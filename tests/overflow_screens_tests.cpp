@@ -9,9 +9,12 @@
 #include "presentation_actor.hpp"
 #include "sim_ui.hpp"
 
+#include "dw4/engine/port_events.hpp"
+#include "dw4/pad.hpp"
 #include "dw4/resources.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -104,6 +107,29 @@ void test_font(const dw4::MountedResources& resources) {
         }
     CHECK(missing == 0);
     std::printf("T9: %zu strings, %d missing glyphs\n", ov::all_texts().size(), missing);
+    // The director's own strings (build page, offers, results, F's meta
+    // lines) are ASCII and the game glyphs: every printable ASCII draws with
+    // fit_to_font (SimUi's text), so none of them has a gap (9.1).
+    const auto has = [&](char16_t c) { return codes.contains(std::uint32_t(c)); };
+    std::string absent;
+    int gaps = 0;
+    for (char16_t c = 0x21; c < 0x7F; ++c) {
+        if (!has(c)) absent += char(c);
+        for (const char16_t f : ov::fit_to_font(std::u16string(1, c), has))
+            if (!has(f)) {
+                std::printf("  T9: ASCII '%c' has no stand-in in the font\n", char(c));
+                ++gaps;
+            }
+    }
+    for (const char* line : {"  Blunt skill 650 / cap 1300, Forge 2 of 5", "Highest hit taken 35 % of MaxHP", "Chips: Drain Ram / Brave Core",
+                             "Sim Bits +120   (480)", "NEW! Blossom Data   opens Drain Ram", "Damage dealt: 12,345 (Art 60 %)"})
+        for (const char16_t f : ov::fit_to_font(ov::to_game_text(line), has))
+            if (!has(f) && f != u' ') {
+                std::printf("  T9: \"%s\": U+%04X has no glyph\n", line, unsigned(f));
+                ++gaps;
+            }
+    std::printf("T9: ASCII the font lacks: [%s], drawn with stand-ins; %d gaps\n", absent.c_str(), gaps);
+    CHECK(gaps == 0);
 }
 
 void test_npc_rules() {
@@ -160,6 +186,140 @@ void test_npc_rules() {
     CHECK(ov::talk_reaches({55, 12, -80}));
     CHECK(!ov::talk_reaches({50, 14, -95}));
     CHECK(!ov::talk_reaches({50, 30, -80}));
+}
+
+// 3.3: the A of the talk does not act in the dialog (also when the host gave
+// the closed lobby no keys), a held stick does not move the cursor, and
+// opening / closing latch the story's pad (the A that closes the dialog must
+// not talk again). "Welcome back" opens once, only when the NPC talks and
+// player 1 has the control.
+void test_lobby_keys() {
+    const std::uint32_t A = dw4::pad_button::a, DOWN = dw4::pad_button::down;
+    ov::NpcConditions c;
+    c.lobby = true;
+    c.intro_seen = true;
+    c.gate_open = true;
+    const auto talk = [](ov::OverflowLobby& lobby) {
+        std::vector<dw4::engine::PortEvent> events(1);
+        events[0].kind = dw4::engine::PortEvent::Kind::talk_box;
+        events[0].slot = 0;
+        events[0].x = 50;
+        events[0].y = 14;
+        events[0].z = -86;
+        lobby.take_events(events);
+        CHECK(events.empty());
+        lobby.stepped(true);
+        lobby.stepped(true);
+    };
+    for (const bool closed_keys : {true, false}) {
+        ov::OverflowLobby lobby;
+        lobby.meta().seen_intro = true;
+        lobby.update(c, std::nullopt, 0.0);
+        CHECK(lobby.state().talk);
+        // The closed lobby sees the held A (the host's new pattern) or nothing (the old one).
+        lobby.input(closed_keys ? A : 0u, 0, 0);
+        talk(lobby);
+        CHECK(lobby.dialog_open());
+        CHECK(lobby.menu().screen() == ov::LobbyScreen::choice);
+        CHECK(lobby.take_story_latch()); // (opening latches the story's pad)
+        CHECK(!lobby.take_story_latch());
+        // The talk's A held on: no choice ("Enter the simulator" stays unchosen).
+        for (int i = 0; i < 4; ++i) CHECK(lobby.input(A, 0, 0).kind == ov::LobbyAction::Kind::none);
+        CHECK(lobby.menu().screen() == ov::LobbyScreen::choice);
+        // A held stick (down) does not move the cursor either.
+        lobby.input(0, 0, -1.0f);
+        CHECK(lobby.menu().cursor() == 0);
+        lobby.input(0, 0, 0);
+        // Released: Leave (the fifth choice), the goodbye page, A closes.
+        for (int i = 0; i < 4; ++i) {
+            lobby.input(DOWN, 0, 0);
+            lobby.input(0, 0, 0);
+        }
+        CHECK(lobby.menu().cursor() == 4);
+        lobby.input(A, 0, 0);
+        CHECK(lobby.menu().screen() == ov::LobbyScreen::talk);
+        CHECK(lobby.menu().pages().size() == 1 && lobby.menu().pages()[0] == ov::text(ov::Text::goodbye));
+        lobby.input(0, 0, 0);
+        CHECK(!lobby.take_story_latch());
+        CHECK(lobby.input(A, 0, 0).kind == ov::LobbyAction::Kind::closed);
+        CHECK(!lobby.dialog_open());
+        CHECK(lobby.take_story_latch()); // (closing latches the story's pad: the held A stays out)
+    }
+    // The crowd line (2-4 players) is not closed by the talk's A.
+    {
+        ov::NpcConditions crowd = c;
+        crowd.players = 2;
+        ov::OverflowLobby lobby;
+        lobby.update(crowd, std::nullopt, 0.0);
+        lobby.input(0, 0, 0);
+        talk(lobby);
+        CHECK(lobby.dialog_open() && !lobby.menu().pages().empty() && lobby.menu().pages()[0] == ov::text(ov::Text::crowd));
+        lobby.input(A, 0, 0);
+        CHECK(lobby.dialog_open());
+        lobby.input(0, 0, 0);
+        lobby.input(A, 0, 0);
+        CHECK(!lobby.dialog_open());
+    }
+    // Welcome back: once, only with talk and the control.
+    {
+        ov::OverflowLobby lobby;
+        lobby.meta().seen_intro = true;
+        ov::NpcConditions show = c;
+        show.test_run = true;
+        show.test = ov::npc_test_mode("show");
+        lobby.update(show, std::nullopt, 0.0);
+        CHECK(lobby.state().shown && !lobby.state().talk);
+        ov::RunSummary back;
+        back.end = ov::RunEnd::cleared;
+        back.seconds = 25 * 60;
+        lobby.returned(back);
+        lobby.stepped(true);
+        CHECK(!lobby.dialog_open()); // ("show" never talks)
+        lobby.update(c, std::nullopt, 0.0);
+        lobby.stepped(false);
+        CHECK(!lobby.dialog_open()); // (an original talk has the control)
+        lobby.stepped(true);
+        CHECK(lobby.dialog_open() && lobby.menu().screen() == ov::LobbyScreen::talk);
+        CHECK(!lobby.menu().pages().empty() && lobby.menu().pages()[0].starts_with("Welcome back"));
+        lobby.close();
+        CHECK(lobby.take_story_latch());
+        lobby.input(0, 0, 0);
+        talk(lobby);
+        CHECK(lobby.dialog_open() && lobby.menu().screen() == ov::LobbyScreen::choice); // (not Welcome back again)
+    }
+}
+
+// The EXP bar inside the level (NEXTEXP is cumulative), the results' layout
+// with more than 16 / 32 lines, the font's missing ASCII.
+void test_run_numbers() {
+    // Curve 80/50/6 (run_next_exp): Lv 5 starts at NEXTEXP(4), 65 % of NEXTEXP(5).
+    const auto next = [](int level) {
+        long long total = 0;
+        for (int k = 0; k < level; ++k) total += 80 + 50LL * k + 6LL * k * k;
+        return int(total);
+    };
+    CHECK(ov::level_progress(next(4), next(4), next(5)) == 0.0f);
+    CHECK(std::abs(ov::level_progress((next(4) + next(5)) / 2, next(4), next(5)) - 0.5f) < 0.01f);
+    CHECK(ov::level_progress(next(5), next(4), next(5)) == 1.0f);
+    CHECK(ov::level_progress(10, 0, 0) == 0.0f);
+    std::vector<std::string> lines;
+    for (int i = 0; i < 19; ++i) lines.push_back("Line " + std::to_string(i));
+    lines.push_back("Sim Bits +120   (480)");
+    lines.push_back("NEW! Blossom Data   opens Drain Ram");
+    CHECK(ov::result_columns(16) == 1);
+    CHECK(ov::result_columns(lines.size()) == 2);
+    CHECK(ov::fit_result_lines(lines, 32) == lines); // (21 lines: all shown, two columns)
+    for (int i = 19; i < 40; ++i) lines.insert(lines.end() - 2, "Line " + std::to_string(i));
+    const auto fit = ov::fit_result_lines(lines, 32);
+    CHECK(fit.size() == 32);
+    CHECK(fit[30].starts_with("Sim Bits") && fit[31].starts_with("NEW!"));
+    CHECK(fit[0] == "Line 0" && fit[29] == "Line 29");
+    // A font without '/' and '%' (9.1): stand-ins, no gaps.
+    const auto has = [](char16_t c) { return c >= 0x20 && c < 0x7F && c != u'/' && c != u'%' && c != u'['; };
+    CHECK(ov::fit_to_font(u"skill 10 / cap 1300", has) == u"skill 10 - cap 1300");
+    CHECK(ov::fit_to_font(u"taken 35 % of MaxHP [x]", has) == u"taken 35 pct of MaxHP (x]");
+    const auto wide = [&](char16_t c) { return has(c) || c == u'\uFF0F'; };
+    CHECK(ov::fit_to_font(u"a/b", wide) == u"a\uFF0Fb");
 }
 
 void test_menu() {
@@ -284,7 +444,10 @@ void test_menu() {
     CHECK(row.techniques.size() == 3);
     CHECK(row.techniques[0] == "⊂M" && row.learned[0]);
     CHECK(row.techniques[1] == "H" && !row.learned[1]);
-    CHECK(row.techniques[2] == "∩∞");
+    CHECK(row.techniques[2] == "∪∞"); // (∪ thunder, ∩ dark: SEAMLESS.md, SJIS 81BC-81BF)
+    CHECK(ov::text(ov::Text::tech_vmon).starts_with("∪Bolt"));
+    CHECK(ov::text(ov::Text::tech_girumon).find("∩Dark") != std::string_view::npos);
+    CHECK(ov::text(ov::Text::tech_dorumon).find("∩Dark") != std::string_view::npos);
     CHECK(ov::quest_timer_text(59.0) == "0:59");
 }
 
@@ -359,6 +522,8 @@ int main(int argc, char** argv) {
     test_text_glyphs();
     test_npc_rules();
     test_menu();
+    test_lobby_keys();
+    test_run_numbers();
     std::string data = argc > 1 ? argv[1] : "";
     if (data.empty())
         if (const char* env = std::getenv("DW4_GAME_DATA")) data = env;

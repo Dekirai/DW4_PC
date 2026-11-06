@@ -19,6 +19,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <utility>
 #include <optional>
 #include <string>
 #include <vector>
@@ -179,12 +180,20 @@ public:
     void take_events(std::vector<engine::PortEvent>& events);
     void stepped(bool player_has_control);
     bool dialog_open() const { return menu_.is_open(); }
-    // The live keys while the dialog is open (edges are found here).
+    const LobbyMenu& menu() const { return menu_; }
+    // The live keys every pass, also while the dialog is closed (edges are
+    // found here; 3.3: after the dialog opens, keys and the stick held from
+    // before act only after they were released).
     LobbyAction input(std::uint32_t buttons, float stick_x, float stick_y);
+    // True once after the dialog opened or closed: the host latches the
+    // story's pad until every button is up (3.3: the A that closed the
+    // dialog must not reach the story and talk again).
+    bool take_story_latch() { return std::exchange(story_latch_, false); }
     void close();
     // A test: the screen to open as soon as the NPC is shown.
     void open_test_screen(LobbyScreen screen) { test_screen_ = screen; }
-    // The run came back: the next talk starts with "Welcome back".
+    // The run came back: "Welcome back" opens once, as soon as the NPC
+    // talks (not in DW4_OVERFLOW=show) and player 1 has the control.
     void returned(const RunSummary& summary);
     // Draws the NPC (3D) and the dialog (2D) into a copy of the frame.
     void present(std::vector<engine::DrawItem>& items, engine::ShadowFrame* shadow, const engine::FrameCamera& camera,
@@ -207,7 +216,12 @@ private:
     int pending_ = 0; // steps until a talk_box reaching the NPC opens the dialog
     std::uint32_t last_buttons_ = 0;
     int last_stick_y_ = 0, last_stick_x_ = 0;
+    bool held_latch_ = false;  // the dialog ignores keys held from before it opened
+    bool story_latch_ = false; // take_story_latch()
+    bool welcome_ = false;     // "Welcome back" waits for the control
+    bool was_open_ = false;
     std::optional<engine::Vec3f> own_;
+    void opened_or_closed();
 };
 
 } // namespace dw4::game::overflow

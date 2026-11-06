@@ -498,7 +498,25 @@ void OverflowLobby::take_events(std::vector<engine::PortEvent>& events) {
     std::erase_if(events, [](const engine::PortEvent& e) { return e.kind == engine::PortEvent::Kind::talk_box; });
 }
 
+void OverflowLobby::opened_or_closed() {
+    const bool open = menu_.is_open();
+    if (open == was_open_) return;
+    was_open_ = open;
+    story_latch_ = true;
+    if (open) held_latch_ = true;
+}
+
 void OverflowLobby::stepped(bool player_has_control) {
+    // "Welcome back" (13.3 step 4): once, when the NPC talks and player 1
+    // has the control (never over an original talk, never in "show").
+    if (welcome_ && back_ && state_.talk && player_has_control && !menu_.is_open() && pending_ == 0) {
+        menu_.open(false, meta_, back_);
+        welcome_ = false;
+        back_.reset();
+        opened_or_closed();
+        std::printf("overflow: Gekomon's Welcome back opens\n");
+        return;
+    }
     if (pending_ <= 0) return;
     if (!player_has_control) {
         pending_ = 0; // an original talk took the press
@@ -506,15 +524,31 @@ void OverflowLobby::stepped(bool player_has_control) {
     }
     if (--pending_ == 0 && state_.talk) {
         menu_.open(state_.crowd, meta_, back_);
+        back_.reset();
+        welcome_ = false;
+        opened_or_closed();
         std::printf("overflow: Gekomon's dialog opens\n");
     }
 }
 
 LobbyAction OverflowLobby::input(std::uint32_t buttons, float stick_x, float stick_y) {
-    const std::uint32_t trigger = buttons & ~last_buttons_;
-    last_buttons_ = buttons;
+    opened_or_closed(); // (a test screen or update() may have opened or closed it)
     const int sy = stick_y > 0.5f ? -1 : stick_y < -0.5f ? 1 : 0; // (the stick's y is up)
     const int sx = stick_x > 0.5f ? 1 : stick_x < -0.5f ? -1 : 0;
+    // 3.3: what was held when the dialog opened (the A of the talk, a
+    // stick) acts only after everything was released.
+    if (held_latch_) {
+        if (buttons != 0 || sx != 0 || sy != 0) {
+            last_buttons_ = buttons;
+            last_stick_x_ = sx;
+            last_stick_y_ = sy;
+            if (menu_.is_open()) menu_.tick();
+            return {};
+        }
+        held_latch_ = false;
+    }
+    const std::uint32_t trigger = buttons & ~last_buttons_;
+    last_buttons_ = buttons;
     const int my = sy != last_stick_y_ ? sy : 0, mx = sx != last_stick_x_ ? sx : 0;
     last_stick_y_ = sy;
     last_stick_x_ = sx;
@@ -535,15 +569,20 @@ LobbyAction OverflowLobby::input(std::uint32_t buttons, float stick_x, float sti
         if (on_intro_seen) on_intro_seen();
     }
     if (action.kind == LobbyAction::Kind::start_run) back_.reset();
+    opened_or_closed();
     return action;
 }
 
-void OverflowLobby::close() { menu_.close(); }
+void OverflowLobby::close() {
+    menu_.close();
+    opened_or_closed();
+}
 
 void OverflowLobby::returned(const RunSummary& summary) {
     back_ = summary;
-    // Back in the lobby: Gekomon's "Welcome back" page opens (13.3 step 4).
-    if (state_.talk || state_.shown) menu_.open(false, meta_, back_);
+    // Back in the lobby: Gekomon's "Welcome back" page opens (13.3 step 4)
+    // at the first step the NPC talks and player 1 has the control.
+    welcome_ = true;
 }
 
 bool OverflowLobby::needs_present() const { return actor_.alpha() > 0.0f || state_.shown || menu_.is_open(); }

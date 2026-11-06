@@ -1449,6 +1449,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // DW4_OVERFLOW_SCREEN=talk|choice|select|plug_lab|records|help opens
         // a screen as soon as it is there (the screenshot set).
         dw4::game::overflow::OverflowLobby overflow_lobby;
+        // (3.2: test runs and input scripts hide it; their script drives the
+        // dialog when DW4_OVERFLOW shows it.)
+        const bool overflow_scripted = options.smoke_frames != 0 || !options.input_script.empty();
+        // (3.3: after the dialog closed, a test script's keys reach the story
+        // only after they were released.)
+        bool overflow_script_latch = false;
         const auto overflow_npc_test = dw4::game::overflow::npc_test_mode(std::getenv("DW4_OVERFLOW"));
         if (const char* screen = std::getenv("DW4_OVERFLOW_SCREEN"); screen && options.smoke_frames != 0) {
             using LS = dw4::game::overflow::LobbyScreen;
@@ -2125,7 +2131,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 npc.lobby = dw4::game::same_stage(engine.stage_name(), "stagML11") && engine.presenting() && !engine.loading() &&
                             engine.stage_snapshot() != nullptr;
                 npc.offline = !(net.active() || net.in_lobby() || online || title_online.active || engine.online().enabled);
-                npc.test_run = options.smoke_frames != 0;
+                npc.test_run = overflow_scripted;
                 npc.test = overflow_npc_test;
                 npc.setting = settings.overflow_npc;
                 const auto& story_flags = engine.flags();
@@ -2140,13 +2146,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                       std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
                 overflow_offline = npc.offline;
                 // (Test runs: the input script drives the dialog, per step below.)
-                if (options.smoke_frames == 0) {
-                    if (overflow_lobby.dialog_open()) {
-                        const auto sample = dw4::game::live_pad_sample(live[0]);
-                        overflow_lobby_action(overflow_lobby.input(pad_latch ? 0u : sample.buttons, sample.left.x, sample.left.y), npc.offline);
+                // (The lobby sees the live keys also while the dialog is closed,
+                // so the A of the talk is not a new press when it opens; 3.3:
+                // opening and closing latch the story's pad until every
+                // button is up.)
+                if (!overflow_scripted) {
+                    const auto sample = dw4::game::live_pad_sample(live[0]);
+                    const bool was_open = overflow_lobby.dialog_open();
+                    const auto action = overflow_lobby.input(sample.buttons, sample.left.x, sample.left.y);
+                    if (was_open) {
+                        overflow_lobby_action(action, npc.offline);
                         live = {};
-                    } else {
-                        overflow_lobby.input(0, 0, 0);
+                    }
+                    if (overflow_lobby.take_story_latch()) {
+                        pad_latch = true;
+                        live = {};
                     }
                 }
             }
@@ -2279,13 +2293,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // (a live analog stick or movement keys, else a bot's
                 // steering); the bots steer only while it is centred.
                 std::uint32_t script_buttons = scripted.held(frame);
-                if (options.smoke_frames != 0 && overflow_lobby.dialog_open()) {
+                if (overflow_scripted && overflow_lobby.dialog_open()) {
                     // (A test run's script drives Data Overflow's dialog; the
                     // story gets neutral pads meanwhile, SURVIVAL.md 3.3.)
                     overflow_lobby_action(overflow_lobby.input(script_buttons, 0, 0), overflow_offline);
                     script_buttons = 0;
-                } else if (options.smoke_frames != 0) {
+                } else if (overflow_scripted) {
                     overflow_lobby.input(script_buttons, 0, 0);
+                }
+                if (overflow_scripted) {
+                    if (overflow_lobby.take_story_latch()) {
+                        overflow_script_latch = true;
+                        script_buttons = 0;
+                    }
+                    if (overflow_script_latch) {
+                        if (script_buttons != 0) script_buttons = 0;
+                        else overflow_script_latch = false;
+                    }
                 }
                 std::uint32_t input = live[0].buttons | script_buttons | (engine.frame() < ui_pad_until ? ui_pad : 0u);
                 float stick_x = live[0].stick.x, stick_y = live[0].stick.y;

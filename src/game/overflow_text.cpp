@@ -1,5 +1,6 @@
 #include "overflow_text.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdarg>
 #include <cstdio>
@@ -43,6 +44,40 @@ std::u32string code_points(std::string_view utf8) {
         ++i;
         for (std::size_t k = 0; k < extra && i < utf8.size(); ++k, ++i) cp = (cp << 6) | (static_cast<unsigned char>(utf8[i]) & 0x3F);
         out.push_back(cp);
+    }
+    return out;
+}
+
+std::u16string fit_to_font(std::u16string_view text, const std::function<bool(char16_t)>& has) {
+    std::u16string out;
+    out.reserve(text.size());
+    for (const char16_t c : text) {
+        if (c == u'\n' || c < 0x21 || c > 0x7E || has(c)) {
+            out.push_back(c);
+            continue;
+        }
+        if (const char16_t full = char16_t(c - 0x21 + 0xFF01); has(full)) {
+            out.push_back(full);
+            continue;
+        }
+        std::u16string_view near;
+        switch (c) {
+        case u'#': near = u"No."; break;
+        case u'$': near = u"S"; break;
+        case u'%': near = u"pct"; break;
+        case u'*': near = u"x"; break;
+        case u'/': near = u"-"; break;
+        case u';': near = u","; break;
+        case u'=': near = u":"; break;
+        case u'@': near = u"at"; break;
+        case u'[': case u'{': near = u"("; break;
+        case u']': case u'}': near = u")"; break;
+        case u'\\': case u'~': near = u"-"; break;
+        case u'`': near = u"'"; break;
+        default: break;
+        }
+        if (!near.empty() && std::all_of(near.begin(), near.end(), [&](char16_t n) { return has(n); })) out += near;
+        else out.push_back(c);
     }
     return out;
 }

@@ -210,11 +210,17 @@ void SimUi::bar(float x, float y, float w, float h, float fraction, UiColor fill
     if (f > 0) rect(x + 1, y + 1, (w - 2) * f, h - 2, fill);
 }
 
+std::u16string SimUi::font_text(std::string_view utf8) const {
+    // (9.1: ASCII the font lacks draws as a stand-in, no gaps.)
+    return overflow::fit_to_font(overflow::to_game_text(utf8),
+                                 [this](char16_t c) { return font_->glyphs.find(std::uint32_t(c)) != font_->glyphs.end(); });
+}
+
 float SimUi::text_width(std::string_view utf8, float size) {
     if (!load_font() || font_->line_height <= 0) return 0;
     const float scale = size / font_->line_height;
     float widest = 0, pen = 0;
-    for (const char16_t c : overflow::to_game_text(utf8)) {
+    for (const char16_t c : font_text(utf8)) {
         if (c == u'\n') {
             widest = std::max(widest, pen);
             pen = 0;
@@ -253,7 +259,7 @@ void SimUi::text(float x, float y, std::string_view utf8, UiColor color, float s
     if (!load_font() || font_->line_height <= 0 || utf8.empty()) return;
     const float scale = size / font_->line_height;
     // One item per line, so each line can be aligned inside `width`.
-    const auto all = overflow::to_game_text(utf8);
+    const auto all = font_text(utf8);
     std::size_t begin = 0;
     float line_y = y;
     for (;;) {

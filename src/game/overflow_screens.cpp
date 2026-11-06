@@ -103,17 +103,26 @@ void draw_list(SimUi& ui, std::string_view title, const std::vector<std::string>
     ui.text(x + 18, y + h - 28, help, ui_colors::grey, 14.0f);
 }
 
-void draw_lines(SimUi& ui, std::string_view title, const std::vector<std::string>& lines, std::string_view help, std::size_t shown,
+void draw_lines(SimUi& ui, std::string_view title, const std::vector<std::string>& all, std::string_view help, std::size_t shown,
                 UiColor title_color) {
-    const float w = 560, x = 40, row = 21;
-    const std::size_t count = std::min(lines.size(), std::size_t(16));
-    const float h = 50 + row * float(count) + 40;
+    // (Past 16 lines two columns, past 32 the meta lines stay: 9.6.)
+    const auto lines = fit_result_lines(all, 32);
+    const std::size_t count = lines.size();
+    const int columns = result_columns(count);
+    const std::size_t rows = std::max<std::size_t>(1, (count + std::size_t(columns) - 1) / std::size_t(columns));
+    const float w = 560, x = 40, row = columns == 1 ? 21.0f : 19.0f, size = columns == 1 ? 16.0f : 14.0f;
+    const float column_w = (w - 44) / float(columns);
+    const float h = 50 + row * float(rows) + 40;
     const float y = std::max(16.0f, 236 - h * 0.5f);
     title_window(ui, x, y, w, h, title, title_color);
     for (std::size_t i = 0; i < count && i < shown; ++i) {
         const auto& line = lines[i];
         const bool news = line.find("NEW!") != std::string::npos;
-        ui.text(x + 22, y + 50 + row * float(i), line, news ? ui_colors::yellow : ui_colors::white, 16.0f);
+        const std::size_t c = i / rows, r = i % rows;
+        // (A line wider than its column draws smaller.)
+        const float width = ui.text_width(line, size);
+        const float fit = width > column_w - 6 ? size * (column_w - 6) / width : size;
+        ui.text(x + 22 + column_w * float(c), y + 50 + row * float(r), line, news ? ui_colors::yellow : ui_colors::white, fit);
     }
     if (shown >= count) ui.text(x + 18, y + h - 28, help, ui_colors::grey, 15.0f);
 }
@@ -140,13 +149,33 @@ void build_row(const std::vector<std::string>& lines, RunScreenData& d) {
         if (colon == std::string::npos || colon < 3) continue;
         const std::string name = line.substr(2, colon - 2);
         const std::string rank = line.substr(colon + 2, line.find(" (", colon) - colon - 2);
-        std::string glyph = name == "Fire" ? "⊂" : name == "Ice" || name == "Freeze" ? "⊃" : name == "Bolt" ? "∩" : name == "Dark" ? "∪" : name.substr(0, 1);
+        std::string glyph = name == "Fire" ? "⊂" : name == "Ice" || name == "Freeze" ? "⊃" : name == "Bolt" ? "∪" : name == "Dark" ? "∩" : name.substr(0, 1);
         const bool learned = rank != "not learned";
         if (learned) glyph += rank == "∞" ? std::string("∞") : rank.substr(0, 1);
         d.techniques.push_back(glyph);
         d.learned.push_back(learned);
     }
 }
+
+float level_progress(int exp, int floor, int next) {
+    if (next <= floor) return 0.0f;
+    return std::clamp(float(double(exp - floor) / double(next - floor)), 0.0f, 1.0f);
+}
+
+std::vector<std::string> fit_result_lines(const std::vector<std::string>& lines, std::size_t most) {
+    if (lines.size() <= most) return lines;
+    const auto meta = [](const std::string& line) { return line.find("NEW!") != std::string::npos || line.rfind("Sim Bits", 0) == 0; };
+    const std::size_t kept = std::size_t(std::count_if(lines.begin(), lines.end(), meta));
+    const std::size_t room = most > kept ? most - kept : 0;
+    std::vector<std::string> out;
+    for (const auto& line : lines)
+        if (!meta(line) && out.size() < room) out.push_back(line);
+    for (const auto& line : lines)
+        if (meta(line) && out.size() < most) out.push_back(line);
+    return out;
+}
+
+int result_columns(std::size_t lines) { return lines <= 16 ? 1 : 2; }
 
 std::string quest_timer_text(double seconds_left) {
     const int whole = std::max(0, int(std::ceil(seconds_left)));

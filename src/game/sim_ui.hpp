@@ -112,6 +112,7 @@ private:
     std::unique_ptr<MountedResources> resources_;
     std::shared_ptr<const IgbDocument> font_document_;
     std::unique_ptr<engine::FontImage> font_;
+    std::u16string font_text(std::string_view utf8) const; // (with fit_to_font)
     std::set<std::uint32_t> codes_;
     bool tried_ = false;
     std::vector<Piece> pieces_;

@@ -321,16 +321,31 @@ private:
         d.defeats = director_->defeats();
         d.exp_fraction = 0;
         if (const auto* sys = run.get<engine::GameSystem>()) {
+            // (NEXTEXP is cumulative: the bar runs inside the level, 9.3.)
             const auto& stats = sys->players[0].stats;
-            if (stats.next_exp > 0) d.exp_fraction = float(stats.exp) / float(stats.next_exp);
+            const int floor = rules_ && stats.level > 1 ? rules_->next_exp(stats.level - 1) : 0;
+            if (stats.next_exp > 0) d.exp_fraction = level_progress(stats.exp, floor, stats.next_exp);
         }
         build_row(director_->build_lines(run), d);
         d.notice = !director_->notice().empty() && director_->notice_step() + 180 > director_->steps() ? director_->notice() : std::string();
-        // The finale: until lane E's finale() / finale_left_steps(), the
-        // last five minutes before the run's end at 25:00 (O1a).
+        // The finale (4.4): lane E's finale() / finale_left_steps() /
+        // time_up() where the merged build has them, else the last five
+        // minutes before the run's end at 25:00 (O1a).
         d.finale = d.seconds >= 20 * 60 && d.seconds < 25 * 60;
         d.finale_left = std::max(0.0, 25 * 60 - d.seconds);
         d.time_up = false;
+        [&](const auto& director) {
+            if constexpr (requires { director.finale(); director.finale_left_steps(); }) {
+                d.finale = director.finale();
+                d.finale_left = double(director.finale_left_steps()) * 1001.0 / 60000.0;
+            }
+            if constexpr (requires { director.time_up(); }) d.time_up = director.time_up();
+        }(*director_);
+        // Lane F's run bits (9.3) where the merged build has them.
+        d.bits = 0;
+        [&](auto& self) {
+            if constexpr (requires { self.run_bits(run); }) d.bits = int(self.run_bits(run));
+        }(*this);
         // (hud_finale=SECONDS, test runs with pictures: the finale timer's
         // look at that many seconds left; presentation only.)
         if (const auto left = option(request_, "hud_finale"); !left.empty()) {
@@ -355,6 +370,13 @@ private:
                 d.offers.push_back({director_->offer_text(run, offer), director_->offer_detail(run, offer), director_->offer_about(run, offer)});
         d.build_lines = screen == ov::Screen::build ? director_->build_lines(run) : std::vector<std::string>{};
         d.result_lines = screen == ov::Screen::results ? director_->result_lines(run) : std::vector<std::string>{};
+        // Lane F's lines under the results (9.6: "Sim Bits +N", "NEW! <title>")
+        // where the merged build has them.
+        if (screen == ov::Screen::results)
+            [&](auto& self) {
+                if constexpr (requires { self.meta_lines(); })
+                    for (auto& line : self.meta_lines()) d.result_lines.push_back(std::move(line));
+            }(*this);
         d.cleared = director_->outcome() == ov::Outcome::cleared;
     }
 

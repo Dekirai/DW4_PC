@@ -58,6 +58,16 @@ struct RunScreenData {
 // rank letter (P, M, G, T, ∞).
 void build_row(const std::vector<std::string>& build_lines, RunScreenData& data);
 
+// The EXP bar inside the level (9.3): NEXTEXP is cumulative (run_next_exp
+// sums the levels), so the bar runs from the level's floor (NEXTEXP of the
+// level before) to its NEXTEXP.
+float level_progress(int exp, int floor, int next);
+// The results' lines (9.6): up to `most`; past that the meta lines (Sim
+// Bits, NEW!) stay and the run's lines before them are cut.
+std::vector<std::string> fit_result_lines(const std::vector<std::string>& lines, std::size_t most);
+// The results' columns: one up to 16 lines, else two (up to 16 rows each).
+int result_columns(std::size_t lines);
+
 // The run's 2D items of one frame (`frame`: the presented step, blinking).
 void draw_run_screens(SimUi& ui, const RunScreenData& data, std::uint64_t frame);
 // The countdown in the quest timer's look: "m:ss" (finale_left).
