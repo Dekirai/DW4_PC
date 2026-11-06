@@ -266,7 +266,8 @@ LobbyAction LobbyMenu::input(const MenuKeys& keys, const LobbyMeta& meta) {
         if (keys.b) to_choice();
         break;
     case LobbyScreen::records:
-        if (keys.left || keys.right) records_page_ = 1 - records_page_;
+        if (const int pages = records_pages(meta); keys.left) records_page_ = (records_page_ + pages - 1) % pages;
+        else if (keys.right) records_page_ = (records_page_ + 1) % pages;
         if (keys.b || keys.a) to_choice();
         break;
     }
@@ -394,9 +395,27 @@ void draw_plug_lab(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta) {
 
 void draw_records(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta) {
     ui.window(40, 40, 560, 400);
-    ui.text(60, 52, menu.records_page() == 0 ? text(Text::records_title) : text(Text::records_digimon), ui_colors::yellow, 22.0f);
+    const int pages = records_pages(meta), page = std::clamp(menu.records_page(), 0, pages - 1);
+    const bool digimon = page == pages - 1;
+    ui.text(60, 52, digimon ? text(Text::records_digimon) : text(Text::records_title), ui_colors::yellow, 22.0f);
     ui.text(60, 52, format(Text::records_earned, meta.earned_total), ui_colors::cyan, 16.0f, 1, 520);
-    if (menu.records_page() == 0) {
+    ui.text(60, 404, format(Text::records_page, page + 1, pages), ui_colors::grey, 14.0f, 1, 520);
+    if (!digimon && !meta.record_rows.empty()) {
+        // Lane F's records (8.4): the title, done with its date, open with
+        // its condition; what it opens under it (9.2).
+        float y = 88;
+        const std::size_t first = std::size_t(page) * kRecordsPerPage;
+        for (std::size_t i = first; i < meta.record_rows.size() && i < first + kRecordsPerPage; ++i) {
+            const auto& row = meta.record_rows[i];
+            const bool done = row.date != 0;
+            ui.text(64, y, row.title, done ? ui_colors::white : ui_colors::grey, 17.0f);
+            if (done) ui.text(64, y, record_date(row.date), ui_colors::cyan, 15.0f, 1, 512);
+            const std::string line = done ? format(Text::records_opens, row.opens.c_str()) : format(Text::records_open_line, row.condition.c_str(), row.opens.c_str());
+            const float width = ui.text_width(line, 13.0f);
+            ui.text(84, y + 19, line, done ? ui_colors::green : ui_colors::grey, width > 490 ? 13.0f * 490 / width : 13.0f);
+            y += 38;
+        }
+    } else if (!digimon) {
         static constexpr std::pair<Text, const char*> records[] = {
             {Text::record_gate_keeper, "gate_keeper"}, {Text::record_ten_minutes, "ten_minutes"}, {Text::record_fifteen_minutes, "fifteen_minutes"},
             {Text::record_first_clear, "first_clear"}, {Text::record_level_25, "run_level_25"}, {Text::record_thousand, "thousand"}};
@@ -414,12 +433,25 @@ void draw_records(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta) {
             ui.text(64, y, format(Text::records_form_line, std::string(text(form_text(form, 0))).c_str(), record.runs, clock(record.best_seconds).c_str(),
                                   record.best_level),
                     ui_colors::white, 17.0f);
-            y += 28;
+            ui.text(84, y + 20, format(Text::records_clears, record.tier_clears[0], record.tier_clears[1], record.tier_clears[2]), ui_colors::grey, 14.0f);
+            y += 46;
         }
     }
     ui.text(60, 404, text(Text::records_help), ui_colors::grey, 14.0f);
 }
 } // namespace
+
+int records_pages(const LobbyMeta& meta) {
+    const int rows = int(meta.record_rows.size());
+    return (rows == 0 ? 1 : (rows + kRecordsPerPage - 1) / kRecordsPerPage) + 1;
+}
+
+std::string record_date(std::int64_t date) {
+    if (date < 10000101) return std::string(text(Text::records_done));
+    char out[16];
+    std::snprintf(out, sizeof out, "%04d-%02d-%02d", int(date / 10000), int(date / 100 % 100), int(date % 100));
+    return out;
+}
 
 std::unique_ptr<engine::Attribute> model_texture(const IgbDocument& document, std::string_view attr_set) {
     for (const auto& object : document.objects) {

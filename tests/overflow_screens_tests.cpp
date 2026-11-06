@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 #include <thread>
@@ -289,6 +290,56 @@ void test_lobby_keys() {
     }
 }
 
+// Lane F's records and per-tier clears (fill_records, a stand-in of F's
+// profile and record_table) and the records pages.
+struct FakeRecordDef {
+    const char* key;
+    const char* title;
+    const char* condition;
+    const char* opens;
+};
+struct FakeFormStats {
+    std::array<int, 3> clears{};
+};
+struct FakeProfile {
+    std::map<std::string, std::int64_t, std::less<>> records;
+    std::map<std::string, FakeFormStats, std::less<>> forms;
+};
+void test_records() {
+    std::vector<FakeRecordDef> table;
+    static std::vector<std::string> keys;
+    for (int i = 0; i < 23; ++i) keys.push_back("record_" + std::to_string(i));
+    for (int i = 0; i < 23; ++i) table.push_back({keys[std::size_t(i)].c_str(), "Title", "Defeat Blossomon.", "Drain Ram"});
+    FakeProfile profile;
+    profile.records["record_1"] = 20261106;
+    profile.records["record_2"] = 0;
+    profile.forms["p_agumon"].clears = {3, 1, 0};
+    ov::LobbyMeta meta;
+    CHECK(ov::records_pages(meta) == 2); // (no rows: the stand-ins, the Digimon page)
+    ov::fill_records(profile, table, meta);
+    CHECK(meta.record_rows.size() == 23);
+    CHECK(meta.record_rows[0].date == 0 && meta.record_rows[1].date == 20261106 && meta.record_rows[2].date == 1);
+    CHECK(meta.record_rows[1].opens == "Drain Ram" && meta.record_rows[1].condition == "Defeat Blossomon.");
+    CHECK(meta.forms["p_agumon"].tier_clears[0] == 3 && meta.forms["p_agumon"].tier_clears[1] == 1);
+    CHECK(ov::records_pages(meta) == 4); // (8 + 8 + 7 records, the Digimon page)
+    CHECK(ov::record_date(20261106) == "2026-11-06");
+    CHECK(ov::record_date(1) == "Done");
+    ov::LobbyMenu menu;
+    menu.open_screen(ov::LobbyScreen::records, meta);
+    ov::MenuKeys right, left;
+    right.right = true;
+    left.left = true;
+    CHECK(menu.records_page() == 0);
+    for (int i = 1; i <= 3; ++i) {
+        menu.input(right, meta);
+        CHECK(menu.records_page() == i);
+    }
+    menu.input(right, meta);
+    CHECK(menu.records_page() == 0);
+    menu.input(left, meta);
+    CHECK(menu.records_page() == 3);
+}
+
 // The EXP bar inside the level (NEXTEXP is cumulative), the results' layout
 // with more than 16 / 32 lines, the font's missing ASCII.
 void test_run_numbers() {
@@ -524,6 +575,7 @@ int main(int argc, char** argv) {
     test_menu();
     test_lobby_keys();
     test_run_numbers();
+    test_records();
     std::string data = argc > 1 ? argv[1] : "";
     if (data.empty())
         if (const char* env = std::getenv("DW4_GAME_DATA")) data = env;

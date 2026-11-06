@@ -46,6 +46,12 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
+// (Data Overflow's meta file of lane F, round O1b, once merged: the records
+// page reads its Data Records, SURVIVAL.md 9.2.)
+#if __has_include("overflow_profile.hpp")
+#include "overflow_profile.hpp"
+#define DW4_O1B_HAS_META 1
+#endif
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
@@ -2144,6 +2150,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 overflow_lobby.update(npc, own_position(),
                                       std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+#ifdef DW4_O1B_HAS_META
+                // (The records page: lane F's Data Records with their dates and
+                // the per-tier clears, while it is open; 8.4, 9.2.)
+                if (overflow_lobby.menu().screen() == dw4::game::overflow::LobbyScreen::records)
+                    dw4::game::overflow::fill_records(dw4::game::overflow::meta().profile(), dw4::game::overflow::record_table(), overflow_lobby.meta());
+#endif
                 overflow_offline = npc.offline;
                 // (Test runs: the input script drives the dialog, per step below.)
                 // (The lobby sees the live keys also while the dialog is closed,

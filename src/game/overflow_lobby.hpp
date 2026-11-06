@@ -73,6 +73,13 @@ struct FormRecord {
     double best_seconds = 0;
     int best_level = 0;
     int clears = 0;
+    std::array<int, 3> tier_clears{}; // Normal, Hard, Very Hard (9.2's Digimon page)
+};
+// A Data Record's row on the records page (8.4, 9.2): lane F's
+// record_table() with the profile's date.
+struct RecordRow {
+    std::string key, title, condition, opens;
+    std::int64_t date = 0; // yyyymmdd when done (1: done, date unknown), 0 open
 };
 struct LobbyMeta {
     bool seen_intro = false;
@@ -84,8 +91,23 @@ struct LobbyMeta {
     std::vector<std::string> chips{"", "wisdom_chip", "spirit_chip", "speed_chip", "pwr_medal"};
     std::map<std::string, std::pair<std::string, std::string>, std::less<>> loadouts; // per form: {armour, chip} last chosen (8.3)
     std::vector<std::string> records; // done records (keys)
+    std::vector<RecordRow> record_rows; // the records page (fill_records); empty: six stand-ins (a build without lane F)
     std::vector<std::string> locked_forms; // forms not open (none of the four Rookies)
 };
+// Lane F's records and per-tier clears into the screens' meta (a template,
+// so lane D builds without F): `table` rows have key / title / condition /
+// opens, `profile.records` maps a key to its date, `profile.forms` a model
+// to stats with `clears` (Normal, Hard, Very Hard). game_main calls it with
+// F's record_table() and meta().profile() when the build has F's header.
+template <typename Profile, typename Table>
+void fill_records(const Profile& profile, const Table& table, LobbyMeta& meta);
+// The records pages: the Data Records (kRecordsPerPage a page), then the
+// Digimon page.
+inline constexpr int kRecordsPerPage = 8;
+int records_pages(const LobbyMeta& meta);
+// A record's date (yyyymmdd) as the page shows it ("2026-11-06"; "Done" when unknown).
+std::string record_date(std::int64_t date);
+
 // How the last run went (Gekomon's "Welcome back" line, 3.4).
 struct RunSummary {
     RunEnd end = RunEnd::retired;
@@ -223,5 +245,20 @@ private:
     std::optional<engine::Vec3f> own_;
     void opened_or_closed();
 };
+
+template <typename Profile, typename Table>
+void fill_records(const Profile& profile, const Table& table, LobbyMeta& meta) {
+    meta.record_rows.clear();
+    for (const auto& r : table) {
+        RecordRow row{r.key, r.title, r.condition, r.opens, 0};
+        if (const auto found = profile.records.find(std::string_view(r.key)); found != profile.records.end())
+            row.date = found->second != 0 ? std::int64_t(found->second) : 1;
+        meta.record_rows.push_back(std::move(row));
+    }
+    for (const auto& [model, stats] : profile.forms) {
+        auto& form = meta.forms[std::string(model)];
+        for (std::size_t i = 0; i < 3 && i < std::size(stats.clears); ++i) form.tier_clears[i] = int(stats.clears[i]);
+    }
+}
 
 } // namespace dw4::game::overflow
