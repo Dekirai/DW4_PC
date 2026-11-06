@@ -29,6 +29,13 @@ public static class LoadGate
     private const int WarmupSeconds = 3;
     /// <summary>The fingerprint every sealed member reports (all engines agree).</summary>
     public const ulong Fingerprint = 0x1234;
+    /// <summary>
+    /// The rooms' client protocol: the newest, <see cref="Wire.ReadyCheckProtocol"/> (48), so every NETFP of a sealed member
+    /// also runs round J's check-fingerprint pass (RoomHub.OnNetFp) and a READY from a checkpoint names its check tick. The
+    /// first r71 measurements (SEAMLESS.md 19.17.4) ran at 47 (<see cref="Wire.CheckpointProtocol"/>); --protocol 47 repeats
+    /// them (the integration review of r71).
+    /// </summary>
+    public static int Protocol { get; set; } = Wire.ReadyCheckProtocol;
     public const ulong Context = 5;
 
     private sealed class Peer : IHubPeer
@@ -151,7 +158,7 @@ public static class LoadGate
         var builds = new SemaphoreSlim(2); // Relay:MaxConcurrentStateBuilds
         RoomHub hub = null!;
         var stateStats = new Stats();
-        hub = new RoomHub(new RoomInfo("WORLD1", Wire.CheckpointProtocol, 1, 2, 4), relay, new SealingOptions(), instances, NullLogger.Instance, null,
+        hub = new RoomHub(new RoomInfo("WORLD1", Protocol, 1, 2, 4), relay, new SealingOptions(), instances, NullLogger.Instance, null,
             job => _ = Task.Run(async () =>
             {
                 await builds.WaitAsync();
@@ -829,7 +836,7 @@ public static class LoadGate
         {
             StateJob? job = null;
             var options = new InstanceOptions { CheckpointJoins = checkpoints, CheckpointWaitMs = 60000 };
-            var hub = new RoomHub(new RoomInfo("WORLD1", Wire.CheckpointProtocol, 1, 2, 4), new RelayOptions(), new SealingOptions(),
+            var hub = new RoomHub(new RoomInfo("WORLD1", Protocol, 1, 2, 4), new RelayOptions(), new SealingOptions(),
                 options, NullLogger.Instance, null, j => job = j);
             var now = Stopwatch.GetTimestamp();
             var peers = new[] { new Peer(), new Peer() };
@@ -895,10 +902,21 @@ public static class LoadGate
             holds["finish_state"] = Math.Round(Ms(Stopwatch.GetTimestamp() - tf), 4);
             holds["state_bytes"] = peers[1].Bytes;
             var target = b.Joining?.Target ?? b.Instance!;
-            Timed(b, new ReadyMsg(target.Id, target.Visit, ticks, 0, 3000, [7], checkpoints ? ReadyMsg.FromCheckpoint : (byte)0).Frame(), "ready");
+            var readyTick = ticks;
+            ulong readyFp = 0;
+            if (checkpoints && Protocol >= Wire.ReadyCheckProtocol)
+            {
+                // Protocol 48: the READY names the checkpoint's check tick (Wire.ReadyCheckTicks replayed steps), checked against
+                // the donor's NETFP of that tick (OnNetFp's check-fingerprint pass, timed too).
+                readyTick = ticks - 30 + Wire.ReadyCheckTicks - 1;
+                readyFp = Fingerprint;
+                Timed(a, new NetFpMsg(i.Id, i.Visit, readyTick, Fingerprint).Frame(), "check_netfp");
+            }
+            Timed(b, new ReadyMsg(target.Id, target.Visit, readyTick, readyFp, 3000, [7], checkpoints ? ReadyMsg.FromCheckpoint : (byte)0).Frame(), "ready");
             Timed(a, new JoinAtMsg(i.Id, i.Visit, ticks + 10).Frame(), "join_at");
             holds["join_reqs"] = peers[0].JoinReqs;
             holds["mode_after"] = (int)i.Mode;
+            holds["protocol"] = Protocol;
             result[checkpoints ? "checkpoint" : "classic"] = holds;
             log($"join after {minutes} min of log ({ticks} ticks), {(checkpoints ? "from a checkpoint" : "classic")}: {Json(holds)}");
         }

@@ -44,7 +44,7 @@ public static class LoadGateNet
         };
         var relay = new RelayHub(options, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
         relay.Admission = a => ValueTask.FromResult<HubAdmitted?>(new HubAdmitted((int)a.AccountId, "m" + a.AccountId, a.AccountId == 0,
-            new RoomInfo(Room, Wire.CheckpointProtocol, 1, 2, 250)));
+            new RoomInfo(Room, LoadGate.Protocol, 1, 2, 250)));
         using var stop = new CancellationTokenSource();
         await relay.StartAsync(stop.Token);
         Console.WriteLine($"LISTENING {await relay.Started}");
@@ -207,7 +207,7 @@ public static class LoadGateNet
         await client.ConnectAsync(IPAddress.Loopback, port, ct);
         var stream = client.GetStream();
         var ticket = tickets.Issue(Room, m.Index, RelayRoles.Member);
-        await stream.WriteAsync(Encoding.ASCII.GetBytes($"{Wire.Magic} {ticket} {Wire.CheckpointProtocol} 1 2\n"), ct);
+        await stream.WriteAsync(Encoding.ASCII.GetBytes($"{Wire.Magic} {ticket} {LoadGate.Protocol} 1 2\n"), ct);
         var line = await ReadLineAsync(stream, ct);
         if (!line.StartsWith("OK ", StringComparison.Ordinal)) throw new IOException($"member {m.Index}: {line}");
         m.Welcome = null;
@@ -317,7 +317,7 @@ public static class LoadGateNet
         var tickets = new RelayTickets(key, TimeSpan.FromMinutes(30), TimeProvider.System);
         // (This executable again; under "dotnet FakeClient.dll" the dll goes first.)
         var exe = Environment.ProcessPath!;
-        var args = $"loadgate-relay --port {port} --key {Convert.ToHexString(key)}";
+        var args = $"loadgate-relay --port {port} --key {Convert.ToHexString(key)} --protocol {LoadGate.Protocol}";
         if (Path.GetFileNameWithoutExtension(exe).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
             args = $"\"{typeof(LoadGateNet).Assembly.Location}\" " + args;
         var child = Process.Start(new ProcessStartInfo(exe, args)

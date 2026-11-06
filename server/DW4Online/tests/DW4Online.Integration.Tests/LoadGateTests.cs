@@ -31,7 +31,7 @@ public class LoadGateTests
     [Fact]
     public void A_lobby_members_presence_stays_plausible_for_a_long_run_and_reaches_the_others()
     {
-        var hub = new RoomHub(new RoomInfo("WORLD1", Wire.CheckpointProtocol, 1, 2, 4), new RelayOptions(), new SealingOptions(), new InstanceOptions(),
+        var hub = new RoomHub(new RoomInfo("WORLD1", LoadGate.Protocol, 1, 2, 4), new RelayOptions(), new SealingOptions(), new InstanceOptions(),
             NullLogger.Instance, null);
         var now = Stopwatch.Frequency * 1000L;
         var peers = new[] { new Peer(), new Peer() };
@@ -55,6 +55,34 @@ public class LoadGateTests
         Assert.Equal(0, hub.Counters.GetValueOrDefault("presence_implausible"));
         Assert.Equal(0, hub.Counters.GetValueOrDefault("presence_dropped"));
         Assert.Equal(3000, peers[1].Presence);
+    }
+
+    /// <summary>
+    /// The gate measures the newest protocol (the integration review of r71: it ran 47 rooms, and 48's check-fingerprint
+    /// pass in OnNetFp went unmeasured); a join from a checkpoint at 48 names the check tick and is checked against the
+    /// donor's NETFP of it, and joins (the JOIN_REQ to the donor, the instance sealed after the JOIN_AT), at 47 as before.
+    /// </summary>
+    [Fact]
+    public void The_gate_runs_the_newest_protocol_and_its_checkpoint_join_is_checked()
+    {
+        Assert.Equal(Wire.ReadyCheckProtocol, LoadGate.Protocol);
+        var r = LoadGate.Join(1, _ => { });
+        var classic = (Dictionary<string, object>)r["classic"];
+        var checkpoint = (Dictionary<string, object>)r["checkpoint"];
+        Assert.Equal((1, (int)InstanceMode.Sealed, Wire.ReadyCheckProtocol), ((int)classic["join_reqs"], (int)classic["mode_after"], (int)classic["protocol"]));
+        Assert.Equal((1, (int)InstanceMode.Sealed), ((int)checkpoint["join_reqs"], (int)checkpoint["mode_after"]));
+        Assert.True(checkpoint.ContainsKey("check_netfp"));
+        try
+        {
+            LoadGate.Protocol = Wire.CheckpointProtocol;
+            var old = (Dictionary<string, object>)LoadGate.Join(1, _ => { })["checkpoint"];
+            Assert.Equal((1, (int)InstanceMode.Sealed, Wire.CheckpointProtocol), ((int)old["join_reqs"], (int)old["mode_after"], (int)old["protocol"]));
+            Assert.False(old.ContainsKey("check_netfp"));
+        }
+        finally
+        {
+            LoadGate.Protocol = Wire.ReadyCheckProtocol;
+        }
     }
 
     [Fact]

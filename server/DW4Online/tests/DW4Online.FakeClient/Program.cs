@@ -15,12 +15,12 @@ using DW4Online.FakeClient;
 //           (--up / --down: an asymmetric link, client to server / server to client; each overrides the symmetric values)
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
 //   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm,joins] [--out FILE.json]
-//           [--sockets --port 56810]
+//           [--sockets --port 56810] [--protocol 48]
 //           round I1a's load gate (SEAMLESS.md 19.17.4): on one in-process hub (LoadGate.cs), or with --sockets against a
 //           real relay in a child process on loopback, one port per cell from --port (LoadGateNet.cs; not the joins cell).
 //           Fails (exit 1) when a cell's run is invalid (frames the hub refused or dropped).
 //   loadgate-relay --port P --key HEX   the relay process of loadgate --sockets (commands on stdin)
-//   joins   [--minutes 1,10,25] [--out FILE.json]   the lock's holds of one classic join per log length, on an idle hub
+//   joins   [--minutes 1,10,25] [--out FILE.json] [--protocol 48]   the lock's holds of one classic join per log length, on an idle hub
 var args2 = args.Skip(1).ToArray();
 string Opt(string name, string fallback = "")
 {
@@ -158,6 +158,8 @@ switch (args.FirstOrDefault())
         var only = Opt("--cells");
         var sockets = args2.Contains("--sockets");
         var port = int.Parse(Opt("--port", "56810"), CultureInfo.InvariantCulture);
+        LoadGate.Protocol = int.Parse(Opt("--protocol", LoadGate.Protocol.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture);
+        Console.WriteLine($"protocol {LoadGate.Protocol}");
         var results = new List<Dictionary<string, object>>();
         foreach (var cell in LoadGate.Cells())
         {
@@ -176,11 +178,13 @@ switch (args.FirstOrDefault())
         return invalid.Count == 0 ? 0 : 1;
     }
     case "loadgate-relay":
+        LoadGate.Protocol = int.Parse(Opt("--protocol", LoadGate.Protocol.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture);
         return await LoadGateNet.RelayHostAsync(int.Parse(Opt("--port"), CultureInfo.InvariantCulture), Opt("--key"));
     case "joins":
     {
         // Round I1a's load gate, the joins cell (SEAMLESS.md 19.17.4): the lock's holds of one classic join per log length.
         var minutes = Opt("--minutes", "1,10,25").Split(',').Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray();
+        LoadGate.Protocol = int.Parse(Opt("--protocol", LoadGate.Protocol.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture);
         LoadGate.Join(1, _ => { }); // (warm-up: the first join JIT-compiles the decision and the state paths)
         var results = minutes.Select(m => LoadGate.Join(m, Console.WriteLine)).ToList();
         Console.WriteLine(LoadGate.Json(results));
