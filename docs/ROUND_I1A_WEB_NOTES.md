@@ -98,6 +98,9 @@ are never candidates for a real client's instance: the FakeEngine's context hash
 (b was still on the way to matz00 when a's gate disc ended the instance; a's part passed), W9 and W32 (the explore bot's
 characters in the Fortress; stopped).
 
+The `--fake` scenarios in the world (`scen_fake.log`, FakeClient's world client, a fresh server each): 9 of 9 pass
+(S1, S2, S3, S5, S16, S17a, S17b, S22a, S22b). All own processes ended, every run's mysqld with "Shutdown complete".
+
 Status of the W set (I1a's Done-when, trial merge 2): pass W1, W1x, W3, W4, W4b, W4bx, W5, W5f, W7, W7c, W8, W11, W12,
 W18, W19, W22, W25, W26, W28, W30, W30x, S14z, A1; fail for the client / relay lanes W24, W7b, W7d (contract); W7e open; W30b needs a Dry Land
 walk (`requires: dry_land_walk`); W6, W8, W9, W12, W27, W29, W30, W30x, W32 see run c3.
@@ -160,8 +163,8 @@ The W scenarios after the merge (a DW4_ONLINE_DEV build of the merged client): `
   keeps the entry's own story (web 15:40), `disk 8` with a k10 character.
 - Not passing yet and not analysed to the end: W7e (the host "taken out of the group" at the barrier), W9 (b, a k2 with its
   own phase 2, fell in the Fortress), W32 (stops at staggf04; the explore bot fell in staggf02 in run c3), W30b
-  (`requires: dry_land_walk`). Runs c4 (W6, W12, W27, W29, S14p after the last fixes) and the `--fake` scenarios: see
-  "Scenario results".
+  (`requires: dry_land_walk`). W6 (b slower to matz00 than a's gate disc at @260: give b more time), W27 and W29
+  (contract web 17:40 / 17:45).
 - Not run in the trial merges: the UI scenarios (`run.py ui ...`; ported: home, areas, offline, newchars) and the rest of
   the regression (S3, S5, S11a/b, S16, S17b, S18/b, S19a-c, S21, S22a/b, L1-L3, M2, P2, P3, J5, JB, JR, JS, JS2, RG7,
   RGJ1).
