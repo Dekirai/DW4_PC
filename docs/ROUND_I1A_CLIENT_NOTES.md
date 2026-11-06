@@ -107,6 +107,14 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   save the same story (`build/off/r25c_e.log`, run seg_r25c_i1aclient_e); the save state suite 17/17 identical after
   loading (`build/st/st_e.log`). Build f (8cd90c31, a comment only; the exe differs from e in the 4 timestamp bytes):
   det.sh 4004f056 / 396cb219 both runs (`det_i1aclient_f`). ctest 57/57 (`build/ctest_rel8.log`).
+- 16:30 review fixes (79aaf163): the story owner key after a reconnect (a restarted relay's new member ids: an engine
+  on another's story sends no STORY until the DISSOLVE's replace, the own story is re-keyed), the barrier fallback in the
+  world (a NEW inside the instance; a hub target from another's story: the local DISSOLVE with the own story and
+  settings), the own story of the card / uploads from the session's own STORY_ACK, the kept *Leave instance*, WORLD_NOTICE
+  ended for an engine apart from its instance, the host's countdown as a running line, the 19.5.6 texts, stale room texts,
+  F1 always on Online, `--online-difficulty` only in development builds. Session tests: restart_story_key (new id = the
+  host's former id, and another), restart_at_home, fallback_in_world, leave_and_end_in_world (325 checks); character test
+  own_story_follows_the_session (303 checks). Left: the counter-proofs, ctest, the DEV=ON compile, the offline proof.
 
 ## Left (in order)
 
