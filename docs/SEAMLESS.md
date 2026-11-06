@@ -12057,7 +12057,13 @@ here).*
   host's extra exit line for a solo stage group's own prompt and the gate
   disc (the original prompt names no destination the client can read);
   "Welcome back, Kim. 14 players online, 2 friends." (with I2's friends);
-  the half-rate ghost animation (M5: the fallback only).
+  the half-rate ghost animation (M5: the fallback only); Play driving the
+  title's Game Start and the box's Call Digimon behind one loading screen
+  (19.5.1): Play starts the world session at the title as the rooms did
+  ("Press START to play your online character."), and the player calls
+  the character himself; an automatic call needs a title driver that does
+  not depend on frame timing (the campaign's presses do) and is left to a
+  later round with *Choose character* and round D's boxes.
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).

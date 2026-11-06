@@ -71,6 +71,10 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   wait-instance / wait-members read the last frame's session facts. SEAMLESS.md 19.25 "Built, lane client".
   Both builds compile (build/rel DEV=OFF with tests, build/dev DEV=ON without tests).
 
+- 13:40 `--online-difficulty N` (dev builds) for W12; det.sh on build b (735926bc): 4004f056 / 396cb219 twice
+  (`work/dref/checks/det/det_i1aclient_b`); r25c and the save state suite on build b running (`build/off/r25c_b.log`,
+  `build/st/st_b.log`).
+
 ## Left (in order)
 
 1. (done) ctest for the engine paths.
@@ -79,5 +83,7 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
 4. (done) App.
 5. det.sh again at the end (the app commits change no engine code but the env list).
 6. (done) SEAMLESS.md 19.25 built notes; the contract decisions (contract file 13:30 entry).
-7. Not this lane's: the W scenarios with real clients (harness lane after the merge); the host's exit line for a solo
+7. Not built (left, see SEAMLESS.md 19.25 "Built, lane client"): Play driving the title's Game Start / Call Digimon
+   behind one loading screen (19.5.1; Play starts at the title as the rooms did).
+8. Not this lane's: the W scenarios with real clients (harness lane after the merge); the host's exit line for a solo
    stage group's own prompt and the gate disc; "Welcome back" with friends (I2); the half-rate ghosts (M5 fallback).
