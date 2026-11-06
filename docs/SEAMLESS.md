@@ -12097,6 +12097,18 @@ lanes shared are in the round's contract file and repeated here).*
   challenges are never reported, and `online_join` is reported at home,
   where the server refuses it (19.8.9: someone else's instance); A1 and
   W29 expect the world's rules.
+- **The W scenarios with real clients (trial merge 2: client 8cd90c31,
+  relay 1470a267).** Passing: W1, W1x, W3, W4, W4b, W4bx, W5, W5f, W7,
+  W7c, W8, W11, W12, W18, W19, W22, W25, W26, W28, W30, W30x, S14z, A1 and
+  the regression scenarios run so far (J1, M1, P1, S1, S2, S14p as the
+  host's story, S17a). Found for the other lanes (contract): the client
+  stays in the field after CLOSE 8 *server stopping* (W24); the relay
+  stamps HOME for a lost or leaving host's stage group at a sealed tick
+  after the host's leave, so the guest leading alone never goes home
+  (W7b); a host resuming after 45 s is closed for too many frames per
+  second (W7d). The explore bot sets the limits of the rest: W9 and W32
+  (characters fall in the Fortress), W30b (Dry Land, `requires:
+  dry_land_walk`). RG1, RG2 and RG10 retired (the room story at home).
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
