@@ -314,6 +314,7 @@ public:
 private:
     // The screens' data from the director (one function, so the merge with
     // lane E's finale and Guardian getters changes only this; o1b contract D4).
+    std::uint64_t screen_step_ = 0; // the director step the open screen opened at (the results' pacing)
     void fill_screen_data(engine::Engine& run) {
         auto& d = data_;
         d.seconds = director_->run_seconds();
@@ -353,8 +354,10 @@ private:
             d.finale_left = std::strtod(left.c_str(), nullptr);
         }
         const auto screen = director_->screen();
-        if (int(screen) != int(d.screen)) d.screen_frames = 0;
-        else ++d.screen_frames;
+        // (Director steps, not presented pictures: the results' lines come
+        // at the same pace at any refresh rate.)
+        if (int(screen) != int(d.screen)) screen_step_ = director_->steps();
+        d.screen_frames = director_->steps() - screen_step_;
         switch (screen) {
         case ov::Screen::none: d.screen = RunScreen::none; break;
         case ov::Screen::level_up: d.screen = RunScreen::level_up; break;

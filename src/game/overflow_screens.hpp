@@ -48,7 +48,7 @@ struct RunScreenData {
     std::vector<RunOffer> offers;
     std::vector<std::string> build_lines, result_lines;
     bool cleared = false;
-    std::uint64_t screen_frames = 0; // frames the screen is open (the results' lines appear one by one)
+    std::uint64_t screen_frames = 0; // director steps the screen is open (the results' lines appear one by one)
 };
 
 // The HUD's build row from the director's build page (until lane E's
