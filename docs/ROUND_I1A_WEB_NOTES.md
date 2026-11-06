@@ -31,25 +31,30 @@ lane contract (outside the repo): `DW4_PC-wt/i1a-contract.md` (the web lane's en
 
 ## Session 2 (2026-11-06 from 14:00): the trial merge
 
-How it is made (all inside this worktree's `build/i1aweb/trial`, gitignored; commit objects without refs):
+How it is made (all inside this worktree's `build/i1aweb/trial` = web a98a63e9 + client 03607b65 + relay 899bc3a2, and
+`build/i1aweb/trial2` = web a69cbeb1 (+ the PruneAsync move) + client 8cd90c31 + relay 1470a267; gitignored; commit objects
+without refs, no other worktree touched):
 
 ```bash
-C1=$(git commit-tree $(git merge-tree --write-tree feat-i1a-web feat-i1a-client) -p feat-i1a-web -p feat-i1a-client -m trial)
-T=$(git merge-tree --write-tree $C1 feat-i1a-relay)       # conflicts: the 4 Domain stubs (take web's), ServerApp.cs, OnlineStoryTests.cs
-git archive $T | tar -x -C build/i1aweb/trial            # then resolve as in the contract entry "web 14:20"
-cd build/i1aweb/trial/server/DW4Online && dotnet build    # + the relay tests' two edits of the contract (fakeWorld: false, tickets via WorldService)
-cmd //c build\i1aweb	rial_cpp.cmd                       # the merged DEV game (build/i1aweb/trial/build/dev/dw4_game.exe)
+C1=$(git commit-tree $(git merge-tree --write-tree feat-i1a-web feat-i1a-client | head -1) -p feat-i1a-web -p feat-i1a-client -m trial)
+T=$(git merge-tree --write-tree $C1 feat-i1a-relay | head -1)  # conflicts: 4 Domain stubs, ServerApp.cs, OnlineStoryTests.cs
+git archive $T | tar -x -C build/i1aweb/trial2
+for f in <the 4 Domain stubs>; do git show feat-i1a-web:$f > build/i1aweb/trial2/$f; done
+python build/i1aweb/tools/resolve_trial.py build/i1aweb/trial2   # ServerApp (web's block), OnlineStoryTests, the relay tests' two edits
+cd build/i1aweb/trial2/server/DW4Online && dotnet build --disable-build-servers
+cmd //c "start /low /wait /b cmd /c build\i1aweb\trial2_cpp.cmd"   # the merged DEV game: build/i1aweb/trial2/build/dev/dw4_game.exe
 ```
 
-Scenarios there: copy `tools/online_test/{run.py,scenarios}` into the trial, then from the trial root
-`python tools/online_test/run.py W1 ... --no-build --parallel 2 --keep --capabilities fake_world_clients,old_client
---old-game-exe build/i1aweb/old48/dw4_old48_dev.exe --game-exe build/i1aweb/trial/build/dev/dw4_game.exe --data "E:/Games/Emulator/
-Dolphin-x64/Games/Digimon World 4 - Extracted" --cards C:/Users/shinz/source/repos/DW4_PC/work/campaign/checkpoints/r25c
---mysql-port 3632 --ports 57200-57399` (run.py starts and SHUTDOWNs its own mysqld on 3632: the integration tests' mysqld must
-be stopped first). The old client is a copy of int71's protocol 48 DEV build (`DW4_PC-wt/int71/build/fix/dw4_fix_dev.exe`, 0872b8f0).
+Scenarios there: `TRIAL=trial2 bash build/i1aweb/trial_scen.sh LOG PARALLEL W1 ...` (copies run.py, character_test.py,
+scenarios/ and ui/ into the trial and runs run.py there with `--capabilities fake_world_clients,old_client --old-game-exe
+build/i1aweb/old48/dw4_old48_dev.exe`, the merged DEV game, the game data and the r25c cards, mysqld 3632, ports 57200-57399).
+run.py starts and SHUTDOWNs its own mysqld on 3632: the integration tests' mysqld must be stopped first. The old client is a
+copy of int71's protocol 48 DEV build (`DW4_PC-wt/int71/build/fix/dw4_fix_dev.exe`, 0872b8f0).
 
-Findings for the other lanes (in the contract): the client's online achievements poll `/rooms/world` (410: never
-`online_host`, the host gets no story challenges) and report `online_join` at home (refused, never again).
+Findings for the other lanes (in the contract): the client's online achievements polled `/rooms/world` (410: never
+`online_host`, the host got no story challenges) and reported `online_join` at home (refused, never again): fixed by the
+client lane in f00afc22; the online card keeps the own story of the entry (minor, contract web 15:40); the relay's newer
+FakeHistory needed IInstanceHistoryRepository without PruneAsync (web moved it, 7c12ffca).
 
 ## Test results (2026-11-06)
 
