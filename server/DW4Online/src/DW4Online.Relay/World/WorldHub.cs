@@ -952,6 +952,8 @@ public sealed partial class RoomHub
     /// </summary>
     private void FanWorldPresence(HubMember m, PresenceMsg msg, Presence2Msg? msg2, long now)
     {
+        // One frame per relation value and kind for this sender's message, not one per receiver (M4: the CPU per frame).
+        Array.Clear(_presenceFrames);
         var left = m.Presence?.Stage;
         var moved = !string.IsNullOrEmpty(left) && !SameStage(left, msg.Stage);
         m.Presence = msg;
@@ -989,11 +991,15 @@ public sealed partial class RoomHub
         }
     }
 
+    private readonly byte[]?[] _presenceFrames = new byte[]?[32];
+
     private void SendPresence(HubMember r, HubMember m, PresenceMsg msg, Presence2Msg? msg2, long now)
     {
         Introduce(r, m);
         var relation = RelationOf(r, m);
-        var frame = msg2 is not null && r.PresenceV2 ? new Presence2OutMsg(m.Id, msg2, relation).Frame() : new PresenceOutMsg(m.Id, msg, relation).Frame();
+        var v2 = msg2 is not null && r.PresenceV2;
+        ref var cached = ref _presenceFrames[(relation & 15) | (v2 ? 16 : 0)];
+        var frame = cached ??= v2 ? new Presence2OutMsg(m.Id, msg2!, relation).Frame() : new PresenceOutMsg(m.Id, msg, relation).Frame();
         // The receiver's presence budget (World:PresenceBytesPerSecond), apart from the game frames' bucket.
         var cap = Math.Max(1, _world.PresenceBytesPerSecond);
         r.PresenceBudget = double.IsNaN(r.PresenceBudget) ? cap : Math.Min(cap, r.PresenceBudget + Ms(now - r.PresenceBudgetAt) / 1000.0 * cap);
