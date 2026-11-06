@@ -58,5 +58,8 @@
       "sql": "SELECT COUNT(*) FROM instance_history_members m JOIN instance_history h ON h.id = m.instance_id WHERE h.host_account_id = {id:a} AND m.account_id IN ({id:fg1}, {id:fg2}) AND m.role = 'guest'",
       "expect": "^2$"
     }
-  ]
+  ],
+  "env": {
+    "DW4_ACHIEVEMENTS": "1"
+  }
 }

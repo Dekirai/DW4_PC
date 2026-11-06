@@ -859,7 +859,7 @@ def is_seeded(sc, c):
     return bool(sc.get("seed_story")) and bool(c.get("card", sc.get("card")))
 
 
-def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock):
+def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH):
     """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
     protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
     fake's engine is the stand-in (FakeEngine), never a real game: it must never share a stage group with a game client
@@ -872,7 +872,8 @@ def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script,
     with open(path, "w") as f:
         json.dump(script, f)
     argv = ["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "client", "--port", str(relay_port), "--api", api.base,
-            "--token", body["token"], "--pin", pin, "--protocol", str(WORLD_PROTOCOL), "--name", name, "--seed", str(seed), "--script", path,
+            "--token", body["token"], "--pin", pin, "--protocol", str(WORLD_PROTOCOL), "--data-hash", str(data_hash), "--name", name,
+            "--seed", str(seed), "--script", path,
             "--duration", str(duration), "--log", os.path.join(out, name + ".jsonl"), "--stats", os.path.join(out, name + ".stats.json")]
     return stack.spawn(argv, os.path.join(out, name + ".out")), body["account"]["id"]
 
@@ -1178,11 +1179,22 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             else:
                 fake_problems.append("fake_guests: %s never logged /%s/" % (source.strip(), pattern.strip()))
                 return
+            # The instance's game data: the relay matches only instances of the arrival's data hash (the real clients' is
+            # the hash of the game data, not the fakes' default 1): read from the host's instance row.
+            data_hash = DATA_HASH
+            with lock:
+                rows = sql_rows(stack, connection, "SELECT settings FROM instance_history WHERE host_account_id = %d ORDER BY id DESC LIMIT 1"
+                                % int(accounts[source.strip()]))
+            m = re.search(r"data=(\d+)", rows[0]) if rows else None
+            if m:
+                data_hash = int(m.group(1))
+            else:
+                fake_problems.append("fake_guests: no instance of %s to take the data hash from" % source.strip())
             for k in range(int(spec.get("count", 1))):
                 name = "fg%d" % (k + 1)
                 script = [{"at": 1.0, "do": "exit", "stage": "stagML11"}, {"at": 4.0 + 0.2 * k, "do": "exit", "stage": spec.get("stage", "stag0101")}]
                 p, accounts[name] = start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, max(10, limit - (time.time() - t0)),
-                                                            200 + k, lock)
+                                                            200 + k, lock, data_hash)
                 fakes.append(p)
                 fake_names.append(name)
         threading.Thread(target=guests, daemon=True).start()
