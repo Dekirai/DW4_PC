@@ -41,13 +41,81 @@ after the scripts fix, with x 0.6 HP (`sp2`, whether it can die):
 No Guardian needs the elite fallback on the Violet Ring (`elite=` keeps it for a later arena). Every Guardian
 walks to the player and attacks; none stands at its stage's own points.
 
-## 3. Measurements
+## 3. Measurements: how to run them
 
-See section 5 (filled as the runs finish). The scripts: `build/f/q.sh EXE NAME TAG "FORMS" "SEEDS" KEY=VALUE...`
-(one queue, at most four game processes, nice -n 10), `build/f/spike.sh`, `build/t/bal_targets.py DIR`.
+All headless (`--smoke-test 100000`), nice -n 10, at most four game processes at once (one queue):
 
-## 4. Left (not done in this lane)
+- `build/f/jobs.sh EXE NAME JOBFILE`: each line `TAG FORM SEED KEY=VALUE...` is one run; files in
+  `build/f/runs_NAME/{sum,log,out}_TAG_FORM_SEED.txt`. `build/f/q.sh` is the same for forms x seeds.
+- `build/f/eval_e.py DIR...`: per tag, form and seed group (a 1-20, b 101-120, c 201-220, d 301-): the median
+  survival (a clear counts at its time), before 3:00 / 10:00, reach 22:00, clears, TIME UP, the fullest
+  two-minute window of defeats, the highest hit, the first level-up, Awakening, the Guardians, and the early
+  deaths' largest damage sources. `build/t/bal_targets.py DIR [TAG]` gives the per-minute medians.
+- `build/f/spike.sh EXE NAME [KEY=VALUE]`: the Guardian spike (section 2).
+- ctest: `build/ctest_all.cmd -R overflow` (12 tests, about 70 s); the full suite `build/ctest_all.cmd` (58).
+- det.sh: from the main repo, `bash work/dref/checks/det.sh <exe copy> <name>`.
+- r25c: from the main repo, `EXE=<exe copy> NAME=<name> nice -n 10 bash work/campaign/segments.sh r25c 4`.
 
-- See the end of this file (kept current).
+(The `build/` directory is not in git; the scripts are short and described here so a restarted agent can
+rewrite them: runs.sh / q.sh / jobs.sh are the O1a `build/t/runs.sh` with the seed loop, `eval_e.py` reads
+the summary lines `end`, `run_seconds`, `level`, `highest_hit_share`, `first_level_up_s`, `guardians_defeated`,
+`awakened`, `taken_by PHASE FAMILY SHARE`.)
 
-## 5. Runs
+## 5. Balance: what the content did to the run, and the answer
+
+**Step by step** (kite bot unless noted; Agumon, Veemon, Guilmon, Dorumon):
+
+| Build | What changed | Result |
+| --- | --- | --- |
+| k1 (5b3fa03) | Guardians at factor 1, no gear | Mammothmon's swings (36-42 % of MaxHP) and the full reactions ended most runs at 5:05-6:10; LordKnightmon hit up to 427 % with a special |
+| k2 (Guardian factors, 30 % clamp, no gear) | Mammothmon x 0.4 | Guilmon still fell to Mammothmon at 5:11-5:39 (3 of 3); TonosamaGekomon (75,878 HP at 15:00) and LordKnightmon (203,930) never fell |
+| k3 (e5: gear, Mammothmon x 0.25, Guardian HP x (1 + 0.10 a minute)) | seeds 1-5 | every run reached the finale; 17 of 20 cleared (LordKnightmon in 96-198 s): Agumon median 21:43 (5/5 clear), Veemon 22:41 (2/5), Guilmon 21:37 (5/5), Dorumon 23:37 (5/5); every run awakened its signature |
+| m1 (e8: LordKnightmon x 14) | human Agumon seeds 1-8 | median 23:26, 5 of 8 cleared: a newcomer outlasted the 14-18 minute target by six minutes |
+| s1 sweep (e8, Agumon seeds 1-4) | v1 contact 1.0/1.6/2.9/3.2, late growth 0.12; v2 1.0/1.8/3.3/3.6, 0.14; v3 1.1/2.4/3.6/3.8, 0.12; v4 1.2/2.8/4.2/4.4, 0.12 (knots at 5:00/10:00/15:00/20:00) | human 21:52 / 21:36 / **16:38** / 12:39; kite 22:40 / 22:58 / **23:08** / 22:23 |
+
+**Why.** The gear (the Brave Core's DEF +45 / +180 / +432 at alpha / beta / gamma, a Board, two chips that
+power up) and the full technique lists (Agumon's Bomb at the densest group, the Resist and Pwr Up buffs, the
+Freeze / Bind pulses) halved the damage a run takes: the human bot took 0.44-0.64 MaxHP a minute at 12:00-19:00
+(O1a: 1.1-1.2) and lasted into the finale. The late *contact* is the lever that keeps the 14.2 targets: a
+newcomer who walks into the crowd pays for it, a kiting player does not (v3: human 16:38, kite 23:08, +6.5
+minutes).
+
+**The answer (a1fe8f6):** contact 0.7 / 1.1 / 2.4 / 3.6 / 3.8 at 0:00-20:00 (was 0.7 / 1.0 / 1.3 / 2.2 / 2.4),
+the damage growth 0.12 a minute from 12:00 (was 0.09); Rare x 0.055 (was 0.061: 17.4 % at phase 4's start
+for Veemon), Megadramon x 0.041 (was 0.045: a Corrupted one 36.5 % for Guilmon at 25:00). `overflow_balance`
+now equips the Brave Core a run carries at the measured level (alpha, beta from Lv 22, gamma from Lv 37; every
+bot takes it among its first gear offers): without it the test's gear-free Rookie meets phase 4 at 16-23 %.
+LordKnightmon x 14 HP (x 8: 17 of 20 kite runs cleared, its fall after 96-198 s).
+
+## 6. The open points of OVERFLOW_DIRECTOR.md 10.7, 11.5, 11.6
+
+- **Kite Veemon against Tortomon (11.6):** Tortomon x 0.085 is in (from 0.10). Measured with everything else of
+  this round (section 7's table, kite Veemon seeds 201-206); the round's other changes (gear, Resist, Freeze,
+  Bind) changed Veemon's phase 3 more than the factor, so the measurement is of the whole, not of the factor alone.
+- **Human Agumon's phase-2 deaths (Mummymon, MRβ02 from 7:00; target at most 1 of 40 before 10:00):** with the
+  gear and the full lists no human Agumon run of this round ended before 10:00 (m1 seeds 1-8, s1 v1-v3 seeds
+  1-4, section 7); phase 2's contact knot (1.1 at 5:00) is barely raised, the new contact is after 10:00.
+  Seeds 101-120 were not run again (time).
+- **Agumon's crowd answer beyond the Forge (11.5):** its own TECH5, Bomb (6.4: a bomb at the densest group
+  within 40 units, a burning area), learned at run level 16 with Blast 661, fires now (k3 seed 1: 498 casts,
+  1.64 M damage against Cleaver's 8.1 M and Cutter's 1.72 M), and TECH2 Pwr Up / TECH6 Resist cut what the
+  crowd costs. No trait was built: the traits (5.2, Blaze: Fire's splash 12 units) are round O3's, and
+  Fire's own splash of 6.4 is not built either (OVERFLOW_DIRECTOR.md 8). Before Lv 16 the Forge stays
+  Agumon's crowd answer (the sure first Forge of 11.1).
+- **Phase 4's entry / the late game (10.7, 11.5):** the finale replaces "25:00 stands in for the finale":
+  LordKnightmon, the quest timer, BT_BOSS2, QS_HURRY, TIME UP.
+
+## 4. Checks (the original stays the original)
+
+| Check | Build | Result |
+| --- | --- | --- |
+| det.sh `o1b_content_1` | dff074d3 (e8) | 4004f056 / 396cb219 in both runs |
+| r25c `o1b_content_r25c` (`segments.sh r25c 4`) | a1ac5dd (e10) | 10 / 10 segments, 1,748,011 frames, every save "same story" (wall 340 s) |
+| ctest (full) | 90c0090 | 58 / 58 |
+| ctest `-R overflow` | a1fe8f6 (final defaults) | 12 / 12 (overflow_guardians, overflow_gear new; overflow_balance with the four Rookies) |
+
+The only change outside a run engine is `Engine::route_donor`'s new defaulted parameter `scripts_only`
+(false everywhere but in `load_overflow_donors`): the story's randomizer takes the same path as before.
+After e10 only run-engine values changed (Tuning, tables.inc, the balance test), so det.sh and r25c stand.
+T3 / T4 / T5 / T8 / T11 (lane A's host scripts) were not run again in this lane: it changed no host code
+except the F1 dev start's form list (`draw_dev_start`) and the driver's request keys.
