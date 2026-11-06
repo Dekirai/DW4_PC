@@ -64,8 +64,8 @@ const FamilyRow kFamilies[] = {
     {"e_torta", "Tortomon", 234, 3, false, 1, 0.085f, 1.0f},    // (0.215 before the balance round of 05.11, 0.13 before the forge round, 0.10 before round O1b: OVERFLOW_DIRECTOR.md 11.6)
     // Phase 4, Machine Pit (34)
     {"e_infermo", "Infermon", 306, 4, false, 1, 0.035f, 1.0f},
-    {"e_megadra", "Megadramon", 315, 4, false, 2, 0.045f, 1.0f},
-    {"e_rare", "Rare", 324, 4, false, 1, 0.061f, 1.0f},
+    {"e_megadra", "Megadramon", 315, 4, false, 2, 0.041f, 1.0f},     // (0.045 before round O1b lane E)
+    {"e_rare", "Rare", 324, 4, false, 1, 0.055f, 1.0f},        // (0.061 before round O1b lane E: its contact at 15:00 x 3.6)
     {"e_mecha5", "MRε05", 341, 4, false, 1, 0.045f, 1.0f},      // (0.061 on the 20-25 ring before the forge round of 05.11)
     {"e_mecha4", "MRδ04", 58, 4, false, 1, 0.043f, 1.0f},
 };

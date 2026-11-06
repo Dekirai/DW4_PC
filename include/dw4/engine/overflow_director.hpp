@@ -136,7 +136,7 @@ struct Tuning {
     // round of 05.11: the contact knots carry the late threat, so the time a
     // run lasts depends on how it is played, not on one wall).
     float damage_late_minutes = 12.0f;
-    float damage_growth_late = 0.09f;
+    float damage_growth_late = 0.12f;            // (0.09 before round O1b lane E: docs/ROUND_O1B_E_NOTES.md 5)
     std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
     float damage_warm_up = 0.2f;                 // the damage side of the warm-up: x 0.2 at 0:00, rising to x 1 at
     float damage_warm_minutes = 8.0f;            // ... this run minute (the review round: 0.4, 5:00)
@@ -148,7 +148,10 @@ struct Tuning {
     // (The balance round of 05.11: 0.7 / 1.0 / 1.3 / 1.5 / 1.6 and 0.8 /
     // 0.7 / 0.65 / 0.6 / 0.6; the forge round raised the late contact and
     // lowered the late shots: after 10:00 skill decides, docs/OVERFLOW_DIRECTOR.md 11.)
-    std::array<float, 5> contact_at{0.7f, 1.0f, 1.3f, 2.2f, 2.4f};
+    // (Round O1b lane E: 1.1 / 2.4 / 3.6 / 3.8 from 5:00, was 1.0 / 1.3 / 2.2 / 2.4: the gear and the full
+    // technique lists halved what a run takes; a player who walks into the crowd pays for it, one
+    // who keeps it off does not: docs/ROUND_O1B_E_NOTES.md 5.)
+    std::array<float, 5> contact_at{0.7f, 1.1f, 2.4f, 3.6f, 3.8f};
     std::array<float, 5> shot_at{0.8f, 0.7f, 0.5f, 0.4f, 0.3f};
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
