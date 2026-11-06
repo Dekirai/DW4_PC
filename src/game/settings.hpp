@@ -56,6 +56,7 @@ struct Settings {
     int height = 960;
     bool fullscreen = false; // borderless desktop fullscreen
     bool vsync = true;
+    bool overflow_npc = true; // [overflow] npc: Data Overflow's Simulator Keeper in the lobby (SURVIVAL.md 3.2)
     bool widescreen = false; // 3D fills wide windows, 2D stays 4:3
     int fps_limit = 0;       // presented frames per second, 0 = no limit
     bool smooth_motion = true; // blend between the 60 Hz steps when presenting faster

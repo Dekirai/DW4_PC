@@ -12,6 +12,8 @@
 // (offers=priority / random) and close the results by themselves; summary=
 // and log= write the run's summary (T6) and its run log (13.5).
 #include "overflow_run.hpp"
+#include "overflow_screens.hpp"
+#include "sim_ui.hpp"
 
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/overflow.hpp"
@@ -262,7 +264,20 @@ public:
 
     std::optional<RunEnd> ended() const override { return end_; }
 
+    // The run's screens in the game's look (round O1b lane D,
+    // overflow_screens.hpp): SimUi's 2D items after the run's picture.
+    void decorate(engine::Engine& run, std::vector<engine::DrawItem>& items) override {
+        ui_.set_resources(run.resources());
+        if (!ui_.ready()) return;
+        fill_screen_data(run);
+        ui_.begin();
+        draw_run_screens(ui_, data_, director_->steps());
+        ui_.finish(items);
+    }
+
     void draw_overlay(engine::Engine& run, const OverlayFrame& frame) override {
+        // (O1a's plain boxes stay as the fallback without the game font.)
+        if (ui_.ready()) return;
         // (The boxes grow with the picture: about 28 px on a 960-line screen.)
         const float size = std::max(18.0f, float(frame.screen_height) / 34.0f);
         if (frame.font) ImGui::PushFont(static_cast<ImFont*>(frame.font), size);
@@ -297,6 +312,46 @@ public:
     }
 
 private:
+    // The screens' data from the director (one function, so the merge with
+    // lane E's finale and Guardian getters changes only this; o1b contract D4).
+    void fill_screen_data(engine::Engine& run) {
+        auto& d = data_;
+        d.seconds = director_->run_seconds();
+        d.level = director_->level(run);
+        d.defeats = director_->defeats();
+        d.exp_fraction = 0;
+        if (const auto* sys = run.get<engine::GameSystem>()) {
+            const auto& stats = sys->players[0].stats;
+            if (stats.next_exp > 0) d.exp_fraction = float(stats.exp) / float(stats.next_exp);
+        }
+        d.weapon = director_->art_name();
+        d.notice = !director_->notice().empty() && director_->notice_step() + 180 > director_->steps() ? director_->notice() : std::string();
+        // The finale: until lane E's finale() / finale_left_steps(), the
+        // last five minutes before the run's end at 25:00 (O1a).
+        d.finale = d.seconds >= 20 * 60 && d.seconds < 25 * 60;
+        d.finale_left = std::max(0.0, 25 * 60 - d.seconds);
+        d.time_up = false;
+        const auto screen = director_->screen();
+        if (int(screen) != int(d.screen)) d.screen_frames = 0;
+        else ++d.screen_frames;
+        switch (screen) {
+        case ov::Screen::none: d.screen = RunScreen::none; break;
+        case ov::Screen::level_up: d.screen = RunScreen::level_up; break;
+        case ov::Screen::pause: d.screen = RunScreen::pause; break;
+        case ov::Screen::build: d.screen = RunScreen::build; break;
+        case ov::Screen::retire_ask: d.screen = RunScreen::retire_ask; break;
+        case ov::Screen::results: d.screen = RunScreen::results; break;
+        }
+        d.cursor = director_->cursor();
+        d.offers.clear();
+        if (screen == ov::Screen::level_up)
+            for (const auto& offer : director_->offers())
+                d.offers.push_back({director_->offer_text(run, offer), director_->offer_detail(run, offer), director_->offer_about(run, offer)});
+        d.build_lines = screen == ov::Screen::build ? director_->build_lines(run) : std::vector<std::string>{};
+        d.result_lines = screen == ov::Screen::results ? director_->result_lines(run) : std::vector<std::string>{};
+        d.cleared = director_->outcome() == ov::Outcome::cleared;
+    }
+
     // The run's summary and log (T6), once.
     void finish(engine::Engine& run) {
         if (finished_) return;
@@ -407,6 +462,8 @@ private:
         ImGui::End();
     }
 
+    SimUi ui_;
+    RunScreenData data_;
     RunRequest request_;
     std::unique_ptr<ov::OverflowDirector> director_;
     std::shared_ptr<ov::OverflowRules> rules_;

@@ -92,6 +92,9 @@ struct RemotePresentation {
     const std::vector<online::RemoteSample>* samples = nullptr; // the remote tags stand where their figures do
     std::optional<engine::Vec3f> own_position;                  // this machine's player (the figures' camera fade)
     double* cost_max = nullptr;                                 // DW4_TRACE_GHOSTS: the figures' own milliseconds a pass
+    // Data Overflow's lobby (round O1b): the NPC and the dialog's 2D items,
+    // drawn like the figures into the copy at the present's own time.
+    std::function<void(std::vector<engine::DrawItem>&, engine::ShadowFrame*, const engine::FrameCamera&, double)> overlay;
 };
 
 // The window, its renderer, the sound output, the controllers, the F1 menu's

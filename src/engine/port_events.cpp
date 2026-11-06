@@ -42,6 +42,7 @@ const char* port_event_name(PortEvent::Kind kind) {
     case PortEvent::Kind::new_character: return "new_character";
     case PortEvent::Kind::card_written: return "card_written";
     case PortEvent::Kind::character_called: return "character_called";
+    case PortEvent::Kind::talk_box: return "talk_box";
     }
     return "?";
 }

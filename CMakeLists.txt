@@ -204,6 +204,16 @@ if(BUILD_TESTING)
   target_include_directories(dw4_ghosts_tests PRIVATE src/game)
   target_link_libraries(dw4_ghosts_tests PRIVATE dw4_engine)
   add_test(NAME ghosts COMMAND dw4_ghosts_tests "${DW4_TEST_DATA}")
+  # Data Overflow's screens (round O1b lane D, docs/SURVIVAL.md 3, 9, 14.1 T9):
+  # every string against the game font's characters (with the game data;
+  # without, against the glyph list of 9.1), the NPC's rules, the talk, the
+  # dialog's state machine, the screens' 2D items and the NPC actor.
+  add_executable(dw4_overflow_screens_tests tests/overflow_screens_tests.cpp src/game/overflow_text.cpp src/game/sim_ui.cpp
+    src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp src/game/overflow_run.cpp
+    src/game/ghost_figures.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
+  target_include_directories(dw4_overflow_screens_tests PRIVATE src/game)
+  target_link_libraries(dw4_overflow_screens_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_screens COMMAND dw4_overflow_screens_tests "${DW4_TEST_DATA}")
   # Seamless online co-op, the engine side. With the game data (a disc image
   # or an extracted folder, never in the repository) it also plays membership
   # scenarios in real stages; without, those are skipped.
@@ -331,7 +341,8 @@ if(DW4_BUILD_APP)
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
-    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
+    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp
+    src/game/overflow_text.cpp src/game/sim_ui.cpp src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
