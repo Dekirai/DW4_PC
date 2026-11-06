@@ -161,6 +161,7 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
     int out = std::clamp(int(double(value) * factor), 1, 99999);
     last_taken.raw = out;
     last_taken.clamped = false;
+    last_taken.guardian_clamped = false;
     if (kind != EnemyClass::guardian && max_hp > 0) {
         const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.hit_clamp))));
         if (out > cap) {
@@ -177,7 +178,8 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
         const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.guardian_clamp))));
         if (out > cap) {
             out = cap;
-            last_taken.clamped = true;
+            last_taken.guardian_clamped = true; // (not 14.2's clamp: the summary's guardian_clamps)
+            ++tally.guardian_clamps;
         }
     }
     return out;

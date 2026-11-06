@@ -244,6 +244,7 @@ void OverflowDirector::equip_ladder(Engine& engine, bool force_model) {
                 event_log_.push_back({clock_, "awakening " + std::to_string(row)});
                 detail::play_sound(engine, "plLVUP01");
                 if (started_) notice("AWAKENING: " + detail::plain_name(db->text("weapon", row, "NAME")));
+                if (rules_) rules_->show_panel(engine, 0, player.digimon); // 6.5: the SQ_TECUP panel
             }
             break;
         }

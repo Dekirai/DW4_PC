@@ -1276,6 +1276,7 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
         out << "no_control_share " << (clock_ ? double(no_control_) / double(clock_) : 0.0) << "\n";
         out << "rules_no_control_share " << (tally.steps ? double(tally.no_control_steps) / double(tally.steps) : 0.0) << "\n";
         out << "rules_clamps " << tally.clamps << "\npanels " << tally.panels << "\npanels_skipped " << tally.panels_skipped << "\n";
+        out << "guardian_clamps " << tally.guardian_clamps << "\n"; // (a Guardian's guardian_clamp; 14.2's clamp is clamps / rules_clamps)
         for (const auto& [source, amount] : tally.dealt_by) out << "dealt " << technique_name(source) << ' ' << amount << '\n';
     }
     for (const auto& [family, by] : hits_by_family_) out << "hits_by " << family << ' ' << by.first << ' ' << by.second << '\n';

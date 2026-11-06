@@ -313,7 +313,7 @@ public:
     struct Tally {
         std::uint64_t steps{};             // run engine steps seen by step()
         std::uint64_t no_control_steps{};  // steps without control (4.8: <= 5 %)
-        int hits_taken{}, misses{}, clamps{};
+        int hits_taken{}, misses{}, clamps{}, guardian_clamps{}; // (guardian_clamps: guardian_clamp, not 14.2's clamp)
         double highest_hit_share{};        // of MaxHP, non-Guardians
         int panels{};                      // SQ_TECUP panels shown
         int panels_skipped{};              // panels the 30-frame gap or "nothing visible" left out
@@ -334,7 +334,8 @@ public:
     // reports it with the hit (HitTaken).
     struct LastTaken {
         int raw{};
-        bool clamped{};
+        bool clamped{};          // 14.2's hit clamp (non-Guardians only)
+        bool guardian_clamped{}; // a Guardian's hit at guardian_clamp
         double range = 1.0; // the hit's near or far factor (its poison's too)
     } last_taken;
 
