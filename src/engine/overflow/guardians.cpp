@@ -47,7 +47,7 @@ namespace {
 // Guardian's hit at most Tuning::guardian_clamp (30 %).
 const std::vector<GuardianRow> kGuardians = {
     {"e_blosso", "Blossomon", 76, "dng101b2", 1, "e_ogre", 1.0f},
-    {"e_mammos", "Mammothmon", 97, "dng102b3", 1, "e_ogre", 0.25f},
+    {"e_mammos", "Mammothmon", 97, "dng102b3", 1, "e_ogre", 0.15f}, // (0.25 in the measurements: Guilmon fell to it at 5-6 minutes)
     {"e_skulgrey", "SkullGreymon", 187, "stag0202/separate/e_skulgrey.igb", 2, "e_tyrano", 1.0f},
     {"e_anomalo", "Anomalocarimon", 196, "dng205b3", 2, "e_tyrano", 1.0f},
     {"e_tonogeko", "TonosamaGekomon", 280, "stag0302/separate/e_tonogeko.igb", 3, "e_torta", 1.0f},
