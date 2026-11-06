@@ -1,0 +1,8 @@
+# W29, host a (k10): hosts with three players (b and two fake guests): online_host counts.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until present>=2,sealed>=1200
+log guests here
+wander -150 -60 20 until sealed>=3000

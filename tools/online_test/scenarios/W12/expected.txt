@@ -1,0 +1,5 @@
+# W12 (19.24, 19.8.7).
+b: online-script: step .* log: Normal at home
+b: online-script: step .* log: Hard in a's instance
+b: online-script: step .* log: Normal at home again
+!b: online-script: FAIL

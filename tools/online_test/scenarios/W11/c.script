@@ -1,0 +1,9 @@
+# W11, c (k4): hosts a Private instance (so a's arrival makes its own) and plays in dng101b1.
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 yes until stage=stag0101,control
+log c hosts
+mat matz00 yes until stage=dng101b1,control
+log c in the cave
+wander 0 0 30 until frames>=12000 fail present>=2
+log c never saw a

@@ -1,0 +1,6 @@
+# W19, a (k10): stands in its lobby among 35 fake presence senders: it draws 30 (World:HubFigures), never more.
+campaign until stage=stagml11,control
+idle until ghosts>=30,frames>=600 fail ghosts>=31
+log 30 figures
+idle until frames>=3600 fail ghosts>=31
+log still 30

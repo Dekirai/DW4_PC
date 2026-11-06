@@ -1,0 +1,13 @@
+# W12, guest b (k10, Normal, camera 0, no randomizer): Hard in a's instance, Normal again at home.
+campaign until stage=stagml11,control
+idle until frames>=120 fail difficulty=1
+log Normal at home
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+idle until frames>=120 fail difficulty=0
+log Hard in a's instance
+follow 40 until sealed>=3000
+disk 8 until stage=stagml11,control
+idle until frames>=120 fail difficulty=1
+log Normal at home again

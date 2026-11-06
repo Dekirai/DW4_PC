@@ -1,8 +1,8 @@
 # RG2 = G2 / G3 / G4 (round G-core, docs/SEAMLESS.md 8.8): the guest plays on the owner's story (phase 6, K0-K10),
 # its card, backups and uploads keep its own (run.py "own_story" checks the files and the database).
-o: online: the game starts with the room story .revision 1.
-g: online: the game starts with the room story .revision 1.
-g: online: Playing on .*'s story .Normal..
+o: online: the game starts with the (?:room|own) story .revision 1.
+g: online: the game starts with the (?:room|own) story .revision 1.
+g: online: (?:Playing on|You.re a guest in) .*'s story
 g: online-script: step .* log: the owner's story: phase 6, K0-K10
 g: online-script: step .* log: in the save room
 g: online-character: saved? .save room.

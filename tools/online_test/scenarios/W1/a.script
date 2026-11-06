@@ -1,0 +1,10 @@
+# W1, host a (k4): hosts a Public instance in stag0101 and plays there while b joins and leaves.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts in stag0101
+wander -150 -60 20 until present=2,sealed>=600 fail stagechange
+log b joined a
+wander -150 -60 20 until present=1 or sealed>=12000 fail stagechange
+log b is gone
+idle until frames>=120

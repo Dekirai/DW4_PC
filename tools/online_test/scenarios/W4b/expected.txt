@@ -1,0 +1,8 @@
+# W4b (19.24, 19.7.6): b takes the gate 6 s after a while a's instance is still starting (World:StartingSeconds 10): b joins without a prompt
+a: online-script: step .* log: together
+b: online-script: step .* log: together
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=coarrival
+shared: a b >= 3000
+!a: online-script: FAIL
+!b: online-script: FAIL

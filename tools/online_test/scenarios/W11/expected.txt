@@ -1,0 +1,6 @@
+# W11 (19.24, decision 41).
+a: online-script: step .* log: a alone in its instance
+c: online-script: step .* log: c never saw a
+!relay: instance_join .*how=join
+!a: online-script: FAIL
+!c: online-script: FAIL

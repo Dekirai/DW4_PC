@@ -1,0 +1,14 @@
+# W1 (19.24): the automatic join of I1a, a's story in b's engine in stag0101, b's own story at home again; b's
+# online card and server story stay its own (own_story). W1x is the counter-proof with the replace switched off.
+a: online-script: step .* log: a hosts in stag0101
+b: online-script: step .* log: own story at home
+b: online-script: step .* log: b plays a's story
+b: online-script: step .* log: b home by the gate disc
+b: online-script: step .* log: own story again at home
+a: online-script: step .* log: b joined a
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=join
+relay: instance_leave .*reason=home
+shared: a b >= 5000
+!a: online-script: FAIL
+!b: online-script: FAIL

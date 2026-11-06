@@ -1,0 +1,40 @@
+{
+  "desc": "the proxy cuts a for 70 s: the instance ends at 60 s (host_lost), b goes home, a goes home after its reconnect",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "allow_close": true,
+  "db_checks": [
+    {
+      "name": "end reason",
+      "sql": "SELECT end_reason FROM instance_history",
+      "expect": "^host_lost$"
+    }
+  ],
+  "own_story": [
+    "b"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k4",
+      "start": 0,
+      "cut": {
+        "at": 200,
+        "seconds": 70,
+        "mode": "close"
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

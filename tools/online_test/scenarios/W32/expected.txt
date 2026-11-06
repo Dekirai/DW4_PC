@@ -1,0 +1,8 @@
+# W32 (19.24, 19.30.2, decision 39).
+a: online-script: step .* log: a on the plateau
+a: online-script: step .* log: a back in Goblin Pass
+b: online-script: step .* log: b alone in Dry Land
+!relay: instance_end .*reason=host_left.*stage=stag0205
+!relay: area_escape
+!a: online-script: FAIL
+!b: online-script: FAIL

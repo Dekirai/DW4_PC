@@ -1,0 +1,2 @@
+# W22 (19.24, 19.17.3): Play:MinimumProtocol 48 as the production example has it; the floor in code refuses 48.
+a: (?i)(update required|client_outdated|too old)

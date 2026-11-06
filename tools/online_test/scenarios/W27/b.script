@@ -1,0 +1,7 @@
+# W27, guest b (k4): plays in a's instance; a's defeat ends it ("... was defeated. The instance ends."): home.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+wander -100 -60 30 until stage=stagml11,control fail epoch>=@500
+log b home

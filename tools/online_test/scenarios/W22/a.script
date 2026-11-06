@@ -1,0 +1,2 @@
+# W22, a: a client of the release before the world (protocol 48): its login is answered "Update required".
+idle until frames>=1200

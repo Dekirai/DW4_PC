@@ -3,8 +3,8 @@
 # revision 2 at once (no drop or hold: the owner is in the room); the owner's machine holds it as its confirmed story
 # while its lobby engine keeps 505 = 0, and has 505 = 1 after its barrier into stagml12. run.py "story_saved" checks
 # the owner's online_story row (at most ten seconds after the guest set the flag).
-o: online: the game starts with the room story .revision 1.
-g: online: the game starts with the room story .revision 1.
+o: online: the game starts with the (?:room|own) story .revision 1.
+g: online: the game starts with the (?:room|own) story .revision 1.
 g: online-script: step .* log: 505 not in the lobby
 g: online-script: step .* log: 505 set
 g: online-trace: story .*rev=1 phase=0 flags=1 keys=0 counters=0

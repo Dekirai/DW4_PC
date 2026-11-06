@@ -1,0 +1,12 @@
+# S14z (world), n: a new account (the campaign bot's new game at the title). Its lobby always plays its own story, which is
+# empty at first (question 36 (b): nothing of anybody's story is copied to it); its own lobby progress (501) starts its
+# online story. It never takes the gate, so it never enters o's instance.
+campaign until stage=stagml11
+talk until control,frames>=60
+log n in its lobby
+idle until frames>=120 fail key:4=1
+log own empty story
+campaign until stage=stagml02
+log n in stagml02
+idle until frames>=120
+log n done

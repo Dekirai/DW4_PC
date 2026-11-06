@@ -1,0 +1,9 @@
+# W4b, a (k4): takes the gate at @100 with nothing running.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log a in stag0101
+wander -150 -60 20 until present=2,sealed>=600 fail stagechange
+log together
+follow 40 until sealed>=4000
+idle until frames>=60

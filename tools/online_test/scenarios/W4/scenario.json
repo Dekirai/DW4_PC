@@ -1,0 +1,31 @@
+{
+  "desc": "two strangers take the gate 2 s apart with nothing running: co-arrival without a prompt, a hosts",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "one instance",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^1$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k4",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k4",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

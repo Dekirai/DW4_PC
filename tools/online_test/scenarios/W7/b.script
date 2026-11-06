@@ -1,0 +1,10 @@
+# W7, guest b (k2).
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until epoch>=@200
+wander -150 -60 20 until epoch>=@235 fail stage=stagml11
+log b waited out the grace
+follow 40 until sealed>=2000 fail stage=stagml11
+log together again

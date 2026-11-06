@@ -1,0 +1,34 @@
+{
+  "desc": "a protocol 48 client sees \"Update required\" with the server on the production example configuration; /api/v1/rooms answers 410",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": false,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "requires": [
+    "old_client"
+  ],
+  "server": {
+    "Play": {
+      "MinimumProtocol": 48,
+      "CurrentProtocol": 49
+    }
+  },
+  "api_checks": [
+    {
+      "at": "after",
+      "as": "admin",
+      "path": "/api/v1/rooms",
+      "status": 410
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "exe": "{old_exe}",
+      "start": 0
+    }
+  ]
+}

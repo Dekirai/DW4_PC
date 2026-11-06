@@ -1,0 +1,6 @@
+# W18, d (a moderator): at the gate: staff see the Private instance and join it as a normal guest with the Staff tag.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log d joined a
+follow 40 until sealed>=2400

@@ -1,0 +1,12 @@
+# W30 (19.24, 19.30.3-4): the area join; b's card and server story stay its own (own_story).
+a: online-script: step .* log: a in dng205b1
+b: online-script: step .* log: own story at home
+b: online-script: step .* log: b plays a's story
+b: online-script: step .* log: b joined a in the ruins
+b: online-script: step .* log: own story again
+relay: instance_start .*stage=stag0201
+relay: instance_join .*stage=stag0201.*how=new_group|instance_join .*how=new_group.*stage=stag0201
+relay: instance_join .*how=join
+!relay: instance_start .*stage=dng205b1
+!a: online-script: FAIL
+!b: online-script: FAIL

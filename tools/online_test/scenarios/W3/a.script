@@ -1,0 +1,9 @@
+# W3, a (k4) alone: nothing runs, so its arrival is a NEW with its remembered visibility (Friends, its online
+# preferences), no prompt; it plays a while and goes home by the gate disc.
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until frames>=1800 fail present>=2
+disk 8 until stage=stagml11,control
+log a home

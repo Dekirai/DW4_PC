@@ -1,0 +1,32 @@
+{
+  "desc": "counter-proof of W1: the replace at the join switched off (DW4_ONLINE_TEST_NO_REPLACE): b keeps its own story in stag0101, W1 must fail",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "dir": "W1",
+  "counter_proof": true,
+  "own_story": [
+    "b"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k4",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "env": {
+        "DW4_ONLINE_TEST_NO_REPLACE": "1"
+      }
+    }
+  ]
+}

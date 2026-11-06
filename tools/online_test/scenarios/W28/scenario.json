@@ -1,0 +1,66 @@
+{
+  "desc": "a story reset and an admin restore while a plays at home and while a hosts b: the keeper reloads, a's instance ends, nothing old is saved again",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "api_steps": [
+    {
+      "at": 150,
+      "as": "a",
+      "method": "POST",
+      "path": "/api/v1/online-character/reset",
+      "body": {
+        "currentPassword": "{pw:a}"
+      }
+    },
+    {
+      "at": 300,
+      "as": "admin",
+      "method": "POST",
+      "path": "/api/v1/admin/accounts/{user:a}/online-story/restore/1"
+    }
+  ],
+  "api_checks": [
+    {
+      "at": 165,
+      "as": "admin",
+      "path": "/api/v1/admin/accounts/{user:a}/online-story/history",
+      "status": 200,
+      "expect": "\"reason\": \"reset\""
+    }
+  ],
+  "db_checks": [
+    {
+      "name": "reset and restore in the history",
+      "sql": "SELECT GROUP_CONCAT(reason ORDER BY id) FROM online_story_history WHERE account_id = {id:a}",
+      "expect": "reset.*admin_restore"
+    },
+    {
+      "name": "the hosted instance ended",
+      "sql": "SELECT COUNT(*) FROM instance_history WHERE host_account_id = {id:a} AND ended_at IS NOT NULL",
+      "expect": "^[1-9]"
+    }
+  ],
+  "own_story": [
+    "b"
+  ],
+  "allow_close": true,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k4",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k4",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "desc": "the visited rule (I1a part): b arrives by the return mat at dng205b2, which a's instance never visited: a NEW of its own; later it joins a there",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1400,
+  "min_shared_ticks": 0,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

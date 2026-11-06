@@ -1,0 +1,3 @@
+# W29 (19.24, 19.8.9): Lone Tamer and the clear need a story clear in the run (a k10 card before stagBS06's fight).
+a: online-script: step .* log: guests here
+!a: online-script: FAIL

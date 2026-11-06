@@ -1,0 +1,6 @@
+# W7b (19.24, 19.6.7): the proxy cuts a for 70 s: the instance ends at 60 s (host_lost), b goes home, a goes home after its reconnect
+b: online-script: step .* log: b home after the grace
+a: online-script: step .* log: a home after its reconnect
+relay: instance_end .*reason=host_lost
+!a: online-script: FAIL
+!b: online-script: FAIL

@@ -1,0 +1,39 @@
+{
+  "desc": "achievements in the world: online_host with three guests (two fake), online_join for the guest, a clear as the host",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "requires": [
+    "fake_world_clients"
+  ],
+  "fake_guests": {
+    "host": "a",
+    "count": 2
+  },
+  "achievements": {
+    "a": [
+      "online_host"
+    ],
+    "b": [
+      "online_join"
+    ]
+  },
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

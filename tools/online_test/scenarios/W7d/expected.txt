@@ -1,0 +1,5 @@
+# W7d (19.24, 19.6.7): a reconnects after 45 s (beyond the member timeout of 35 s): still host, the instance never ended
+a: online-script: step .* log: a still hosts
+b: online-script: step .* log: b stayed
+!a: online-script: FAIL
+!b: online-script: FAIL

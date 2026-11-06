@@ -1,0 +1,6 @@
+# W26, guest b (k2): joins a; its process is killed at 220 s (a foreign story in its engine).
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until frames>=99999

@@ -1,0 +1,5 @@
+# W28 (19.24, 19.8.1).
+a: online-script: step .* log: a hosts
+b: online-script: step .* log: b home
+a: online-script: step .* log: a home after the restore
+!b: online-script: FAIL

@@ -1,0 +1,6 @@
+# W7e (19.24, 19.6.7): the cut is timed to the mat (route plus prompt); see the notes if the timing misses it.
+b: online-script: step .* log: b in stag0102
+a: online-script: step .* log: a joined b there, still host
+relay: instance_join .*how=join
+!a: online-script: FAIL
+!b: online-script: FAIL

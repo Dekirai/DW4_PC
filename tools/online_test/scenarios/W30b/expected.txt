@@ -1,0 +1,7 @@
+# W30b (19.24, 19.30.3): b's card must have its last Security Gate on dng205b2 (the return mat's target).
+b: online-script: step .* log: b alone on dng205b2
+a: online-script: step .* log: a in dng205b2
+b: online-script: step .* log: b joined a on dng205b2
+relay: instance_start .*stage=dng205b2
+!a: online-script: FAIL
+!b: online-script: FAIL

@@ -1,10 +1,7 @@
-# S14z, room owner o: a new account (no online story, no online character, no card: the room starts at zero). It sits at
-# the title until the guest has played its lobby, then the campaign bot starts a new game: the title gives it the room
-# story, which is still empty (revision 0), and its game entering the lobby starts the story.
-log at the title
-idle until epoch>=@150
-campaign until stage=stagml11
-talk until control,frames>=60
-log owner in the lobby
-idle until frames>=900
-log owner done
+# S14z (world), o (k4): hosts an instance in stag0101 while the new account plays its own lobby.
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 yes until stage=stag0101,control
+log o hosts
+wander -150 -60 20 until frames>=6000
+log o done

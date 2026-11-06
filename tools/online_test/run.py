@@ -1,11 +1,33 @@
-"""The local online test stack (SEAMLESS.md 16).
+"""The local online test stack (SEAMLESS.md 16, the world of round I1: 19.24).
 
 Starts a private MariaDB (C:/xampp/mysql/bin/mysqld.exe with its own data directory under tools/online_test/.work and
 its own port), the DW4Online server on 127.0.0.1 with a throw-away HTTPS certificate (openssl, pinned by the clients)
-and the DW4R2 relay on a free port, registers accounts through the API, creates and joins a room, starts N hidden
-clients with input scripts, optionally each behind the latency / jitter / loss proxy, collects every client's net
-fingerprints and membership log and the relay's membership log, compares them per instance and checks each scenario's
-expected events. It stops only the processes it started (by their handles), never anything by name.
+and the DW4R2 relay on a free port, registers accounts through the API, starts N hidden clients with input scripts that
+enter the world with --online-play (the world has no rooms: every scenario gets a FRESH server process with its own
+database, so no scenario sees another's instances), optionally each behind the latency / jitter / loss proxy, collects
+every client's net fingerprints and membership log and the relay's world membership log (world_<run>.jsonl, a wid on
+every line), compares them per instance and checks each scenario's expected events. It stops only the processes it
+started (by their handles), never anything by name.
+
+World keys of scenario.json (round I1a): "autochoice" (first | new: DW4_ONLINE_AUTOCHOICE of every client, the development
+build's answer to the arrival prompt; default first; a client's own "autochoice" wins), a client's "box" (--online-play
+BOX), a client's "cut" ({"at": S, "seconds": N, "mode": "close" | "half"}: its own proxy cuts its link at the scenario's
+start + S for N seconds; close drops the connection and refuses reconnects, half holds every byte back without a FIN),
+"server_restart" ({"at": S, "kill": false, "down": N}: the scenario's server stops at start + S, gracefully (Ctrl+Break:
+the service's ordered stop) or killed, and starts again on the same ports N seconds later), "db_checks" ([{"sql": ...,
+"expect": REGEX, "after": true}]: a query of the scenario's database after the run whose tab-separated rows must match),
+"world_log" ([REGEX ...]: lines that must appear in the relay's world log in order, as "relay:" lines of expected.txt),
+"own_story" (as in round G-core: the clients whose online card and server story must stay their own), a client's
+"prefs" (PUT /me/online-prefs before it starts: visibility, host settings), a client's "role" (moderator / admin before it
+starts), "api_steps" ([{"at": S, "as": CLIENT | "admin", "method", "path", "body"}]: timed API calls, e.g. a story reset or
+a staff restore; "admin" is an admin account the harness makes; {id:NAME}, {user:NAME} and {pw:NAME} name a client's
+account and password),
+"api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX}]), a client's "crash"
+({"at": S, "restart": N, "script": FILE}: its process is killed at start + S and started again N seconds later with that
+script), "allow_close" (the world's CLOSEs of a server restart or an ended instance are expected), "counter_proof" (the
+scenario must FAIL: a client hook switches the checked behaviour off; its expected problems are listed as notes) and
+"requires" ([CAPABILITY ...]: the scenario runs only with --capabilities naming them, e.g. fake_world_clients for the
+fake presence senders; else it is reported as SKIP with the reason).
 
     python run.py [SCENARIO ...] --game-exe EXE --data DATA [--cards DIR] [--parallel N] [--list] [--keep]
                                                            the scenarios with hidden game clients (scenarios/<id>)
@@ -74,6 +96,7 @@ WORK = os.path.join(HERE, ".work")
 MYSQL_BIN = r"C:\xampp\mysql\bin"
 BELOW_NORMAL = 0x00004000
 NO_WINDOW = 0x08000000
+NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP: the server gets Ctrl+Break (the host's ordered stop) without the harness
 PROTOCOL, DATA_HASH = 43, 1
 
 # The stand-in engine's timing for every client of a scenario (simulation: all must agree).
@@ -135,6 +158,7 @@ class Stack:
         self.args = args
         self.procs = []
         self.ports = []
+        self.servers = {}
         self.dir = os.path.join(WORK, time.strftime("run_%Y%m%d_%H%M%S"))
         os.makedirs(self.dir, exist_ok=True)
 
@@ -347,7 +371,7 @@ def start_server(stack, connection, extra=None, name=""):
         "Service": {"RelayHost": "127.0.0.1"},
         "Accounts": {"PasswordIterations": 1000},
         "RateLimits": {k: 100000 for k in ("GlobalPerMinute", "LoginPerMinute", "RegisterPerHour", "RoomCreatesPerMinute", "RoomJoinsPerMinute",
-                                           "StageChangesPerMinute")},
+                                           "StageChangesPerMinute", "WorldEntersPerMinute", "SocialPerMinute")},
         "Relay": {"Enabled": True, "ListenAddress": "127.0.0.1", "Port": relay, "TicketKey": base64.b64encode(secrets.token_bytes(32)).decode(),
                   "DiagnosticsDirectory": diag},
         "Web": {"DataProtectionKeysDirectory": "memory"},
@@ -360,11 +384,38 @@ def start_server(stack, connection, extra=None, name=""):
     path = os.path.join(folder, "server-settings.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=1)
-    stack.spawn(["dotnet", server_dll(), "--settings", path], os.path.join(folder, "server.out"),
-                env=dict(os.environ, ASPNETCORE_ENVIRONMENT="Production", DOTNET_gcServer="0"))
+    argv, env = ["dotnet", server_dll(), "--settings", path], dict(os.environ, ASPNETCORE_ENVIRONMENT="Production", DOTNET_gcServer="0")
+    proc = stack.spawn(argv, os.path.join(folder, "server.out"), env=env, flags=BELOW_NORMAL | NO_WINDOW | NEW_GROUP)
     if not wait_port(https, 60) or not wait_port(relay, 30):
         raise RuntimeError("the server did not start (see %s)" % os.path.join(folder, "server.out"))
-    return "https://127.0.0.1:%d" % https, relay, pin, der, diag
+    base = "https://127.0.0.1:%d" % https
+    stack.servers[base] = {"argv": argv, "env": env, "folder": folder, "proc": proc, "https": https, "relay": relay, "starts": 1}
+    return base, relay, pin, der, diag
+
+
+def restart_server(stack, base, kill=False, down=0.0):
+    """Stops the server of `base` (gracefully: Ctrl+Break to its process group, the host's ordered stop, which closes the
+    world's connections with CLOSE server stopping; kill: TerminateProcess, no CLOSE, as a crash) and starts it again on
+    the same ports with the same settings `down` seconds later (W24, W25: the clients reconnect to the new process)."""
+    import signal
+    srv = stack.servers[base]
+    proc = srv["proc"]
+    if proc.poll() is None:
+        if kill:
+            proc.kill()
+        else:
+            os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+            try:
+                proc.wait(60)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    proc.wait(30)
+    time.sleep(max(0.0, down))
+    srv["starts"] += 1
+    srv["proc"] = stack.spawn(srv["argv"], os.path.join(srv["folder"], "server%d.out" % srv["starts"]), env=srv["env"],
+                              flags=BELOW_NORMAL | NO_WINDOW | NEW_GROUP)
+    if not wait_port(srv["https"], 60) or not wait_port(srv["relay"], 30):
+        raise RuntimeError("the restarted server did not start (see %s)" % srv["folder"])
 
 
 def run_scenario(stack, sc, api, relay_port, pin, diag):
@@ -409,6 +460,25 @@ def run_scenario(stack, sc, api, relay_port, pin, diag):
     for name, p in procs:
         p.wait(sc["duration"] + 60)
     return evaluate(sc, out, code, diag)
+
+
+def load_world_log(diag):
+    """The relay's world membership log of a server (one world_<run>.jsonl per relay process, in start order; a restarted
+    server writes a second file): every line with its wid (0 at home)."""
+    lines = []
+    for path in sorted(glob.glob(os.path.join(diag, "world_*.jsonl")), key=os.path.getmtime):
+        lines += load_jsonl(path)
+    return lines
+
+
+def world_notes(relay):
+    """The world's membership log per instance: its events by kind (the notes of a scenario)."""
+    per = {}
+    for e in relay:
+        per.setdefault(int(e.get("wid", 0) or 0), {}).setdefault(e.get("ev", "?"), 0)
+        per[int(e.get("wid", 0) or 0)][e.get("ev", "?")] += 1
+    return ["world log, instance %s: %s" % (wid if wid else "home", ", ".join("%s %d" % kv for kv in sorted(evs.items())))
+            for wid, evs in sorted(per.items())]
 
 
 def load_jsonl(path):
@@ -612,6 +682,15 @@ def seed_story(stack, connection, account_id, folder, difficulty=0, with_trainin
                     db, "-e", sql], check=True, capture_output=True, creationflags=NO_WINDOW)
 
 
+def sql_rows(stack, connection, sql):
+    """The rows of a query of the scenario's database (tab-separated text per row; NULL as "NULL")."""
+    db = dict(kv.split("=", 1) for kv in connection.split(";") if "=" in kv)["Database"]
+    port, pw = stack.mysql
+    out = subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
+                          "-N", "-B", db, "-e", sql], check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout
+    return [l for l in out.splitlines() if l.strip()]
+
+
 def stored_story(stack, connection, account_id):
     """(revision, the story bytes as a record holds them: flags 1024, folder 12, counters 16 x i32 big endian) of the
     account's online_story row; (0, 1100 zero bytes) without one (round G-core: the guest's own story)."""
@@ -719,7 +798,8 @@ def game_scenarios():
 
 
 def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
-    """One game scenario: hidden game clients with scripts in one room."""
+    """One game scenario: hidden game clients with scripts that enter the world (--online-play) on the scenario's own
+    server (main gives every scenario a fresh one)."""
     a = stack.args
     if not a.game_exe or not a.data:
         raise RuntimeError("game scenarios need --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
@@ -736,8 +816,44 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
             accounts[c["name"]] = body["account"]["id"]
             tokens[c["name"]] = body.get("token")
+        if sc.get("api_steps") or sc.get("api_checks") or any(c.get("role") for c in sc["clients"]):
+            passwords["admin"] = "online test admin " + secrets.token_hex(4)
+            s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + "admin", "password": passwords["admin"]})
+            accounts["admin"], tokens["admin"] = body["account"]["id"], body.get("token")
+            sql_rows(stack, connection, "UPDATE accounts SET role = 'admin' WHERE id = %d" % int(accounts["admin"]))
+            s, body = api.call("POST", "/api/v1/auth/login", {"username": tag + "admin", "password": passwords["admin"]})
+            tokens["admin"] = body.get("token")
+        for c in sc["clients"]:
+            if c.get("role"):
+                sql_rows(stack, connection, "UPDATE accounts SET role = '%s' WHERE id = %d" % (c["role"], int(accounts[c["name"]])))
+                s, body = api.call("POST", "/api/v1/auth/login", {"username": tag + c["name"], "password": passwords[c["name"]]})
+                tokens[c["name"]] = body.get("token")
+            if c.get("prefs"):
+                s, body = api.call("PUT", "/api/v1/me/online-prefs", c["prefs"], tokens[c["name"]])
+                if s != 200:
+                    raise RuntimeError("prefs of %s: %s %s" % (c["name"], s, body))
     https_port = api.base.rsplit(":", 1)[1]
-    room_name = re.sub(r"[^A-Za-z0-9 ]", " ", sc["name"]) + " " + tag
+
+    def expand(text):
+        for n, i in accounts.items():
+            text = text.replace("{id:%s}" % n, str(i)).replace("{user:%s}" % n, tag + n).replace("{pw:%s}" % n, passwords.get(n, ""))
+        return text.replace("{tag}", tag)
+
+    def api_call(step):
+        body = json.loads(expand(json.dumps(step.get("body")))) if step.get("body") is not None else None
+        with lock:
+            return api.call(step.get("method", "GET"), expand(step["path"]), body, tokens.get(step.get("as", "admin")))
+
+    def api_check(check, problems, notes):
+        status, body = api_call(check)
+        text = json.dumps(body)
+        if check.get("status") and status != check["status"]:
+            problems.append("api %s %s as %s: %s, expected %s (%s)" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), status,
+                                                                       check["status"], text[:160]))
+        elif check.get("expect") and not re.search(check["expect"], text):
+            problems.append("api %s %s: %s does not match /%s/" % (check.get("method", "GET"), check["path"], text[:200], check["expect"]))
+        else:
+            notes.append("api %s %s as %s: %s" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), status))
     t0 = time.time()
 
     def script_for(c):
@@ -784,28 +900,34 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
         return folder
 
-    def start(c, room_args):
+    def start(c, play_args):
         card = os.path.join(out, "card_" + c["name"])
         for sub_dir in ("Card A", "Card B"):
             os.makedirs(os.path.join(card, sub_dir), exist_ok=True)
         env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin,
                    DW4_ONLINE_PASSWORD=passwords[c["name"]], DW4_ONLINE_TRACE="1")
+        # The development build's answer to the arrival prompt (19.24): I1a's automatic join takes the first row.
+        env["DW4_ONLINE_AUTOCHOICE"] = c.get("autochoice", sc.get("autochoice", "first"))
         env.update(sc.get("env", {}))
         env.update(c.get("env", {}))
         env["DW4_ONLINE_LOG"] = os.path.join(out, c["name"] + ".online.log")
         # The client's link (SEAMLESS.md 6.4, the latency scenarios): "impair" {"up": "MS,JITTER,LOSS", "down": ...} of the
         # client, else of the scenario, else --net (all clients): its own impairment proxy in front of the relay.
         link = c.get("impair") or sc.get("impair") or net_override()
-        if link:
+        cut = c.get("cut")
+        if link or cut:
+            link = link or {"up": "0,0,0"}
             port = free_port(stack)
+            extra = ["--cut", "%.3f,%s,%s" % (t0 + float(cut["at"]), cut["seconds"], cut.get("mode", "close"))] if cut else []
             stack.spawn(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "proxy", "--listen", str(port), "--target",
-                         str(relay_port), "--up", link.get("up", "0,0,0"), "--down", link.get("down", link.get("up", "0,0,0"))],
+                         str(relay_port), "--up", link.get("up", "0,0,0"), "--down", link.get("down", link.get("up", "0,0,0"))] + extra,
                         os.path.join(out, c["name"] + ".proxy.out"))
             if not wait_port(port, 20):
                 raise RuntimeError("the proxy of %s did not start" % c["name"])
             env["DW4_ONLINE_RELAY_PORT"] = str(port)
-        argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
-                "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args +             [x.replace("{out}", out) for x in c.get("args", [])]  # (a client's extra game arguments; {out}: the scenario's folder)
+        exe = c.get("exe", a.game_exe).replace("{old_exe}", a.old_game_exe or "{old_exe}")
+        argv = [exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
+                "--online-login", tag + c["name"], "--online-script", script_for(c)] + play_args +             [x.replace("{out}", out) for x in c.get("args", [])]  # (a client's extra game arguments; {out}: the scenario's folder)
         # (Round G-core: each client's online card cache in the run folder, for the own story checks.)
         argv += ["--online-folder", os.path.join(out, "online_" + c["name"])]
         # "shots": the script's shot steps write NAME.bmp into the run folder (hidden 1920x1009 widescreen MSAA 4
@@ -816,7 +938,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 env.setdefault(k, v)
         folder = saved_card(c)
         if folder and c.get("upload_card"):
-            # (Round G-core: the card's character is the account's online character on the server already; the room
+            # (Round G-core: the card's character is the account's online character on the server already; the world
             # entry's GET brings it with the account's own story, the bot calls it at the title.)
             env["DW4_CAMPAIGN_LOAD"] = "1"
         elif folder:
@@ -863,34 +985,59 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         if c.get("seed_story") or (c is clients[0] and sc.get("seed_story")):
             with lock:
                 seeded[c["name"]] = stored_story(stack, connection, accounts[c["name"]])[0]
-    procs = [(clients[0]["name"], start(clients[0], ["--online-create", room_name]))]
     story_saved, stop_watch = {}, threading.Event()
     if sc.get("story_saved"):
         watcher = threading.Thread(target=watch_story_saved, args=(stack, sc, out, connection, accounts[clients[0]["name"]], story_saved, stop_watch),
                                    daemon=True)
         watcher.start()
-    code = None
-    while time.time() - t0 < 90 and code is None:
-        if procs[0][1].poll() is not None:
-            raise RuntimeError("the first client ended before its room existed (see %s)" % os.path.join(out, clients[0]["name"] + ".log"))
-        with lock:
-            s, rooms = api.call("GET", "/api/v1/rooms")
-        for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
-            if r.get("name") == room_name:
-                code = r.get("code")
-        time.sleep(0.2)
-    if not code:
-        raise RuntimeError("the first client's room did not appear")
-    for c in clients[1:]:
+    # The world: every client enters with --online-play at its start offset (no room to create or join); the scenario's
+    # scripts take them through the lobby gate, where I1a's automatic join (DW4_ONLINE_AUTOCHOICE) groups them.
+    procs = []
+    if sc.get("server_restart"):
+        spec = sc["server_restart"]
+
+        def restarter():
+            while time.time() - t0 < float(spec["at"]):
+                time.sleep(0.05)
+            restart_server(stack, api.base, bool(spec.get("kill")), float(spec.get("down", 0)))
+        threading.Thread(target=restarter, daemon=True).start()
+    timed_problems, timed_notes = [], []
+    for step in sc.get("api_steps", []) + [dict(ch, check=True) for ch in sc.get("api_checks", []) if ch.get("at") != "after"]:
+        def timed(step=step):
+            while time.time() - t0 < float(step.get("at", 0)):
+                time.sleep(0.05)
+            if step.get("check"):
+                api_check(step, timed_problems, timed_notes)
+            else:
+                status, body = api_call(step)
+                timed_notes.append("api step %s %s as %s: %s" % (step.get("method", "GET"), step["path"], step.get("as", "admin"), status))
+        threading.Thread(target=timed, daemon=True).start()
+    for c in clients:
         while time.time() - t0 < c.get("start", 0):
             time.sleep(0.05)
-        procs.append((c["name"], start(c, ["--online-join", code])))
+        procs.append((c["name"], start(c, ["--online-play"] + ([str(c["box"])] if c.get("box") else []))))
+        if c.get("crash"):
+            def crash(c=c, index=len(procs) - 1):
+                while time.time() - t0 < float(c["crash"]["at"]):
+                    time.sleep(0.05)
+                procs[index][1].kill()
+                time.sleep(float(c["crash"].get("restart", 5)))
+                again = dict(c, script=c["crash"].get("script", c["script"]), name=c["name"])
+                os.replace(os.path.join(out, c["name"] + ".log"), os.path.join(out, c["name"] + ".crashed.log"))
+                procs[index] = (c["name"], start(again, ["--online-play"]))
+            threading.Thread(target=crash, daemon=True).start()
+    code = None
     limit = sc.get("timeout", 1200)
-    for name, p in procs:
+    if any(c.get("crash") for c in clients):
+        # (The crashed client's second process replaces the first in procs: wait for the crash and restart to pass.)
+        time.sleep(max(0.0, max(float(c["crash"]["at"]) + float(c["crash"].get("restart", 5)) + 2 for c in clients if c.get("crash"))
+                       - (time.time() - t0)))
+    for name, p in list(procs):
         try:
             p.wait(max(1, limit - (time.time() - t0)))
         except subprocess.TimeoutExpired:
             pass
+    procs = list(procs)
     timed_out = [name for name, p in procs if p.poll() is None]
     exits = {name: p.poll() for name, p in procs}
     for name, p in procs:
@@ -898,6 +1045,11 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             p.terminate()
     stop_watch.set()
     problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    problems += timed_problems
+    notes += timed_notes
+    for check in sc.get("api_checks", []):
+        if check.get("at") == "after":
+            api_check(check, problems, notes)
     if sc.get("own_story"):
         with lock:
             own_story_checks(stack, connection, sc, out, accounts, seeded, problems, notes)
@@ -921,6 +1073,18 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                                                                                                              spec["seconds"]))
     if sc.get("achievements"):
         check_achievements(sc, api, tag, passwords, lock, problems, notes)
+    # The scenario's database afterwards (the world's tables: instance_history's end reason, its members, prefs, ...).
+    for check in sc.get("db_checks", []):
+        sql = check["sql"].replace("{tag}", tag)
+        for n, i in accounts.items():
+            sql = sql.replace("{id:%s}" % n, str(i))
+        with lock:
+            rows = sql_rows(stack, connection, sql)
+        text = "\n".join(rows)
+        if re.search(check["expect"], text):
+            notes.append("db: %s -> %s" % (check.get("name", sql[:60]), text.replace("\t", " ")[:120]))
+        else:
+            problems.append("db: %s gave %r, expected /%s/" % (check.get("name", sql[:80]), text[:200], check["expect"]))
     return problems, notes
 
 
@@ -1048,6 +1212,8 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
         if not any(l.startswith("online-script: done") for l in logs[n]):
             problems.append("%s: the script did not finish" % n)
         for l in logs[n]:
+            if l.startswith("online-trace: close") and sc.get("allow_close"):
+                continue  # (a server restart, an ended instance: the scenario expects the world's CLOSE)
             if l.startswith("online-trace: close") or l.startswith("error:") or "inputs stopped arriving" in l or l.startswith("online-script: FAIL"):
                 problems.append("%s: %s" % (n, l))
     # Net fingerprints: equal wherever two clients report the same instance, visit, tick and members.
@@ -1058,7 +1224,8 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
     compared = [k for k, per in table.items() if len(per) >= 2]
     differ = [k for k in compared if len(set(table[k].values())) > 1]
     notes.append("%d fingerprint ticks reported by two or more clients, %d differ" % (len(compared), len(differ)))
-    relay = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    relay = load_world_log(diag)
+    notes.extend(world_notes(relay))
     if sc.get("allow_resync"):
         # A resync scenario (S11a, S11b): the fingerprints may differ from the injected desync up to the instance's last
         # resync READY; from there on they must be equal for min_after_resync ticks.
@@ -1136,6 +1303,16 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
         if kinds.get(bad):
             problems.append("relay logged %d x %s" % (kinds[bad], bad))
     relay_lines = [" ".join([e["ev"]] + ["%s=%s" % (k, v) for k, v in e.items() if k != "ev"]) for e in relay]
+    # scenario.json "world_log": lines of the world log that must appear in order (as expected.txt's "relay:" lines).
+    at = 0
+    for pattern in sc.get("world_log", []):
+        rx = re.compile(pattern)
+        while at < len(relay_lines) and not rx.search(relay_lines[at]):
+            at += 1
+        if at >= len(relay_lines):
+            problems.append("world log: expected /%s/ (in order) not found" % pattern)
+        else:
+            at += 1
     # The expected log.
     expected = os.path.join(src, "expected.txt")
     cursors = {}
@@ -1198,35 +1375,27 @@ def run_game(stack, api, relay_port, pin, diag):
     with open(os.path.join(out, "campaign.txt"), "w") as f:
         f.write("0 SEEK 200000 campaign\n")
     https_port = api.base.rsplit(":", 1)[1]
-    room_name = "G1 " + tag
-
-    def start(name, room_args):
+    def start(name, play_args):
         card = os.path.join(out, "card_" + name)
         for sub in ("Card A", "Card B"):
             os.makedirs(os.path.join(card, sub), exist_ok=True)
         env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin,
-                   DW4_ONLINE_PASSWORD=passwords[name], DW4_ONLINE_TRACE="1")
+                   DW4_ONLINE_PASSWORD=passwords[name], DW4_ONLINE_TRACE="1", DW4_ONLINE_AUTOCHOICE="first")
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(a.frames), "--card-dir", card, "--input", os.path.join(out, "campaign.txt"),
-                "--online-login", tag + name] + room_args
+                "--online-login", tag + name] + play_args
         return stack.spawn(argv, os.path.join(out, name + ".log"), env=env)
 
     t0 = time.time()
-    first = start(names[0], ["--online-create", room_name])
+    # The world (round I1): both enter with --online-play, the second --offset seconds later; the campaign bot takes both
+    # through the lobby gate into stag0101, where I1a's automatic join (DW4_ONLINE_AUTOCHOICE first) puts the second
+    # into the first's instance.
+    first = start(names[0], ["--online-play"])
     code = None
-    while time.time() - t0 < 90 and code is None:
+    while time.time() - t0 < a.offset:
         if first.poll() is not None:
-            raise RuntimeError("the first client ended before its room existed (see %s)" % os.path.join(out, names[0] + ".log"))
-        s, rooms = api.call("GET", "/api/v1/rooms")
-        for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
-            if r.get("name") == room_name:
-                code = r.get("code")
-        time.sleep(0.5)
-    if not code:
-        raise RuntimeError("the first client's room did not appear")
-    created = time.time()
-    while time.time() - created < a.offset:
+            raise RuntimeError("the first client ended early (see %s)" % os.path.join(out, names[0] + ".log"))
         time.sleep(0.1)
-    second = start(names[1], ["--online-join", code])
+    second = start(names[1], ["--online-play"])
     limit = a.frames / 59.94 + 240
     for p in (first, second):
         try:
@@ -1276,7 +1445,8 @@ def evaluate_game(out, names, code, diag, sealed_ticks):
                      (best[0][0], best[0][1], min(best[1]), max(best[1]), span, len(best[1])))
         if span < sealed_ticks:
             problems.append("only %d sealed ticks compared (< %d)" % (span, sealed_ticks))
-    relay_log = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    relay_log = load_world_log(diag)
+    notes.extend(world_notes(relay_log))
     kinds = {}
     for e in relay_log:
         kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
@@ -1306,7 +1476,7 @@ def run_dev(stack, api, pin):
         if s != 201:
             raise RuntimeError("register %s: %s %s" % (n, s, body))
     https_port = api.base.rsplit(":", 1)[1]
-    room_name = "Dev room " + tag
+
     campaign = os.path.join(out, "campaign.txt")
     with open(campaign, "w") as f:
         f.write("0 SEEK 200000 campaign\n")
@@ -1329,20 +1499,11 @@ def run_dev(stack, api, pin):
         # Visible windows for the person at the PC: normal priority, their own windows.
         return stack.spawn(argv, os.path.join(out, n + ".log"), env=env, flags=0)
 
-    first = start(names[0], ["--online-create", room_name])
-    code, t0 = None, time.time()
-    while time.time() - t0 < 120 and code is None:
-        if first.poll() is not None:
-            raise RuntimeError("the first client ended before its room existed (see %s)" % os.path.join(out, names[0] + ".log"))
-        s, rooms = api.call("GET", "/api/v1/rooms")
-        for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
-            if r.get("name") == room_name:
-                code = r.get("code")
-        time.sleep(0.5)
-    if not code:
-        raise RuntimeError("the first client's room did not appear")
-    print("room %s (code %s): %s created it, %s joins; logs in %s" % (room_name, code, tag + names[0], tag + names[1], out), flush=True)
-    second = start(names[1], ["--online-join", code])
+    first = start(names[0], ["--online-play"])
+    t0 = time.time()
+    time.sleep(5)
+    print("the world: %s and %s pressed Play; logs in %s" % (tag + names[0], tag + names[1], out), flush=True)
+    second = start(names[1], ["--online-play"])
     if a.hidden:
         limit = a.frames / 59.94 + 240
         for p in (first, second):
@@ -1619,6 +1780,9 @@ def main():
     ap.add_argument("--server-has-story", action="store_true",
                     help="--server-root's server keeps the room story (round 56 and later, e.g. DW4Online 0.1.2): seed it as for this one")
     ap.add_argument("--net", default="", help="game scenarios: every client behind its own proxy, UP[/DOWN] as MS,JITTER,LOSS")
+    ap.add_argument("--capabilities", default="",
+                    help="game scenarios: what this build offers beyond the client and relay, comma-separated (fake_world_clients, old_client)")
+    ap.add_argument("--old-game-exe", default="", help="W22: a client of the release before the world (protocol 48), for {old_exe}")
     ap.add_argument("--compat-scripts", action="store_true",
                     help="game scenarios: drop the key:N and difficulty conditions of round G-core (a counter-proof client before it)")
     a = ap.parse_args()
@@ -1719,18 +1883,26 @@ def main():
 
             def one(sc):
                 t = time.time()
+                missing = [r for r in sc.get("requires", []) if r not in {x.strip() for x in a.capabilities.split(",") if x.strip()}]
+                if missing:
+                    with lock:
+                        results[sc["name"]] = ([], ["SKIP: needs " + ", ".join(missing)])
+                        print("SKIP %-5s %s (needs %s)" % (sc["name"], sc["desc"], ", ".join(missing)), flush=True)
+                    return
                 try:
-                    if sc.get("server"):
-                        # Its own server (settings of scenario.json's "server") with its own database: a server closes the
-                        # rooms its database lists as open when it starts.
-                        with lock:
-                            own_db = create_database(stack)
-                            own = start_server(stack, own_db, sc["server"], sc["name"])
-                        problems, notes = run_real(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4], lock, own_db)
-                    else:
-                        problems, notes = run_real(stack, sc, api, relay, pin, diag, lock, connection)
+                    # Every game scenario gets a fresh server process with its own database (19.24's harness lane): in the
+                    # world every scenario on one server would see the others (Public by default, the automatic join,
+                    # the ghost figures). scenario.json's "server" settings are merged over the stack's.
+                    with lock:
+                        own_db = create_database(stack)
+                        own = start_server(stack, own_db, sc.get("server"), sc["name"])
+                    problems, notes = run_real(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4], lock, own_db)
                 except Exception as e:  # a broken scenario is a failure, the others go on
                     problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+                if sc.get("counter_proof"):
+                    # A counter-proof (W1x, W30x): a client hook switches the checked behaviour off, so the checks must fail.
+                    problems, notes = (["the counter-proof passed: the checks do not catch the switched-off behaviour"] if not problems
+                                       else []), notes + ["counter-proof failed as it must: " + p for p in problems]
                 with lock:
                     results[sc["name"]] = (problems, notes)
                     print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)

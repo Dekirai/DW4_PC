@@ -1,0 +1,17 @@
+# W1, guest b (k2): at its lobby gate while a's instance runs in stag0101: I1a joins it automatically (the first
+# row, DW4_ONLINE_AUTOCHOICE first); in stag0101 its engine has a's story (key item 4, which b's own story lacks); its
+# gate disc takes it home onto its own story again (19.30.4, 19.8.3).
+campaign until stage=stagml11,control
+idle until frames>=120 fail key:4=1
+log own story at home
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+idle until frames>=120 fail key:4=0
+log b plays a's story
+follow 40 until sealed>=6000
+log together
+disk 8 until stage=stagml11,control
+log b home by the gate disc
+idle until frames>=120 fail key:4=1
+log own story again at home

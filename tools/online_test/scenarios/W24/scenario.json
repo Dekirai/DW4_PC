@@ -1,0 +1,40 @@
+{
+  "desc": "an ordered server restart with host a and guest b in a field: both home on their own stories; cards and server stories untouched",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "allow_close": true,
+  "server_restart": {
+    "at": 220,
+    "kill": false,
+    "down": 5
+  },
+  "db_checks": [
+    {
+      "name": "the instance ended with the server",
+      "sql": "SELECT end_reason FROM instance_history",
+      "expect": "^server_stop$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k4",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

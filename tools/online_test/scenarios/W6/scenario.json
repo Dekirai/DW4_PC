@@ -1,0 +1,34 @@
+{
+  "desc": "the host's gate disc with b in another stage group: the instance ends (host_left), b goes home on its own story",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "db_checks": [
+    {
+      "name": "end reason",
+      "sql": "SELECT end_reason FROM instance_history",
+      "expect": "^host_left$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k4",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

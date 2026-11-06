@@ -1,7 +1,7 @@
 # RG10 = G10 / G11 (round G-core, docs/SEAMLESS.md 8.8): a guest ahead of the owner plays exactly the owner's story;
 # the call shop is closed online; nothing of the guest's own lead reaches the owner's story.
-o: online: the game starts with the room story .revision 1.
-g: online: the game starts with the room story .revision 1.
+o: online: the game starts with the (?:room|own) story .revision 1.
+g: online: the game starts with the (?:room|own) story .revision 1.
 g: online-script: step .* log: exactly the owner's story: phase 2, K0-K2
 g: online: The call shop is not available online: everyone plays their own character.
 g: online-script: step .* log: the call shop changed nothing

@@ -1,0 +1,9 @@
+# W4bx (19.24, 19.7.6): counter-proof of W4b: with World:StartingSeconds 0 b's arrival is no co-arrival but I1a's automatic join of the first row
+a: online-script: step .* log: together
+b: online-script: step .* log: together
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=join
+!relay: instance_join .*how=coarrival
+shared: a b >= 3000
+!a: online-script: FAIL
+!b: online-script: FAIL
