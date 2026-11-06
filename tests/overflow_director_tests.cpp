@@ -696,17 +696,6 @@ void balance(const std::filesystem::path& data, bool report) {
                 const double minutes =
                     phase == 4 && end ? double(Tuning{}.end_steps) / 3600.0 - 0.01 : 5.0 * double(phase - 1 + end) - (end ? 0.01 : 0.0);
                 set_level(engine, level);
-                // (Round O1b lane E: a run at this level carries its Brave Core,
-                // alpha, beta from Lv 22, gamma from Lv 37: the bots take it among
-                // their first gear offers, and the damage growth was raised for it.)
-                {
-                    auto& player = sys->players[0];
-                    ItemDevice core{1, level >= 37 ? 2 : level >= 22 ? 1 : 0, true, 0, 0};
-                    player.devices.push_back(core);
-                    player.main_slot[0] = int(player.devices.size()) - 1;
-                    sys->recalc_player(engine, 0);
-                    player.hp = player.max_hp;
-                }
                 rules.damage.taken_factor = run.director->damage_factor(minutes);
                 {
                     // (The near and far factors of that time: the larger of the two for

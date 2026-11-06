@@ -86,7 +86,7 @@ constexpr TechDef kTechniques[] = {
     {5, 150, "plMAGIC1", true, false, 1.0f},   // Ice, 2.5 s
     {15, 150, "plMAGIC1", true, false, 1.0f},  // Dark, 2.5 s
     {20, 180, "plVENOM", true, false, 1.0f},   // Venom, 3.0 s (at the densest group)
-    {35, 120, "plMAGIC1", true, false, 1.0f},  // Bomb, 2.0 s (at the densest group)
+    {35, 120, "plMAGIC1", true, false, 0.5f},  // Bomb, 2.0 s (at the densest group; x 0.5 as Impact: round O1b lane E)
     {75, 900, "plMIND01", false, false, 1.0f}, // Resist, 15 s (a buff on the player)
     {80, 900, "plMIND01", false, false, 1.0f}, // Pwr Up, 15 s (a buff on the player)
     {70, 480, "plMIND01", false, false, 1.0f}, // Freeze, 8 s (a pulse on the enemies)

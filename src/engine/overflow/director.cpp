@@ -84,6 +84,10 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     rules.damage.tag_factor[kTagArt] = art_factor();
     for (const int family : {0, 5, 10, 15, 20, 25, 30, 35, 40})
         if (technique_damage(family) != 1.0f) rules.damage.technique_factor[family] = technique_damage(family);
+    // Bomb's ranks too (round O1b lane E: its burning area strikes a whole group,
+    // as Impact's rings do; at x 1 Agumon's human bot outlasted the other forms'
+    // by ten minutes, docs/ROUND_O1B_E_NOTES.md 5).
+    for (int row = 36; row < 40; ++row) rules.damage.technique_factor[row] = technique_damage(35);
     // A normal enemy's stun, sleep or bind is a hitch, not a stop (4.8; 14.2
     // allows 5 % of the frames without control).
     rules.player_hit.status_cap = config_.tuning.status_cap;
