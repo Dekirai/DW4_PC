@@ -1492,12 +1492,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // Round I1a's Play (SEAMLESS.md 19.5.1, online/title_driver.hpp): the
         // title's Game Start and the box's Call Digimon behind one loading
         // screen, straight into the own lobby; never with an online test
-        // script (its campaign bot drives the title as before).
+        // script or an input script (their campaign bot drives the title as
+        // before).
         dw4::game::online::TitleDriver title_driver;
         double welcome_at = -1; // the drive reached the lobby: "Welcome back, ..." then (GET /world asked first)
         std::map<std::string, bool> exit_mats_home; // "stage/mat": the exit mat's script names only hub stages (the host's exit line)
         auto start_title_drive = [&] {
-            if (!online || online_script.active()) return;
+            if (!online || online_script.active() || !options.input_script.empty()) return;
             dw4::game::online::TitleDriver::Config config;
             // The card box holding the online character (none: a new account's
             // first character, the original new-character flow).
