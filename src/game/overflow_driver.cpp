@@ -147,6 +147,7 @@ public:
         // Guardians' HP factors.
         if (const auto on = option(request_, "guardians"); !on.empty()) config.tuning.guardians = on != "0";
         seconds("guardian_first", config.tuning.guardian_first);
+        seconds("guardian_half", config.tuning.guardian_half_steps);
         real("guardian_hp", config.tuning.guardian_hp);
         real("finale_hp", config.tuning.finale_hp);
         auto list = [](const std::string& text) {

@@ -300,6 +300,8 @@ void OverflowDirector::spawner(Engine& engine) {
     if (clock_ >= std::uint64_t(t.surge_first) &&
         ((clock_ - std::uint64_t(t.surge_first)) % std::uint64_t(t.surge_every)) < std::uint64_t(t.surge_length))
         target += t.surge_extra;
+    // While a Guardian lives, A(t) halves for at most guardian_half_steps (4.4, round O1b).
+    if (guardian_ && clock_ < guardian_->at + std::uint64_t(std::max(0, t.guardian_half_steps))) target /= 2;
     // The refill rate: spawns a second, kept as a credit of whole spawns.
     refill_credit_ = std::min(refill_credit_ + double(knots(t.refill_at, minutes)) * double(t.spawn_every) / 60.0,
                               double(std::max(1, t.spawns_per_tick)));
