@@ -11430,21 +11430,34 @@ the decision stays under the lock).
   / 0.46 in *base-wait* and *storm-wait* (*base* and *storm* again), every
   cell valid.
 
-  **Verdict at protocol 49:** the holds pass in every cell (p99 at most
-  20.4 µs, p99.99 0.42-1.63 ms, decision 42); the sealing lateness over
-  sockets passes (over 2 ms: 0.07-0.40 % of the passes, so p99 under
-  2 ms); the relay's CPU passes in *base* (0.41-0.48 cores), *select*,
-  *storm* (under half a core, a full core allowed) and *sealonly*.
-  *fullhub* (all 200 members in one hub stage) is at the half core:
-  0.41-0.55 in three runs, down from 4.01 (r71): the selection's fan-out
-  took its frames to the clients from 398,612 to 42,712 a second (and
-  *base*'s from 43,128 to 19,768). The lock is busy 0.8-1.9 %: **phase 1
-  stays**; phase 2 (a lock per cell) would not change the CPU. What is
-  left for the CPU is the send per frame itself (about 10 µs of the
-  relay's CPU per frame in *fullhub*, the loopback's TCP work included);
-  fewer, larger writes need frames for one receiver to wait for each other
-  (a presence flush every few milliseconds), a design change not made in
-  I1a.
+  **The presence flush** (19.31, `Relay:PresenceFlushMs` 16): presence
+  frames wait up to 16 ms for the receiver's other frames and go out with
+  them in one gathered send. A/B in one session (`net49_flush_r1/_r2`,
+  `net49_noflush_r1` with `DW4_LOADGATE_PRESENCE_FLUSH_MS=0`), relay cores
+  and sends a second:
+
+  | Cell | Flush 0 | Flush 16 ms |
+  | --- | --- | --- |
+  | fullhub | 0.49; 37,582 sends for 42,655 frames | **0.27 / 0.26**; 11,953 sends for 42,684 frames |
+  | base | 0.41; 18,750 sends | 0.38 / 0.46; 10,851 sends for 19,803 frames |
+  | select | 0.17; 7,916 sends | 0.14 / 0.14; 2,417 sends |
+
+  The final run with everything (`net49_flush_r1.json`, all seven cells,
+  every one valid): relay **0.38** (*base*), **0.27** (*fullhub*), 0.14
+  (*select*), **0.40** (*storm*), 0.33 (*sealonly*), 0.44 and 0.38 (*base*
+  and *storm* again) cores; clients 0.11-0.54; sealing lateness over 2 ms
+  0.04-0.27 % of the passes, `TryEnter` misses 0.2-1.3 %.
+
+  **Verdict at protocol 49:** **the gate passes in every cell.** The
+  holds: p99 at most 20.4 µs, p99.99 0.42-1.63 ms (decision 42); the
+  sealing lateness over sockets: p99 under 2 ms (over 2 ms at most 0.40 %
+  of the passes); the relay's CPU over sockets: 0.14-0.46 cores, under
+  half a core in every cell (the storm's full core not needed). From r71:
+  *base* 0.72-0.85 to 0.38-0.46, *fullhub* 4.01 to 0.26-0.27, *select*
+  0.66 to 0.14. The lock is busy 0.8-1.9 %: **phase 1 stays**, phase 2 is
+  not built. Machine: Ryzen 7 7800X3D with the other I1a lanes' builds and
+  tests beside every run (not the quiet machine 19.17.4 asks for; the runs
+  spread by about a fifth).
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
@@ -13216,9 +13229,14 @@ the remembered visibility off the lock). Decisions the design left open:
   `Outbox` scope, a non-blocking send); a full socket buffer, a state
   transfer and the connection's end hand the queue to the asynchronous
   writer on the thread pool, which before took every frame
-  (`Relay:DirectSends`, default on; off is the old path). The reader reads
-  the socket into a 16 KB buffer, one read per arrival instead of one per
-  header and one per payload.
+  (`Relay:DirectSends`, default on; off is the old path). One non-blocking
+  send takes everything queued for the connection (up to 64 frames or
+  64 KB, a gathered `Socket.Send`). A presence frame to a receiver waits
+  up to `Relay:PresenceFlushMs` (16) for the receiver's other frames: one
+  flusher thread writes the waiting connections every 16 ms, and a game
+  frame before that takes them along (a figure's update is 100 ms apart;
+  this adds 0-16 ms). The reader reads the socket into a 16 KB buffer, one
+  read per arrival instead of one per header and one per payload.
 - **The admission** of the relay lane's branch, until web's `WorldService`
   sets its own (`IWorldRelay.SetAdmission`): the account active, its role,
   its friends and blocks from the repositories; the story from

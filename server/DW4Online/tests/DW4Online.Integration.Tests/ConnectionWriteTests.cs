@@ -58,7 +58,8 @@ public class ConnectionWriteTests
         var conn = new Connection(server, options, NullLogger.Instance, IPAddress.Loopback);
         var writer = conn.WriteLoopAsync();
         // 3,000 frames of 1 KB while nobody reads (far more than the socket buffers hold), from four threads in turn as the
-        // hub's hot paths send them (a scope each, under one lock), every 50th a state transfer (bulk).
+        // hub's hot paths send them (a scope each, under one lock), every 50th a state transfer (bulk), every third a
+        // presence frame (SendSoon).
         const int count = 3000;
         var gate = new object();
         var next = 0;
@@ -73,7 +74,8 @@ public class ConnectionWriteTests
                     {
                         if (next == count) return;
                         var k = next++;
-                        conn.Send(Frame(k, 1024), bulk: k % 50 == 49);
+                        if (k % 3 == 1) conn.SendSoon(Frame(k, 1024)); // (a presence frame: it may wait for the flusher)
+                        else conn.Send(Frame(k, 1024), bulk: k % 50 == 49);
                     }
                 }
                 finally
@@ -133,6 +135,23 @@ public class ConnectionWriteTests
         Assert.False(await reading.WaitAsync(TimeSpan.FromSeconds(10))); // (closed without BYE)
         Assert.Equal(sizes.Select((n, k) => (GameType, k, k & 0xFF, n)), got.Select(x => (x.Type, x.K, x.Last, x.Len)));
         Assert.Equal(all.Length, conn.BytesIn);
+        conn.Abort();
+    }
+
+    [Fact]
+    public async Task A_presence_frame_alone_goes_out_at_the_flushers_next_turn()
+    {
+        var (reader, server) = await PairAsync();
+        using var r = reader;
+        var conn = new Connection(server, new RelayOptions { PresenceFlushMs = 16 }, NullLogger.Instance, IPAddress.Loopback);
+        _ = conn.WriteLoopAsync();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        conn.SendSoon(Frame(7, 16));
+        var buf = new byte[Wire.HeaderBytes + 16];
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await reader.GetStream().ReadExactlyAsync(buf, timeout.Token);
+        Assert.Equal(7, BinaryPrimitives.ReadInt32LittleEndian(buf.AsSpan(Wire.HeaderBytes)));
+        Assert.InRange(sw.ElapsedMilliseconds, 0, 1000);
         conn.Abort();
     }
 

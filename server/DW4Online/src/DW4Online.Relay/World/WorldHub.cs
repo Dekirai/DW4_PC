@@ -1019,7 +1019,7 @@ public sealed partial class RoomHub
             return;
         }
         r.PresenceBudget -= frame.Length;
-        r.Peer!.Send(frame);
+        r.Peer!.SendSoon(frame);
         Count("presence_out");
     }
 }

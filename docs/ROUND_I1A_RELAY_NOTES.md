@@ -29,25 +29,25 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   the members playing on a keeper; round 59's not_started / epochs / OwnerSeen / dropped sets retired.
 - M4: the PING margin cached per stream with a linear selection, pings spread over the passes, presence selection
   off the lock, fan-out by selection with tiers, presence frames built once per relation; (e) the connection path:
-  frames written by the hot path's thread right after the lock (non-blocking, `Relay:DirectSends`, `Outbox`), buffered
-  reads (`ConnectionWriteTests`).
+  frames written by the hot path's thread right after the lock (non-blocking, gathered, `Relay:DirectSends`, `Outbox`),
+  presence frames flushed every 16 ms with the receiver's others (`Relay:PresenceFlushMs`), buffered reads
+  (`ConnectionWriteTests`).
 - Stub copies of web-owned files (the integration takes the web lane's): `Domain/Abstractions/WorldRelay.cs`,
   `Domain/Abstractions/World.cs`, `Domain/World/OnlinePrefs.cs`, `Domain/World/AreaTable.cs`.
 - Client lane 13:30 (contract "relay 13:45"): story mode *replace* for arrivals from home into another's instance, a fresh
   joiner's fallback after its JOIN as a new stage group of the target instance, the DISSOLVE's modes, plan id 0xFFFF =
   *New instance*, seatless groups home with the redirect, the redirect's stage in lower case.
-- The load gate at protocol 49, both harnesses (SEAMLESS.md 19.17.4): holds pass everywhere (p99 at most 20.4 us, p99.99
-  0.42-1.63 ms), sealing lateness over sockets passes, the joins cell joins all ten (its groups of three now at fields of
-  the area table).
+- The load gate at protocol 49, both harnesses (SEAMLESS.md 19.17.4): **passes in every cell** - holds p99 at most
+  20.4 us, p99.99 0.42-1.63 ms; sealing lateness over sockets p99 under 2 ms; relay CPU 0.14-0.46 cores (fullhub 0.27,
+  from 4.01); the joins cell joins all ten (its groups of three now at fields of the area table). Phase 1 stays.
 - Tests: unit (WireGoldenTests, WorldLifecycleTests, StoryKeeperTests, HubStoryTests, HubPresenceTests and the
   adapted lockstep tests), integration (WorldRelayTests over loopback with the real server and MariaDB, the adapted
   LoadGateTests and RelayConnectionTests; RoomTests / RoomPageTests removed as the web lane did).
 
 ## Left (see also the final report)
 
-- The gate's CPU in *fullhub* (all 200 in one hub stage) is at the half core (0.41-0.55 in three runs, from 4.01); every
-  other cell passes (SEAMLESS.md 19.17.4, "Measured again at protocol 49" and "M4 (e)"). Fewer, larger writes would need
-  a presence flush interval (a design change).
+- The gate ran on the busy machine (the other lanes beside it), not the quiet one 19.17.4 asks for; a quiet rerun can
+  confirm the numbers (`loadgate` in-process and `--sockets`).
 - Not built in I1a by design: OPTIONS / PLAN / CHOICE (I1b), go along (I1b), the mirror (I2), FRIENDS_STATE (I2),
   spectators and GOTO (I3), parties (I4), seats (I5).
 - At the integration: take the web lane's versions of the four stub files; `RelayGateway.cs` conflicts with web's
@@ -69,7 +69,8 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
 - Load gate: `DOTNET_gcServer=1 tests/DW4Online.FakeClient/bin/Release/net10.0/DW4Online.FakeClient.exe loadgate
   --seconds 30 --out <json>` and the same with `--sockets --port 57100` (`--cells joins` for one cell). Runs of this
   lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2, net49_direct_r1/_r2,
-  net49_pooled_r1/_r2, net49_e_r1, net49_e_pooled_r1; `DW4_LOADGATE_DIRECT_SENDS=0` runs the old writer).
-- Last results: unit 449/449 (`build/i1arelay/unit_r5.log`); integration 119 passed, 4 skipped (`build/i1arelay/integration_r4.log`).
+  net49_pooled_r1/_r2, net49_e_r1, net49_e_pooled_r1, net49_flush_r1/_r2, net49_noflush_r1;
+  `DW4_LOADGATE_DIRECT_SENDS=0` runs the old writer, `DW4_LOADGATE_PRESENCE_FLUSH_MS=0` no presence flush).
+- Last results: unit 449/449 (`build/i1arelay/unit_r6.log`); integration 120 passed, 4 skipped (`build/i1arelay/integration_r5.log`).
 - No client code changed (the branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh or game
   scenarios are needed for this lane.

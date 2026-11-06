@@ -44,6 +44,8 @@ public static class LoadGateNet
             Enabled = true, ListenAddress = "127.0.0.1", Port = port, MaxConnectionsPerIp = 1024, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600,
             // (DW4_LOADGATE_DIRECT_SENDS=0: the writer of every frame on the thread pool, the relay before M4 (e).)
             DirectSends = Environment.GetEnvironmentVariable("DW4_LOADGATE_DIRECT_SENDS") != "0",
+            // (DW4_LOADGATE_PRESENCE_FLUSH_MS=0: presence frames at once, each its own send.)
+            PresenceFlushMs = int.TryParse(Environment.GetEnvironmentVariable("DW4_LOADGATE_PRESENCE_FLUSH_MS"), out var flush) ? flush : 16,
         };
         var relay = new RelayHub(options, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
         relay.Admission = a => ValueTask.FromResult<HubAdmit?>(new HubAdmit(a.AccountId, "m" + a.AccountId));
@@ -68,7 +70,7 @@ public static class LoadGateNet
         browsing.Start();
         TimeSpan cpu0 = default;
         long passes0 = 0, misses0 = 0, at0 = 0;
-        (long Direct, long Pooled) written0 = default;
+        (long Direct, long Pooled, long Sends) written0 = default;
         int gc0 = 0;
         long[] late0 = new long[SealLateness.BoundsMs.Length + 1];
         Dictionary<string, long> counters0 = [];
@@ -112,6 +114,7 @@ public static class LoadGateNet
                     var written = RelayHub.FramesWritten;
                     r["relay_frames_direct_per_second"] = Math.Round((written.Direct - written0.Direct) / wall);
                     r["relay_frames_pooled_per_second"] = Math.Round((written.Pooled - written0.Pooled) / wall);
+                    r["relay_direct_sends_per_second"] = Math.Round((written.Sends - written0.Sends) / wall);
                     var passes = relay.SealPasses - passes0;
                     var misses = relay.SealTryMisses - misses0;
                     r["seal_passes_per_second"] = Math.Round(passes / wall);

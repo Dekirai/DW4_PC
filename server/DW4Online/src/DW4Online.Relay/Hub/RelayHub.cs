@@ -195,7 +195,7 @@ public sealed class RelayHub : BackgroundService
     public long SealPasses => Interlocked.Read(ref _sealPasses);
     /// <summary>Frames the relay process wrote right after a hot path's lock (M4 (e), Relay:DirectSends) and through the
     /// thread pool's writer.</summary>
-    public static (long Direct, long Pooled) FramesWritten => (Connection.DirectFrames, Connection.PooledFrames);
+    public static (long Direct, long Pooled, long Sends) FramesWritten => (Connection.DirectFrames, Connection.PooledFrames, Connection.DirectSends);
     public long SealTryMisses => Interlocked.Read(ref _sealTryMisses);
     private long _sealPasses;
     private long _sealTryMisses;

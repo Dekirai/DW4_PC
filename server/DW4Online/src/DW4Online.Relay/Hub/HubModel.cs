@@ -8,6 +8,8 @@ public interface IHubPeer
 {
     /// <summary>Queues a frame. Bulk frames (STATE_DATA and the LIVE frames behind it) pass the state budget.</summary>
     void Send(byte[] frame, bool bulk = false);
+    /// <summary>Queues a frame that may wait a few milliseconds to go out with the peer's next ones (presence, M4 (e)).</summary>
+    void SendSoon(byte[] frame) => Send(frame);
     /// <summary>Sends CLOSE and closes the connection.</summary>
     void Close(CloseReason reason, string text);
 }

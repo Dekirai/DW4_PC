@@ -51,6 +51,11 @@ public sealed class RelayOptions
     /// writer). Off: every frame goes through the thread pool's writer (the relay before I1a).
     /// </summary>
     public bool DirectSends { get; set; } = true;
+    /// <summary>
+    /// With DirectSends: a presence frame (PRESENCE / PRESENCE2 to a receiver) waits at most this long to go out with the
+    /// receiver's other frames in one send (0: at once). A figure's update is 100 ms apart; this adds 0 to this many ms.
+    /// </summary>
+    public int PresenceFlushMs { get; set; } = 16;
     /// <summary>Folder for one JSON-lines membership log per room (diagnostics and the online test stack); empty = off.</summary>
     public string DiagnosticsDirectory { get; set; } = "";
 }

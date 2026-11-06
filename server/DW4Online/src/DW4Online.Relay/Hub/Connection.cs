@@ -1,6 +1,6 @@
 using System.Buffers;
-using System.Collections.Concurrent;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -16,23 +16,34 @@ namespace DW4Online.Relay.Hub;
 /// <para>
 /// The queue is written by one thread at a time, the holder of the write token. M4 (e), round I1a: a frame sent inside an
 /// <see cref="Outbox"/> scope (the hub's hot paths: a received frame, a sealing pass, the housekeeping) is written by the
-/// thread of that scope right after it released the hub's lock, with a non-blocking send (Relay:DirectSends); only a full
-/// socket buffer, a state transfer or the end of the connection hands the queue to the asynchronous writer on the thread
-/// pool. Without a scope (or with DirectSends off) every frame goes through the thread pool as before.
+/// thread of that scope right after it released the hub's lock, with non-blocking sends of everything queued at once
+/// (Relay:DirectSends); a presence frame waits up to Relay:PresenceFlushMs to go out with others (<see cref="SendSoon"/>);
+/// only a full socket buffer, a state transfer or the end of the connection hands the queue to the asynchronous writer on
+/// the thread pool. Without a scope (or with DirectSends off) every frame goes through the thread pool as before.
 /// </para>
 /// </summary>
 internal sealed class Connection : IHubPeer
 {
+    /// <summary>Frames and bytes one non-blocking send takes at most.</summary>
+    private const int GatherFrames = 64;
+    private const int GatherBytes = 64 * 1024;
+
+    [ThreadStatic] private static List<ArraySegment<byte>>? t_gather;
+
     private readonly TcpClient _client;
     private readonly Socket _socket;
     private readonly NetworkStream _stream;
     private readonly RelayOptions _options;
     private readonly ILogger _log;
     private readonly bool _direct;
-    private readonly ConcurrentQueue<(byte[] Frame, bool Bulk)> _pending = new();
+    private readonly int _flushMs;
+    private readonly Queue<(byte[] Frame, bool Bulk)> _pending = new();
+    private readonly Lock _pendingLock = new();
     private readonly TokenBucket _stateBudget;
     private readonly CancellationTokenSource _closed = new();
     private readonly TaskCompletionSource _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    // The queue's length, readable without its lock (written under it).
+    private int _count;
     private long _queued;
     private long _queuedBulk;
     private int _closing;
@@ -44,6 +55,8 @@ internal sealed class Connection : IHubPeer
     private int _writing;
     // The part of the queue's first frame a partial non-blocking send wrote already.
     private int _offset;
+    // Queued with the presence flusher (a frame of SendSoon waits).
+    private int _soon;
 
     public Connection(TcpClient client, RelayOptions options, ILogger log, IPAddress ip)
     {
@@ -54,6 +67,7 @@ internal sealed class Connection : IHubPeer
         _log = log;
         _stateBudget = new TokenBucket(options.StateBytesPerSecond, options.StateBurstBytes, TimeProvider.System);
         _direct = options.DirectSends;
+        _flushMs = _direct ? Math.Max(0, options.PresenceFlushMs) : 0;
         // (Overlapped reads and writes ignore the non-blocking mode; only the direct sends use it.)
         if (_direct) _socket.Blocking = false;
         Ip = ip;
@@ -63,16 +77,38 @@ internal sealed class Connection : IHubPeer
     public CancellationToken Closed => _closed.Token;
     public long BytesIn { get; private set; }
     public long BytesOut { get; private set; }
-    /// <summary>Frames written by the thread of an outbox scope (diagnostics: the share of direct sends).</summary>
+    /// <summary>Frames written by a thread right after a hot path's lock or by the presence flusher (diagnostics).</summary>
     public static long DirectFrames => Interlocked.Read(ref s_directFrames);
     /// <summary>Frames written by the asynchronous writer.</summary>
     public static long PooledFrames => Interlocked.Read(ref s_pooledFrames);
+    /// <summary>Non-blocking sends (one per gathered batch of frames).</summary>
+    public static long DirectSends => Interlocked.Read(ref s_directSends);
     private static long s_directFrames;
     private static long s_pooledFrames;
+    private static long s_directSends;
 
     public void Send(byte[] frame, bool bulk = false)
     {
-        if (Volatile.Read(ref _closing) != 0) return;
+        if (!Queue(frame, bulk)) return;
+        if (_direct && !bulk && Outbox.Mark(this)) return;
+        Kick(inline: false);
+    }
+
+    /// <summary>A presence frame: it may wait up to Relay:PresenceFlushMs to go out with the connection's next frames.</summary>
+    public void SendSoon(byte[] frame)
+    {
+        if (_flushMs == 0)
+        {
+            Send(frame);
+            return;
+        }
+        if (!Queue(frame, false)) return;
+        if (Interlocked.Exchange(ref _soon, 1) == 0) PresenceFlusher.Add(this, _flushMs);
+    }
+
+    private bool Queue(byte[] frame, bool bulk)
+    {
+        if (Volatile.Read(ref _closing) != 0) return false;
         // Game frames and state transfers have their own limits: a member that does not read is closed before the relay
         // holds much for it (16 connections of one address could park 512 MiB here).
         var over = bulk
@@ -82,17 +118,41 @@ internal sealed class Connection : IHubPeer
         {
             _log.LogWarning("Relay connection from {Ip} does not read its frames; closing it", Ip);
             Close(CloseReason.Timeout, "Too many unsent frames.");
-            return;
+            return false;
         }
-        _pending.Enqueue((frame, bulk));
-        if (_direct && !bulk && Outbox.Mark(this)) return;
-        Kick(inline: false);
+        Enqueue(frame, bulk);
+        return true;
+    }
+
+    private void Enqueue(byte[] frame, bool bulk)
+    {
+        lock (_pendingLock)
+        {
+            _pending.Enqueue((frame, bulk));
+            _count = _pending.Count;
+        }
+    }
+
+    private bool Empty => Volatile.Read(ref _count) == 0;
+
+    private bool TryPeek(out (byte[] Frame, bool Bulk) item)
+    {
+        lock (_pendingLock) return _pending.TryPeek(out item);
+    }
+
+    private void Dequeue(int frames = 1)
+    {
+        lock (_pendingLock)
+        {
+            for (var k = 0; k < frames; ++k) _pending.Dequeue();
+            _count = _pending.Count;
+        }
     }
 
     public void Close(CloseReason reason, string text)
     {
         if (Interlocked.Exchange(ref _closing, 1) != 0) return;
-        _pending.Enqueue((new CloseMsg(reason, text).Frame(), false));
+        Enqueue(new CloseMsg(reason, text).Frame(), false);
         Volatile.Write(ref _completed, 1);
         Kick(inline: false);
         // The writer flushes CLOSE and closes the socket; a stuck writer is cut after two seconds.
@@ -131,6 +191,13 @@ internal sealed class Connection : IHubPeer
         return _done.Task;
     }
 
+    /// <summary>The presence flusher's turn: writes what waits (the frames of <see cref="SendSoon"/> and any behind them).</summary>
+    internal void FlushSoon()
+    {
+        Interlocked.Exchange(ref _soon, 0);
+        Kick(inline: true);
+    }
+
     /// <summary>
     /// Takes the write token if it is free and there is something to do, and drains the queue on this thread
     /// (<paramref name="inline"/>: outside the hub's lock only) or on the thread pool.
@@ -138,7 +205,7 @@ internal sealed class Connection : IHubPeer
     internal void Kick(bool inline)
     {
         if (Volatile.Read(ref _started) == 0) return;
-        if (_pending.IsEmpty && Volatile.Read(ref _completed) == 0) return;
+        if (Empty && Volatile.Read(ref _completed) == 0) return;
         if (Interlocked.CompareExchange(ref _writing, 1, 0) != 0) return;
         if (inline && _direct) DrainInline();
         else Pool();
@@ -149,42 +216,77 @@ internal sealed class Connection : IHubPeer
     /// <summary>Releases the write token; true when this thread took it again (frames came meanwhile, or the end).</summary>
     private bool Release()
     {
-        Volatile.Write(ref _writing, 0);
-        if (_pending.IsEmpty && Volatile.Read(ref _completed) == 0) return false;
+        // (A full fence: a producer that queued after the drain's last look sees the token free, or this sees its frame.)
+        Interlocked.Exchange(ref _writing, 0);
+        if (Empty && Volatile.Read(ref _completed) == 0) return false;
         return Interlocked.CompareExchange(ref _writing, 1, 0) == 0;
     }
 
-    /// <summary>Holding the token: non-blocking sends of the queued game frames; the rest goes to the asynchronous writer.</summary>
+    /// <summary>
+    /// Holding the token: non-blocking sends of the queued game frames, as many as are queued in one send; a state transfer, a
+    /// full socket buffer and the end go to the asynchronous writer.
+    /// </summary>
     private void DrainInline()
     {
+        var gather = t_gather ??= new List<ArraySegment<byte>>(GatherFrames);
         try
         {
             do
             {
-                while (_pending.TryPeek(out var item))
+                while (true)
                 {
-                    if (item.Bulk || _offset != 0)
+                    gather.Clear();
+                    var bytes = 0;
+                    var bulkFirst = false;
+                    lock (_pendingLock)
+                    {
+                        foreach (var item in _pending)
+                        {
+                            if (item.Bulk)
+                            {
+                                bulkFirst = gather.Count == 0;
+                                break;
+                            }
+                            if (gather.Count == GatherFrames || (gather.Count > 0 && bytes + item.Frame.Length > GatherBytes)) break;
+                            gather.Add(item.Frame);
+                            bytes += item.Frame.Length;
+                        }
+                    }
+                    if (bulkFirst || _offset != 0)
                     {
                         Pool(); // (a state transfer waits for its budget; a partial frame's rest: the asynchronous writer)
                         return;
                     }
-                    var sent = _socket.Send(item.Frame, 0, item.Frame.Length, SocketFlags.None, out var error);
-                    if (error == SocketError.Success && sent == item.Frame.Length)
+                    if (gather.Count == 0) break;
+                    SocketError error;
+                    var sent = gather.Count == 1
+                        ? _socket.Send(gather[0].Array!, 0, gather[0].Count, SocketFlags.None, out error)
+                        : _socket.Send(gather, SocketFlags.None, out error);
+                    if (error is not (SocketError.Success or SocketError.WouldBlock))
                     {
-                        _pending.TryDequeue(out _);
-                        Written(item);
-                        Interlocked.Increment(ref s_directFrames);
-                        continue;
+                        Abort();
+                        return;
                     }
-                    if (error is SocketError.Success or SocketError.WouldBlock)
+                    Interlocked.Increment(ref s_directSends);
+                    var left = error == SocketError.Success ? sent : 0;
+                    var done = 0;
+                    while (done < gather.Count && left >= gather[done].Count)
+                    {
+                        left -= gather[done].Count;
+                        BytesOut += gather[done].Count;
+                        Interlocked.Add(ref _queued, -gather[done].Count);
+                        ++done;
+                    }
+                    if (done > 0) Dequeue(done);
+                    Interlocked.Add(ref s_directFrames, done);
+                    if (done < gather.Count)
                     {
                         // The socket's buffer is full (a slow reader): the asynchronous writer waits for it from here.
-                        _offset = error == SocketError.Success ? sent : 0;
+                        _offset = left;
+                        BytesOut += left;
                         Pool();
                         return;
                     }
-                    Abort();
-                    return;
                 }
                 if (Volatile.Read(ref _completed) != 0)
                 {
@@ -197,6 +299,10 @@ internal sealed class Connection : IHubPeer
         {
             Abort();
         }
+        finally
+        {
+            gather.Clear();
+        }
     }
 
     /// <summary>Holding the token: writes the queue asynchronously (state transfers through the state budget); at the end of
@@ -207,13 +313,16 @@ internal sealed class Connection : IHubPeer
         {
             do
             {
-                while (_pending.TryPeek(out var item))
+                while (TryPeek(out var item))
                 {
                     if (item.Bulk) await _stateBudget.TakeAsync(item.Frame.Length, _closed.Token);
-                    await _stream.WriteAsync(item.Frame.AsMemory(_offset), _closed.Token);
+                    var from = _offset;
+                    await _stream.WriteAsync(item.Frame.AsMemory(from), _closed.Token);
                     _offset = 0;
-                    _pending.TryDequeue(out _);
-                    Written(item);
+                    Dequeue();
+                    BytesOut += item.Frame.Length - from;
+                    if (item.Bulk) Interlocked.Add(ref _queuedBulk, -item.Frame.Length);
+                    else Interlocked.Add(ref _queued, -item.Frame.Length);
                     Interlocked.Increment(ref s_pooledFrames);
                 }
                 if (Volatile.Read(ref _completed) != 0)
@@ -228,13 +337,6 @@ internal sealed class Connection : IHubPeer
         {
             Abort();
         }
-    }
-
-    private void Written((byte[] Frame, bool Bulk) item)
-    {
-        BytesOut += item.Frame.Length;
-        if (item.Bulk) Interlocked.Add(ref _queuedBulk, -item.Frame.Length);
-        else Interlocked.Add(ref _queued, -item.Frame.Length);
     }
 
     /// <summary>
@@ -369,6 +471,48 @@ internal static class Outbox
         var marked = t_marked!;
         for (var i = 0; i < marked.Count; ++i) marked[i].Kick(inline: true);
         marked.Clear();
+    }
+}
+
+/// <summary>
+/// M4 (e): the presence flusher, one thread for the process. A connection with a presence frame waiting
+/// (<see cref="Connection.SendSoon"/>) is written at the flusher's next turn, every Relay:PresenceFlushMs, together with
+/// whatever else waits for it (one non-blocking send for the lot); a game frame before that takes the waiting ones along.
+/// </summary>
+internal static class PresenceFlusher
+{
+    private static readonly ConcurrentQueue<Connection> Due = new();
+    private static int s_started;
+
+    public static void Add(Connection c, int intervalMs)
+    {
+        Due.Enqueue(c);
+        if (Volatile.Read(ref s_started) == 0 && Interlocked.Exchange(ref s_started, 1) == 0)
+            new Thread(() => Run(intervalMs)) { IsBackground = true, Name = "DW4R2 presence flush" }.Start();
+    }
+
+    private static void Run(int intervalMs)
+    {
+        using var timer = new HighResolutionTimer();
+        var period = (long)(intervalMs * Stopwatch.Frequency / 1000.0);
+        var next = Stopwatch.GetTimestamp() + period;
+        while (true)
+        {
+            timer.WaitUntil(next);
+            var now = Stopwatch.GetTimestamp();
+            next = Math.Max(next + period, now + period / 2);
+            for (var n = Due.Count; n > 0 && Due.TryDequeue(out var c); --n)
+            {
+                try
+                {
+                    c.FlushSoon();
+                }
+                catch (Exception)
+                {
+                    // (A connection's fault is its own: the writer aborts it; the flusher goes on.)
+                }
+            }
+        }
     }
 }
 
