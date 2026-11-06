@@ -49,6 +49,8 @@ public class ProxyHeadersTests
     // $proxy_add_x_forwarded_for): its last entry is still the edge it saw; the entries before it never count.
     [InlineData("192.0.2.66, 203.0.113.11, 198.51.100.7", "203.0.113.11", "203.0.113.11")]
     [InlineData("203.0.113.12, 198.51.100.7", null, "198.51.100.7")]
+    [InlineData("127.0.0.1, 198.51.100.7", null, "198.51.100.7")] // (the review's probe: loopback was taken from here)
+    [InlineData("2130706433, 198.51.100.7", null, "198.51.100.7")]
     [InlineData("192.0.2.69, 203.0.113.13", "192.0.2.70", "203.0.113.13")]
     // No usable CF-Connecting-IP behind an edge: the edge stays the address (as without the setting).
     [InlineData("198.51.100.8", null, "198.51.100.8")]
