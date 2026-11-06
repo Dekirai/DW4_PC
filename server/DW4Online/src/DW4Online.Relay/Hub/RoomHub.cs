@@ -1396,7 +1396,7 @@ public sealed class RoomHub
             DetachFromOld(g.From, m);
             Place(m, hub, 0, now);
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Dissolve, hub.Id, hub.Visit, g.Stage, g.Point, 0, map,
-                InstanceMode.Hub, 0, [], Story.Story.Revision, Story.Story.ToBlob(), Story.Dropped.ToBlob()).Frame());
+                InstanceMode.Hub, 0, [], Story.Story.Revision, Story.Story.ToBlob()).Frame());
             Note("dissolve", hub, ("member", m.Index), ("from", g.From.Id));
         }
         EndIfEmpty(g.From, now);
@@ -1488,7 +1488,7 @@ public sealed class RoomHub
             Array.Fill(slotMap, (sbyte)-1);
             foreach (var b in g.Members) slotMap[b.Slot] = (sbyte)map[b.Member];
             m.Peer?.Send(new BarrierOkMsg(fromId, fromVisit, BarrierDecision.New, inst.Id, inst.Visit, g.Stage, g.Point, (byte)map[m], slotMap,
-                inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, story.Revision, storyBlob, dropped, notice, noticeNames).Frame());
+                inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, story.Revision, storyBlob, notice, noticeNames).Frame());
         }
         foreach (var c in g.CoArrivals)
         {
@@ -1524,7 +1524,7 @@ public sealed class RoomHub
         // snapshot): its client knows their names (before, it showed "A player left" for its partners).
         var others = map.Where(kv => kv.Key != m).OrderBy(kv => kv.Value).Select(kv => new CoArrival((byte)kv.Value, (byte)kv.Key.Index, [])).ToList();
         m.Peer?.Send(new BarrierOkMsg(from.Id, from.Visit, BarrierDecision.CoArrive, inst.Id, inst.Visit, inst.Stage, point, (byte)slot, none,
-            inst.Mode, (byte)delay, others, Story.Story.Revision, Story.Story.ToBlob(), Story.Dropped.ToBlob()).Frame());
+            inst.Mode, (byte)delay, others, Story.Story.Revision, Story.Story.ToBlob()).Frame());
         Note("co_arrive", inst, ("member", m.Index), ("slot", slot));
     }
 
@@ -1667,8 +1667,7 @@ public sealed class RoomHub
             var none = new sbyte[Wire.MaxSlots];
             Array.Fill(none, (sbyte)-1);
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Join, target.Id, target.Visit, g.Stage, g.Point, (byte)slot, none,
-                target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], Story.Story.Revision, Story.Story.ToBlob(),
-                Story.Dropped.ToBlob()).Frame());
+                target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], Story.Story.Revision, Story.Story.ToBlob()).Frame());
             Note("join_decided", target, ("member", m.Index), ("slot", slot));
             DeliverState(m, now);
         }
@@ -2235,7 +2234,7 @@ public sealed class RoomHub
         Array.Fill(map, (sbyte)-1);
         map[j.OldSlot] = 0;
         m.Peer?.Send(new BarrierOkMsg(j.Target.Id, j.Target.Visit, BarrierDecision.New, inst.Id, inst.Visit, inst.Stage, j.From.Point, 0, map,
-            InstanceMode.SoloLed, 0, [], Story.Story.Revision, Story.Story.ToBlob(), Story.Dropped.ToBlob(),
+            InstanceMode.SoloLed, 0, [], Story.Story.Revision, Story.Story.ToBlob(),
             notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice, []).Frame());
         Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id));
     }

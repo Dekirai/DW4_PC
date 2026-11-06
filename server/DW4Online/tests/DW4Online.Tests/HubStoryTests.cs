@@ -134,7 +134,6 @@ public class HubStoryTests
         var ok = a.LastOk;
         Assert.Equal(6u, ok.StoryRevision);
         Assert.Equal(1, RoomStoryData.FromBlob(ok.Story, ok.StoryRevision).Flags[393]);
-        Assert.Empty(ok.Dropped);
         Assert.Equal(6u, h.Hub.StoryState().Revision);
     }
 
@@ -172,10 +171,6 @@ public class HubStoryTests
         var okB = b.LastOk;
         Assert.Equal((BarrierDecision.New, BarrierDecision.CoArrive), (okA.Decision, okB.Decision));
         Assert.Equal(okA.Story, okB.Story);
-        Assert.Equal(okA.Dropped, okB.Dropped);
-        var dropped = StoryKeys.FromBlob(okA.Dropped);
-        Assert.Equal([392, 393], dropped.Flags);
-        Assert.Equal([1], dropped.Counters);
         Assert.Equal(1, RoomStoryData.FromBlob(okA.Story, okA.StoryRevision).Flags[392]); // (in the room: the engines keep it)
     }
 
@@ -344,7 +339,6 @@ public class HubStoryTests
         // The guest's old visit still holds 392: it does not count; its barrier removes it (the dropped set).
         Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(392)).Refused.Single().Reason);
         h.Barrier("b", "stagml13");
-        Assert.Equal([392], StoryKeys.FromBlob(b.LastOk.Dropped).Flags);
         Assert.Equal(0, RoomStoryData.FromBlob(b.LastOk.Story, b.LastOk.StoryRevision).Flags[392]);
         // Set anew in a later visit of a stage that sets it, it counts; so does the owner's own progress.
         h.Barrier("b", "stagml12");
@@ -372,7 +366,6 @@ public class HubStoryTests
         h.Advance(12_000);
         Assert.All(h.Story("b", new StoryDelta { Phase = 1, Flags = [501] }).Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
         h.Barrier("b", "stagml02");
-        Assert.Equal([1, 501], StoryKeys.FromBlob(b.LastOk.Dropped).Flags);
         h.Advance(12_000);
         var ack = h.Story("b", new StoryDelta { Phase = 2, Flags = [320] });
         Assert.Equal([new(StoryKeyKind.Phase, 2, StoryRefusal.NotStarted), new StoryRefused(StoryKeyKind.Flag, 320, StoryRefusal.NotStarted)], ack.Refused);
@@ -392,9 +385,6 @@ public class HubStoryTests
         Assert.All(h.Story("b", new StoryDelta { Phase = 2, Flags = [320, 502] }).Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
         h.Hub.Housekeep(h.Now);
         h.Barrier("b", "stagml11");
-        var dropped = StoryKeys.FromBlob(b.LastOk.Dropped).Flags;
-        Assert.Contains(2, dropped);
-        Assert.Contains(502, dropped);
         Assert.Equal(1, StoryMerge.Phase(RoomStoryData.FromBlob(b.LastOk.Story, b.LastOk.StoryRevision)));
         Assert.Equal((1u, 1), (h.Hub.StoryState().Revision, h.Hub.StoryState().Phase));
         Assert.Single(h.Saved);
@@ -651,7 +641,6 @@ public class HubStoryTests
         Assert.Equal([392], again.Hub.StoryState().DroppedFlags);
         Assert.True(again.I("b").Id > last);
         again.Barrier("b", "stagml13");
-        Assert.Equal([392], StoryKeys.FromBlob(b.LastOk.Dropped).Flags);
     }
 
     /// <summary>A revision that changed only counters goes to the saver as such (it writes those at most once a minute).</summary>

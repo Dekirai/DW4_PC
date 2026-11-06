@@ -1,4 +1,5 @@
 using System.Numerics;
+using DW4Online.Domain.Rooms;
 using DW4Online.Domain.Story;
 
 namespace DW4Online.Relay.Protocol;
@@ -39,6 +40,15 @@ public sealed record TickEvent(byte Type, byte[] Payload)
     }
 
     public static TickEvent Delay(int slot, int delay) => new(Ev.Delay, [(byte)slot, (byte)delay]);
+
+    /// <summary>Protocol 49: exactly the slots of <paramref name="mask"/> take the home departure (19.6.5).</summary>
+    public static TickEvent Home(byte mask, HomeReason reason) => new(Ev.Home, [(byte)(mask & Wire.SlotMask), (byte)reason]);
+
+    /// <summary>HOME's slot mask (0 for other events).</summary>
+    public byte HomeMask => Type == Ev.Home && Payload.Length > 0 ? Payload[0] : (byte)0;
+
+    /// <summary>The same HOME with only the slots of <paramref name="side"/> (a fork splits HOME's mask by side).</summary>
+    public TickEvent WithHomeMask(byte side) => new(Ev.Home, [(byte)(HomeMask & side), Payload.Length > 1 ? Payload[1] : (byte)HomeReason.Ended]);
 
     /// <summary>An event's payload length is a u16.</summary>
     public const int MaxPayload = ushort.MaxValue;
@@ -180,8 +190,11 @@ public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong Conte
     public byte[] Frame() => new WireWriter(Msg.Heading).U32(Inst).Str(Stage).U8(Point).U64(ContextHash).Frame();
 }
 
-/// <summary>BARRIER: after the barrier tick (the step that executed NEXTSTAGE); carry = the sender's own player carry.</summary>
-public sealed record BarrierMsg(uint Inst, uint Visit, uint Tick, string Stage, byte Point, byte AliveMask, byte PresentMask, ulong ContextHash, byte[] Carry)
+/// <summary>BARRIER: after the barrier tick (the step that executed NEXTSTAGE); carry = the sender's own player carry. Protocol 49
+/// appends the travel token u32 (0: none; round I3), the plan id u16 (0: none; round I1b) and the member's OWN settings (11 B:
+/// its Game Start difficulty and its own Online > Settings, never the engine's current ones).</summary>
+public sealed record BarrierMsg(uint Inst, uint Visit, uint Tick, string Stage, byte Point, byte AliveMask, byte PresentMask, ulong ContextHash, byte[] Carry,
+    uint TravelToken = 0, ushort PlanId = 0, RoomSettings? Settings = null)
 {
     /// <summary>A carry becomes a JOIN event (slot, point, carry) whose length is a u16: at most 65,533 bytes.</summary>
     public const int MaxCarry = ushort.MaxValue - 2;
@@ -189,13 +202,19 @@ public sealed record BarrierMsg(uint Inst, uint Visit, uint Tick, string Stage, 
     public static BarrierMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var m = new BarrierMsg(r.U32(), r.U32(), r.U32(), StageNames.Read(ref r), r.U8(), Masks.Read(ref r), Masks.Read(ref r), r.U64(), r.Blob(MaxCarry));
+        var m = new BarrierMsg(r.U32(), r.U32(), r.U32(), StageNames.Read(ref r), r.U8(), Masks.Read(ref r), Masks.Read(ref r), r.U64(), r.Blob(MaxCarry),
+            r.U32(), r.U16(), SettingsBlock.Read(ref r));
         r.End();
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.Barrier, 40 + Carry.Length).U32(Inst).U32(Visit).U32(Tick).Str(Stage).U8(Point)
-        .U8(AliveMask).U8(PresentMask).U64(ContextHash).Blob(Carry).Frame();
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Barrier, 60 + Carry.Length).U32(Inst).U32(Visit).U32(Tick).Str(Stage).U8(Point)
+            .U8(AliveMask).U8(PresentMask).U64(ContextHash).Blob(Carry).U32(TravelToken).U16(PlanId);
+        SettingsBlock.Write(w, Settings ?? RoomSettings.Default);
+        return w.Frame();
+    }
 }
 
 /// <summary>BARRIER_CHOICE: at a boss-locked target, 0 = wait for them, 1 = go alone.</summary>
@@ -407,13 +426,15 @@ public sealed record StateMsg(uint Inst, uint Visit, uint Tick, byte Flags, ulon
     /// <summary>Protocol 47 (round J's review): the visit reached its load end K; the first such STATE's context is the
     /// visit's entry context (SEAMLESS.md 3.7), joinable or not.</summary>
     public const byte LoadEnded = 8;
+    /// <summary>Protocol 49 (round I1b): no present slot is alive. Accepted (and ignored) by the I1a relay.</summary>
+    public const byte NoLivingMember = 16;
 
     public static StateMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
         var m = new StateMsg(r.U32(), r.U32(), r.U32(), r.U8(), r.U64(), (StateReason)r.U8());
         r.End();
-        if (m.Flags > 15) throw new ProtocolException("unknown state flags");
+        if (m.Flags > 31) throw new ProtocolException("unknown state flags");
         return m;
     }
 
@@ -428,7 +449,7 @@ public sealed record IntentMsg(uint Inst, uint Visit, IntentKind Kind, int Argum
         var r = new WireReader(p);
         var m = new IntentMsg(r.U32(), r.U32(), (IntentKind)r.U8(), r.I32());
         r.End();
-        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp)) throw new ProtocolException("unknown intent");
+        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp or IntentKind.Leave or IntentKind.GoAlong)) throw new ProtocolException("unknown intent");
         return m;
     }
 
@@ -558,18 +579,19 @@ public sealed record Presence2Msg(byte Version, PresenceMsg Presence, string Cli
     }
 }
 
-/// <summary>RESUME: after a reconnect: the instance, slot and the last tick this machine executed.</summary>
-public sealed record ResumeMsg(uint Inst, uint Visit, byte Slot, uint LastTick)
+/// <summary>RESUME: after a reconnect: the instance, slot and the last tick this machine executed; protocol 49 appends the stage
+/// the engine is on (19.15: a member whose WELCOME was not resumable is filed there as continuing alone in its instance).</summary>
+public sealed record ResumeMsg(uint Inst, uint Visit, byte Slot, uint LastTick, string Stage = "")
 {
     public static ResumeMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var m = new ResumeMsg(r.U32(), r.U32(), r.U8(), r.U32());
+        var m = new ResumeMsg(r.U32(), r.U32(), r.U8(), r.U32(), StageNames.Read(ref r, allowEmpty: true));
         r.End();
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.Resume).U32(Inst).U32(Visit).U8(Slot).U32(LastTick).Frame();
+    public byte[] Frame() => new WireWriter(Msg.Resume).U32(Inst).U32(Visit).U8(Slot).U32(LastTick).Str(Stage).Frame();
 }
 
 /// <summary>RATE: the replay rate in steps per second (calibration at the room join and after every replay).</summary>
@@ -618,8 +640,8 @@ public sealed record ByeMsg(byte Reason)
 /// WELCOME: the first frame after "OK": the member's room index and the instance the server has it in (a fresh solo hub
 /// instance, or after a reconnect within the window the instance and slot it still holds, with the last sealed tick).
 /// </summary>
-public sealed record WelcomeMsg(byte Member, uint Inst, uint Visit, byte Slot, InstanceMode Mode, string Stage, uint LastTick, byte Delay,
-    ushort MaxCatchUpSeconds, byte Flags)
+public sealed record WelcomeMsg(uint Member, uint Inst, uint Visit, byte Slot, InstanceMode Mode, string Stage, uint LastTick, byte Delay,
+    ushort MaxCatchUpSeconds, byte Flags, uint Wid = 0, byte Box = 1)
 {
     public const byte Resumable = 1;
     /// <summary>This hub takes PRESENCE2 (round 60). A client sends it only then: an older hub closes on an unknown frame.</summary>
@@ -627,18 +649,25 @@ public sealed record WelcomeMsg(byte Member, uint Inst, uint Visit, byte Slot, I
     /// <summary>This hub takes STATEHASH, CHECKPOINT and CHECKPOINT_BAD (round J). A client sends them only then: an older hub
     /// closes on an unknown frame.</summary>
     public const byte Checkpoints = 4;
+    /// <summary>Protocol 49: a world relay (always set).</summary>
+    public const byte World = 8;
+    /// <summary>Protocol 49 (round I5): the member holds a seat in <see cref="Wid"/>.</summary>
+    public const byte SeatHeld = 16;
+    /// <summary>Protocol 49: the member's ticket role is staff.</summary>
+    public const byte Staff = 32;
     public const uint NoTick = uint.MaxValue;
 
     public static WelcomeMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var m = new WelcomeMsg(r.U8(), r.U32(), r.U32(), r.U8(), (InstanceMode)r.U8(), StageNames.Read(ref r, allowEmpty: true), r.U32(), r.U8(), r.U16(), r.U8());
+        var m = new WelcomeMsg(r.U32(), r.U32(), r.U32(), r.U8(), (InstanceMode)r.U8(), StageNames.Read(ref r, allowEmpty: true), r.U32(), r.U8(), r.U16(), r.U8(),
+            r.U32(), r.U8());
         r.End();
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.Welcome).U8(Member).U32(Inst).U32(Visit).U8(Slot).U8((byte)Mode).Str(Stage).U32(LastTick)
-        .U8(Delay).U16(MaxCatchUpSeconds).U8(Flags).Frame();
+    public byte[] Frame() => new WireWriter(Msg.Welcome).U32(Member).U32(Inst).U32(Visit).U8(Slot).U8((byte)Mode).Str(Stage).U32(LastTick)
+        .U8(Delay).U16(MaxCatchUpSeconds).U8(Flags).U32(Wid).U8(Box).Frame();
 }
 
 /// <summary>SEALED / LIVE: ticks first..first+count-1 of an instance's stream (batched when behind).</summary>
@@ -666,18 +695,26 @@ public sealed record TicksMsg(byte Type, uint Inst, uint Visit, uint FirstTick, 
     }
 }
 
-/// <summary>JOIN_REQ: to the leader of a solo-led instance: choose the tick J from which the instance is sealed.</summary>
-public sealed record JoinReqMsg(uint Inst, uint Visit, byte Slot, byte Delay)
+/// <summary>JOIN_REQ: to the leader of a solo-led instance: choose the tick J from which the instance is sealed. Protocol 49 appends
+/// the kind (1 join; 2 home: <see cref="Slot"/> holds the HOME mask and SEALED(J) carries HOME; 3 go, round I1b: + stage str, point u8).</summary>
+public sealed record JoinReqMsg(uint Inst, uint Visit, byte Slot, byte Delay, JoinReqKind Kind = JoinReqKind.Join, string GoStage = "", byte GoPoint = 0)
 {
     public static JoinReqMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var m = new JoinReqMsg(r.U32(), r.U32(), r.U8(), r.U8());
+        var m = new JoinReqMsg(r.U32(), r.U32(), r.U8(), r.U8(), (JoinReqKind)r.U8());
+        if (m.Kind == JoinReqKind.Go) m = m with { GoStage = StageNames.Read(ref r), GoPoint = r.U8() };
+        else if (m.Kind is not (JoinReqKind.Join or JoinReqKind.Home)) throw new ProtocolException("unknown join request kind");
         r.End();
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.JoinReq).U32(Inst).U32(Visit).U8(Slot).U8(Delay).Frame();
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.JoinReq).U32(Inst).U32(Visit).U8(Slot).U8(Delay).U8((byte)Kind);
+        if (Kind == JoinReqKind.Go) w.Str(GoStage).U8(GoPoint);
+        return w.Frame();
+    }
 }
 
 /// <summary>
@@ -685,7 +722,7 @@ public sealed record JoinReqMsg(uint Inst, uint Visit, byte Slot, byte Delay)
 /// while it is not empty. inst, visit (the member's instance now), the confirmed revision, phase u8 (0: no claim), u16 n +
 /// n x u16 flags, u8 n + n x u8 keys, u8 n + n x (u8 counter, u32 line inst, u32 line visit, i32 growth).
 /// </summary>
-public sealed record StoryMsg(uint Inst, uint Visit, uint Revision, StoryDelta Delta)
+public sealed record StoryMsg(uint Inst, uint Visit, uint Revision, StoryDelta Delta, uint OwnerMember = 0, byte OwnerBox = 1)
 {
     public const int MaxLines = 32;
 
@@ -720,8 +757,11 @@ public sealed record StoryMsg(uint Inst, uint Visit, uint Revision, StoryDelta D
             if (counter >= StorySets.CounterCount) throw new ProtocolException("story: counter out of range");
             d.Counters.Add(new CounterGrowth(counter, r.U32(), r.U32(), r.I32()));
         }
+        // Protocol 49 (19.8.4): the owner key, the story the sender's pending set is against (member u32, box u8).
+        var owner = r.U32();
+        var box = r.U8();
         r.End();
-        return new StoryMsg(inst, visit, revision, d);
+        return new StoryMsg(inst, visit, revision, d, owner, box);
     }
 
     public byte[] Frame()
@@ -733,7 +773,7 @@ public sealed record StoryMsg(uint Inst, uint Visit, uint Revision, StoryDelta D
         foreach (var k in Delta.Folder) w.U8((byte)k);
         w.U8((byte)Delta.Counters.Count);
         foreach (var g in Delta.Counters) w.U8((byte)g.Counter).U32(g.Inst).U32(g.Visit).I32(g.Growth);
-        return w.Frame();
+        return w.U32(OwnerMember).U8(OwnerBox).Frame();
     }
 }
 
@@ -742,7 +782,7 @@ public sealed record StoryMsg(uint Inst, uint Visit, uint Revision, StoryDelta D
 /// and the refused keys (kind u8, index u16, reason u8). After WELCOME, to every member on each new revision, and to a
 /// STORY's sender.
 /// </summary>
-public sealed record StoryAckMsg(uint Revision, byte[] Story, byte Flags, IReadOnlyList<StoryRefused> Refused)
+public sealed record StoryAckMsg(uint Revision, byte[] Story, byte Flags, IReadOnlyList<StoryRefused> Refused, uint OwnerMember = 0, byte OwnerBox = 1)
 {
     public const byte Answer = 1;
 
@@ -761,20 +801,34 @@ public sealed record StoryAckMsg(uint Revision, byte[] Story, byte Flags, IReadO
             if (kind > 3) throw new ProtocolException("story_ack: unknown key kind");
             refused.Add(new StoryRefused((StoryKeyKind)kind, r.U16(), (StoryRefusal)r.U8()));
         }
+        var owner = r.U32();
+        var box = r.U8();
         r.End();
-        return new StoryAckMsg(revision, story, flags, refused);
+        return new StoryAckMsg(revision, story, flags, refused, owner, box);
     }
 
     public byte[] Frame()
     {
         var w = new WireWriter(Msg.StoryAck, 16 + Story.Length + 4 * Refused.Count).U32(Revision).Blob(Story).U8(Flags).U16((ushort)Refused.Count);
         foreach (var x in Refused) w.U8((byte)x.Kind).U16((ushort)x.Index).U8((byte)x.Reason);
-        return w.Frame();
+        return w.U32(OwnerMember).U8(OwnerBox).Frame();
     }
 }
 
-/// <summary>A co-arrival in the base's BARRIER_OK: its slot in the new instance, its room member index and its carry.</summary>
-public sealed record CoArrival(byte Slot, byte Member, byte[] Carry);
+/// <summary>A co-arrival in the base's BARRIER_OK: its slot in the new instance, its member id (protocol 49: u32) and its carry.</summary>
+public sealed record CoArrival(byte Slot, uint Member, byte[] Carry);
+
+/// <summary>
+/// BARRIER_OK's world part (protocol 49, appended after the notice names): the instance (wid, 0 at home) and its host, its
+/// visibility, what the decision means for the member (<see cref="ArrivalKind"/>), the settings the visit runs with (the instance's
+/// = the host's; at a DISSOLVE the member's own) and their hash, the story owner key of the visit that starts (the host in an
+/// instance, the member itself at home), the story mode and, only with DISSOLVE, a redirect (19.8.3).
+/// </summary>
+public sealed record BarrierWorld(uint Wid, uint HostMember, Visibility Visibility, ArrivalKind Arrival, RoomSettings Settings, ulong SettingsHash,
+    uint OwnerMember, byte OwnerBox, StoryMode StoryMode, string RedirectStage = "", byte RedirectPoint = 0)
+{
+    public static readonly BarrierWorld Home = new(0, 0, Visibility.Public, ArrivalKind.None, RoomSettings.Default, 0, 0, 1, StoryMode.Merge);
+}
 
 /// <summary>
 /// BARRIER_OK: the server's decision for a parked member. SlotMap[old slot] = the new slot of that engine player or -1
@@ -784,9 +838,12 @@ public sealed record CoArrival(byte Slot, byte Member, byte[] Carry);
 /// names say why a NEW opened next to an instance of the same stage.
 /// </summary>
 public sealed record BarrierOkMsg(uint Inst, uint Visit, BarrierDecision Decision, uint NewInst, uint NewVisit, string Stage, byte Point, byte OwnSlot,
-    sbyte[] SlotMap, InstanceMode Mode, byte Delay, IReadOnlyList<CoArrival> CoArrivals, uint StoryRevision, byte[] Story, byte[] Dropped,
+    sbyte[] SlotMap, InstanceMode Mode, byte Delay, IReadOnlyList<CoArrival> CoArrivals, uint StoryRevision, byte[] Story,
     BarrierNotice Notice = BarrierNotice.None, IReadOnlyList<string>? NoticeNames = null)
 {
+    /// <summary>Protocol 49's world part.</summary>
+    public BarrierWorld World { get; init; } = BarrierWorld.Home;
+
     public static BarrierOkMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
@@ -804,29 +861,34 @@ public sealed record BarrierOkMsg(uint Inst, uint Visit, BarrierDecision Decisio
         var delay = r.U8();
         var n = r.U8();
         var co = new List<CoArrival>(n);
-        for (var i = 0; i < n; ++i) co.Add(new CoArrival(r.U8(), r.U8(), r.Blob(BarrierMsg.MaxCarry)));
+        for (var i = 0; i < n; ++i) co.Add(new CoArrival(r.U8(), r.U32(), r.Blob(BarrierMsg.MaxCarry)));
         var revision = r.U32();
         var story = r.Blob(1 << 16);
-        var dropped = r.Blob(1 << 16);
         var notice = (BarrierNotice)r.U8();
         var nn = r.U8();
         var names = new List<string>(nn);
         for (var i = 0; i < nn; ++i) names.Add(r.Str(64));
+        var world = new BarrierWorld(r.U32(), r.U32(), (Visibility)r.U8(), (ArrivalKind)r.U8(), SettingsBlock.Read(ref r), r.U64(), r.U32(), r.U8(),
+            (StoryMode)r.U8(), StageNames.Read(ref r, allowEmpty: true), r.U8());
         r.End();
-        return new BarrierOkMsg(inst, visit, decision, newInst, newVisit, stage, point, own, map, mode, delay, co, revision, story, dropped, notice, names);
+        return new BarrierOkMsg(inst, visit, decision, newInst, newVisit, stage, point, own, map, mode, delay, co, revision, story, notice, names) { World = world };
     }
 
     public byte[] Frame()
     {
-        var w = new WireWriter(Msg.BarrierOk, 64 + CoArrivals.Sum(c => c.Carry.Length + 6) + Story.Length + Dropped.Length)
+        var w = new WireWriter(Msg.BarrierOk, 112 + CoArrivals.Sum(c => c.Carry.Length + 9) + Story.Length)
             .U32(Inst).U32(Visit).U8((byte)Decision).U32(NewInst).U32(NewVisit).Str(Stage).U8(Point).U8(OwnSlot);
         foreach (var s in SlotMap) w.I8(s);
         w.U8((byte)Mode).U8(Delay).U8((byte)CoArrivals.Count);
-        foreach (var c in CoArrivals) w.U8(c.Slot).U8(c.Member).Blob(c.Carry);
-        w.U32(StoryRevision).Blob(Story).Blob(Dropped).U8((byte)Notice);
+        foreach (var c in CoArrivals) w.U8(c.Slot).U32(c.Member).Blob(c.Carry);
+        w.U32(StoryRevision).Blob(Story).U8((byte)Notice);
         var names = NoticeNames ?? [];
         w.U8((byte)names.Count);
         foreach (var n in names) w.Str(n);
+        var x = World;
+        w.U32(x.Wid).U32(x.HostMember).U8((byte)x.Visibility).U8((byte)x.Arrival);
+        SettingsBlock.Write(w, x.Settings);
+        w.U64(x.SettingsHash).U32(x.OwnerMember).U8(x.OwnerBox).U8((byte)x.StoryMode).Str(x.RedirectStage).U8(x.RedirectPoint);
         return w.Frame();
     }
 }
@@ -978,40 +1040,44 @@ public sealed record StateBlob(StatePurpose Purpose, byte Slot, byte[] Snapshot,
     }
 }
 
-public sealed record PresenceOutMsg(byte Member, PresenceMsg Presence)
+/// <summary>PRESENCE to a receiver (protocol 49): member u32, relation u8 (<see cref="Relation"/>), then the PRESENCE fields.</summary>
+public sealed record PresenceOutMsg(uint Member, PresenceMsg Presence, byte Relation = 0)
 {
     public static PresenceOutMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var member = r.U8();
-        var m = new PresenceOutMsg(member, PresenceMsg.Read(ref r));
+        var member = r.U32();
+        var relation = r.U8();
+        var m = new PresenceOutMsg(member, PresenceMsg.Read(ref r), relation);
         r.End();
         return m;
     }
 
     public byte[] Frame()
     {
-        var w = new WireWriter(Msg.PresenceOut).U8(Member);
+        var w = new WireWriter(Msg.PresenceOut).U32(Member).U8(Relation);
         Presence.Write(w);
         return w.Frame();
     }
 }
 
-/// <summary>PRESENCE2 to a member that sends PRESENCE2 itself: the member index, then the sender's PRESENCE2 at version 1.</summary>
-public sealed record Presence2OutMsg(byte Member, Presence2Msg Presence)
+/// <summary>PRESENCE2 to a member that sends PRESENCE2 itself (protocol 49): member u32, relation u8, then the sender's PRESENCE2 at
+/// version 1.</summary>
+public sealed record Presence2OutMsg(uint Member, Presence2Msg Presence, byte Relation = 0)
 {
     public static Presence2OutMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var member = r.U8();
-        var m = new Presence2OutMsg(member, Presence2Msg.Read(ref r));
+        var member = r.U32();
+        var relation = r.U8();
+        var m = new Presence2OutMsg(member, Presence2Msg.Read(ref r), relation);
         if (m.Presence.Version == Presence2Msg.CurrentVersion) r.End();
         return m;
     }
 
     public byte[] Frame()
     {
-        var w = new WireWriter(Msg.Presence2Out).U8(Member);
+        var w = new WireWriter(Msg.Presence2Out).U32(Member).U8(Relation);
         Presence.Write(w);
         return w.Frame();
     }

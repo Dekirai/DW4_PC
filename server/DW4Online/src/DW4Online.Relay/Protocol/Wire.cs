@@ -30,6 +30,14 @@ public static class Wire
     public const int ReadyCheckProtocol = 48;
     /// <summary>Protocol 48: the replayed steps a READY from a checkpoint is checked after (a quarter second).</summary>
     public const uint ReadyCheckTicks = 15;
+    /// <summary>Round I1 (SEAMLESS.md 19.18): the world without rooms. The relay speaks only this protocol (the floor in code,
+    /// 19.17.3: a handshake with any other protocol is answered ERR protocol, whatever Play:MinimumProtocol says). The web
+    /// lane's DW4Online.Domain.World.WorldProtocol.Version is the same number (the integration pins them equal).</summary>
+    public const int WorldProtocol = 49;
+    /// <summary>The 11-byte settings block of BARRIER, BARRIER_OK and INSTANCE_INFO (protocol 49).</summary>
+    public const int SettingsBytes = 11;
+    /// <summary>The handshake's ticket channel of the world (one fixed channel, 19.14).</summary>
+    public const string WorldChannel = "WORLD";
 }
 
 /// <summary>Frame types. Client to server 0x01-0x3F, server to client 0x80-0xBF.</summary>
@@ -62,6 +70,8 @@ public static class Msg
     public const byte Checkpoint = 0x16;
     /// <summary>Round J: a joiner's rebuild from a checkpoint failed.</summary>
     public const byte CheckpointBad = 0x17;
+    /// <summary>Round I1 (protocol 49): the host's or staff's instance operation (visibility, remove, end).</summary>
+    public const byte InstanceOp = 0x1B;
 
     // server -> client
     public const byte Welcome = 0x80;
@@ -83,6 +93,12 @@ public static class Msg
     public const byte Presence2Out = 0x90;
     /// <summary>Round J: the donor uploads its tick state at its next state-safe tick (0x91 stays free).</summary>
     public const byte CheckpointAsk = 0x92;
+    /// <summary>Round I1 (protocol 49): the member's own instance (members, seats, the host's grace).</summary>
+    public const byte InstanceInfo = 0x95;
+    /// <summary>Round I1 (protocol 49): a notice about the world or the own instance (joined, left, went, ended ...).</summary>
+    public const byte WorldNotice = 0x96;
+    /// <summary>Round I1 (protocol 49): a member's name, level and relation, before its first mention to a receiver.</summary>
+    public const byte MemberInfo = 0x97;
 
     public static string Name(byte type) => type switch
     {
@@ -94,7 +110,8 @@ public static class Msg
         Welcome => "WELCOME", Sealed => "SEALED", Live => "LIVE", JoinReq => "JOIN_REQ", BarrierOk => "BARRIER_OK",
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
-        Presence2Out => "PRESENCE2",
+        Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
+        MemberInfo => "MEMBER_INFO",
         _ => "0x" + type.ToString("X2"),
     };
 }
@@ -112,6 +129,11 @@ public static class Ev
     public const byte LeadFrom = 4;
     /// <summary>slot u8, delay u8: that member samples its pads this many ticks ahead from now on.</summary>
     public const byte Delay = 5;
+    /// <summary>Protocol 49 (19.6.5): slot mask u8, reason u8 (<see cref="HomeReason"/>): exactly the masked slots take the home
+    /// departure, defeated or not (ForkKind::home). At a fork the mask is split by side.</summary>
+    public const byte Home = 6;
+    /// <summary>Reserved for round I1b's GO (slot u8, point u8, stage str).</summary>
+    public const byte Go = 7;
 }
 
 /// <summary>Instance modes (WELCOME, BARRIER_OK).</summary>
@@ -145,6 +167,130 @@ public enum IntentKind : byte
 {
     GoWithout = 1,
     GiveUp = 2,
+    /// <summary>Protocol 49: *Leave instance*: the own slot goes home (the relay stamps HOME).</summary>
+    Leave = 3,
+    /// <summary>Protocol 49, round I1b: *Go along* (argument: the offer id, 0 withdraws). The I1a relay ignores it.</summary>
+    GoAlong = 4,
+}
+
+/// <summary>An instance's visibility (19.6.2): wire u8 and the text of online_prefs / instance_history.</summary>
+public enum Visibility : byte
+{
+    Public = 0,
+    Friends = 1,
+    Private = 2,
+}
+
+public static class Visibilities
+{
+    public static string Text(Visibility v) => v switch { Visibility.Friends => "friends", Visibility.Private => "private", _ => "public" };
+
+    public static Visibility Parse(string? text) => text?.Trim().ToLowerInvariant() switch
+    {
+        "friends" => Visibility.Friends,
+        "private" => Visibility.Private,
+        _ => Visibility.Public,
+    };
+}
+
+/// <summary>BARRIER_OK's arrival byte (protocol 49): what the decision means for the member's instance (the toasts).</summary>
+public enum ArrivalKind : byte
+{
+    /// <summary>A move inside the instance, or a DISSOLVE.</summary>
+    None = 0,
+    /// <summary>A new instance: this member hosts it.</summary>
+    NewInstance = 1,
+    /// <summary>I1a's automatic join of a running instance (the first row of 19.7.3).</summary>
+    AutoJoin = 2,
+    /// <summary>A co-arrival with, or a join of, a starting instance (19.7.6).</summary>
+    Starting = 3,
+    /// <summary>A guest's NEW: a new stage group of a running instance where nobody of it is (19.30.4).</summary>
+    GuestNew = 4,
+}
+
+/// <summary>BARRIER_OK's story mode (protocol 49, 19.8.3).</summary>
+public enum StoryMode : byte
+{
+    /// <summary>The confirmed story merges into the engine's (barriers only add, as before round I1).</summary>
+    Merge = 0,
+    /// <summary>The engine's story subset is replaced by the story blob (a DISSOLVE home, a guest's NEW).</summary>
+    Replace = 1,
+}
+
+/// <summary>HOME's reason (protocol 49).</summary>
+public enum HomeReason : byte
+{
+    Leave = 1,
+    Ended = 2,
+    Removed = 3,
+    Staff = 4,
+}
+
+/// <summary>Why an instance ended (19.6.5): WORLD_NOTICE ended's argument and instance_history.end_reason.</summary>
+public enum EndReason : byte
+{
+    HostLeft = 1,
+    HostDefeated = 2,
+    HostLost = 3,
+    Staff = 4,
+    Empty = 5,
+    ServerStop = 6,
+}
+
+public static class EndReasons
+{
+    public static string Text(EndReason r) => r switch
+    {
+        EndReason.HostLeft => "host_left",
+        EndReason.HostDefeated => "host_defeated",
+        EndReason.HostLost => "host_lost",
+        EndReason.Staff => "staff",
+        EndReason.Empty => "empty",
+        _ => "server_stop",
+    };
+}
+
+/// <summary>WORLD_NOTICE kinds (protocol 49; 20 and above: friends and parties, rounds I2 / I4).</summary>
+public enum WorldNoticeKind : byte
+{
+    Joined = 1,
+    Left = 2,
+    WentTo = 3,
+    VisibilityChanged = 4,
+    Removed = 5,
+    HostAway = 6,
+    HostBack = 7,
+    Ended = 8,
+    Lagging = 9,
+    LagOver = 10,
+    SharedProgress = 11,
+    ServerRestart = 12,
+    GoRefused = 13,
+}
+
+/// <summary>JOIN_REQ kinds (protocol 49) for solo-led stage groups.</summary>
+public enum JoinReqKind : byte
+{
+    Join = 1,
+    Home = 2,
+    Go = 3,
+}
+
+/// <summary>INSTANCE_INFO's own role (protocol 49).</summary>
+public enum InstanceRole : byte
+{
+    Host = 0,
+    Guest = 1,
+    Staff = 2,
+    Spectator = 3,
+}
+
+/// <summary>INSTANCE_OP's op (protocol 49).</summary>
+public enum InstanceOpKind : byte
+{
+    Visibility = 1,
+    Remove = 2,
+    End = 3,
 }
 
 public enum SplitKind : byte
@@ -213,6 +359,8 @@ public enum CloseReason : byte
     Abuse = 6,
     Timeout = 7,
     ServerStopping = 8,
+    /// <summary>Protocol 49: the account was locked, banned or deleted, or the admission re-check refused it (no reconnect).</summary>
+    Account = 9,
 }
 
 /// <summary>

@@ -38,13 +38,13 @@ public class HubCoreTests
         Assert.Equal(ghost, Presence2Msg.Parse(Payload(ghost.Frame())));
         Assert.Equal(new Presence2OutMsg(3, ghost), Presence2OutMsg.Parse(Payload(new Presence2OutMsg(3, ghost).Frame())));
         Assert.Equal(new Presence2Msg(1, presence, "", 0, 0, 0, ""), Presence2Msg.Parse(Payload(new Presence2Msg(1, presence, "", 0, 0, 0, "").Frame())));
-        Assert.Equal(new ResumeMsg(1, 2, 3, 4), ResumeMsg.Parse(Payload(new ResumeMsg(1, 2, 3, 4).Frame())));
+        Assert.Equal(new ResumeMsg(1, 2, 3, 4, "stag0101"), ResumeMsg.Parse(Payload(new ResumeMsg(1, 2, 3, 4, "stag0101").Frame())));
         Assert.Equal(new PongMsg(5, 6), PongMsg.Parse(Payload(new PongMsg(5, 6).Frame())));
         Assert.Equal(new WelcomeMsg(1, 2, 3, 0, InstanceMode.Sealed, "stag0101", 99, 3, 30, 1),
             WelcomeMsg.Parse(Payload(new WelcomeMsg(1, 2, 3, 0, InstanceMode.Sealed, "stag0101", 99, 3, 30, 1).Frame())));
         Assert.Equal(new JoinReqMsg(1, 2, 3, 4), JoinReqMsg.Parse(Payload(new JoinReqMsg(1, 2, 3, 4).Frame())));
         var ok = new BarrierOkMsg(1, 2, BarrierDecision.New, 3, 4, "stag0102", 5, 1, [0, -1, 1, -1], InstanceMode.Sealed, 3,
-            [new CoArrival(2, 7, [9, 9])], 0, [], [], BarrierNotice.Full, ["kim"]);
+            [new CoArrival(2, 7, [9, 9])], 0, [], BarrierNotice.Full, ["kim"]);
         var back = BarrierOkMsg.Parse(Payload(ok.Frame()));
         Assert.Equal((ok.Decision, ok.NewInst, ok.NewVisit, ok.Stage, ok.OwnSlot, ok.Mode, ok.Delay, ok.Notice), (back.Decision, back.NewInst, back.NewVisit,
             back.Stage, back.OwnSlot, back.Mode, back.Delay, back.Notice));

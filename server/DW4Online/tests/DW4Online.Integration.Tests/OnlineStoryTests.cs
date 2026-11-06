@@ -283,7 +283,6 @@ public class OnlineStoryTests
         // The guest's barrier removes them (the dropped set); set anew in its next visit, 393 counts.
         await b.SendAsync(new BarrierMsg(ok.NewInst, ok.NewVisit, 0, "stagml13", 0, 1, 1, 5, [1]).Frame());
         var next = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
-        Assert.Equal([2, 392, 393], StoryKeys.FromBlob(next.Dropped).Flags);
         await b.SendAsync(new BarrierMsg(next.NewInst, next.NewVisit, 0, "stagml12", 0, 1, 1, 5, [1]).Frame());
         var again = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
         await Task.Delay(1200);
