@@ -779,6 +779,12 @@ void gear(const std::filesystem::path& data) {
     check(player.stats.mamori > before.mamori, "the core raises DEF (" + std::to_string(before.mamori) + " > " + std::to_string(player.stats.mamori) + ")");
     check(player.stats.kashikosa > before.kashikosa, "the chip raises INT");
     check(run.director->build_lines(engine).size() >= 4, "the build page lists the gear");
+    // The run log's header carries the loadout, the meta state and the Guardian keys (SURVIVAL.md 13).
+    const std::string log = run.director->log_text();
+    check(log.find("\nloadout brave_core wisdom_chip\n") != std::string::npos, "the run log's header names the loadout");
+    check(log.find("\nmeta plug_lab 0 0 0 0 0 0 0 0 0 0 0 gear_open -\n") != std::string::npos, "the run log's header names the meta state");
+    check(log.find("\nguardians 1 guardian_set - - - elite - guardian_hp 6 finale_hp 14\n") != std::string::npos, "the run log's header names the Guardian keys");
+    check(log.find("loadout none") == std::string::npos, "no fixed 'loadout none' in the header");
     std::cout << "  gear: DEF " << before.mamori << " -> " << player.stats.mamori << ", INT " << before.kashikosa << " -> " << player.stats.kashikosa << '\n';
     // Gear names in the offers: the core's next grade waits for run level 22.
     const auto beta = Offer{OfferKind::core, gear_index("brave_core")};

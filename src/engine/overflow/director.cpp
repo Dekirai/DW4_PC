@@ -1191,7 +1191,21 @@ std::string OverflowDirector::log_text() const {
     out << "DW4OVERFLOWLOG 1\n";
     out << "form " << config_.form << "\nfield " << config_.field << "\nseed " << config_.seed << "\ntier " << config_.tier << "\nbot "
         << (config_.bot.empty() ? "-" : config_.bot) << "\noffers " << (config_.offers.empty() ? "player" : config_.offers) << "\n";
-    out << "loadout none\nmeta none\n"; // (O1b: the loadout and the Plug Lab)
+    // SURVIVAL.md 13: the loadout, the meta state and the Guardian keys, so a run replays exactly.
+    const auto dash = [](const std::string& s) { return s.empty() ? std::string("-") : s; };
+    out << "loadout " << dash(config_.loadout_armor) << ' ' << dash(config_.loadout_chip) << '\n';
+    out << "meta plug_lab";
+    for (int v : config_.plug_lab) out << ' ' << v;
+    out << " gear_open";
+    if (config_.gear_open.empty()) out << " -";
+    for (const auto& g : config_.gear_open) out << ' ' << g;
+    out << '\n';
+    out << "guardians " << (config_.tuning.guardians ? 1 : 0) << " guardian_set";
+    for (const auto& g : config_.guardians) out << ' ' << dash(g);
+    out << " elite";
+    if (config_.elite.empty()) out << " -";
+    for (const auto& e : config_.elite) out << ' ' << e;
+    out << " guardian_hp " << config_.tuning.guardian_hp << " finale_hp " << config_.tuning.finale_hp << '\n';
     for (const auto& [step, text] : command_log_) out << "command " << step << ' ' << text << '\n';
     for (const auto& [step, text] : event_log_) out << "event " << step << ' ' << text << '\n';
     for (const auto& m : minutes_)

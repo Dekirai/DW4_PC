@@ -165,9 +165,13 @@ public:
         }
         config.elite = list(option(request_, "elite"));
         // The loadout and the opened gear (lanes D and F set them; tests: loadout=ARMOR,CHIP).
-        if (const auto loadout = list(option(request_, "loadout")); !loadout.empty()) {
-            config.loadout_armor = loadout[0] == "-" ? std::string() : loadout[0];
-            if (loadout.size() > 1) config.loadout_chip = loadout[1] == "-" ? std::string() : loadout[1];
+        // (positional: "loadout=,wisdom_chip" keeps the empty armor field; "-" means empty too)
+        if (const std::string text = option(request_, "loadout"); !text.empty()) {
+            const std::size_t comma = text.find(',');
+            const std::string armor = text.substr(0, comma);
+            const std::string chip = comma == std::string::npos ? std::string() : text.substr(comma + 1);
+            config.loadout_armor = armor == "-" ? std::string() : armor;
+            config.loadout_chip = chip == "-" ? std::string() : chip;
         }
         timing_ = option(request_, "timing") == "1";
         // commands=STEP KIND[VALUE],... (test runs with pictures): the menu keys
