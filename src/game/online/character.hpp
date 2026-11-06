@@ -246,6 +246,7 @@ public:
     // The uploads stopped for this room session (409 or a refused account).
     bool blocked() const { return blocked_ || auth_blocked_; }
     int revision() const { return revision_; }
+    int box() const { return box_; } // the online character's box in the card cache (0-3)
     std::uint32_t unique() const { return unique_; }
     std::int64_t play_seconds() const;
     std::uint64_t uploads() const { return uploads_; }

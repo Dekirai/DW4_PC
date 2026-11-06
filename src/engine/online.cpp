@@ -96,7 +96,7 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_CARD_B",
         // the cameras-exits test switches (game_main.cpp: rules, forks and intents of offline test runs)
         "DW4_CAMERAS", "DW4_CAM_LOCAL", "DW4_LEASH_OFF", "DW4_ONLINE", "DW4_TEST_RULES", "DW4_TEST_GATEDISC",
-        "DW4_TEST_GIVEUP",
+        "DW4_TEST_GIVEUP", "DW4_TEST_TITLE_DRIVE",
         // state tests, the randomizer's save bond of test runs and the direct netplay menus (the client lane's list)
         "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN",
         // the cloud backup panel's test login and action (F1 Saves, outside rooms only)

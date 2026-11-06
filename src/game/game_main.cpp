@@ -29,6 +29,7 @@
 #include "online_ui_script.hpp"
 #include "title_entry.hpp"
 #include "online/lobby.hpp"
+#include "online/title_driver.hpp"
 #include "online_achievements.hpp"
 #include "online/cpu_gate.hpp"
 #include "online/env_check.hpp"
@@ -1487,6 +1488,41 @@ int run(const Options& options, dw4::game::Settings& settings) {
         };
         // Keys a UI test run presses into the menus (pressed one frame, released the next).
         std::vector<int> ui_keys, ui_keys_down;
+        // Round I1a's Play (SEAMLESS.md 19.5.1, online/title_driver.hpp): the
+        // title's Game Start and the box's Call Digimon behind one loading
+        // screen, straight into the own lobby; never with an online test
+        // script (its campaign bot drives the title as before).
+        dw4::game::online::TitleDriver title_driver;
+        double welcome_at = -1; // the drive reached the lobby: "Welcome back, ..." then (GET /world asked first)
+        auto start_title_drive = [&] {
+            if (!online || online_script.active()) return;
+            dw4::game::online::TitleDriver::Config config;
+            // The card box holding the online character (none: a new account's
+            // first character, the original new-character flow).
+            if (auto* character = online->character())
+                if (const auto gci = character->card().read(); gci && dw4::save::valid_save_gci(*gci)) {
+                    for (int k = 0; k < 4 && !config.box; ++k) {
+                        const int box = (character->box() + k) % 4;
+                        if (const auto record = dw4::game::online::record_of_box(*gci, box); record && dw4::game::online::record_used(*record))
+                            config.box = box;
+                    }
+                }
+            config.difficulty = online->room().difficulty; // (--online-difficulty, development builds)
+            title_driver.start(config);
+            std::cout << "online: Play drives the title (" << (config.box ? "box " + std::to_string(*config.box) : std::string("no online character yet"))
+                      << ")\n";
+        };
+        if (online && options.online.wanted()) start_title_drive();
+#ifdef DW4_ONLINE_DEV
+        // DW4_TEST_TITLE_DRIVE=BOX (development test runs, offline): Play's
+        // title drive on this run's own title with the card's box BOX, the
+        // app's input path without a server (ctest online_title drives the
+        // engine alone).
+        const char* title_drive_test = options.smoke_frames ? std::getenv("DW4_TEST_TITLE_DRIVE") : nullptr;
+        if (title_drive_test && !online) title_driver.start({std::clamp(std::atoi(title_drive_test), 0, 3), std::nullopt, 5400});
+#else
+        constexpr const char* title_drive_test = nullptr;
+#endif
         // An old save the one-time move into saves/savedata.dat could not
         // copy (save_store.cpp): the player hears of it at once.
         for (const auto& warning : save_choice.warnings)
@@ -2056,7 +2092,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // (Data Overflow: the story steps with neutral live pads while it
             // fades out, as with the F1 menu open; its sound fades along.)
             if (overflow_switch.fading_out()) live = {};
-            view.gain = overflow_switch.gain();
+            // (Behind Play's loading screen the title is not heard either.)
+            view.gain = overflow_switch.gain() * (title_driver.covering() ? 0.0f : 1.0f);
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
@@ -2415,8 +2452,25 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // and the bots' direction presses push a centred main stick
                 // as well as setting the D-pad bit; live D-pad input and the
                 // scripts' DPAD_* never move the stick.
-                const std::uint32_t bot_bits = input & ~before_bots;
-                std::uint32_t push = scripted.pushed(frame);
+                // Play's title drive (19.5.1): behind the loading screen the own
+                // pad is the driver's alone (D-pad bits); the difficulty dialog
+                // is the player's.
+                bool driven = false;
+                if (title_driver.active() && !online && !title_drive_test) title_driver.stop(); // (the session ended: the title is the player's)
+                if (title_driver.active()) {
+                    const std::uint32_t pressed = title_driver.step(dw4::game::online::read_title(engine, own_slot()));
+                    if (!online && title_drive_test && title_driver.changed())
+                        std::printf("[%d] title drive (test run): %s (%s), %d steps, %d presses\n", frame,
+                                    dw4::game::online::title_phase_name(title_driver.phase()), title_driver.note().c_str(), title_driver.steps(),
+                                    title_driver.presses());
+                    if (title_driver.covering() || pressed) {
+                        driven = true;
+                        input = pressed;
+                        stick_x = stick_y = 0;
+                    }
+                }
+                const std::uint32_t bot_bits = driven ? 0u : input & ~before_bots;
+                std::uint32_t push = driven ? 0u : scripted.pushed(frame);
                 if (bot_bits & dw4::pad_button::up) push |= dw4::pad_direction::positive_y;
                 if (bot_bits & dw4::pad_button::down) push |= dw4::pad_direction::negative_y;
                 if (bot_bits & dw4::pad_button::left) push |= dw4::pad_direction::negative_x;
@@ -2424,7 +2478,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // The original device's sample (host_pad_sample: full
                 // deflection 72/74 main stick, 59/74 C-stick after the SDK
                 // clamp); STICK / CSTICK hold raw device values.
-                pads[0] = dw4::host_pad_sample({input, push, live[0].c_stick_directions, {stick_x, stick_y}, live[0].c_stick});
+                pads[0] = driven ? dw4::host_pad_sample({input, 0u, 0u, {0.0f, 0.0f}, {0.0f, 0.0f}})
+                                 : dw4::host_pad_sample({input, push, live[0].c_stick_directions, {stick_x, stick_y}, live[0].c_stick});
                 if (const auto stick = scripted.stick(frame)) pads[0].left = *stick;
                 if (const auto stick = scripted.stick(frame, 0, true)) pads[0].right = *stick;
                 for (std::size_t i = 1; i < 4; ++i) {
@@ -2758,6 +2813,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::cout << "online: " << notice << '\n';
                     toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
                 }
+                // Play's title drive (19.5.1): its end, and the lobby's welcome
+                // ("Welcome back, Kim. 14 players online."; the friends' count
+                // comes with round I2) once GET /world had a moment to answer.
+                if (title_driver.changed()) {
+                    using Phase = dw4::game::online::TitleDriver::Phase;
+                    std::printf("[%d] online: Play's title drive: %s (%s), %d steps, %d presses\n", frame,
+                                dw4::game::online::title_phase_name(title_driver.phase()), title_driver.note().c_str(), title_driver.steps(),
+                                title_driver.presses());
+                    std::fflush(stdout);
+                    if (title_driver.phase() == Phase::done) {
+                        if (lobby) lobby->refresh_world();
+                        welcome_at = steady_seconds() + 1.5;
+                    } else if (title_driver.phase() == Phase::gave_up) {
+                        const auto* title = engine.get<dw4::engine::Title2Manager>();
+                        if (title && title->state() == 1)
+                            toasts.push_back({"Online", "Press START to play your online character.",
+                                              std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+                    }
+                }
+                if (welcome_at >= 0 && steady_seconds() >= welcome_at) {
+                    welcome_at = -1;
+                    std::string text = "Welcome back, " + online->room().account + ".";
+                    if (lobby && lobby->world_counts())
+                        text += " " + std::to_string(lobby->world_counts()->players) + (lobby->world_counts()->players == 1 ? " player" : " players") +
+                                " online.";
+                    std::cout << "online: " << text << '\n';
+                    toasts.push_back({"Online", text, std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+                }
                 // (Round G-core: the guest's story at its Game Start, the closed call shop.)
                 for (auto& notice : online->take_notices()) {
                     std::cout << "online: " << notice << '\n';
@@ -2942,7 +3025,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         show_menu = false;
                         lobby->session_started();
                         std::cout << "online: the world session starts at the title\n";
-                        if (!title_online.active)
+                        // Play goes straight into the own lobby (19.5.1).
+                        start_title_drive();
+                        if (!title_driver.active() && !title_online.active)
                             toasts.push_back({"Online", "Press START to play your online character.",
                                               std::chrono::steady_clock::now() + std::chrono::seconds(6)});
                     } else {
@@ -3877,6 +3962,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 std::to_string(int(session.delay() * dw4::engine::kFieldSeconds * 1000.0 + 0.5)) + " ms)";
                     ImGui::TextColored(colour, "%s", text.c_str());
                     ImGui::End();
+                }
+                // Play's loading screen (19.5.1): the title's Game Start and the
+                // box's Call Digimon run behind it (the F1 menu and the toasts
+                // stay above it).
+                if (title_driver.covering()) {
+                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                    auto* backdrop = ImGui::GetBackgroundDrawList();
+                    backdrop->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
+                    const char* entering = "Entering the server...";
+                    const ImVec2 size = ImGui::CalcTextSize(entering);
+                    backdrop->AddText(ImVec2((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f), IM_COL32(230, 230, 230, 255), entering);
                 }
                 // Achievement notices, top right.
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
