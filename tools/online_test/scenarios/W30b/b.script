@@ -1,13 +1,22 @@
-# W30b, b (k10, last Security Gate dng205b2): the lobby's return mat puts it on dng205b2, where a's instance never was: a NEW
-# of its own (I1a; I1b shows a's row greyed "Story not here yet"); home again, and after a reached dng205b2 the next
-# arrival there joins a without leaving a's story.
+# W30b, b (k10). First, with nothing running, its own trip to dng205b2, where its gate disc takes it home and sets its
+# return mat (GATESTAGE) to dng205b2. Then, while a's Dry Land instance has never been at dng205b2, the lobby's return
+# mat puts b there: a NEW of its own (I1a; I1b shows a's row greyed "Story not here yet"); home again, and after a reached
+# dng205b2 the next arrival there joins a without leaving a's story.
 campaign until stage=stagml11,control
-idle until epoch>=@200
+idle until epoch>=@40
+gate mate00 1 until stage=stag0201,control
+explore matz00 yes until stage=stag0202,control
+explore matz01 yes until stage=dng205b1,control
+explore matz01 yes until stage=dng205b2,control
+log b set its return mat
+disk 8 until stage=stagml11,control fail epoch>=@350
+log b home before a hosts
+idle until epoch>=@480
 explore mate02 yes until stage=dng205b2,control
 log b alone on dng205b2
 idle until frames>=300 fail present>=2
 disk 8 until stage=stagml11,control
-idle until epoch>=@320
+idle until epoch>=@700
 explore mate02 yes until stage=dng205b2,control
-wander 0 0 30 until present=2,sealed>=600 fail epoch>=@620
+wander 0 0 30 until present=2,sealed>=600 fail epoch>=@1000
 log b joined a on dng205b2

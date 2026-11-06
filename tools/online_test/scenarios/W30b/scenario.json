@@ -1,10 +1,10 @@
 {
-  "desc": "the visited rule (I1a part): b arrives by the return mat at dng205b2, which a's instance never visited: a NEW of its own; later it joins a there",
+  "desc": "the visited rule (I1a part): b, its return mat set to dng205b2 by its own earlier trip, arrives there while a's Dry Land instance never was: a NEW of its own; later it joins a there",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
   "frames": 60000,
-  "timeout": 1400,
+  "timeout": 1500,
   "min_shared_ticks": 0,
   "clients": [
     {
