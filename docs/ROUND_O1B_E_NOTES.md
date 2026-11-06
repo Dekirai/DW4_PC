@@ -182,3 +182,78 @@ HP for Guilmon's Fang Thrust (one big target), then the kite bot's clear rate ag
   form list and the driver's request keys).
 - **The user's run** decides the finale's HP (x 14) and the late contact (section 5): the bots model a newcomer
   and a kiting player, not him.
+
+## 9. Appendix: the measurement scripts (build/ is not in git)
+
+`build/f/jobs.sh` (one queue, at most four game processes):
+
+```bash
+#!/bin/bash
+# o1b-content: jobs.sh EXE NAME JOBFILE -- each line "TAG FORM SEED KEY=VALUE..." one headless run, ONE queue,
+# at most 4 game processes at once (nice -n 10); files in build/f/runs_NAME/<kind>_<TAG>_<FORM>_<SEED>.txt.
+export PATH=/usr/bin:/mingw64/bin:/c/Windows/System32:/c/Windows:$PATH
+exe=$1 name=$2 jobs=$3
+R=/c/Users/shinz/source/repos/DW4_PC-wt/o1b-content/build/f/runs_$name
+mkdir -p $R/cards
+DATA="E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted"
+run() {
+  local tag=$1 form=$2 seed=$3; shift 3
+  local C=$R/cards/${tag}_${form}_$seed; mkdir -p "$C/Card A" "$C/Card B"
+  DW4_NO_ERROR_BOX=1 nice -n 10 "$exe" --data "$DATA" --smoke-test 100000 --card-dir "$(cygpath -w $C)" \
+    --overflow-run form=$form field=stagbs02 tier=normal seed=$seed "$@" \
+    summary="$(cygpath -w $R/sum_${tag}_${form}_$seed.txt)" log="$(cygpath -w $R/log_${tag}_${form}_$seed.txt)" > $R/out_${tag}_${form}_$seed.txt 2>&1
+}
+n=0
+while read -r line; do
+  [ -z "$line" ] && continue
+  run $line &
+  n=$((n+1)); if [ $n -ge 4 ]; then wait -n; n=$((n-1)); fi
+done < $jobs
+wait
+echo done $name
+```
+
+`build/f/eval_e.py`:
+
+```python
+# o1b-content: eval_e.py DIR [DIR...] -- per tag/form/seed group: survival (a clear counts at its time), the targets
+# of SURVIVAL.md 14.2 and OVERFLOW_DIRECTOR.md 11.6, the Guardians, the early deaths' largest damage sources.
+import sys, os, re, statistics, collections
+def mmss(s): return "%d:%02d" % (int(s)//60, int(s)%60)
+runs = collections.defaultdict(list)
+for d in sys.argv[1:]:
+    for name in sorted(os.listdir(d)):
+        m = re.match(r'sum_(\w+?)_(p_\w+)_(\d+)\.txt$', name)
+        if not m: continue
+        tag, form, seed = m.group(1), m.group(2), int(m.group(3))
+        kv = {}; taken = collections.Counter(); gdef = []
+        for line in open(os.path.join(d, name), encoding='utf-8', errors='replace'):
+            parts = line.split()
+            if not parts: continue
+            if parts[0] == 'taken_by' and len(parts) >= 4: taken[(int(parts[1]), parts[2])] += float(parts[3])
+            elif parts[0] == 'guardians_defeated': gdef = parts[2:]
+            elif len(parts) >= 2 and parts[0] not in kv: kv[parts[0]] = parts[1]
+        grp = 'a' if seed <= 20 else 'b' if seed <= 120 else 'c' if seed <= 220 else 'd'
+        runs[(tag, form, grp)].append(dict(seed=seed, end=kv.get('end'), s=float(kv.get('run_seconds', 0)), level=kv.get('level'),
+            hit=float(kv.get('highest_hit_share', 0)), first=float(kv.get('first_level_up_s', -1)), gdef=gdef, taken=taken,
+            awake=kv.get('awakened'), clamps=kv.get('clamps', '0'), lua=kv.get('lua_errors', '0'), noctl=kv.get('no_control_share', '-')))
+for key in sorted(runs):
+    rs = sorted(runs[key], key=lambda r: r['s'])
+    t = [r['s'] for r in rs]
+    clears = sum(r['end'] == 'cleared' for r in rs); tu = sum(r['end'] == 'time_up' for r in rs)
+    reach22 = sum(r['s'] >= 1320 or r['end'] == 'cleared' for r in rs)
+    deaths = sorted(r['s'] for r in rs if r['end'] == 'defeated')
+    win = max((sum(1 for x in deaths if a <= x < a + 120) for a in deaths), default=0)
+    print("== %s %s seeds %s: %d runs  median %s (%s-%s)  before 3:00 %d  before 10:00 %d  reach 22:00 %d  cleared %d  time_up %d  most deaths in 2 min %d" % (
+        key[0], key[1], key[2], len(rs), mmss(statistics.median(t)), mmss(t[0]), mmss(t[-1]), sum(x < 180 for x in t), sum(x < 600 for x in t),
+        reach22, clears, tu, win))
+    print("   highest hit %.1f %%  first level-up max %.1f s  awakened %d/%d  Guardians defeated (median) %s  lua errors %s" % (
+        100 * max(r['hit'] for r in rs), max(r['first'] for r in rs), sum(r['awake'] == '1' for r in rs), len(rs),
+        statistics.median(len(r['gdef']) for r in rs), sum(int(r['lua']) for r in rs if r['lua'].isdigit())))
+    for r in rs:
+        if r['s'] < 600 and r['end'] == 'defeated':
+            top = ', '.join('%s %d %.2f' % (f, p, v) for (p, f), v in r['taken'].most_common(3))
+            print("   early: seed %d %s Lv %s; most taken: %s" % (r['seed'], mmss(r['s']), r['level'], top))
+```
+
+`build/bld.sh DIR ON x [target]` calls `build/bld.cmd` (work/port-research/build_clean.cmd with its own build dir `build/rel`, Ninja, MSVC 18 Insiders, `--parallel 5`, the FETCHCONTENT dirs of the main repo's build/Release/_deps, `-DDW4_TEST_DATA=<game data>`).
