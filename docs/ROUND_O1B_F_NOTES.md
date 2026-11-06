@@ -22,7 +22,7 @@ the repo); the parts that concern this lane are repeated here.
 | Form unlocks of 5.3 (used from O3; the story's forms as a read-only bitmask, 17.1 answer 7) and their texts | `form_unlocked`, `form_unlock_text` |
 | Sim Bits of 4.9: the run's bits x the tier (1, 1.5, 2), +500 x the tier on a clear | `run_sim_bits`, `tier_factor` |
 | The run's bits (4.7): the run drops no g_000bit yet, so the driver credits 5 % of the defeats with the original's band for the level x (100 + BITRITSU) / 100, from its own splitmix64 (seeded from the run seed). The run engine and the director's draws are untouched | `defeat_bits`, `bits_seed`; `DirectorDriver::count_bits / run_bits` |
-| The run driver: `apply_meta` puts the form's loadout, Plug Lab points and opened gear into the request (a request's own options win); `copy_meta` hands them to lane E's RunConfig fields where the build has them (requires-guards); until E's director takes `plug_lab` the host gives the run player the UPCNT once the run started; the run is recorded when the results open (or when the window closes: Retire); the O1a overlay shows "Sim Bits +N" and "NEW! <record>"; the HUD shows Bits | `src/game/overflow_driver.cpp` |
+| The run driver: `apply_meta` puts the form's loadout, Plug Lab points and opened gear into the request (a request's own options win); `copy_meta` hands the loadout and gear to lane E's RunConfig fields where the build has them (requires-guards; checked against E's headers of 5b3fa033); the Plug Lab's UPCNT is the host's alone (`give_plug_lab`, once the run started; RunConfig::plug_lab stays at zeros, so the points are given exactly once); the run is recorded when the results open (or when the window closes: Retire); the O1a overlay shows "Sim Bits +N" and "NEW! <record>"; the HUD shows Bits | `src/game/overflow_driver.cpp` |
 | Lane D's LobbyMeta from the profile (a template on D's field names), the select's start (`remember_start`), the Plug Lab row purchase | `fill_lobby_meta`, `remember_start`, `buy_plug_row` |
 | T7 (profile) | `tests/overflow_profile_tests.cpp`, ctest `overflow_profile` (778 checks) |
 
@@ -45,10 +45,11 @@ the repo); the parts that concern this lane are repeated here.
   `LobbyAction::start_run` -> `remember_start(request)` before the switch.
   D's results screen shows `meta().last_reward()` (Sim Bits, NEW! records)
   as O1a's overlay does here; D's HUD reads `run_bits(run)`.
-- **E:** apply `RunConfig::plug_lab` at the run start (UPCNT index; then the
-  host's own `give_plug_lab` switches off by itself). The Adept records need
-  a `tech_defeats()` getter (4 ints), Crate Breaker a `crates()` getter (O2):
-  the driver reads them once they exist.
+- **E:** must not apply `RunConfig::plug_lab` (F's host side does; F leaves
+  it at zeros). The Adept records need a `tech_defeats()` getter (4 ints),
+  Crate Breaker a `crates()` getter (O2): the driver reads them once they
+  exist. At the merge `overflow_driver.cpp` has E's lines next to F's in the
+  constructor and after_step (E's `loadout=` parse before F's `copy_meta`).
 - The Data Records screen's second page (per form, clears per tier) and the
   Plug Lab screen are D's; the data is all here.
 - Endless (O4) is in the format (`best_endless`, `RunReport::endless`), not
