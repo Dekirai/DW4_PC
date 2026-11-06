@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -553,6 +554,19 @@ struct LobbyMeta {
     std::vector<std::string> locked_forms;
 };
 
+// ... and the parts of D's OverflowLobby and LobbyAction the glue uses.
+struct StandLobby {
+    LobbyMeta meta_;
+    LobbyMeta& meta() { return meta_; }
+    std::function<void()> on_intro_seen;
+};
+struct StandAction {
+    enum class Kind { none, start_run, intro_seen, buy_plug, closed } kind = Kind::none;
+    ov::RunRequest request;
+    std::string form;
+    int stat = 0;
+};
+
 void lobby() {
     ov::OverflowProfile p;
     LobbyMeta fresh;
@@ -601,6 +615,38 @@ void lobby() {
     start.options["chip"] = "drain_ram";
     ov::remember_start(start);
     check(ov::meta().profile().loadout("p_girumon").chip == "pwr_medal", "an unopened chip is not kept");
+
+    // The merge's glue on stand-ins of D's OverflowLobby and LobbyAction (a file this time).
+    Folder folder;
+    const fs::path file = folder.root / "overflow.dat";
+    ov::meta().open(file);
+    StandLobby lobby;
+    ov::connect_lobby(lobby);
+    check(!lobby.meta().seen_intro && lobby.meta().sim_bits == 0 && lobby.on_intro_seen, "connected");
+    lobby.on_intro_seen();
+    check(lobby.meta().seen_intro && ov::meta().profile().seen_intro && fs::exists(file), "the first meeting is written");
+    auto with_bits = ov::meta().profile();
+    with_bits.sim_bits = 250;
+    ov::meta().replace(with_bits);
+    StandAction buy;
+    buy.kind = StandAction::Kind::buy_plug;
+    buy.form = "p_dorumon";
+    buy.stat = 1; // Def.
+    check(ov::lobby_action(lobby, buy) == ov::BuyResult::bought && lobby.meta().sim_bits == 150 && lobby.meta().plugs.at("p_dorumon")[1] == 1,
+          "buy_plug: the row bought, the lobby's meta filled again");
+    check(ov::lobby_action(lobby, buy) == ov::BuyResult::not_enough && lobby.meta().sim_bits == 150, "not enough for step 2 (200)");
+    StandAction run;
+    run.kind = StandAction::Kind::start_run;
+    run.request.form = "p_dorumon";
+    run.request.options["armor"] = "ice_board";
+    run.request.options["chip"] = "speed_chip";
+    ov::lobby_action(lobby, run);
+    ov::MetaStore back;
+    back.open(file);
+    check(back.profile().loadout("p_dorumon") == ov::Loadout{"ice_board", "speed_chip"} && back.profile().plug_steps("p_dorumon", 3) == 1 &&
+              back.profile().last_form == "p_dorumon",
+          "start_run: the loadout and choice are in the file");
+    ov::meta().open({});
 }
 
 } // namespace

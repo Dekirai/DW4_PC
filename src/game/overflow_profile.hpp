@@ -32,6 +32,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace dw4::engine {
@@ -341,6 +342,35 @@ BuyResult buy_plug_row(std::string_view model, int row);
 // chip=): the loadout and the last choice are kept for the next select (8.5:
 // written after a loadout change).
 void remember_start(const RunRequest& request);
+
+// The merge's glue for D's OverflowLobby (templates on D's names, so this
+// lane builds without D): connect_lobby once (the lobby's LobbyMeta from the
+// store, the first meeting written through on_intro_seen), lobby_action for
+// every LobbyAction the lobby returns (buy_plug buys the row, start_run keeps
+// the loadout and choice, intro_seen writes the first meeting; the meta is
+// filled again), refresh_lobby after a run came back.
+template <typename Lobby>
+void refresh_lobby(Lobby& lobby, std::uint32_t story = 0) {
+    fill_lobby_meta(meta().profile(), lobby.meta(), story);
+}
+template <typename Lobby>
+void connect_lobby(Lobby& lobby, std::uint32_t story = 0) {
+    refresh_lobby(lobby, story);
+    lobby.on_intro_seen = [&lobby] {
+        meta().mark_intro_seen();
+        lobby.meta().seen_intro = true;
+    };
+}
+template <typename Lobby, typename Action>
+BuyResult lobby_action(Lobby& lobby, const Action& action, std::uint32_t story = 0) {
+    using Kind = std::remove_cvref_t<decltype(action.kind)>;
+    BuyResult result = BuyResult::bought;
+    if (action.kind == Kind::buy_plug) result = buy_plug_row(action.form, action.stat);
+    else if (action.kind == Kind::start_run) remember_start(action.request);
+    else if (action.kind == Kind::intro_seen) meta().mark_intro_seen();
+    refresh_lobby(lobby, story);
+    return result;
+}
 // The file a program uses: DW4_OVERFLOW_PROFILE when set; none in test runs
 // (`test_run`); else <program folder>/saves/overflow.dat.
 std::filesystem::path profile_path(const std::filesystem::path& program_folder, bool test_run);
