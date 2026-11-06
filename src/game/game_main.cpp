@@ -1513,6 +1513,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             config.difficulty = online->room().difficulty; // (--online-difficulty, development builds)
             title_driver.start(config);
+            welcome_at = -1; // (an earlier session's welcome that never came: gone)
             std::cout << "online: Play drives the title (" << (config.box ? "box " + std::to_string(*config.box) : std::string("no online character yet"))
                       << ")\n";
         };
