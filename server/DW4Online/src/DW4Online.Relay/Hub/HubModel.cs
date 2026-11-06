@@ -56,6 +56,16 @@ public sealed class HubMember(uint id, long accountId, string name)
     public IReadOnlySet<long> BlockedBy { get; set; } = new HashSet<long>();
     /// <summary>The admission's handle for the live re-check (the relay calls the admission again with it).</summary>
     public object? Admission { get; set; }
+    /// <summary>The live re-checks started for this member (each one gets the next number) and the newest one applied: a result that
+    /// comes after a newer one's is dropped (19.14).</summary>
+    public long RecheckSeq { get; set; }
+    public long RecheckApplied { get; set; }
+    /// <summary>INSTANCE_OP's token bucket (<see cref="RoomHub.InstanceOpBurst"/>, refilled at one a second) and when it was refilled.</summary>
+    public double InstanceOpTokens { get; set; } = double.NaN;
+    public long InstanceOpTokensAt { get; set; }
+    /// <summary>A HOME the relay owes this member (its *Leave instance* or its removal, 19.6.4 / 19.6.6), asked again in its next stage
+    /// group of that instance when a barrier overtook it; gone at the member's DISSOLVE or the instance's end.</summary>
+    public HomeWish? HomeWish { get; set; }
     /// <summary>The instance the member has a seat in (null: home). Its stage group is <see cref="Instance"/> (null while parked,
     /// joining or continuing alone).</summary>
     public DW4Online.Relay.World.WorldInstance? World { get; set; }
@@ -303,6 +313,15 @@ public sealed class ArrivalGroup
 }
 
 public sealed record Arrival(HubMember Member, int Slot, byte[] Carry);
+
+/// <summary>A HOME owed to a member in an instance (<see cref="HubMember.HomeWish"/>): the reason, the instance, and the stage group
+/// visit it was last asked in (a barrier between the ask and the stamp drops a stage group's unstamped HOME).</summary>
+public sealed class HomeWish(HomeReason reason, uint wid)
+{
+    public HomeReason Reason { get; } = reason;
+    public uint Wid { get; } = wid;
+    public (uint Inst, uint Visit) AskedIn { get; set; }
+}
 
 /// <summary>The barrier reports of an instance's members (the first one stops the sealing).</summary>
 public sealed class BarrierCollect(uint tick, string stage, byte point, byte alive, byte present, ulong context, long firstAt)

@@ -74,8 +74,23 @@ public sealed partial class RoomHub
     /// <summary>The keeper the member's story values go to now (19.8.4): its instance host's in an instance, its own at home.</summary>
     private StoryKeeper OwnerKeeper(HubMember m) => m.World is { } w ? w.Keeper : OwnKeeper(m);
 
-    /// <summary>The owner key (member id, box) of a keeper: its owner's member id while the owner is in the world, else 0.</summary>
-    private (uint Member, byte Box) OwnerKey(StoryKeeper k) => (_byAccount.TryGetValue(k.Account, out var o) ? o.Id : 0u, (byte)k.Box);
+    /// <summary>
+    /// The owner key (member id, box) of a keeper as <paramref name="receiver"/> knows it (19.8.4): the keeper of the receiver's instance
+    /// by that instance's host's member id (the id BARRIER_OK named; the host stays with his instance until it goes, also after he
+    /// left the world), the receiver's own keeper by the receiver's id; else the owner's member id while he is in the world, else the
+    /// host of an instance that still runs on it. 0 only for a keeper nobody owns any more: a STORY_ACK then carries no story (a
+    /// client reads owner 0 as its own key, client 13:30).
+    /// </summary>
+    private (uint Member, byte Box) OwnerKey(StoryKeeper k, HubMember? receiver = null)
+    {
+        var box = (byte)k.Box;
+        if (receiver?.World is { } w && w.Keeper == k) return (w.Host.Id, box);
+        if (receiver is not null && receiver.AccountId == k.Account && receiver.Box == k.Box) return (receiver.Id, box);
+        if (_byAccount.TryGetValue(k.Account, out var o)) return (o.Id, box);
+        foreach (var x in _worlds.Values)
+            if (x.Keeper == k) return (x.Host.Id, box);
+        return (0, box);
+    }
 
     private static DateTime UtcNow => DateTime.UtcNow;
 
@@ -120,8 +135,13 @@ public sealed partial class RoomHub
         own.IdleSince = 0;
         beforeWelcome?.Invoke(m.Id);
         if (m.Peer is { } old && old != peer) old.Close(CloseReason.Replaced, "A newer connection of this account replaced this one.");
+        // Resumable only in a stage group of the member's live instance: WELCOME then names it (wid). A client whose WELCOME names
+        // no instance or another takes the local way home (19.6.10) and sends no RESUME; a slot kept for it here (an instance that
+        // is ending, a seat that went with a removal, a detached group) would stop its stage group's sealing at that way home's
+        // BARRIER.
         var resumable = m.Instance is { Ended: false } i && m.DisconnectedAt != 0 && m.Joining is null && m.Arrival is null && i.Barrier is null &&
-                        m.Slot >= 0 && i.Slots[m.Slot] == m && i.Mode != InstanceMode.Hub;
+                        m.Slot >= 0 && i.Slots[m.Slot] == m && i.Mode != InstanceMode.Hub &&
+                        m.World is { Ending: false } seat && _worlds.ContainsKey(seat.Wid) && i.World == seat;
         m.Peer = peer;
         m.DisconnectedAt = 0;
         m.LastHeard = now;
@@ -142,11 +162,12 @@ public sealed partial class RoomHub
         peer.Send(new WelcomeMsg(m.Id, inst.Id, inst.Visit, (byte)m.Slot, inst.Mode, inst.Stage,
             resumable && m.Cursor > 0 ? m.Cursor - 1 : WelcomeMsg.NoTick, (byte)(inst.Streams[m.Slot]?.Delay.Current ?? 0),
             (ushort)_inst.MaxCatchUpSeconds, flags, m.World is { Ending: false } live ? live.Wid : 0, (byte)m.Box).Frame());
-        // The own confirmed story (the title applies it at its Game Start, 19.8.2), then the instance's when the member still plays in one.
-        peer.Send(StoryAck(own, 0, []));
+        // The own confirmed story (the title applies it at its Game Start, 19.8.2), then the instance's when the member still plays in
+        // one (an ending instance's story is nobody's to play on: WELCOME names no instance then).
+        peer.Send(StoryAck(own, 0, [], receiver: m));
         if (m.World is { } world)
         {
-            peer.Send(StoryAck(world.Keeper, 0, []));
+            if (!world.Ending) peer.Send(StoryAck(world.Keeper, 0, [], receiver: m));
             if (world.Host == m && world.HostAway) HostBack(world, now);
             MarkInfoDirty(world);
         }
@@ -172,11 +193,27 @@ public sealed partial class RoomHub
     /// <summary>
     /// The live re-check (19.14): the admission ran again off the lock after IWorldNotifier.AccountChanged / PrefsChanged /
     /// FriendsChanged / BlocksChanged. Null: the account may not play any more (locked, banned, deleted, a newer session): its
-    /// connection gets CLOSE account and it leaves the world (a hosted instance ends).
+    /// connection gets CLOSE account and it leaves the world (a hosted instance ends). <paramref name="handle"/> and
+    /// <paramref name="seq"/> name the re-check (<see cref="AdmissionHandles"/>): a result for an admission the member no longer has (a
+    /// newer handshake came meanwhile) or one that a newer re-check's result overtook is dropped, a refusal included.
     /// </summary>
-    public void Readmitted(long accountId, HubAdmit? a, long now)
+    public void Readmitted(long accountId, HubAdmit? a, long now, object? handle = null, long seq = 0)
     {
         if (!_byAccount.TryGetValue(accountId, out var m)) return;
+        if (handle is not null && !Equals(m.Admission, handle))
+        {
+            Count("readmit_stale");
+            return;
+        }
+        if (seq != 0)
+        {
+            if (seq <= m.RecheckApplied)
+            {
+                Count("readmit_overtaken");
+                return;
+            }
+            m.RecheckApplied = seq;
+        }
         if (a is null)
         {
             Count("readmit_refused");
@@ -192,10 +229,17 @@ public sealed partial class RoomHub
         if (m.World is { } w) MarkInfoDirty(w);
     }
 
-    /// <summary>The members whose admission should run again for a change of <paramref name="accountId"/> (it and, for a friendship
-    /// or block, the other side when that one is online).</summary>
-    public IReadOnlyList<(long Account, object? Handle)> AdmissionHandles(params long[] accounts) =>
-        accounts.Distinct().Select(a => _byAccount.TryGetValue(a, out var m) ? (a, m.Admission) : (a, null)).Where(x => x.Item2 is not null).ToList();
+    /// <summary>The members whose admission should run again for a change of these accounts (it and, for a friendship or block, the
+    /// other side when that one is online): the admission's handle and the re-check's number (<see cref="Readmitted"/> applies the
+    /// newest only).</summary>
+    public IReadOnlyList<(long Account, object Handle, long Seq)> AdmissionHandles(params long[] accounts)
+    {
+        var list = new List<(long, object, long)>();
+        foreach (var a in accounts.Distinct())
+            if (_byAccount.TryGetValue(a, out var m) && m.Admission is { } handle)
+                list.Add((a, handle, ++m.RecheckSeq));
+        return list;
+    }
 
     /// <summary>
     /// The member leaves the world (BYE, POST /world/leave, its connection gone beyond World:MemberTimeoutSeconds, its account
@@ -212,6 +256,7 @@ public sealed partial class RoomHub
         foreach (var r in m.ChosenBy.Keys) r.Peer?.Send(GoneFigure(m));
         m.ChosenBy.Clear();
         m.Choice = PresenceChoice.Empty;
+        m.HomeWish = null;
         _members.Remove(m.Index);
         _byAccount.Remove(m.AccountId);
         m.LeftWorld = true;
@@ -255,7 +300,8 @@ public sealed partial class RoomHub
         keeper.IdleSince = 0;
         var w = new WorldInstance(NextWid())
         {
-            Host = host, Keeper = keeper, DataHash = host.DataHash, Visibility = host.DefaultVisibility, Settings = host.Settings,
+            Host = host, Keeper = keeper, DataHash = host.DataHash, Visibility = host.DefaultVisibility, LoggedVisibility = host.DefaultVisibility,
+            Settings = host.Settings,
             Area = _areas.AreaOf(stage), FirstStage = stage.ToLowerInvariant(), Context = context, CreatedAt = now, StartedUtc = UtcNow,
             StartingUntil = now + FromMs(_world.StartingSeconds * 1000.0),
         };
@@ -332,6 +378,7 @@ public sealed partial class RoomHub
     public void EndWorld(WorldInstance w, EndReason reason, long now)
     {
         if (w.Ending) return;
+        FlushVisibility(w);
         w.Ending = true;
         w.EndReason = reason;
         w.EndedAt = now;
@@ -405,7 +452,43 @@ public sealed partial class RoomHub
     /// and story owner switch at once (a modified client cannot keep writing the host's story).</summary>
     private void HomeMember(HubMember m, HomeReason reason, long now)
     {
-        if (m.Instance is { } g && m.Slot >= 0 && g.Slots[m.Slot] == m) SendHome(g, (byte)(1 << m.Slot), reason, now, 0);
+        // (The HOME is owed until the member's DISSOLVE: a barrier of its stage group before the stamp drops the group's unstamped
+        // HOME, so the member's next stage group of the instance is asked again, RetryHome.)
+        var wid = m.World?.Wid ?? m.Instance?.World?.Wid ?? 0;
+        if (wid != 0) m.HomeWish = new HomeWish(reason, wid);
+        if (m.Instance is not { } g || m.Slot < 0 || g.Slots[m.Slot] != m) return;
+        if (g.Barrier is not null)
+        {
+            Count("home_at_barrier");
+            return;
+        }
+        if (m.HomeWish is { } wish) wish.AskedIn = (g.Id, g.Visit);
+        SendHome(g, (byte)(1 << m.Slot), reason, now, 0);
+    }
+
+    /// <summary>
+    /// A HOME owed to a member (<see cref="HubMember.HomeWish"/>) whose stage group took a barrier before it was stamped (a *Leave
+    /// instance* while the group gathered at a barrier, a solo leader's JOIN_REQ home or a sealed group's HOME waiting for its sealing
+    /// when the barrier came): asked again once in each later stage group of the instance the member plays in, unless that group holds
+    /// it already. The instance's end sends everyone home anyway.
+    /// </summary>
+    private void RetryHome(HubMember m, long now)
+    {
+        if (m.HomeWish is not { } wish) return;
+        if (!_worlds.TryGetValue(wish.Wid, out var w) || w.Ending)
+        {
+            m.HomeWish = null;
+            return;
+        }
+        if (m.Instance is not { Ended: false } g || g.Mode == InstanceMode.Hub || g.World != w || m.Slot < 0 || g.Slots[m.Slot] != m ||
+            g.Barrier is not null || m.Arrival is not null || m.Joining is not null || wish.AskedIn == (g.Id, g.Visit))
+            return;
+        wish.AskedIn = (g.Id, g.Visit);
+        var bit = (byte)(1 << m.Slot);
+        if (((g.HomeStamped | (g.PendingHome?.Mask ?? 0) | (g.AskedHome?.Mask ?? 0)) & bit) != 0) return;
+        Count("home_asked_again");
+        Note("home_again", g, ("member", m.Id), ("reason", wish.Reason.ToString()), ("wid", w.Wid));
+        SendHome(g, bit, wish.Reason, now, 0);
     }
 
     // The host's grace (19.6.7) ---------------------------------------------------------------------------------------------
@@ -468,6 +551,7 @@ public sealed partial class RoomHub
                     MarkInfoDirty(w);
                 }
             }
+            if (w.VisibilityPending is { } vp && Ms(now - vp.At) >= VisibilitySettleMs) FlushVisibility(w);
             if (w.StartingUntil != 0 && (now >= w.StartingUntil || w.Groups.Any(g => g.Joinable))) w.StartingUntil = 0;
             var players = Math.Min(w.Seats.Count, Wire.MaxSlots);
             w.SeenWithPlayers[players] = now;
@@ -495,6 +579,8 @@ public sealed partial class RoomHub
             if (m.World is { HostAway: true } w && w.Host == m) limit = Math.Max(limit, Ms(w.GraceUntil - m.DisconnectedAt) + _world.MemberTimeoutMarginSeconds * 1000.0);
             if (Ms(now - m.DisconnectedAt) >= limit) LeaveWorld(m, "lost", now);
         }
+        foreach (var m in _members.Values)
+            if (m.HomeWish is not null) RetryHome(m, now);
         foreach (var (key, k) in _keepers.ToList())
             if (k.IdleSince != 0 && Ms(now - k.IdleSince) >= _world.KeeperIdleMinutes * 60_000.0 && !_byAccount.ContainsKey(key.Account) &&
                 !_worlds.Values.Any(x => x.Keeper == k))
@@ -523,8 +609,23 @@ public sealed partial class RoomHub
 
     // Instance operations (INSTANCE_OP, the admin endpoints) ----------------------------------------------------------------------
 
+    /// <summary>INSTANCE_OP a member may send at once; then one a second (19.16: a flood reaches neither the guests' toasts nor the
+    /// audit log). More are counted and dropped; INSTANCE_INFO tells the client the state that holds.</summary>
+    public const int InstanceOpBurst = 3;
+    /// <summary>A visibility change's audit row and the host's remembered default wait this long for the next change (one row for a burst).</summary>
+    public const double VisibilitySettleMs = 2000;
+
     private void OnInstanceOp(HubMember m, InstanceOpMsg msg, long now)
     {
+        m.InstanceOpTokens = double.IsNaN(m.InstanceOpTokens) ? InstanceOpBurst
+            : Math.Min(InstanceOpBurst, m.InstanceOpTokens + Ms(now - m.InstanceOpTokensAt) / 1000.0);
+        m.InstanceOpTokensAt = now;
+        if (m.InstanceOpTokens < 1)
+        {
+            Count("instance_op_throttled");
+            return;
+        }
+        m.InstanceOpTokens -= 1;
         if (m.World is not { Ending: false } w)
         {
             Count("instance_op_ignored");
@@ -562,14 +663,33 @@ public sealed partial class RoomHub
         if (w.Visibility == v) return;
         w.Visibility = v;
         Note("visibility", null, ("wid", w.Wid), ("visibility", Visibilities.Text(v)), ("by", by.Id));
-        Audit?.Invoke("instance_visibility", w.HostAccount, by.AccountId, new { wid = w.Wid, visibility = Visibilities.Text(v) });
+        // (The audit row and the remembered default are written once the choice settled, FlushVisibility.)
+        w.VisibilityPending = (by, now);
         if (by == w.Host)
         {
             by.DefaultVisibility = v;
-            RememberVisibility?.Invoke(by.AccountId, v);
+            w.HostChoicePending = v;
         }
         foreach (var x in w.Members) x.Peer?.Send(Notice(x, WorldNoticeKind.VisibilityChanged, by, (uint)v, ""));
         MarkInfoDirty(w);
+    }
+
+    /// <summary>A settled visibility change (or one at the instance's end): its audit row when the visibility differs from the last
+    /// one written, and the host's own last choice as his remembered default (Q9), both off the lock.</summary>
+    private void FlushVisibility(WorldInstance w)
+    {
+        if (w.VisibilityPending is not { } p) return;
+        w.VisibilityPending = null;
+        if (w.Visibility != w.LoggedVisibility)
+        {
+            w.LoggedVisibility = w.Visibility;
+            Audit?.Invoke("instance_visibility", w.HostAccount, p.By.AccountId, new { wid = w.Wid, visibility = Visibilities.Text(w.Visibility) });
+        }
+        if (w.HostChoicePending is { } choice)
+        {
+            w.HostChoicePending = null;
+            RememberVisibility?.Invoke(w.HostAccount, choice);
+        }
     }
 
     /// <summary>A removal (19.6.6): HOME for the member's slot, a bar of World:RemovedBarMinutes, the seat and the story owner at once.</summary>
@@ -617,7 +737,7 @@ public sealed partial class RoomHub
         if (!_keepers.TryGetValue((accountId, box), out var k)) return;
         k.Replace(story);
         Note("story_replaced", null, ("account", accountId), ("box", box), ("revision", story.Revision));
-        if (_byAccount.TryGetValue(accountId, out var m)) m.Peer?.Send(StoryAck(k, 0, []));
+        if (_byAccount.TryGetValue(accountId, out var m)) m.Peer?.Send(StoryAck(k, 0, [], receiver: m));
     }
 
     // Notices, member info, instance info ---------------------------------------------------------------------------------------
@@ -776,6 +896,13 @@ public sealed partial class RoomHub
     /// </summary>
     private void FreshJoinOrNew(ArrivalGroup g, long now)
     {
+        // The choice *New instance* (plan 0xFFFF) holds whatever came before this decision (a co-arrival hold nobody joined, a
+        // redecision after its target ended).
+        if (g.PlanNew)
+        {
+            New(g, now, BarrierNotice.None, []);
+            return;
+        }
         var rows = Candidates(g, now, out var notice, out var names);
         var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable);
         var row = starting ?? Matching.AutoJoinRow(rows);
@@ -842,9 +969,10 @@ public sealed partial class RoomHub
         return host.DataHash == g.Members[0].Member.DataHash;
     }
 
-    /// <summary>The world part of BARRIER_OK for a member arriving in an instance (19.18).</summary>
-    private BarrierWorld WorldPart(WorldInstance w, ArrivalKind arrival, StoryMode mode) =>
-        new(w.Wid, w.Host.Id, w.Visibility, arrival, w.Settings, w.SettingsHash, OwnerKey(w.Keeper).Member, (byte)w.Keeper.Box, mode);
+    /// <summary>The world part of BARRIER_OK for a member arriving in an instance (19.18): the story owner is the instance's host (his
+    /// member id also after he left the world while the instance ends).</summary>
+    private static BarrierWorld WorldPart(WorldInstance w, ArrivalKind arrival, StoryMode mode) =>
+        new(w.Wid, w.Host.Id, w.Visibility, arrival, w.Settings, w.SettingsHash, w.Host.Id, (byte)w.Keeper.Box, mode);
 
     /// <summary>A barrier inside an instance: the visited set, the area check (invariant 9, 19.30.2) and the "went to" notice.</summary>
     private void ArrivedInside(WorldInstance w, ArrivalGroup g)

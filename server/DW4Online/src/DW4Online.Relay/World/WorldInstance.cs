@@ -97,6 +97,11 @@ public sealed class WorldInstance(uint wid)
     public required StoryKeeper Keeper { get; init; }
     public required ulong DataHash { get; init; }
     public Visibility Visibility { get; set; }
+    /// <summary>The visibility the audit log last got, and a change that waits to settle before its audit row and the host's
+    /// remembered default are written (a burst of changes writes once, 19.16): who made it, when, and the host's choice if his.</summary>
+    public Visibility LoggedVisibility { get; set; }
+    public (HubMember By, long At)? VisibilityPending { get; set; }
+    public Visibility? HostChoicePending { get; set; }
     public required RoomSettings Settings { get; init; }
     public ulong SettingsHash => Settings.Hash(Wire.WorldProtocol, DataHash);
     public bool Randomizer => Settings.RandomizerActive;

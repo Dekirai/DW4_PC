@@ -347,7 +347,8 @@ public partial class HubLogicTests
         h.Barrier("a", "stag0101");
         h.Snapshot("a");
         var w = W(h, "a");
-        // M3: the barrier's alive mask 0 is the game over, whatever stage it names (here the field's own exit prompt).
+        // M3: the barrier's alive mask 0 is the game over, whatever stage it names (here the game over's own stagML11; into a field:
+        // A_hosts_barrier_with_no_living_slot_into_a_field_is_his_defeat_and_goes_home).
         BarrierWith(h, "a", "stagML11", alive: 0);
         Assert.Equal(EndReason.HostDefeated, w.EndReason);
         var g = SealedPair(out _);
@@ -491,10 +492,14 @@ public partial class HubLogicTests
         Assert.Equal(Visibility.Public, w.Visibility);
         h.Send("a", new InstanceOpMsg(InstanceOpKind.Visibility, 1).Frame());
         Assert.Equal(Visibility.Friends, w.Visibility);
-        Assert.Equal([(h.Mem("a").AccountId, Visibility.Friends)], remembered);
         Assert.Contains(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.VisibilityChanged && n.Argument == 1);
         h.Hub.Housekeep(h.Now);
         Assert.Equal(Visibility.Friends, h.P("b").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Visibility);
+        // (Remembered once the choice settled.)
+        Assert.Empty(remembered);
+        h.Advance(RoomHub.VisibilitySettleMs + 100);
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal([(h.Mem("a").AccountId, Visibility.Friends)], remembered);
     }
 
     [Fact]
@@ -558,6 +563,7 @@ public partial class HubLogicTests
         h.Hub.StaffEnd(w.Wid, 999, h.Now);
         var b2 = h.Connect("b", 1);
         Assert.Equal(0u, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Wid);
+        Assert.Equal(0, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags & WelcomeMsg.Resumable); // (review: never resumable without its instance)
         Assert.Equal(0u, b2.Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Wid);
     }
 

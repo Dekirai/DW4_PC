@@ -11463,7 +11463,9 @@ the decision stays under the lock).
   0.66 to 0.14. The lock is busy 0.8-1.9 %: **phase 1 stays**, phase 2 is
   not built. Machine: Ryzen 7 7800X3D with the other I1a lanes' builds and
   tests beside every run (not the quiet machine 19.17.4 asks for; the runs
-  spread by about a fifth).
+  spread by about a fifth). Open (19.31): the rerun on a quiet machine, and
+  the cause of the first *storm* run's 1.34 s stall (not seen again in
+  eleven *storm* runs over sockets, max 12.0-35.9 ms).
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
@@ -13160,7 +13162,14 @@ the remembered visibility off the lock). Decisions the design left open:
   and `BlocksChanged` (both sides) run the admission again off the lock with
   the member's last ticket nonce (web answers the same nonce again while it
   is the newest); a refusal closes the member (CLOSE 9) and it leaves the
-  world.
+  world. Each re-check carries the admission it ran with and a number: a
+  result for an admission the member no longer has (a newer handshake came
+  meanwhile) or one a newer re-check's result overtook is dropped, and a
+  refusal of a nonce that is no longer the account's newest (the gateway
+  remembers the newest it issued; the client fetched a ticket for its
+  reconnect) is asked again with the newest nonce and closes the member
+  only if that one is refused too (a client that keeps its old connection
+  after fetching a newer ticket does not escape a lock).
 - **The context of an instance** for an arrival without a stage group of it
   at the arrival stage is the context of the instance's first barrier (the
   dungeon floors' load-time COUNTER 2 would otherwise hide every instance
@@ -13194,7 +13203,12 @@ the remembered visibility off the lock). Decisions the design left open:
   member from a field that is not the host, and for one from the title or
   a fresh session (the local way home after a lost instance, 19.6.10).
 - **The end** (19.6.5): WELCOME and INSTANCE_INFO name no instance that is
-  ending; seats free at each member's DISSOLVE (or when it leaves the
+  ending, and a WELCOME is resumable only when it names the member's live
+  instance whose stage group still holds it (wid 0 is never resumable: the
+  client's local way home then starts from WELCOME's hub-mode stage group,
+  and a slot kept for it would stop its old stage group's sealing at that
+  way home's BARRIER; also for a member removed while its link was down);
+  seats free at each member's DISSOLVE (or when it leaves the
   world), and the instance goes when the last seat frees. A stage group
   whose leader never answers JOIN_REQ home (`Instances:JoinRequestTries`)
   is detached: nobody's instance, its next barrier a DISSOLVE home with the
@@ -13210,7 +13224,24 @@ the remembered visibility off the lock). Decisions the design left open:
   values merge; not back: END host_lost.
 - **M3**: a DISSOLVE of the host with his slot's bit clear in the barrier's
   alive mask ends his instance as host_defeated unless the member's give-up
-  INTENT was stamped in that visit (then host_left).
+  INTENT was stamped in that visit (then host_left). A barrier of the host's
+  stage group with no living present slot into a field (the exit prompt's
+  stag0101 point 2 after a HOME left him alone on matz01, 19.6.5) is his
+  defeat too: END host_defeated and a DISSOLVE redirected to stagML11
+  point 3 (his own story, merge). A guest's such barrier stays travel
+  inside the instance.
+- **A guest's HOME is owed until its DISSOLVE** (*Leave instance*, a
+  removal): a barrier of its stage group before the HOME was stamped (the
+  INTENT while the group gathers at a barrier, a solo leader's JOIN_REQ
+  home or a sealed group's HOME waiting for its sealing) drops the group's
+  unstamped HOME; the housekeeping asks it again, once in each later stage
+  group of the instance the member plays in (`home_asked_again`).
+- **INSTANCE_OP** is throttled per member (3 at once, then one a second;
+  more are dropped and counted, `instance_op_throttled`; INSTANCE_INFO
+  shows the state that holds). A visibility change's audit row
+  (`instance_visibility`, only when it differs from the last row) and the
+  host's remembered default are written once the visibility settled for
+  2 s, or at the instance's end: a burst writes one row (19.16).
 - **Staff**: the ticket role from the database at the admission, re-checked
   live; staff see every visibility but blocks and bars count for a staff
   member who plays (the override comes with I3's *Join as moderator*);
@@ -13254,6 +13285,21 @@ the remembered visibility off the lock). Decisions the design left open:
 - **The membership log** is `world_<run>.jsonl` with `wid` on every line and
   the events `instance_start`, `instance_end`, `instance_join`,
   `instance_leave`, `redirect`, `area_escape` (web's names).
+- **The handshake's refusals** (a correction of the lane contract's relay
+  13:05 entry): `ERR ticket` for every refusal of the admission (web's
+  `AdmitAsync` names no reason; `ERR banned` is not sent; web's `POST
+  /world/enter` already answers 403 `account_inactive`). WORLD_NOTICE 12
+  (*server restart in*) is not sent by the I1a relay (it comes with a
+  planned restart's announcement, 19.26 idea 7); at a stop the relay sends
+  CLOSE 8 only, its history rows say server_stop.
+- **StoryReplaced** ends an instance the account hosts on that box with
+  END `staff` whoever replaced the story: the notifier names no actor, and
+  the player's own reset runs only at the title, where he hosts nothing.
+- **"Arriving now"** (19.7.2: a running instance's stage group at its
+  barrier for S) is no row of its own in I1a: such an instance is a guest's
+  NEW at S when S is visited or its gate open (else story not here yet),
+  and the arriving group, decided inside the instance, joins that stage
+  group or plays beside it. I1b's prompt shows it as a waiting row.
 
 **Story lane.** `StoryKeeper` (Domain/Story) per (account, box), made at
 the admission from the stored story and kept in the hub's registry while
@@ -13265,7 +13311,22 @@ whatever the stage); `Hold` / `Release` for the grace; `Replacing` and
 `Replace` for `StoryReplaced`; `SetDifficulty` follows the owner's own
 difficulty while nothing plays on the story. `RoomStoryKeeper` stays in the
 tree unused (the web lane's files still name its `StoryPolicy`); the
-cleanup release deletes it with the rooms.
+cleanup release deletes it with the rooms. The owner key of a STORY_ACK is
+the key its receiver knows the keeper by (19.8.4): the keeper of the
+receiver's instance by that instance's host's member id, also after the
+host left the world while the instance ends (the host stays with his
+instance until it goes); the receiver's own keeper by its own id. A
+STORY_ACK whose keeper has no owner key carries no story (the client reads
+owner 0 as its own: the host's story must never come so), and a reconnect
+into an ending instance gets only its own story.
+
+**Open after the lane's review**: the load gate on a quiet machine before
+the deploy (both harnesses; the storm several times with a GC trace): the
+lane's runs had the other lanes beside them, and the first *storm* run
+over sockets had one stall of the relay process of 1.34 s whose cause is
+not found (it came before M4 (e); the eleven later *storm* and
+*storm-wait* runs over sockets had a sealing lateness max of 12.0-35.9 ms,
+`build/i1arelay/gate/`).
 
 ## 20. Risks
 

@@ -125,6 +125,34 @@ public class WorldRelayTests
         Assert.Equal(CloseReason.Account, close.Reason);
     }
 
+    [DbFact]
+    public async Task A_recheck_with_an_older_ticket_closes_nobody_but_a_lock_still_closes_the_member()
+    {
+        var (host, port) = await StartAsync();
+        await using var scope = host;
+        var (_, _, id) = await host.RegisterAsync("RecheckPlayer");
+        var relay = host.App.Services.GetRequiredService<IWorldRelay>();
+        var hub = host.App.Services.GetRequiredService<RelayHub>();
+        // Web's admission (19.17.3, web 12:50): only the account's newest nonce, and only an active account.
+        string? newest = null;
+        var locked = false;
+        relay.SetAdmission(a => ValueTask.FromResult(!locked && a.Nonce == newest
+            ? new WorldAdmitted(a.AccountId, "RecheckPlayer", a.Role, 1, Domain.World.OnlinePrefs.Default) : null));
+        var first = relay.IssueTicket(id, RelayRoles.Member);
+        newest = first.Nonce;
+        await using var m = await WorldMember.ConnectAsync(port, first.Ticket);
+        // The client fetched a newer ticket (its reconnect in the making) when a change runs the re-check with the old one: no CLOSE.
+        newest = relay.IssueTicket(id, RelayRoles.Member).Nonce;
+        host.App.Services.GetRequiredService<IWorldNotifier>().PrefsChanged(id);
+        await Task.Delay(1000);
+        Assert.True(hub.Locked((h, _) => h.MemberOf(id) is { Connected: true }));
+        // A lock: refused with the newest nonce too: CLOSE account.
+        locked = true;
+        host.App.Services.GetRequiredService<IWorldNotifier>().AccountChanged(id);
+        var close = CloseMsg.Parse(await m.NextAsync(Msg.Close));
+        Assert.Equal(CloseReason.Account, close.Reason);
+    }
+
     /// <summary>A raw protocol 49 member: handshake, WELCOME, the first STORY_ACK (its own story).</summary>
     private sealed class WorldMember : IAsyncDisposable
     {

@@ -182,6 +182,7 @@ public sealed partial class RoomHub
         foreach (var w in _worlds.Values.ToList())
             if (!w.Ending)
             {
+                FlushVisibility(w);
                 w.Ending = true;
                 w.EndReason = EndReason.ServerStop;
                 History?.Invoke(new HistoryEnd(w, EndReasons.Text(EndReason.ServerStop), w.PeakPlayers, UtcNow));
@@ -678,7 +679,7 @@ public sealed partial class RoomHub
             }
             Note("leave_intent", i, ("member", m.Id), ("wid", w.Wid));
             if (w.Host == m) EndWorld(w, EndReason.HostLeft, now);
-            else SendHome(i, (byte)(1 << m.Slot), HomeReason.Leave, now, 0);
+            else HomeMember(m, HomeReason.Leave, now); // (at a barrier: asked again in its next stage group, RetryHome)
             return;
         }
         if (i.Mode != InstanceMode.Sealed || !i.Sealing)
@@ -1161,6 +1162,16 @@ public sealed partial class RoomHub
             Dissolve(g, now, redirectHome: false);
             return;
         }
+        if (w is not null && g.Members.Any(a => a.Member == w.Host) && (g.Alive & PresentOf(g)) == 0 && !w.Host.GaveUp)
+        {
+            // M3 (19.6.5): a barrier with no living present slot is the host's stage group's game over whatever stage it names (after a
+            // HOME the exit prompt's names the field, stag0101 point 2), outside a give-up copy: the host was defeated; before round I3
+            // his instance ends at once, and the barrier goes home like every barrier of an ended instance.
+            Count("host_defeated_elsewhere");
+            EndWorld(w, EndReason.HostDefeated, now);
+            Dissolve(g, now, redirectHome: true);
+            return;
+        }
         if (w is not null) ArrivedInside(w, g);
         // A base that holds for announced groups takes this one as a co-arrival (one it does not wait for only where the
         // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
@@ -1204,9 +1215,16 @@ public sealed partial class RoomHub
             Note("hold_co_arrival", g.From, ("awaiting", awaited.Select(x => x.Index).ToArray()));
             return;
         }
-        if (w is null && g.PlanNew) New(g, now, BarrierNotice.None, []);
-        else if (w is null) FreshJoinOrNew(g, now);
+        if (w is null) FreshJoinOrNew(g, now);
         else JoinOrNew(g, now);
+    }
+
+    /// <summary>The arriving group's slots in the engine that reported the barrier.</summary>
+    private static byte PresentOf(ArrivalGroup g)
+    {
+        var mask = 0;
+        foreach (var a in g.Members) mask |= 1 << a.Slot;
+        return (byte)mask;
     }
 
     /// <summary>A fresh member <paramref name="x"/> may see the instance <paramref name="host"/> would make with this base group: no
@@ -1417,6 +1435,7 @@ public sealed partial class RoomHub
         {
             var m = a.Member;
             m.Arrival = null;
+            m.HomeWish = null; // (home now)
             var w = m.World;
             var isHost = w is not null && w.Host == m;
             var redirect = "";
@@ -2575,7 +2594,7 @@ public sealed partial class RoomHub
     private void OnStory(HubMember m, StoryMsg msg, long now)
     {
         var keeper = OwnerKeeper(m);
-        var (owner, box) = OwnerKey(keeper);
+        var (owner, box) = OwnerKey(keeper, m);
         Count("story");
         // A burst, then Instances:StoryMessagesPerMinute (the client sends again what the rate refused).
         var burst = Math.Max(1, _inst.StoryBurst);
@@ -2615,7 +2634,7 @@ public sealed partial class RoomHub
         if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
         NoteHeld(m, take, at);
         // (A STORY refused for the rate or the owner changed nothing: its answer carries no story.)
-        m.Peer?.Send(StoryAck(keeper, StoryAckMsg.Answer, take.Refused, withStory: !(rated || wrongOwner)));
+        m.Peer?.Send(StoryAck(keeper, StoryAckMsg.Answer, take.Refused, withStory: !(rated || wrongOwner), receiver: m));
         if (take.Changed) StoryChanged(keeper, m);
     }
 
@@ -2727,9 +2746,16 @@ public sealed partial class RoomHub
     private void StoryChanged(StoryKeeper keeper, HubMember? sender)
     {
         var story = keeper.Story;
-        var frame = StoryAck(keeper, 0, []);
+        // (One frame per owner key its receivers know the keeper by: the host's id in his instance, the owner's own at home.)
+        byte[]? frame = null;
+        uint frameKey = 0;
         foreach (var other in _members.Values)
-            if (other != sender && OwnerKeeper(other) == keeper) other.Peer?.Send(frame);
+        {
+            if (other == sender || other.Peer is null || OwnerKeeper(other) != keeper) continue;
+            var key = OwnerKey(keeper, other).Member;
+            if (frame is null || frameKey != key) (frame, frameKey) = (StoryAck(keeper, 0, [], receiver: other), key);
+            other.Peer.Send(frame);
+        }
         Note("story", null, ("account", keeper.Account), ("box", keeper.Box), ("revision", story.Revision), ("phase", StoryMerge.Phase(story)));
         // (Only counters changed since the last save: the saver writes such revisions at most once a minute, SEAMLESS.md 8.7.)
         var countersOnly = keeper.Saved is { } before && before.Flags.AsSpan().SequenceEqual(story.Flags) && before.Folder.AsSpan().SequenceEqual(story.Folder);
@@ -2737,10 +2763,16 @@ public sealed partial class RoomHub
         if (keeper.Account > 0) StorySaver?.Invoke(keeper.Account, story.Clone(), countersOnly);
     }
 
-    /// <summary>STORY_ACK of a keeper's story with its owner key.</summary>
-    private byte[] StoryAck(StoryKeeper k, byte flags, IReadOnlyList<StoryRefused> refused, bool withStory = true)
+    /// <summary>STORY_ACK of a keeper's story with its owner key as <paramref name="receiver"/> knows it; without an owner key no story
+    /// (a client reads owner 0 as its own: another's story must never come so).</summary>
+    private byte[] StoryAck(StoryKeeper k, byte flags, IReadOnlyList<StoryRefused> refused, bool withStory = true, HubMember? receiver = null)
     {
-        var (owner, box) = OwnerKey(k);
+        var (owner, box) = OwnerKey(k, receiver);
+        if (owner == 0 && withStory)
+        {
+            Count("story_ack_without_owner");
+            withStory = false;
+        }
         return new StoryAckMsg(k.Story.Revision, withStory ? k.Story.ToBlob() : [], flags, refused, owner, box).Frame();
     }
 

@@ -27,6 +27,8 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
     private readonly ILogger<WorldGateway>? _log;
     private readonly WorldHistoryQueue _queue;
     private Func<WorldAdmission, ValueTask<WorldAdmitted?>>? _check;
+    /// <summary>The newest ticket nonce issued to each account in this process (web's admission answers null for an older one).</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, string> _newestNonce = new();
 
     public WorldGateway(RelayTickets tickets, RelayOptions options, IServiceProvider services)
     {
@@ -73,8 +75,13 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
     public WorldTicket IssueTicket(long accountId, string role)
     {
         var issued = _tickets.Create(Wire.WorldChannel, accountId, role == RelayRoles.Staff ? RelayRoles.Staff : RelayRoles.Member);
+        _newestNonce[accountId] = issued.Nonce;
         return new WorldTicket(issued.Ticket, issued.Nonce, issued.Expires);
     }
+
+    /// <summary>The admission's nonce is no longer the account's newest: a newer ticket was issued (a reconnect through /world/ticket, a
+    /// Play on another PC), so a null answer for it says nothing about the account (i1a review).</summary>
+    internal bool Superseded(HubAdmission a) => _newestNonce.TryGetValue(a.AccountId, out var newest) && newest != a.Nonce;
 
     public WorldSnapshot Snapshot() => _hub?.World.CachedSnapshot ?? WorldSnapshot.Empty;
 
@@ -140,12 +147,17 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
         });
     }
 
-    /// <summary>Runs the account's admission again (off the lock) and gives the result to the hub (19.14's live re-check).</summary>
+    /// <summary>
+    /// Runs the account's admission again (off the lock) and gives the result to the hub (19.14's live re-check) with the handle and
+    /// the number it ran with: the hub drops a result for an admission the member no longer has and one a newer re-check overtook. A
+    /// refusal of a nonce that is no longer the account's newest is no refusal of the account (its client fetched a new ticket for a
+    /// reconnect; that handshake is checked on its own): it is dropped here.
+    /// </summary>
     private void Recheck(long account)
     {
         if (_hub is null) return;
         var handles = _hub.Locked((hub, _) => hub.AdmissionHandles(account));
-        foreach (var (a, handle) in handles)
+        foreach (var (a, handle, seq) in handles)
         {
             if (handle is not HubAdmission admission) continue;
             _ = Task.Run(async () =>
@@ -153,7 +165,18 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
                 try
                 {
                     var admit = await AdmitAsync(admission);
-                    lock (_hub.World.Sync) _hub.World.Readmitted(a, admit, Stopwatch.GetTimestamp());
+                    if (admit is null && _newestNonce.TryGetValue(a, out var newest) && newest != admission.Nonce)
+                    {
+                        // (Asked again with the newest nonce: refused there too, the account itself may not play: a client that
+                        // fetched a newer ticket and kept its old connection does not escape a lock.)
+                        var newer = admission with { Nonce = newest };
+                        if (await CheckAsync(newer) is not null || Superseded(newer))
+                        {
+                            _log?.LogInformation("The world's re-check of account {Account} ran with an older ticket; dropped", a);
+                            return;
+                        }
+                    }
+                    lock (_hub.World.Sync) _hub.World.Readmitted(a, admit, Stopwatch.GetTimestamp(), admission, seq);
                 }
                 catch (Exception e)
                 {
@@ -166,8 +189,7 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
     /// <summary>The admission (off the hub lock): web's check, or this gateway's own; then the account's story.</summary>
     private async ValueTask<HubAdmit?> AdmitAsync(HubAdmission a)
     {
-        var request = new WorldAdmission(a.AccountId, a.Role, a.Nonce);
-        var ok = _check is { } check ? await check(request) : await DefaultCheckAsync(request);
+        var ok = await CheckAsync(a);
         if (ok is null) return null;
         var story = _stories is not null ? await _stories.LoadAsync(a.AccountId) : new RoomStoryData();
         return new HubAdmit(a.AccountId, ok.Username)
@@ -182,6 +204,13 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
             NewSession = ok.NewSession,
             Handle = a,
         };
+    }
+
+    /// <summary>Web's admission check (or this gateway's own until web sets it), without the story.</summary>
+    private ValueTask<WorldAdmitted?> CheckAsync(HubAdmission a)
+    {
+        var request = new WorldAdmission(a.AccountId, a.Role, a.Nonce);
+        return _check is { } check ? check(request) : DefaultCheckAsync(request);
     }
 
     /// <summary>The admission before web's WorldService sets its own: the account active, its live role, its friends and blocks.</summary>
