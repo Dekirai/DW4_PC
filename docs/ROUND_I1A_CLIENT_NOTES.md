@@ -114,7 +114,18 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   ended for an engine apart from its instance, the host's countdown as a running line, the 19.5.6 texts, stale room texts,
   F1 always on Online, `--online-difficulty` only in development builds. Session tests: restart_story_key (new id = the
   host's former id, and another), restart_at_home, fallback_in_world, leave_and_end_in_world (325 checks); character test
-  own_story_follows_the_session (303 checks). Left: the counter-proofs, ctest, the DEV=ON compile, the offline proof.
+  own_story_follows_the_session (303 checks).
+- 15:20 counter-proofs: each new session test fails with its fix taken back (`build/sess_cp1.log` the key re-check off:
+  "a STORY after the restart carried the host's values (owner 9)"; `sess_cp2.log` the old fallback: "still a guest in 9's
+  instance"; `sess_cp3.log` the old leave: "the leave is kept while parked"; `sess_cp4.log` no *ended* trigger: "B took
+  the home departure itself"). Review finding "F1 opens where the player left it" rejected: `menu_tab` is a one-shot
+  request the tab bar consumes, so it is empty at every opening by the player; a tab a UI script names is kept (3e37b9e7).
+  Contract entry "client 15:15" (no wire / REST change).
+- 15:45 final offline proof on build h (3e37b9e7, the last code commit; `build/off/dw4_i1aclient_h.exe`): det.sh
+  4004f056 / 396cb219 both runs (`work/dref/checks/det/det_i1aclient_h`, `build/off/det_h.log`); r25c 10/10 reached,
+  1,748,011 frames, every save the same story (`build/off/r25c_h.log`); the save state suite 17/17 identical after
+  loading (`build/st/st_h.log`). Build g (79aaf163): det.sh 4004f056 / 396cb219 (`det_i1aclient_g`), r25c 10/10, 1,748,011
+  (`build/off/r25c_g.log`). ctest 57/57 (`build/ctest_rel10.log`); the DEV=ON build compiles (`build/bld_dev10.log`).
 
 ## Left (in order)
 
