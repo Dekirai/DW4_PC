@@ -8,7 +8,7 @@ log b joined
 wander -150 -60 20 until present=1,frames>=60
 log b left for the cave
 wander -150 -60 20 until frames>=1800
-mat matz00 yes until stage=dng101b1,control
+explore matz00 yes until stage=dng101b1,control
 log a in dng101b1
 wander 0 0 30 until present=2,sealed>=600
 log a joined b in the cave

@@ -4,7 +4,7 @@ idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control
 log b joined a
 follow 40 until sealed>=900
-mat matz00 yes until stage=dng101b1,control
+explore matz00 yes until stage=dng101b1,control
 log b in dng101b1
 idle until frames>=120 fail key:4=0
 log b on a's story in the cave
