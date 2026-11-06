@@ -51,6 +51,13 @@ struct RunScreenData {
     std::uint64_t screen_frames = 0; // frames the screen is open (the results' lines appear one by one)
 };
 
+// The HUD's build row from the director's build page (until lane E's
+// getters): the weapon after "Art: <Art> with ", the skill / cap of the
+// class line as the weapon bar, each technique line ("  Fire: Petty (...)",
+// "  Heal Lt: not learned (...)") as its element glyph or initial with its
+// rank letter (P, M, G, T, ∞).
+void build_row(const std::vector<std::string>& build_lines, RunScreenData& data);
+
 // The run's 2D items of one frame (`frame`: the presented step, blinking).
 void draw_run_screens(SimUi& ui, const RunScreenData& data, std::uint64_t frame);
 // The countdown in the quest timer's look: "m:ss" (finale_left).

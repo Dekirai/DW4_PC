@@ -324,7 +324,7 @@ private:
             const auto& stats = sys->players[0].stats;
             if (stats.next_exp > 0) d.exp_fraction = float(stats.exp) / float(stats.next_exp);
         }
-        d.weapon = director_->art_name();
+        build_row(director_->build_lines(run), d);
         d.notice = !director_->notice().empty() && director_->notice_step() + 180 > director_->steps() ? director_->notice() : std::string();
         // The finale: until lane E's finale() / finale_left_steps(), the
         // last five minutes before the run's end at 25:00 (O1a).

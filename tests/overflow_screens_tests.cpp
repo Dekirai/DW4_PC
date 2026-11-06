@@ -261,6 +261,17 @@ void test_menu() {
     run.end = ov::RunEnd::cleared;
     CHECK(ov::welcome_back(run).starts_with("Welcome back! Simulation"));
     CHECK(ov::quest_timer_text(299.2) == "5:00");
+    // The HUD's build row from the director's build page.
+    ov::RunScreenData row;
+    ov::build_row({"Art: Cleaver with Battle Hawk α", "  Blunt skill 650 / cap 1300, Forge 2 of 5", "  Fire: Mega (Blast 120 / cap 750)",
+                   "  Heal Lt: not learned (Heal 1 / cap 300)", "  Bolt: ∞ (Blast 9 / cap 9)", "Time 01:00   Level 3   Defeated 9"},
+                  row);
+    CHECK(row.weapon == "Battle Hawk α");
+    CHECK(row.weapon_fraction > 0.49f && row.weapon_fraction < 0.51f);
+    CHECK(row.techniques.size() == 3);
+    CHECK(row.techniques[0] == "⊂M" && row.learned[0]);
+    CHECK(row.techniques[1] == "H" && !row.learned[1]);
+    CHECK(row.techniques[2] == "∩∞");
     CHECK(ov::quest_timer_text(59.0) == "0:59");
 }
 

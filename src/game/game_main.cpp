@@ -3427,6 +3427,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Gameplay", nullptr, tab_flags("Gameplay"))) {
+                        // Data Overflow's Simulator Keeper in the lobby (SURVIVAL.md 3.2).
+                        if (ImGui::Checkbox("Show the simulator NPC", &settings.overflow_npc)) view.settings_changed = true;
                         // Data Overflow's dev start (SURVIVAL.md 15.1, round O1a).
                         const std::string refusal = overflow_switch.busy() ? std::string("A run is starting.")
                                                                            : dw4::game::overflow::start_refusal(engine, net.active() || net.in_lobby() || online || title_online.active);

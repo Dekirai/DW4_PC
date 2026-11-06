@@ -119,6 +119,35 @@ void draw_lines(SimUi& ui, std::string_view title, const std::vector<std::string
 }
 } // namespace
 
+void build_row(const std::vector<std::string>& lines, RunScreenData& d) {
+    d.weapon.clear();
+    d.weapon_fraction = 0;
+    d.techniques.clear();
+    d.learned.clear();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const auto& line = lines[i];
+        if (i == 0) {
+            if (const auto with = line.find(" with "); with != std::string::npos) d.weapon = line.substr(with + 6);
+            continue;
+        }
+        if (line.rfind("  ", 0) != 0) continue;
+        if (const auto skill = line.find(" skill "); skill != std::string::npos && i == 1) {
+            int value = 0, cap = 0;
+            if (std::sscanf(line.c_str() + skill + 7, "%d / cap %d", &value, &cap) == 2 && cap > 0) d.weapon_fraction = float(value) / float(cap);
+            continue;
+        }
+        const auto colon = line.find(": ");
+        if (colon == std::string::npos || colon < 3) continue;
+        const std::string name = line.substr(2, colon - 2);
+        const std::string rank = line.substr(colon + 2, line.find(" (", colon) - colon - 2);
+        std::string glyph = name == "Fire" ? "⊂" : name == "Ice" || name == "Freeze" ? "⊃" : name == "Bolt" ? "∩" : name == "Dark" ? "∪" : name.substr(0, 1);
+        const bool learned = rank != "not learned";
+        if (learned) glyph += rank == "∞" ? std::string("∞") : rank.substr(0, 1);
+        d.techniques.push_back(glyph);
+        d.learned.push_back(learned);
+    }
+}
+
 std::string quest_timer_text(double seconds_left) {
     const int whole = std::max(0, int(std::ceil(seconds_left)));
     char text[16];
