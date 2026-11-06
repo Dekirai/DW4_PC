@@ -11,7 +11,8 @@ lanes E (content) and F (meta): `DW4_PC-wt/o1b-contract.md`, the entries
 | --- | --- | --- |
 | H0: the `talk_box` port event | `include/dw4/engine/port_events.hpp` (a new kind at the end, `x/y/z` on every event), `src/engine/model_ctrl.cpp` (where the main lobby's A pushes the talk hitbox, only while port events are collected; reads the node matrix, writes nothing) | built; T1 and T2 unchanged |
 | Presentation actor core (13.6) | `src/game/presentation_actor.*`: any model of a stage package's main member (or a `_common` package) read on a worker thread from a copy of the resources, its own scene cache, clips by sequence name (SQ_WAIT, SQ_TALK), fade 0.35 s, camera fade, shadow proxy, turning to a point; the ghost figures' technique (`ghost_matrix`, `ghost_insert_points`, `ghost_camera_alpha` shared) | built; n_gekoa from stag0302 |
-| SimUi (9.1, 13.6) | `src/game/sim_ui.*`: 2D items of the 640 x 480 layer (orthographic, so the renderer keeps them 4:3 in widescreen), windows in the game's window colours (quads: the 13.6 fallback), the game font (bectext.igb NORMAL, the engine's own `layout_text`), cursor bars, bars, the talk prompt, word wrap | built |
+| SimUi (9.1, 13.6) | `src/game/sim_ui.*`: 2D items of the 640 x 480 layer (orthographic, so the renderer keeps them 4:3 in widescreen), windows in the game's window colours (quads: the 13.6 fallback), the game font (bectext.igb NORMAL, the engine's own `layout_text`), pictures (`image`), cursor bars, bars, the talk prompt, word wrap | built |
+| Face icon | `model_texture` (overflow_lobby.cpp): the texture bind of n_gekoaic's igAttrSet in stag0302's main member (the document the NPC actor loaded), drawn upright in the talk window's face frame | built (9c762731) |
 | Texts (9.7) | `src/game/overflow_text.inc` + `overflow_text.hpp/.cpp`: every string of the screens, the dialog of 3.4 word for word | built; T9 |
 | NPC rules (3.2) | `overflow_lobby.cpp` `npc_state`, `gate_open` (mate00.lua's branches: flag 409 or 2 / 4 / 5 / 6 / 86; with flag 501), offline only, 2-4 players: the crowd line, test runs hidden unless `DW4_OVERFLOW=1` (talk) / `show` (drawn, no talk), settings.ini `[overflow] npc` and F1 > Gameplay > "Show the simulator NPC" | built, unit tested |
 | Talk (3.3) | `OverflowLobby::take_events` takes `talk_box` out of the step's list before the tracker and the online client; a box of player 1 reaching the NPC's 10-unit cube opens the dialog a step later only if player 1 still has the control (no original talk took the press); port events are collected while the NPC is shown; F5 / F9 close the dialog first; the story steps with neutral pads while it is open; test runs: the input script drives the dialog | built; a hidden walk-and-talk run shows it (section 3) |
@@ -24,9 +25,10 @@ lanes E (content) and F (meta): `DW4_PC-wt/o1b-contract.md`, the entries
 
 | Test | Result |
 | --- | --- |
-| ctest | 57 / 57 (a57d98ac); commits d1089944-91945f51 failed `online` / `online_env` (the new DW4_OVERFLOW* variables were on neither list; fixed in 8c919404) |
+| ctest | 57 / 57 (a57d98ac, 9c762731); commits d1089944-91945f51 failed `online` / `online_env` (the new DW4_OVERFLOW* variables were on neither list; fixed in 8c919404) |
 | T9 | 128 strings, 0 missing glyphs (the font has 484 characters, no '/') |
-| T1 det.sh | 4004f056 / 396cb219 both runs (d1089944 and 0e38a86c) |
+| T1 det.sh | 4004f056 / 396cb219 both runs (d1089944, 0e38a86c, 9c762731) |
+| T4-like | the lobby's select, a kite run of 900 steps and back, `DW4_STATE_TEST=4600` and `=5000` (the input log spans the dialog's neutral pads and the run): "identical after loading" (800 and 400 frames) |
 | T2 r25c, NPC shown (`DW4_OVERFLOW=show`, port events collected in the lobby, H0 on) | 10 / 10 segments, 1,748,011 frames, every save "same story" (build of d1089944; `runs/seg/o1bD_show`) |
 | T2 r25c, NPC hidden | 10 / 10, 1,748,011 frames, same story (8c919404; `runs/seg/o1bD_plain`) |
 | Isolation (T3-like) | new game into the lobby, the select opened (`DW4_OVERFLOW_SCREEN=select`), A A by the script: a kite run of 1,800 steps, back, 7,000 story frames; reference: the same script without the two presses and without the NPC: 140 of 140 fingerprint lines equal (every 50 frames, `build/t3/A.log`, `B.log`) |
@@ -38,6 +40,7 @@ lanes E (content) and F (meta): `DW4_PC-wt/o1b-contract.md`, the entries
 `build/shots/` (`.bmp` full, `.png` half): `npc_4700` (the NPC by the gate),
 `walk_7650` (a real talk via H0), `talk_4700`, `choice_4250`, `help_4700`,
 `select_4700`, `e2e_4310` (Enter the simulator?), `plug_lab_4700`,
+(`talk_4250`, `choice_4250` and `help_4250` with the face icon),
 `records_4700`, `e2e_4600` (Welcome back), `run_hud_overflow_2400` (HUD with
 the build row), `run_menus_overflow_300`, `run_levelup_overflow_1100`
 (level-up and the finale timer), `run_menus_overflow_630` (pause),
@@ -55,15 +58,18 @@ Scripts (ignored `build/`): `lobby_shot.sh NAME SCREEN [1|show] [FRAMES]`,
   windows' colours (13.6's fallback, without the models' textures). Tried for
   the face icon n_gekoaic: its beAction2Info has no animation database and
   its geometry (a 64 x 64 quad) is scaled to 0 and untextured until its
-  SQ_OPENL action runs, so playing 2D models needs the engine's Action2
-  evaluation privately (not started). The face frame shows "Geko" for now.
+  SQ_OPENL action runs, so playing 2D models (and their open / close clips)
+  needs the engine's Action2 evaluation privately (not started). The face
+  icon's picture itself is drawn (its attribute set's texture, 9c762731).
 - **UI sounds** (WINDOW_OPEN / CLOSE, CURSOR_*: a second audio stream, 13.6):
   not built.
 - **Merge glue** with E and F (contract, D 16:55): F's three calls in
   game_main, E's finale / time_up getters and F's run bits and reward lines in
   `fill_screen_data`; the driver copying `armor=` / `chip=` is F's.
-- The "Beaten by a Gekomon" line needs the defeating family (RunOutcome has
-  none yet; `RunSummary::defeated_by` is ready).
+- The "Beaten by a Gekomon" line needs the defeating family: the director
+  (lane E's file) would keep the last damaging hit's `HitTaken::shooter`, the
+  driver's `RunStatus` hand it to `RunOutcome` and game_main to
+  `RunSummary::defeated_by` (ready, unit tested).
 - Director strings (offers, build and result lines) are outside T9's table;
   '/' draws as a gap.
 - T4 (F5 / F9 across a talk and a run), T5 (story files) and T8 / T11 were not
