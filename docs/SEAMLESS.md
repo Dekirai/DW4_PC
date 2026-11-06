@@ -10498,7 +10498,7 @@ a hundred requests are one toast, not two hundred seconds of them).
 | A modified host client writes into guests' stories through the mirror | the mirror copies only what the guest's own STORY of the same visit also reported (19.8.6) |
 | A removed guest's modified client keeps sending STORY | its owner switches at the removal, its stage group is detached (19.6.6) |
 | Cheated characters among strangers | the Cheats tab fix before round I1 (19.25); round D's server character later; *Report player* from round I1b |
-| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor of 47 in code, 410 on `/rooms*` (19.18) |
+| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor of the world's protocol (49 after integration r71) in code, 410 on `/rooms*` (19.18) |
 | Free text | none anywhere; quick chat (I6) uses fixed phrases; reports pick a reason from a fixed list |
 
 ### 19.17 Server
@@ -10700,12 +10700,13 @@ the decision stays under the lock).
   (the settings hash field stays and is ignored), answered `OK <memberId>
   <serverTimeMs>` or `ERR protocol | data | ticket | full | busy | banned`.
 - **The protocol floor in code.** `Play:MinimumProtocol` is a configuration
-  value (46 in `deploy/appsettings.Production.example.json`; `VersionGate`
-  compares against it), so a forgotten edit would let a 46 client past the
-  version gate to a generic 410 on `/rooms`. The world therefore refuses
-  below 47 whatever the configuration: `VersionGate` uses
-  `max(Play:MinimumProtocol, 47)` and the relay answers `ERR protocol`
-  below 47 by a constant. DEPLOY.md's step still raises the configured
+  value (48 in `deploy/appsettings.Production.example.json` after integration
+  r71; `VersionGate` compares against it), so a forgotten edit would let a 48
+  client past the version gate to a generic 410 on `/rooms`. The world
+  therefore refuses below its own protocol (19.18: 49 after integration r71)
+  whatever the configuration: `VersionGate` uses
+  `max(Play:MinimumProtocol, 49)` and the relay answers `ERR protocol`
+  below 49 by a constant. DEPLOY.md's step still raises the configured
   value (19.22 step 7), and W22 runs against the production example
   configuration.
 - **The data hash.** Today the room join compares the client's data hash
@@ -10995,7 +10996,7 @@ the decision stays under the lock).
 `StoryWhileOwnerAway`) is ignored with one log warning and removed in the
 cleanup; `Rooms:RankedDataHashes` is read as `World:RankedDataHashes` for
 one release, `Play:RequireRoom` as `Play:RequireWorld`. `Play:MinimumProtocol`
-stays, with the floor of 47 in code (19.17.3).
+stays, with the floor of 49 in code (19.17.3).
 
 **Log memory.** A sealed visit's log costs about 1.6 KB per second (four
 6-byte pads plus events per tick at 59.94 Hz), about 5.8 MB per hour;
@@ -11007,8 +11008,10 @@ joins from checkpoints only. Hub stage groups log nothing.
 
 ### 19.18 Protocol
 
-The protocol rises to **47**, or to the next free number when round I1 is
-integrated (rounds G and J raise it too); written 47 below. Message numbers
+The protocol rises to the next free number when round I1 is integrated:
+rounds G-core and J took 47 and 48 (integration r71: `kOnlineProtocol` and
+`Wire.ReadyCheckProtocol` 48), so it is **49**, or the next number again if
+another round raises it first; written 49 below. Message numbers
 follow the registry of 6.3 after round J (J holds client 0x15-0x17 and server
 0x92-0x93, 6.13.7; server 0x91 is free) and are pinned at the integration;
 golden vectors on both sides (`online_wire_tests.cpp`,
@@ -11069,7 +11072,7 @@ golden vectors on both sides (`online_wire_tests.cpp`,
   MEMBER_INFO, FRIENDS_STATE, INSTANCE_LIST, INSTANCE_INFO or PARTY_STATE;
   an undecodable OPTIONS means "nothing to choose" (NEW).
 
-**Old clients.** The server's minimum protocol is 47, as a floor in code
+**Old clients.** The server's minimum protocol is 49, as a floor in code
 whatever `Play:MinimumProtocol` says (19.17.3): the version gate shows
 "Update required" before any call, the relay answers `ERR protocol`,
 `/rooms*` answers 410 `rooms_retired`. Rooms and the world cannot run side
@@ -11189,8 +11192,9 @@ Everything runs online only.
    stays possible only at the title (stagIS*).
 7. **The user's steps** (DEPLOY.md gets them, with the HeidiSQL guide for the
    new tables and views): a database backup in HeidiSQL; in the server's
-   `appsettings.Production.json` `Play:MinimumProtocol` set to 47 (the code
-   refuses below 47 anyway, 19.17.3) and `Play:RequireRoom` renamed
+   `appsettings.Production.json` `Play:MinimumProtocol` set to the world's
+   protocol, 49 after integration r71 (the code refuses below it anyway,
+   19.17.3, 19.18) and `Play:RequireRoom` renamed
    `Play:RequireWorld`; the server release (it migrates at the start); the
    client release, both together. Rooms are gone after the update. Round
    I2's social migration (`friends`) comes earlier with its own release and
@@ -11257,7 +11261,7 @@ with 1,748,011 frames, the save state suite 17 of 17.
   host ending at once, the defeated host's return hold (I3).
 - `AccountScrubTests` (19.17.1), `WorldServiceTests` (counts, the play
   context for achievements, `StoryReplaced` with a live keeper),
-  `ProtocolFloorTests` (46 refused with `Play:MinimumProtocol` 46).
+  `ProtocolFloorTests` (48 refused with `Play:MinimumProtocol` 48).
 - `WireGoldenTests` with every new and changed message and the registry.
 - `WorldLoadTests`: the load gate of 19.17.4 with all its cells.
 
@@ -11266,7 +11270,7 @@ private MariaDB): the gate form's PLAN round trip and a PLAN without an
 answer (the press released after 1 s); the loading-screen prompt and its
 loss on a disconnect; a travel with its hold and its failure before and
 after the restore; the host's quit, give up and grace; staff join and
-audit; the 410 room endpoints; a protocol 46 refusal; the migration's data
+audit; the 410 room endpoints; a protocol 48 refusal; the migration's data
 steps (the prefs from room settings; no story copy for guest-only accounts, question 36 (b)); achievements in
 the world (*Lone Tamer*, `online_host`, a clear as host and as an in-step
 guest, none for a not-in-step guest); the story reset and restore while
@@ -11316,7 +11320,7 @@ means round I1a):
 | W19 | I1 / I2 | 35 fake presence senders plus friend f plus blocked x in stagML11: the real client draws 30, with f (I2) and never x; frame time at 144 Hz recorded |
 | W20 | I4 | a party of three takes the gate within 3 s: one instance, the leader hosts, the entry scene together; a fourth member at home follows by travel next to the leader; W20b: a member reaches the barrier 1 s before the leader: the leader's group is the base, every engine has the leader's story (the member's own phase differs in the seed) |
 | W21 | I5 | b's client is killed in a's instance and restarted: *Play* returns it next to a ("Returning to Kim's instance..."); a seat expired: home |
-| W22 | I1 | a protocol 46 client sees "Update required" with the server on the production example configuration (`Play:MinimumProtocol` 46); `/api/v1/rooms` answers 410 |
+| W22 | I1 | a protocol 48 client (the release before the world) sees "Update required" with the server on the production example configuration (`Play:MinimumProtocol` 48); `/api/v1/rooms` answers 410 |
 | W23 | I5 | the host crashes and restarts within 50 s: his slot is rejoined from a checkpoint, he stays host, the guests never left |
 | W24 | I1 | an ordered server restart with a guest b and the host a in a field: both home on their own stories, `online_card.dat` and the server revisions untouched by the foreign story |
 | W25 | I1 | the same with the server process killed (no CLOSE): the clients reconnect to the new process, find no instance and take the home departure themselves |
@@ -11438,8 +11442,9 @@ Done when W1 (the prompt), W2, W2b, W10-W10c, W11 and W11b pass, plus the
 I1a scenarios again, the regression, ctest, the server's tests and online
 off; a DW4Online release with the migration and the new protocol exists.
 The user's steps (19.22 step 7): a fresh backup in HeidiSQL,
-`Play:MinimumProtocol` 47, the server release, the client release,
-together.
+`Play:MinimumProtocol` the world's protocol (19.18: 49 after integration
+r71, never lower than the release's `kOnlineProtocol`), the server release,
+the client release, together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
 
@@ -11686,7 +11691,7 @@ Applied with this design (short notes that point here): 0, 1.1, 1.2, 2,
 entries of 19.27. When round I1 merges, the round rewrites them in full:
 the room items of 1.1 become the decisions of 19.1; the terms of 19.3 enter
 2; 3.1-3.4 read world, instance and stage group; 6.2 the world tickets and
-the per-stage-group settings hash; 6.3 the protocol 47 tables; 6.10 the
+the per-stage-group settings hash; 6.3 the world protocol's tables (49, 19.18); 6.10 the
 reconnect inside the instance; 6.11 the instance host; 8.3-8.8 the story per
 instance host and the replace at DISSOLVE (8.6 removed); 9.1.1 the binding
 per world session; 10 the home screen; 11 the instance context; 12.1 the
@@ -11709,7 +11714,7 @@ this section). Fixed in place unless marked otherwise.
 | 7 | Account deletion bypasses `ON DELETE CASCADE`; the cleanup would break it | 19.17.1: scrub statements per table, `room_members` out with the DROP; `AccountScrubTests` |
 | 8 | Story reset and restore with live keepers | 19.8.1: `StoryReplaced`; W28 |
 | 9 | The mirror carries unspaced owner deltas into foreign accounts; its order at a hub barrier | 19.8.6: only what the guest's own STORY reported; 19.8.3: STORY, merge, mirror, then the payload; W16, W16b |
-| 10 | The old-client gate depends on the configuration | 19.17.3, 19.18: a floor of 47 in code, the DEPLOY.md step; W22 on the production example |
+| 10 | The old-client gate depends on the configuration | 19.17.3, 19.18: a floor of the world's protocol (49 after integration r71) in code, the DEPLOY.md step; W22 on the production example |
 | 11 | The world's data hash is undefined | 19.17.3: `World:DataHashes`, a matching filter, "ranked" per instance |
 | 12 | A host lost at a barrier makes the guests wait | 19.6.7: decided without him, he resumes into it; W7e |
 | 13 | P7 only half met for a guest beyond 10 s | 19.15: filed at its stage, documented apart until I5, rejoined from a checkpoint in I5 |
