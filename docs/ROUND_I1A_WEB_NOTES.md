@@ -22,6 +22,34 @@ lane contract (outside the repo): `DW4_PC-wt/i1a-contract.md` (the web lane's en
 | 12 | harness: fresh server per scenario, world log per wid, `--online-play`, `DW4_ONLINE_AUTOCHOICE`, cuts, restarts (ordered via Testing:StopFile), crashes, prefs, roles, API steps / checks, db checks, counter-proofs, `requires` | done |
 | 13 | W scenarios of I1a's Done-when as files with expected results; S14/S14a/S14h/S14zb retired, S14z rewritten; ui `rooms` -> `home` | done (not runnable before the merge) |
 | 14 | tests: unit, integration, ctest, det.sh | done (numbers below) |
+| 15 | session 2: a trial merge of the three lanes in `build/i1aweb/trial` (no ref, no other worktree touched): server builds and passes, the merged DEV client builds, W scenarios run there | in progress (results below) |
+| 16 | integration fixes on web's side (VisibilityNames, worldWeb, AreaTable constants and constructor, TestHost's `overrideServices`) + `WorldDomainTests` Wire.WorldProtocol == WorldProtocol.Version (reflection) | done (a98a63e9) |
+| 17 | harness: fake world clients (`fake_presence` W19, `fake_guests` W29), `play_args` / `refused` (W22 with the protocol 48 client), `frame_times`, the `--fake` scenarios in the world, logins and uploads at 49 | done |
+| 18 | scenario fixes from the trial runs: card k4 (missing) -> k5, `upload_card` for own-story clients, W1's host stays 15 s, W12 `--online-difficulty`, field exits by `explore`, W19's count, A1 in the world | done |
+| 19 | end-to-end tools in the world: `tests/winhttp_client` (world enter, handshake 49, first_defeat, leave, 410) and `tests/e2e/relay_spike_test.py` (co-arrival from home, sealed stream, host's leave ends the instance) | done, to verify in the trial |
+| 20 | release 0.1.7 (Directory.Build.props, DEPLOY.md 9.2); migration 0013 still the next number | done |
+
+## Session 2 (2026-11-06 from 14:00): the trial merge
+
+How it is made (all inside this worktree's `build/i1aweb/trial`, gitignored; commit objects without refs):
+
+```bash
+C1=$(git commit-tree $(git merge-tree --write-tree feat-i1a-web feat-i1a-client) -p feat-i1a-web -p feat-i1a-client -m trial)
+T=$(git merge-tree --write-tree $C1 feat-i1a-relay)       # conflicts: the 4 Domain stubs (take web's), ServerApp.cs, OnlineStoryTests.cs
+git archive $T | tar -x -C build/i1aweb/trial            # then resolve as in the contract entry "web 14:20"
+cd build/i1aweb/trial/server/DW4Online && dotnet build    # + the relay tests' two edits of the contract (fakeWorld: false, tickets via WorldService)
+cmd //c build\i1aweb	rial_cpp.cmd                       # the merged DEV game (build/i1aweb/trial/build/dev/dw4_game.exe)
+```
+
+Scenarios there: copy `tools/online_test/{run.py,scenarios}` into the trial, then from the trial root
+`python tools/online_test/run.py W1 ... --no-build --parallel 2 --keep --capabilities fake_world_clients,old_client
+--old-game-exe build/i1aweb/old48/dw4_old48_dev.exe --game-exe build/i1aweb/trial/build/dev/dw4_game.exe --data "E:/Games/Emulator/
+Dolphin-x64/Games/Digimon World 4 - Extracted" --cards C:/Users/shinz/source/repos/DW4_PC/work/campaign/checkpoints/r25c
+--mysql-port 3632 --ports 57200-57399` (run.py starts and SHUTDOWNs its own mysqld on 3632: the integration tests' mysqld must
+be stopped first). The old client is a copy of int71's protocol 48 DEV build (`DW4_PC-wt/int71/build/fix/dw4_fix_dev.exe`, 0872b8f0).
+
+Findings for the other lanes (in the contract): the client's online achievements poll `/rooms/world` (410: never
+`online_host`, the host gets no story challenges) and report `online_join` at home (refused, never again).
 
 ## Test results (2026-11-06)
 
