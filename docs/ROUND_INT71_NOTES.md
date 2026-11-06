@@ -94,6 +94,47 @@ expects), M1 1,890 ms (the donor's status window open: no checkpoint in time).
 - r25c's regression and the save state suite (no game code changed in the integration beyond the three lanes'
   merged code, which ctest, det.sh and the scenarios cover).
 
+## Fix stage (the review of int-r71, 2026-11-06)
+
+Own stack: mysqld 3627 (the integration tests; run.py's own for the scenarios), ports 56800-56899 (the load gate's
+relay child 56880-56889). Logs in the worktree's `build/fix/`.
+
+| Finding (lens) | Outcome | Commit |
+| --- | --- | --- |
+| The load gate ran protocol 47 rooms; 48's check-fingerprint pass in `OnNetFp` unmeasured (merge) | fixed: `LoadGate.Protocol` = `Wire.ReadyCheckProtocol` (`--protocol`), the 48 checkpoint join checked at its check tick; the gate again at 48 and 47 in one session: NETFP hold p99 7.8-8.4 us against 3.9-4.8 us, the rest within the spread (SEAMLESS.md 19.17.4) | e779e0c3, 0872b8f0 |
+| SEAMLESS.md 19.18 / I1b / 19.22 still "MinimumProtocol 47" (merge) | fixed: the world's protocol is 49 after this integration, everywhere in 19 | 2b90dddb |
+| Traefik's `trustedIPs` holds for every site on the entry point (security, should_fix) | fixed by design: DW4Online reads Cloudflare's `CF-Connecting-IP` behind a trusted edge; Traefik keeps its default; DEPLOY.md warns against the setting | 5bccc642, 2aef18bc |
+| A browser's `X-Forwarded-Prefix` became the path base without stripPrefix (security, should_fix) | fixed: the header counts only as `Service:PathBase`; the RequireHttps redirect sends `Cache-Control: no-store` | 5bccc642 |
+| The residual risk understated; loopback and unspecified addresses taken (security) | fixed: DEPLOY.md lists the real consequences (per-IP limits, the account-wide lock, a targeted name/address lock, the records); `CF-Connecting-IP` must be one public address (no loopback, unspecified, private, CGNAT, link-local, multicast, edge) | 5bccc642, 2aef18bc |
+| `TrustedProxyNetworks` takes IPv4-mapped networks and host bits silently (security) | fixed: refused at the start, the message names the network meant | 5bccc642 |
+| The privacy page does not name Cloudflare (security) | fixed: `Web:Processors` on the privacy page, DEPLOY.md 6.2 has Cloudflare's entry | 5bccc642, 2aef18bc |
+| `FriendsChanged(a, b)` does not say who may learn of it (security, I1) | fixed: `FriendsChanged(account, other, otherSees)` | dc183083, 4f304646 |
+| The RequireHttps redirect uses the raw Host header (security, optional) | not changed: the plain HTTP endpoint listens on 127.0.0.1 only, Traefik's `Host()` rule fixes the host, a browser sends the host of the URL it opened, and the redirect is `no-store` now, so no cache can keep another client's | - |
+| Scenario timing worse in the reviewer's runs (rerun) | no code change (other load on the machine); J1, JS, JS2, JB, S3, M1 again below | - |
+| run.py terminated its mysqld right after SHUTDOWN (rerun) | fixed: the clients and the server first, then SHUTDOWN and up to 120 s waiting | f270e343 |
+| No real-client scenario for friends and blocks (rerun) | not now: the client has no friends code before round I1 | - |
+
+Each new test was checked against the old code (`build/fix/counter`, the merge's `ProxyHeaders`, `WebSetup`, privacy
+page and options with only the new header constant added): 23 of 110 `ProxyHeadersTests` (as then) and 10 of 11
+`ReverseProxyTests` fail there (`counter/srv_c_unit.log`, `counter/srv_c_int.log`).
+
+Checks after the fixes (HEAD 0872b8f0 for the code; the C++ sources are unchanged since the merges, so `build/rel` and
+`build/dev` rebuilt incrementally with nothing to do):
+
+| Check | Result | Log (`build/fix/`) |
+| --- | --- | --- |
+| ctest (Release without `DW4_ONLINE_DEV`, with tests) | 56 of 56 | `ctest_rel.log` |
+| `det.sh` (an exe copy of that build, name `int71fix`) | 4004f056 / 396cb219 in both runs | `det.log` |
+| DW4Online.Tests | 423 of 423 (`ProxyHeadersTests` 112, `SocialServiceTests` 24, `HubLogicTests` 80) | `srv_final_unit.log`, `.trx` |
+| DW4Online.Integration.Tests, one run (mysqld 3627, ports 56800-56899, WinHTTP client, `DW4ONLINE_PYTHON`) | 127 passed, 1 skipped (the certificate-store test); social (`SocialApiTests` 7, `FriendPageTests` 4, `AccountScrubTests` 3, `MigratorTests` 10), proxy (`ReverseProxyTests` 11, `PathBaseTests` 4), relay (`RelayConnectionTests` 5, `OnlineStoryTests` 8, `RoomTests` 5) and `LoadGateTests` 4 all passed; no port shortage, no second pass needed | `srv_final_int.log`, `.trx` |
+| The load gate at 48 and 47 (in-process all cells, sockets, idle-hub joins) | every run valid; SEAMLESS.md 19.17.4 | `gate/gate_r1.log`, `gate/*.json` |
+| Scenarios J1, JB, JS, JS2, M1, S3 (`--parallel 1`, the DEV build, this worktree's server) | 6 of 6 pass, 0 differing fingerprints outside JS2's injected drift; every client sealed at delay 2 with 0 dropped frames (JS2's drifting b 38, M1's b 2), backlogs 0-1 | `scen_final.log`, `tools/online_test/.work/run_20261106_120039` |
+| Joins (`join_times.py`) | J1 340 ms (checkpoint 3,609, READY 3,623 checked), JS2 307 ms, S3 324 / 305 ms; classic: JB 1,046 ms, JS 1,162 ms (`ready_mismatch` at 3,603), M1 1,831 ms | `join_times_final.txt` |
+| run.py's mysqld after the scenarios | `mysqld.err` ends with "Shutdown complete", no `.pid` left | the run folder's `mysqld.err` |
+
+The own mysqld of the integration tests stopped with SQL SHUTDOWN ("Shutdown complete"); no process of this stage is
+left running.
+
 ## Open
 
 - The release: DW4Online 0.1.6 goes on the server first (a backup before migration 0012, DEPLOY.md 8 and 9.1;
