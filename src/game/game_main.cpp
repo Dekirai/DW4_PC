@@ -2794,7 +2794,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 std::vector<dw4::game::OverheadLabels::RemotePlayer> remote;
                 for (const auto& tag : present_remote)
                     remote.push_back({tag.member, tag.name, tag.stage, {tag.x, tag.y, tag.z}, tag.species, tag.level, tag.hp, tag.max_hp, tag.mp,
-                                      tag.max_mp, tag.busy});
+                                      tag.max_mp, tag.busy, session.member_flags(std::uint32_t(tag.member))});
                 labels.set_remote_players(std::move(remote));
                 // The audio device follows the simulation's pace (6.4).
                 if (audio) {
@@ -3816,6 +3816,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                         ImGui::TextUnformatted(line.c_str());
+                        ImGui::End();
+                    }
+                }
+                // The host's exit prompt into a hub stage (19.5.4): one more line
+                // while guests play in his instance (the exit port's prompt of a
+                // stage group of two or more names its destination).
+                if (online && online->session().is_host() && online->session().instance_players() > 1) {
+                    const auto& prompt = engine.exit_prompt();
+                    if (prompt.active && prompt.owner == engine.view_slot() && prompt.asking == prompt.owner &&
+                        dw4::game::online::is_hub_stage(prompt.stage)) {
+                        const ImVec2 display = ImGui::GetIO().DisplaySize;
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 96), ImGuiCond_Always, ImVec2(0.5f, 1));
+                        ImGui::SetNextWindowBgAlpha(0.6f);
+                        ImGui::Begin("##host_exit", nullptr,
+                                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                        ImGui::TextUnformatted("Your guests will return to their lobbies.");
                         ImGui::End();
                     }
                 }

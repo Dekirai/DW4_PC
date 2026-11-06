@@ -904,7 +904,8 @@ void Session::arrival_toast() {
     case w::Arrival::guest_new: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
     default: return;
     }
-    if (arrival != w::Arrival::new_instance)
+    // (The co-arrival's toast names the guest's story already.)
+    if (arrival != w::Arrival::new_instance && arrival != w::Arrival::co_arrival)
         notice("You're a guest in " + host + "'s story" + (instance_->story_label.empty() ? std::string() : " (" + instance_->story_label + ")") +
                ". Your level, items and Digimon stay yours.");
 }

@@ -185,6 +185,10 @@ struct OverheadLabel {
     // member is in its own window or scene ("Kim is in the menu",
     // docs/SEAMLESS.md 5.3); empty otherwise.
     std::string note;
+    // Round I1a (19.5.2): a remote player's relation flags (wire::MemberInfo:
+    // 1 friend, 2 party, 4 staff tag): the name's colour (party green, friend
+    // blue, staff gold, else white).
+    std::uint8_t relation{};
 };
 
 class OverheadLabels {
@@ -198,6 +202,7 @@ public:
         int species{};
         int level{}, hp{}, max_hp{}, mp{}, max_mp{};
         bool busy{}; // a status / shop window is open: counted, but no tag
+        std::uint8_t relation{}; // round I1a: 1 friend, 2 party, 4 staff tag (the name's colour)
     };
     void set_remote_players(std::vector<RemotePlayer> players) { remote_ = std::move(players); }
     const std::vector<RemotePlayer>& remote_players() const { return remote_; }

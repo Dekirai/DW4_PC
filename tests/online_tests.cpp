@@ -1479,7 +1479,92 @@ void own_gifts(const std::filesystem::path& data) {
           "own gifts: the partner's folder takes one, the other gift finds it full (36, nothing lost)");
 }
 
+// Round I1a (19.6.5, 19.6.10) with the game data: HOME for slot 1 of a
+// stage group of two in stag0101 at frame 1300, on the stayer's copy, the
+// leaver's copy and an observer that replays with the recorded fork side:
+// the stayer and the observer stay equal, the leaver takes the home
+// departure to stagML11 point 3; a solo engine's local way home goes the
+// same way.
+struct HomeRun {
+    std::map<std::uint64_t, std::uint64_t> fingerprints;
+    std::optional<SplitResult> split;
+    std::string pending;
+    int point = -1;
+    std::uint8_t present_after{};
+    bool departed = false;
+};
+
+HomeRun run_home(const std::filesystem::path& data, int identity, std::uint8_t present, std::uint8_t mask, const std::vector<ForkSide>& sides,
+                 bool local = false) {
+    HomeRun r;
+    Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_online_tests_cards");
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    const char* species[2] = {"p_agumon", "p_dorumon"};
+    for (int s = 0; s < 2; ++s)
+        if (present & (1u << s)) {
+            sys->players[std::size_t(s)].joined = true;
+            sys->players[std::size_t(s)].digimon = species[s];
+        }
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = present;
+    engine.set_online(rules);
+    engine.set_split_identity(identity);
+    engine.set_view_slot(std::max(identity, 0));
+    if (!sides.empty()) engine.set_fork_sides(sides);
+    engine.request_stage("stag0101");
+    bool homed = false;
+    for (int i = 0; i < 3200; ++i) {
+        if (!homed && engine.frame() >= 1300 && engine.membership_safe()) {
+            homed = true;
+            r.departed = local ? engine.online_depart_home() : engine.online_home(mask);
+            r.split = engine.take_split();
+        }
+        host_step(engine, pads_at(engine.frame()), nullptr);
+        if (homed && !r.split)
+            if (auto split = engine.take_split()) r.split = split;
+        r.fingerprints[engine.frame()] = engine.net_fingerprint();
+        if (homed && engine.pending_stage() && r.pending.empty()) {
+            r.pending = std::string(*engine.pending_stage());
+            r.point = engine.get<PlayerPointManager>()->point_no();
+            break;
+        }
+    }
+    r.present_after = engine.online().present;
+    engine.set_online(OnlineRules{});
+    return r;
+}
+
+void home_with_data(const std::filesystem::path& data) {
+    const auto stayer = run_home(data, 0, 0b0011, 0b0010, {});
+    check(!stayer.departed && stayer.split && stayer.split->child == 0b0010 && !stayer.split->local_leaves && stayer.present_after == 0b0001 &&
+              stayer.pending.empty(),
+          "HOME(slot 1): the stayer's copy keeps slot 0 and plays on");
+    const auto leaver = run_home(data, 1, 0b0011, 0b0010, {});
+    check(leaver.departed && leaver.split && leaver.split->local_leaves && leaver.pending == "stagml11" && leaver.point == 3,
+          "HOME(slot 1): the leaver's copy takes the home departure to stagML11 point 3 (" + leaver.pending + " " + std::to_string(leaver.point) + ")");
+    // An observer (no own slot) finds the recorded side again (ForkKind::home: the give-up's frame).
+    const auto observer = run_home(data, -1, 0b0011, 0b0010, {ForkSide{stayer.split->frame + 1, 0b0010, false}});
+    std::size_t compared = 0, differ = 0;
+    for (const auto& [frame, fp] : stayer.fingerprints)
+        if (const auto it = observer.fingerprints.find(frame); it != observer.fingerprints.end()) {
+            ++compared;
+            if (it->second != fp) ++differ;
+        }
+    check(compared > 1500 && differ == 0, "the observer replays the stayer's side (" + std::to_string(compared) + " frames, " +
+                                              std::to_string(differ) + " differ)");
+    const auto all = run_home(data, 0, 0b0011, 0b0011, {});
+    check(all.departed && !all.split && all.pending == "stagml11" && all.point == 3, "HOME for every present slot: the group move, no fork");
+    const auto solo = run_home(data, 0, 0b0001, 0, {}, true);
+    check(solo.departed && solo.pending == "stagml11" && solo.point == 3, "the local way home of a solo engine (19.6.10)");
+    std::cout << "  home: stayer and observer equal over " << compared << " frames; the leaver departs to " << leaver.pending << " point "
+              << leaver.point << '\n';
+}
+
 void data_scenarios(const std::filesystem::path& data) {
+    home_with_data(data);
     // 1. dng101b1: Agumon alone, a Dorumon joins mid-stage (another species:
     // its package loads now), a Veemon joins as the third, the Dorumon leaves
     // through a fork (this copy stays), the Veemon leaves.
