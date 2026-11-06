@@ -1458,6 +1458,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
             overflow_lobby.open_test_screen(chosen);
         }
         bool overflow_resources_set = false;
+        // The select's Yes (SURVIVAL.md 9.2): the switch fades the story out
+        // and the run starts with the chosen form and loadout. Test runs add
+        // DW4_OVERFLOW_TEST_RUN's KEY=VALUE tokens (bot=, frames=, shots=,
+        // ...: a hidden run started from the lobby's screens).
+        auto overflow_lobby_action = [&](const dw4::game::overflow::LobbyAction& action, bool offline) {
+            if (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || overflow_switch.busy()) return;
+            auto request = action.request;
+            request.seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+            if (const char* keys = std::getenv("DW4_OVERFLOW_TEST_RUN"); keys && options.smoke_frames != 0) {
+                std::vector<std::string> tokens;
+                std::istringstream in(keys);
+                for (std::string token; in >> token;) tokens.push_back(token);
+                for (const auto& token : tokens) {
+                    const auto eq = token.find('=');
+                    if (eq != std::string::npos && token.substr(0, eq) == "form") tokens.clear(); // (the select chose the form)
+                }
+                std::string error;
+                if (auto extra = dw4::game::overflow::parse_run_request(tokens, error)) {
+                    request.bot = extra->bot;
+                    request.frames = extra->frames;
+                    request.shots = extra->shots;
+                    if (extra->seed != 1) request.seed = extra->seed;
+                    for (const auto& [key, value] : extra->options) request.options[key] = value;
+                }
+            }
+            if (dw4::game::overflow::start_refusal(engine, !offline).empty()) overflow_switch.request(std::move(request));
+        };
+        bool overflow_offline = true;
         bool overflow_quit_after = false;
         if (options.overflow_given) {
             std::string error;
@@ -2023,7 +2051,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 {
                     dw4::game::overflow::RunSummary back;
                     back.end = outcome.end;
-                    back.seconds = double(outcome.steps) * 1001.0 / 60000.0;
+                    back.seconds = outcome.seconds;
                     if (outcome.end != dw4::game::overflow::RunEnd::failed && outcome.end != dw4::game::overflow::RunEnd::window_closed)
                         overflow_lobby.returned(back);
                 }
@@ -2107,17 +2135,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 overflow_lobby.update(npc, own_position(),
                                       std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
-                if (overflow_lobby.dialog_open()) {
-                    const auto sample = dw4::game::live_pad_sample(live[0]);
-                    const auto action = overflow_lobby.input(pad_latch ? 0u : sample.buttons, sample.left.x, sample.left.y);
-                    live = {};
-                    if (action.kind == dw4::game::overflow::LobbyAction::Kind::start_run && !overflow_switch.busy()) {
-                        auto request = action.request;
-                        request.seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
-                        if (dw4::game::overflow::start_refusal(engine, !npc.offline).empty()) overflow_switch.request(std::move(request));
+                overflow_offline = npc.offline;
+                // (Test runs: the input script drives the dialog, per step below.)
+                if (options.smoke_frames == 0) {
+                    if (overflow_lobby.dialog_open()) {
+                        const auto sample = dw4::game::live_pad_sample(live[0]);
+                        overflow_lobby_action(overflow_lobby.input(pad_latch ? 0u : sample.buttons, sample.left.x, sample.left.y), npc.offline);
+                        live = {};
+                    } else {
+                        overflow_lobby.input(0, 0, 0);
                     }
-                } else {
-                    overflow_lobby.input(0, 0, 0);
                 }
             }
             view.gain = overflow_switch.gain();
@@ -2248,7 +2275,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // bots. stick_x / stick_y are the main stick in host units
                 // (a live analog stick or movement keys, else a bot's
                 // steering); the bots steer only while it is centred.
-                std::uint32_t input = live[0].buttons | scripted.held(frame) | (engine.frame() < ui_pad_until ? ui_pad : 0u);
+                std::uint32_t script_buttons = scripted.held(frame);
+                if (options.smoke_frames != 0 && overflow_lobby.dialog_open()) {
+                    // (A test run's script drives Data Overflow's dialog; the
+                    // story gets neutral pads meanwhile, SURVIVAL.md 3.3.)
+                    overflow_lobby_action(overflow_lobby.input(script_buttons, 0, 0), overflow_offline);
+                    script_buttons = 0;
+                } else if (options.smoke_frames != 0) {
+                    overflow_lobby.input(script_buttons, 0, 0);
+                }
+                std::uint32_t input = live[0].buttons | script_buttons | (engine.frame() < ui_pad_until ? ui_pad : 0u);
                 float stick_x = live[0].stick.x, stick_y = live[0].stick.y;
                 if (stick_x == 0 && stick_y == 0) {
                     const auto keys = live[0].stick_directions;

@@ -80,6 +80,8 @@ public:
     void text(float x, float y, std::string_view utf8, UiColor color = ui_colors::white, float size = 18.0f, int align = 0,
               float width = 0);
     float text_width(std::string_view utf8, float size = 18.0f);
+    // The text with `|` breaks at spaces so no line is wider than `width`.
+    std::string wrap(std::string_view utf8, float size, float width);
     // The ▼ prompt of a talk page (a small triangle, blinking).
     void prompt(float x, float y, std::uint64_t frame);
     void finish(std::vector<engine::DrawItem>& items, float alpha = 1.0f);

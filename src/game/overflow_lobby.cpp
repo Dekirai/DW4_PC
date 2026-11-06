@@ -118,6 +118,7 @@ void LobbyMenu::open(bool crowd, const LobbyMeta& meta, const std::optional<RunS
 void LobbyMenu::open_screen(LobbyScreen screen, const LobbyMeta& meta) {
     open(false, meta, std::nullopt);
     if (screen == LobbyScreen::talk) return;
+    to_choice();
     if (screen == LobbyScreen::help) {
         pages_.clear();
         for (const Text t : {Text::help_1, Text::help_2, Text::help_3, Text::help_4}) pages_.push_back(std::string(text(t)));

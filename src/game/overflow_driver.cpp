@@ -331,6 +331,12 @@ private:
         d.finale = d.seconds >= 20 * 60 && d.seconds < 25 * 60;
         d.finale_left = std::max(0.0, 25 * 60 - d.seconds);
         d.time_up = false;
+        // (hud_finale=SECONDS, test runs with pictures: the finale timer's
+        // look at that many seconds left; presentation only.)
+        if (const auto left = option(request_, "hud_finale"); !left.empty()) {
+            d.finale = true;
+            d.finale_left = std::strtod(left.c_str(), nullptr);
+        }
         const auto screen = director_->screen();
         if (int(screen) != int(d.screen)) d.screen_frames = 0;
         else ++d.screen_frames;

@@ -194,6 +194,29 @@ float SimUi::text_width(std::string_view utf8, float size) {
     return std::max(widest, pen) * scale;
 }
 
+std::string SimUi::wrap(std::string_view utf8, float size, float width) {
+    std::string out, line;
+    std::size_t begin = 0;
+    while (begin <= utf8.size()) {
+        const std::size_t end = std::min(utf8.find_first_of(" |", begin), utf8.size());
+        const std::string word(utf8.substr(begin, end - begin));
+        const std::string candidate = line.empty() ? word : line + " " + word;
+        if (!line.empty() && text_width(candidate, size) > width) {
+            out += line + "|";
+            line = word;
+        } else {
+            line = candidate;
+        }
+        if (end < utf8.size() && utf8[end] == '|') {
+            out += line + "|";
+            line.clear();
+        }
+        if (end >= utf8.size()) break;
+        begin = end + 1;
+    }
+    return out + line;
+}
+
 void SimUi::text(float x, float y, std::string_view utf8, UiColor color, float size, int align, float width) {
     if (!load_font() || font_->line_height <= 0 || utf8.empty()) return;
     const float scale = size / font_->line_height;

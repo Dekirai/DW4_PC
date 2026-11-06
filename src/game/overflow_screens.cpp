@@ -69,7 +69,9 @@ void draw_hud(SimUi& ui, const RunScreenData& d, std::uint64_t frame) {
 void draw_level_up(SimUi& ui, const RunScreenData& d) {
     // The quick panel list in the middle (9.4).
     const float w = 560, x = 40, row = 30;
-    const float h = 60 + row * float(d.offers.size()) + 56;
+    const std::string about = d.cursor >= 0 && d.cursor < int(d.offers.size()) ? ui.wrap(d.offers[std::size_t(d.cursor)].about, 15.0f, w - 120) : "";
+    const float about_lines = float(1 + std::count(about.begin(), about.end(), '|'));
+    const float h = 60 + row * float(d.offers.size()) + 40 + 17.0f * about_lines;
     const float y = 240 - h * 0.5f;
     ui.window(x, y, w, h);
     ui.text(x + 18, y + 12, text(Text::level_up), ui_colors::yellow, 24.0f);
@@ -84,7 +86,7 @@ void draw_level_up(SimUi& ui, const RunScreenData& d) {
     const float fy = y + 52 + row * float(d.offers.size()) + 8;
     ui.rect(x + 14, fy, w - 28, 1.5f, UiColor{0.6f, 0.75f, 1, 0.6f});
     ui.text(x + 18, fy + 10, text(Text::level_up_take), ui_colors::yellow, 16.0f);
-    if (d.cursor >= 0 && d.cursor < int(d.offers.size())) ui.text(x + 100, fy + 10, d.offers[std::size_t(d.cursor)].about, ui_colors::white, 15.0f);
+    if (!about.empty()) ui.text(x + 100, fy + 10, about, ui_colors::white, 15.0f);
 }
 
 void draw_list(SimUi& ui, std::string_view title, const std::vector<std::string>& lines, int cursor, std::string_view help) {
