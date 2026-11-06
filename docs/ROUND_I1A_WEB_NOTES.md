@@ -90,8 +90,16 @@ ended the instance early), W12 (the Hard host fell), W27 (a dead host goes along
 with data hash 1 got their own instance; achievements off), W30 / W30b / W32 (the explore bot's characters fall in Dry
 Land and in staggf04), S14p (ported), P1 (member ids), RG2 (retired with RG1 and RG10).
 
-Status of the W set (I1a's Done-when, trial merge 2): pass W1, W1x, W3, W4, W4b, W4bx, W5, W5f, W7, W7c, W11, W18, W19,
-W22, W25, W26, W28, S14z, A1; fail for the client / relay lanes W24, W7b, W7d (contract); W7e open; W30b needs a Dry Land
+Runs c3 / c4 (`scen_c3.log`, `scen_c4.log`): PASS P1, W30 (the area join at stag0201 with a's story, home on the own
+story), W30x (counter-proof), W8 (free travel into dng101b1, a joins b there), W12 (Hard / camera 1 / randomizer in the
+instance, Normal at home), S14p (505 in the host's online_story 0.8 s after the guest set it). FAIL: W29 (the fake guests
+are never candidates for a real client's instance: the FakeEngine's context hash; b's online_join held; contract web
+17:40), W27 (a host alone in its stage group falls and gives up: no game over, no host_defeated; contract web 17:45), W6
+(b was still on the way to matz00 when a's gate disc ended the instance; a's part passed), W9 and W32 (the explore bot's
+characters in the Fortress; stopped).
+
+Status of the W set (I1a's Done-when, trial merge 2): pass W1, W1x, W3, W4, W4b, W4bx, W5, W5f, W7, W7c, W8, W11, W12,
+W18, W19, W22, W25, W26, W28, W30, W30x, S14z, A1; fail for the client / relay lanes W24, W7b, W7d (contract); W7e open; W30b needs a Dry Land
 walk (`requires: dry_land_walk`); W6, W8, W9, W12, W27, W29, W30, W30x, W32 see run c3.
 
 ## Test results, session 1 (2026-11-06)
