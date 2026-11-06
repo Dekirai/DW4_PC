@@ -145,11 +145,27 @@ class Stack:
         return p
 
     def stop(self):
+        # The clients and the server first, then the mysqld: SQL SHUTDOWN, and its process waited for until it is gone. A
+        # terminate() right after SHUTDOWN cut its shutdown short (mysqld.err ended at "FTS optimize thread exiting", no
+        # "Shutdown complete", a stale .pid left): the way mysql.global_priv was damaged before (the r71 review).
+        mysqld = getattr(self, "mysqld", None)
+        for p, f in reversed(self.procs):
+            if p is not mysqld and p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
         if getattr(self, "mysql", None):
             port, pw = self.mysql
             subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root",
                             "--password=" + pw, "-e", "SHUTDOWN"], capture_output=True, creationflags=NO_WINDOW)
             self.mysql = None
+            if mysqld is not None:
+                try:
+                    mysqld.wait(120)
+                except subprocess.TimeoutExpired:
+                    print("mysqld did not shut down within 120 s after SHUTDOWN; terminated", file=sys.stderr)
         for p, f in reversed(self.procs):
             if p.poll() is None:
                 p.terminate()
@@ -221,9 +237,10 @@ def start_mysql(stack):
         subprocess.run([os.path.join(MYSQL_BIN, "mysql_install_db.exe"), "--datadir=" + data, "--port=%d" % port, "--password=" + pw, "--silent"],
                        check=True, creationflags=NO_WINDOW)
     pw = open(pw_file).read().strip()
-    stack.spawn([os.path.join(MYSQL_BIN, "mysqld.exe"), "--defaults-file=" + os.path.join(data, "my.ini"), "--bind-address=127.0.0.1",
-                 "--port=%d" % port, "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00",
-                 "--innodb-use-native-aio=0", "--log-error=" + os.path.join(stack.dir, "mysqld.err")], os.path.join(stack.dir, "mysqld.out"))
+    stack.mysqld = stack.spawn([os.path.join(MYSQL_BIN, "mysqld.exe"), "--defaults-file=" + os.path.join(data, "my.ini"),
+                                "--bind-address=127.0.0.1", "--port=%d" % port, "--character-set-server=utf8mb4",
+                                "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00", "--innodb-use-native-aio=0",
+                                "--log-error=" + os.path.join(stack.dir, "mysqld.err")], os.path.join(stack.dir, "mysqld.out"))
     if not wait_port(port, 40):
         raise RuntimeError("mysqld did not open port %d" % port)
     stack.mysql = (port, pw)
