@@ -257,7 +257,9 @@ void OverflowDirector::power_up_chips(Engine& engine) {
         const std::string name = detail::plain_name(db->text("abChip", chip.record, "NAME"));
         notice(name);
         event_log_.push_back({clock_, "chip " + name});
-        post_effect(engine, "MODELCTRL", player.digimon, 0, "i_getitempnl01", "SQ_TECUP");
+        // The panel counts in the rules' panel gap like every SQ_TECUP of the run.
+        if (rules_) rules_->show_panel(engine, 0, player.digimon);
+        else post_effect(engine, "MODELCTRL", player.digimon, 0, "i_getitempnl01", "SQ_TECUP");
         return; // (one step a call)
     }
 }

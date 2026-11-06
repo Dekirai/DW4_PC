@@ -784,6 +784,17 @@ void gear(const std::filesystem::path& data) {
     const auto beta = Offer{OfferKind::core, gear_index("brave_core")};
     check(run.director->offer_text(engine, beta) == "Brave Core β", "the core's next grade by its own name: " + run.director->offer_text(engine, beta));
     check(run.director->offer_text(engine, Offer{OfferKind::board, gear_index("armor_board")}) == "Armor Board α", "a board by its own name");
+    // Every SQ_TECUP of the run (skill ups, train offers, the chips' ¶ Data
+    // power-ups) counts in the rules' panel gap: a second panel in the same
+    // frame is left out.
+    auto& rules = *run.rules;
+    rules.last_panel_frame = -1;
+    const int shown = rules.tally.panels, skipped = rules.tally.panels_skipped;
+    const bool first = rules.show_panel(engine, 0, player.digimon);
+    const bool second = rules.show_panel(engine, 0, player.digimon);
+    check(first && !second, "a second SQ_TECUP inside the panel gap is left out");
+    check(rules.tally.panels == shown + 1 && rules.tally.panels_skipped == skipped + 1, "the panel gap's tally counts both");
+    check(rules.last_panel_frame == std::int64_t(engine.frame()), "the panel gap starts at the shown panel");
 }
 
 // Round O1b lane E: the Guardians' plan (4.4), the gear table (7, the keys of

@@ -289,6 +289,11 @@ public:
     // P2ESKILLUP replaced (true: handled).
     bool skill_up(Engine& engine, int slot, int kind, int critical);
     int technique_level(int lock) const;
+    // The skill up panel (i_getitempnl01 SQ_TECUP) over the player under the
+    // panel gap: every SQ_TECUP of the run goes through it (the skill ups,
+    // the train offers, the chips' ¶ Data power-ups; round O1b lane E).
+    // false: inside the gap, left out (tally.panels_skipped).
+    bool show_panel(Engine& engine, int slot, const std::string& digimon);
 
     // ---- H5 (forwarded to the director).
     void enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index);

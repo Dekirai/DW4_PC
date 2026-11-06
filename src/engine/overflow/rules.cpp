@@ -258,15 +258,20 @@ bool OverflowRules::skill_up(Engine& engine, int slot, int kind, int critical) {
     const bool visible = player.wazalist != techniques_before || stats.weapon_record != record_before ||
                          (!player.power_socket.empty() && player.power_socket[0] != weapon_before);
     if (!visible) return true;
+    show_panel(engine, slot, player.digimon);
+    return true;
+}
+
+bool OverflowRules::show_panel(Engine& engine, int slot, const std::string& digimon) {
     const auto frame = std::int64_t(engine.frame());
     if (last_panel_frame >= 0 && frame - last_panel_frame < skills.panel_gap) {
         ++tally.panels_skipped;
-        return true;
+        return false;
     }
     last_panel_frame = frame;
     ++tally.panels;
     // The skill up panel over the player (i_getitempnl01 SQ_TECUP), posted as the original's (80373B40).
-    post_effect(engine, "MODELCTRL", player.digimon, slot, "i_getitempnl01", "SQ_TECUP");
+    post_effect(engine, "MODELCTRL", digimon, slot, "i_getitempnl01", "SQ_TECUP");
     return true;
 }
 

@@ -576,7 +576,7 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
         skill = std::min(cap, skill + 100);
         sys->recalc_player(engine, 0);
         sys->store_species(0);
-        if (player.wazalist != before) post_effect(engine, "MODELCTRL", player.digimon, 0, "i_getitempnl01", "SQ_TECUP");
+        if (player.wazalist != before) rules_->show_panel(engine, 0, player.digimon);
         break;
     }
     case OfferKind::core:
