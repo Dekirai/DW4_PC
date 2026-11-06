@@ -628,7 +628,7 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
         }
     }
     if (partner_raised && joined >= 2 && local_player) give("raise_ally");
-    if (step.online && local_player) give("online_join");
+    if (step.online && step.joined_other && local_player) give("online_join");
     if (step.online && step.hosting && step.online_players >= 3) give("online_host");
     // Counter goals.
     for (const auto& def : kAchievements)

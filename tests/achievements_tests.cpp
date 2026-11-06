@@ -287,6 +287,17 @@ void counters_and_state() {
     session.players[1].unique = 77;
     unlocks = online.observe(session, {}, AchievementGate::open, false, 1);
     check(has(unlocks, "online_join") && has(unlocks, "online_host"), "online session");
+    {
+        // Round I1a (19.8.9): the world's client gives "Connected" only as a
+        // guest in someone else's instance, never at home.
+        AchievementTracker home;
+        auto at_home = live_step();
+        at_home.online = true;
+        at_home.joined_other = false;
+        check(!has(home.observe(at_home, {}, AchievementGate::open, false, 1), "online_join"), "at home: no online_join");
+        at_home.joined_other = true;
+        check(has(home.observe(at_home, {}, AchievementGate::open, false, 2), "online_join"), "a guest in another's instance: online_join");
+    }
     const PortEvent remote_kill[] = {{Kind::enemy_defeated, 1, 1, 0, "e_goburi"}};
     online.observe(session, remote_kill, AchievementGate::open, false, 2);
     check(online.profile().stat("kills") == 0, "another machine's kill");

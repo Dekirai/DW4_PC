@@ -163,7 +163,7 @@ void OnlineAchievements::pass(double now) {
         next_save_ = now + kSaveSeconds;
     }
     while (auto done = queue_->poll()) answer(done->first, done->second, now);
-    if (now >= next_room_ && !room_in_flight_) {
+    if (config_.room_interval > 0 && now >= next_room_ && !room_in_flight_) {
         room_in_flight_ = queue_->submit(api::room_request(config_.room_code));
         next_room_ = now + config_.room_interval;
     }

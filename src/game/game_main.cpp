@@ -495,6 +495,7 @@ std::unique_ptr<dw4::game::OnlineAchievements> make_online_achievements(dw4::gam
     // (Round I1a: the server takes the world context from the relay, 19.8.9.)
     config.room_code = "world";
     config.owner_hint = created;
+    config.room_interval = 0; // (no room to ask: the session's facts, set_world_facts)
     config.randomizer = room.settings.randomizer();
     config.protocol = int(dw4::game::kOnlineProtocol);
     config.client_version = DW4_PC_VERSION;
@@ -1565,8 +1566,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 step.online = true;
                 step.own_slot = room_slot;
                 step.shared_story = true;
-                step.story_owner = step.hosting = online_achievements && online_achievements->owner();
-                step.online_players = online_achievements ? online_achievements->room_members() : 1;
+                // Round I1a (19.8.9): the session's facts (the world has no
+                // room to ask): the story is the own at home and the host's in
+                // an instance; the instance's players; "Connected" only as a
+                // guest in someone else's instance.
+                const auto& world = online->session();
+                step.story_owner = step.hosting = !world.in_instance() || world.is_host();
+                step.online_players = std::max(1, world.instance_players());
+                step.joined_other = world.in_instance() && !world.is_host();
+                if (online_achievements) online_achievements->set_world_facts(step.story_owner, step.online_players);
             }
             if (const auto* sys = engine.get<dw4::engine::GameSystem>()) {
                 step.difficulty = sys->difficulty;
