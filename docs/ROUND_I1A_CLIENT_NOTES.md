@@ -97,8 +97,16 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
 - 14:20 "Welcome back, Kim. 14 players online, 2 friends." (GET /world and GET /friends at the lobby; web's I1a
   friend list carries the presence). ctest 57/57 (`build/ctest_rel7.log`).
 - 14:30 offline proof on build d (15b80d40, `build/off/dw4_i1aclient_d.exe`): det.sh 4004f056 / 396cb219 both runs
-  (`work/dref/checks/det/det_i1aclient_d`); r25c (`build/off/r25c_d.log`, run seg_r25c_i1aclient_d) and the save
-  state suite (`build/st/st_d.log`) see below.
+  (`work/dref/checks/det/det_i1aclient_d`); r25c 10/10 reached, 1,748,011 frames (`build/off/r25c_d.log`, run
+  seg_r25c_i1aclient_d).
+- 14:35 web's trial-merge finding (contract 14:45 / 14:55) built: the online achievements take the world's facts from the
+  session (no GET /rooms/world poll, which the world answers 410; owner = own story at home or the host; the instance's
+  players; online_join only as a guest in someone else's instance). Contract entry "client 14:40".
+- 14:50 final offline proof on build e (ce095e03, `build/off/dw4_i1aclient_e.exe`, the last code change): det.sh
+  4004f056 / 396cb219 both runs (`work/dref/checks/det/det_i1aclient_e`); r25c 10/10 reached, 1,748,011 frames, every
+  save the same story (`build/off/r25c_e.log`, run seg_r25c_i1aclient_e); the save state suite 17/17 identical after
+  loading (`build/st/st_e.log`). Build f (8cd90c31, a comment only; the exe differs from e in the 4 timestamp bytes):
+  det.sh 4004f056 / 396cb219 both runs (`det_i1aclient_f`). ctest 57/57 (`build/ctest_rel8.log`).
 
 ## Left (in order)
 

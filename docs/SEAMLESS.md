@@ -12090,6 +12090,12 @@ here).*
   `DW4_TEST_TITLE_DRIVE=BOX` (development test runs, offline, on the
   forbidden list online) drives a run's own title through the app's input
   path (k2's card from stagIS10 into stagML11 in 1,564 steps, 7 presses).
+- **Online achievements in the world (19.8.9; the web lane's trial-merge
+  finding):** no GET /rooms poll any more (the world server answers 410);
+  the story's owner is the own at home and the host in an instance, the
+  players are the instance's (`OnlineAchievements::set_world_facts`), and
+  *Connected* (`online_join`) is given only as a guest in someone else's
+  instance (`AchievementStep::joined_other`; lockstep sessions as before).
 - **Tests:** ctest 57/57 (online: the replace, the redirect, the settings
   at a restore, at a guest's NEW and at DISSOLVE, HOME without data and on
   real engines with an observer finding the side again, the local way
