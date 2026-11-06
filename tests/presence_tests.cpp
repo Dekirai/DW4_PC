@@ -645,7 +645,34 @@ int serve(const std::string& name, int seconds, const std::string& mode) {
 // The stage names the website's room page reads (data/online/areas.json).
 void area_file(const std::string& file) {
     const auto text = dw4::game::area_names_json();
-    check(text.find("\"stage\": \"stag0101\", \"name\": \"Death Valley: Goblin Pass\"") != std::string::npos, "an area line");
+    check(text.find("\"stage\": \"stag0101\", \"name\": \"Death Valley: Goblin Pass\", \"area\": \"death_valley\", \"kind\": \"field\", "
+                    "\"dungeon\": null, \"gate\": true}") != std::string::npos, "an area line (format 2)");
+    check(text.find("\"format\": \"dw4-areas/2\"") != std::string::npos, "format 2");
+    // The world's columns (docs/SEAMLESS.md 19.30.2), explicit for every stage: what no image key or name gives.
+    const auto column = [](const char* stage) {
+        const auto* a = dw4::game::find_area(stage);
+        check(a != nullptr, std::string("a row for ") + stage);
+        return std::string(a->area ? a->area : "-") + "/" + a->kind + "/" + (a->dungeon ? a->dungeon : "-") + (a->gate ? "/gate" : "");
+    };
+    check(column("stagBS01") == "death_valley/boss/dng103", "stagBS01 belongs to dng103");
+    check(column("stagbs02") == "dry_land/boss/dng206", "stagBS02 belongs to dng206");
+    check(column("stagbs03") == "venom_jungle/boss/dng310", "stagBS03 belongs to dng310");
+    check(column("stagbs06") == "machine_pit/boss/zone_x", "stagBS06 belongs to Zone X");
+    check(column("staggf03") == "death_valley/field/-", "the Fortress is Death Valley's fields (decision 39)");
+    check(column("stag0205") == "dry_land/field/-", "stag0205 is Dry Land's");
+    check(column("stag0301") == "venom_jungle/field/-/gate", "a gate stage");
+    check(column("stag0001") == "death_valley/field/-", "the training is no gate stage");
+    check(column("stagML12") == "-/hub/-", "the lobby is a hub");
+    check(column("dngq4b2v") == "machine_pit/dungeon/dngq4", "a quest dungeon");
+    int gates = 0;
+    for (const auto& area : dw4::game::area_table()) {
+        gates += area.gate ? 1 : 0;
+        const std::string kind = area.kind;
+        check(kind == "hub" || kind == "field" || kind == "dungeon" || kind == "boss", std::string("a known kind: ") + area.folder);
+        check((kind == "hub") == (area.area == nullptr), std::string("hub stages and only they have no area: ") + area.folder);
+        check((kind == "dungeon" || kind == "boss") == (area.dungeon != nullptr), std::string("a dungeon key exactly for dungeon stages: ") + area.folder);
+    }
+    check(gates == 4, "four gate stages");
     check(text.find('\r') == std::string::npos && text.ends_with("]\n}\n"), "LF, complete");
     for (const auto& area : dw4::game::area_table())
         for (const char* c = area.place; *c; ++c) check(*c != '"' && *c != '\\' && static_cast<unsigned char>(*c) < 0x80, "plain ASCII names");
