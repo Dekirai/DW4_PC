@@ -327,3 +327,21 @@ clear banner from `d.cleared` (to check at D's merge).
 
 **T6's command (SURVIVAL.md 14):** with the run's end at 25:00 the run clock alone needs 90000 steps
 (1500 s x 60) plus the start frames, so `--smoke-test 90000` cannot reach TIME UP; this lane uses 100000.
+
+**Fixed after the review (18:20-18:26, build ok, `ctest -R overflow` 12/12 each; det.sh / r25c / T3-T5 / T8
+not run again: PC shutdown 18:30):**
+- 7eeb1656: the run log's header comes from the config: `loadout ARMOR CHIP` ('-' empty), `meta plug_lab <11
+  values> gear_open <keys or ->`, `guardians 0|1 guardian_set <3 families or -> elite <families or ->
+  guardian_hp X finale_hp Y` (SURVIVAL.md 13); `overflow_gear` checks the three lines. `loadout=,wisdom_chip`
+  now keeps the empty armor field (positional parse).
+- 845b9717: a Guardian's hit at `guardian_clamp` no longer counts as 14.2's clamp: own flag
+  `LastTaken::guardian_clamped`, own tally `guardian_clamps` and summary line `guardian_clamps`;
+  `clamps` / `rules_clamps` are the non-Guardian clamp only. Awakening calls `rules_->show_panel` (the SQ_TECUP
+  panel of 6.5, inside the panel gap). No ctest covers these two yet.
+- SURVIVAL.md 14 T6: `--smoke-test 100000`.
+
+**Still open (review findings not done for lack of time):** the finale ctest mode (a Guardian by
+`guardian_first`: boss bar, clamp, drops; short `end_steps`: TIME UP / Outcome::time_up; Awakening by a set
+skill; A(t)'s halving; the scripts_only fix; the Drain hook in lua_host), a ctest for `guardian_clamps`, T3 / T4
+/ T5 / T8 / T11 (T8 budget is directly affected: Guardians on by default, 25:00 now TIME UP), det.sh and r25c
+on 845b9717, all measurements of the table above, the pictures.
