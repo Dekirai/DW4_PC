@@ -1,4 +1,4 @@
-# W8, host a (k5): stays in stag0101 while b goes into dng101b1 alone, then follows and joins b's stage group there.
+# W8, host a (k10): stays in stag0101 while b goes into dng101b1 alone, then follows and joins b's stage group there.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

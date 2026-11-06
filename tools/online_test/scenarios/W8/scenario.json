@@ -20,13 +20,13 @@
     {
       "name": "a",
       "script": "a.script",
-      "card": "k5",
+      "card": "k10",
       "start": 0
     },
     {
       "name": "b",
       "script": "b.script",
-      "card": "k2",
+      "card": "k5",
       "start": 3,
       "seed_story": true,
       "upload_card": true

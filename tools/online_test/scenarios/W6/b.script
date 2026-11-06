@@ -1,4 +1,4 @@
-# W6, guest b (k2): joins a, goes into dng101b1 alone; a's gate disc ends the instance: the notice, then b's home
+# W6, guest b (p4: phase 4 without key item 4, level 10; a k2 falls on stag0101's rock slope on the way to matz00): joins a, goes into dng101b1 alone; a's gate disc ends the instance: the notice, then b's home
 # departure about 3 s later; b is in its lobby on its own story within 5 s of the end.
 campaign until stage=stagml11,control
 idle until epoch>=@100
