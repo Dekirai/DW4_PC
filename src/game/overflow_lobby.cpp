@@ -454,8 +454,10 @@ void OverflowLobby::update(const NpcConditions& conditions, std::optional<engine
 void OverflowLobby::take_events(std::vector<engine::PortEvent>& events) {
     for (const auto& e : events)
         if (e.kind == engine::PortEvent::Kind::talk_box && e.slot == 0 && state_.talk && !menu_.is_open() &&
-            talk_reaches(engine::Vec3f{e.x, e.y, e.z}))
+            talk_reaches(engine::Vec3f{e.x, e.y, e.z})) {
             pending_ = 2;
+            std::printf("overflow: talk box at (%.1f, %.1f, %.1f) reaches Gekomon\n", double(e.x), double(e.y), double(e.z));
+        }
     std::erase_if(events, [](const engine::PortEvent& e) { return e.kind == engine::PortEvent::Kind::talk_box; });
 }
 
@@ -465,7 +467,10 @@ void OverflowLobby::stepped(bool player_has_control) {
         pending_ = 0; // an original talk took the press
         return;
     }
-    if (--pending_ == 0 && state_.talk) menu_.open(state_.crowd, meta_, back_);
+    if (--pending_ == 0 && state_.talk) {
+        menu_.open(state_.crowd, meta_, back_);
+        std::printf("overflow: Gekomon's dialog opens\n");
+    }
 }
 
 LobbyAction OverflowLobby::input(std::uint32_t buttons, float stick_x, float stick_y) {
