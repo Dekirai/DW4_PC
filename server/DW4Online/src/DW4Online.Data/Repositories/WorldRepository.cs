@@ -104,11 +104,29 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
         var events = auditEvent is null ? StaffAuditRow.Events : StaffAuditRow.Events.Where(e => e == auditEvent).ToArray();
         if (events.Length == 0) return [];
         await using var c = await db.OpenAsync(ct);
-        return (await c.QueryAsync<StaffAuditRow>(new CommandDefinition(
+        var rows = (await c.QueryAsync<StaffAuditRow>(new CommandDefinition(
             "SELECT CAST(l.id AS SIGNED) AS id, l.at, l.event, s.username AS staff, p.username AS player, l.detail FROM audit_log l " +
             "LEFT JOIN accounts s ON s.id = l.actor_id LEFT JOIN accounts p ON p.id = l.account_id " +
             "WHERE l.event IN @events AND (@actor IS NULL OR l.actor_id = @actor) ORDER BY l.id DESC LIMIT @limit",
             new { events, actor = actorId, limit = Math.Clamp(limit, 1, 1000) }, cancellationToken: ct))).ToList();
+        // The details name accounts by id (no names kept in the log): their current names, one query for the page.
+        var named = rows.Select(r => (Row: r, Ids: StaffAuditRow.DetailAccounts(r.Detail))).ToList();
+        var ids = named.SelectMany(x => x.Ids.Members.Append(x.Ids.Host ?? 0)).Where(id => id > 0).Distinct().ToList();
+        if (ids.Count == 0) return rows;
+        var names = (await c.QueryAsync<(long Id, string Username)>(new CommandDefinition(
+            "SELECT CAST(id AS SIGNED), username FROM accounts WHERE id IN @ids", new { ids }, cancellationToken: ct))).ToDictionary(x => x.Id, x => x.Username);
+        string Name(long id) => names.GetValueOrDefault(id, $"#{id}");
+        return named.Select(x =>
+        {
+            var parts = new List<string>();
+            if (x.Ids.Host is { } host) parts.Add("host " + Name(host));
+            if (x.Ids.Members.Count > 0) parts.Add("members " + string.Join(", ", x.Ids.Members.Select(Name)));
+            return parts.Count == 0 ? x.Row : new StaffAuditRow
+            {
+                Id = x.Row.Id, At = x.Row.At, Event = x.Row.Event, Staff = x.Row.Staff, Player = x.Row.Player, Detail = x.Row.Detail,
+                Accounts = string.Join("; ", parts),
+            };
+        }).ToList();
     }
 
     public async Task<IReadOnlyList<PresencePrefsRow>> ListPresencePrefsAsync(IReadOnlyCollection<long> accountIds, CancellationToken ct = default)

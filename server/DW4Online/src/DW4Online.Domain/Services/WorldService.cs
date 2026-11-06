@@ -349,7 +349,10 @@ public sealed class WorldService
     public IReadOnlyList<WorldInstanceRow> AdminInstances() =>
         _relay.Snapshot().Instances.OrderByDescending(i => i.StartedAtUtc).ThenBy(i => i.Wid).ToList();
 
-    /// <summary>Staff ends an instance (END reason staff): audit row staff_end_instance with the instance, host, visibility and members.</summary>
+    /// <summary>
+    /// Staff ends an instance (END reason staff): audit row staff_end_instance with the instance, the host's and the members'
+    /// account ids (never names: a deleted account's name must not stay in other accounts' rows), visibility and place.
+    /// </summary>
     public async Task<Result<bool>> EndInstanceAsync(long actorId, uint wid, byte[]? ip, CancellationToken ct = default)
     {
         var row = _relay.Snapshot().Instances.FirstOrDefault(i => i.Wid == wid);
@@ -366,8 +369,9 @@ public sealed class WorldService
         var member = row.Members.Concat(row.Spectators).FirstOrDefault(m => string.Equals(m.Name, username?.Trim(), StringComparison.OrdinalIgnoreCase));
         if (member is null || !_relay.RemoveMember(wid, member.AccountId, actorId))
             return DomainError.NotFound("member_not_found", "No such player in this instance.");
+        // (The member is the row's account, the staff member its actor; the host by account id: no names in the detail.)
         await _audit.WriteAsync("staff_remove", member.AccountId, actorId, ip,
-            new { wid, historyId = row.HistoryId, host = row.HostName, member = member.Name, role = member.Role }, Clock.Now(_time), ct);
+            new { wid, historyId = row.HistoryId, hostId = row.HostAccountId, role = member.Role }, Clock.Now(_time), ct);
         return member.Name;
     }
 
@@ -382,11 +386,11 @@ public sealed class WorldService
     {
         wid = row.Wid,
         historyId = row.HistoryId,
-        host = row.HostName,
+        hostId = row.HostAccountId,
         visibility = row.Visibility,
         area = row.Area,
         stage = row.HostStage,
-        members = row.Members.Select(m => m.Name).ToList(),
+        memberIds = row.Members.Select(m => m.AccountId).ToList(),
     };
 
     private static DomainError InstanceNotFound() => DomainError.NotFound("instance_not_found", "No such instance (it may have ended).");

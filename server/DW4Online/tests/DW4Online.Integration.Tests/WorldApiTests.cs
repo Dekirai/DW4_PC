@@ -399,7 +399,14 @@ public class WorldApiTests
         Assert.Equal(["staff_remove", "staff_end_instance"], rows.Select(r => r.Event));
         Assert.Equal([lee, kim], rows.Select(r => r.Account));
         Assert.Contains("\"historyId\":55", rows[1].Detail);
+        // Account ids, never names, in the details (a deleted account's name must not stay in other accounts' rows).
+        Assert.Contains($"\"hostId\":{kim}", rows[0].Detail);
+        Assert.Contains($"\"memberIds\":[{kim},{lee}]", rows[1].Detail);
+        Assert.All(rows, r => Assert.DoesNotContain("Kim", r.Detail));
+        Assert.All(rows, r => Assert.DoesNotContain("Lee", r.Detail));
         Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM v_staff_audit WHERE staff = 'Moddy'"));
+        var listed = (await (await mod.GetAsync("/api/v1/admin/audit?event=staff_end_instance")).Json()).GetProperty("rows");
+        Assert.Equal("host Kim; members Kim, Lee", listed[0].GetProperty("accounts").GetString());
 
         // The audit list (19.19): a moderator his own rows, an admin everybody's; one event.
         await host.RegisterAsync("Chief");

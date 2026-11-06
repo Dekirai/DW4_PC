@@ -35,7 +35,7 @@ else
                     <td>@r.Event</td>
                     <td>@(r.Staff ?? "-")</td>
                     <td>@(r.Player is null ? "-" : r.Player)</td>
-                    <td class="small"><code>@(r.Detail ?? "")</code></td>
+                    <td class="small">@if (r.Accounts is not null) { <span>@r.Accounts</span><br /> }<code>@(r.Detail ?? "")</code></td>
                 </tr>
             }
             </tbody>

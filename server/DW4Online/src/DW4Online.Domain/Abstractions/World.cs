@@ -117,6 +117,32 @@ public sealed class StaffAuditRow
     public string? Staff { get; init; }
     public string? Player { get; init; }
     public string? Detail { get; init; }
+    /// <summary>
+    /// The current names of the accounts the detail names by id (hostId, memberIds: staff_end_instance, staff_remove), as
+    /// "host Kim; members Kim, Lee"; null when it names none. The detail itself holds no names (an account's deletion
+    /// renames it, so a deleted player shows under his anonymous name here).
+    /// </summary>
+    public string? Accounts { get; init; }
+
+    /// <summary>The account ids a detail names: (hostId, memberIds); empty for other details or text that is no JSON.</summary>
+    public static (long? Host, IReadOnlyList<long> Members) DetailAccounts(string? detail)
+    {
+        if (string.IsNullOrEmpty(detail)) return (null, []);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detail);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, []);
+            long? host = doc.RootElement.TryGetProperty("hostId", out var h) && h.TryGetInt64(out var hv) ? hv : null;
+            var members = doc.RootElement.TryGetProperty("memberIds", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? m.EnumerateArray().Where(x => x.TryGetInt64(out _)).Select(x => x.GetInt64()).ToList()
+                : [];
+            return (host, members);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return (null, []);
+        }
+    }
 
     /// <summary>The audit events of staff actions and looks (the view v_staff_audit holds the same list).</summary>
     public static readonly string[] Events =

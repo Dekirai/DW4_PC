@@ -10980,7 +10980,11 @@ release).
   `staff_join`, `staff_join_override`, `staff_spectate_start`,
   `staff_spectate_end`, `staff_end_instance`, `staff_remove`,
   `report_handled`. Friend and block changes are not audited (the tables
-  are the record; refusals by the limits are logged).
+  are the record; refusals by the limits are logged). The details name
+  other accounts by id (`hostId`, `memberIds`), never by name: an
+  account's deletion renames its row, so no deleted player's name stays
+  in other accounts' audit rows; the staff audit list shows the current
+  names (`accounts`: "host Kim; members Kim, Lee"; I1a review).
 - `rooms` and `room_members` lose their writer and stay read-only for one
   release; a cleanup migration drops them (19.22).
 - Live state stays in the relay's memory: instances, stage groups, seats,
