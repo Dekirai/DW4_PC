@@ -10659,11 +10659,17 @@ release).
 enters the world, outside the hub's lock (the admission does it before the
 member is added). API and relay run in one process (`ServerApp`), so the
 domain services tell the hub through an in-process `IWorldNotifier`
-(`FriendsChanged(a, b)`, `BlocksChanged(a, b)`, `PrefsChanged(a)`,
+(`FriendsChanged(a, b, otherSees)`, `BlocksChanged(a, b)`, `PrefsChanged(a)`,
 `AccountChanged(a)`, `StoryReplaced(a, box)`): no database read under the
 hub's lock, no polling. Round I2's social lane, which runs before round I1,
 ships the interface with a no-op implementation; round I1's relay
-implements it.
+implements it. `FriendsChanged` says who may learn of the change (the
+integration r71 review): `a` always, `b` only with `otherSees`; a decline
+and the delivery of a waiting request are the receiver's alone (their
+sender never learns of them, not even by a changed list or count), an
+accept, a cancelled delivered request and a removed friend show on both
+sides; the relay follows the flag and does not rebuild the rule from the
+database.
 
 **`WorldService`** (round I1, the facade that takes over `RoomService`'s
 remaining jobs): `Counts` for the home page (`Index.cshtml.cs`'s

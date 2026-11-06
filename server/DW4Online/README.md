@@ -328,7 +328,8 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   audited. Every social write holds the locks of both accounts (striped by account id), so crossing requests and the
   caps cannot race while other accounts' writes run on; after 10 s of waiting it answers 503 `social_busy`. Account
   deletion removes the account's rows in all three tables, in both directions.
-  `IWorldNotifier` (`FriendsChanged`, `BlocksChanged`, ...) tells the relay in-process; until round I1 nobody listens
+  `IWorldNotifier` (`FriendsChanged`, `BlocksChanged`, ...) tells the relay in-process; `FriendsChanged` names who may
+  learn of a change (a decline and a delivered waiting request are the receiver's alone); until round I1 nobody listens
   (`NullWorldNotifier`).
 - **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10
   players, the netplay protocol and data hash of the host (only compatible clients join). The owner is the host: the
