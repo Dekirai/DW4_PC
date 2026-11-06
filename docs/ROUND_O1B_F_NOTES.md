@@ -34,6 +34,7 @@ the repo); the parts that concern this lane are repeated here.
 | ctest (all) | 57 of 57 (with `online` / `online_env`: DW4_OVERFLOW_PROFILE is on the presentation list) |
 | T1 det.sh (`det_o1bmeta`) | 4004f056 / 396cb219 (both runs) |
 | T3 / T5 (`build/t3/t3meta.sh`, in the worktree's build folder) | the det script with a run at story frame 3000 (Agumon, kite bot, 1,800 steps) and without: 20 fingerprint lines equal (4004f056), the card folders equal (empty), the achievement profiles equal (unlock times aside), only the run writes the `DW4_OVERFLOW_PROFILE` file |
+| T4 (the T3 script with `DW4_STATE_TEST` 2990 / 3600 / 4200 and `DW4_STATE_FILE`, a run at story frame 3000 with a profile) | identical after loading, all three (3010, 2400, 1800 frames compared); the run's hash the same in all (471b26cdc67e1a58) |
 | a hidden run with a profile (`plug p_agumon mhp 10 str 4`, 18,000 steps) | the Plug Lab points reach the player (the first minute's highest hit 1/60 of MaxHP instead of 1/48); 817 defeats, 1,125 bits, Sim Bits 100 -> 1,225, the `.bak` written, the best line and totals right |
 | the same run without a profile | nothing written (a test run keeps it in memory) |
 | T2 r25c (`EXE=<copy> NAME=seg_r25c_o1bmeta work/campaign/segments.sh r25c 4`, without the NPC) | 10 / 10 segments reached, 1,748,011 frames, every save "same story" |
