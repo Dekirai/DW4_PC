@@ -12113,6 +12113,20 @@ lanes shared are in the round's contract file and repeated here).*
   second (W7d). The explore bot sets the limits of the rest: W9 and W32
   (characters fall in the Fortress), W30b (Dry Land, `requires:
   dry_land_walk`). RG1, RG2 and RG10 retired (the room story at home).
+- **The web lane's review fixes.** A member's leave closes the account's
+  newest open history row of the instance that started at most a second
+  after the leave's join key (the relay's seat time is a separate
+  sub-millisecond clock reading, never the stored `joined_at`: every
+  leave was lost before); times are cut to milliseconds. A friend whose
+  whereabouts preference is *nobody* shows "Online" / "Offline" only
+  (19.11), not nothing. The admission answers a database error with a
+  refusal (ERR ticket) instead of an exception, and writes last seen
+  apart from it. Staff audit details name accounts by id (`hostId`,
+  `memberIds`), the audit list shows the current names. The harness
+  counts a skipped scenario apart and exits 3 for it unless
+  `--allow-skip`, and a counter-proof passes only when its `expect_fail`
+  check failed and nothing else broke (`test_run_verdicts.py`). The
+  production example says `Play:MinimumProtocol` 49.
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).

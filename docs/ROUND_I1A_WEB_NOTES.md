@@ -28,6 +28,30 @@ lane contract (outside the repo): `DW4_PC-wt/i1a-contract.md` (the web lane's en
 | 18 | scenario fixes from the trial runs: card k4 (missing) -> k5, `upload_card` for own-story clients, W1's host stays 15 s, W12 `--online-difficulty`, field exits by `explore`, W19's count, A1 in the world | done |
 | 19 | end-to-end tools in the world: `tests/winhttp_client` (world enter, handshake 49, first_defeat, leave, 410) and `tests/e2e/relay_spike_test.py` (co-arrival from home, sealed stream, host's leave ends the instance) | done, to verify in the trial |
 | 20 | release 0.1.7 (Directory.Build.props, DEPLOY.md 9.2); migration 0013 still the next number | done |
+| 21 | session 3: the lane review's findings (see "Review fixes" below) | done (but finding 4: after the merge) |
+
+## Review fixes (session 3, 2026-11-06 18:00-18:30)
+
+| Finding | State | Commit |
+| --- | --- | --- |
+| MemberLeftAsync never matched the relay's seat time (sub-ms ticks, two UtcNow reads) | fixed: the account's newest open row with joined_at <= key + 1 s; times cut to ms; `Member_left_closes_the_row_with_the_relays_clock_readings` (fails on the old query) | 671f9a69 |
+| run.py: a SKIP counted as a pass, exit 0 | fixed: "N of M passed, K skipped, F failed", exit 3 on a skip unless `--allow-skip`; `test_run_verdicts.py` | 24d38b26 |
+| counter-proof passed on any problem | fixed: `expect_fail` (W1x: b's key:4 checks at line 16 / 10 or its own-story card check; W30x: b's key:9=0 at line 12) and nothing else broken | 24d38b26 |
+| Done-when not met (W24, W7b, W7d, W7e, W27, W29, W6; W9, W30b, W32 by the explore bot) | open, after the merge: needs the client / relay fixes and game runs (no long runs after 18:00 today); proposals under "Left" | - |
+| whereabouts "nobody" showed nothing | fixed: "Online" / "Offline" without place or last time (19.11) | 2af9afeb |
+| AdmitAsync threw database errors into the relay; last seen under the admission timeout | fixed: null + WriteFailed; last seen in its own task; `Admission_refuses_on_database_errors_and_never_waits_for_last_seen` | 2af9afeb |
+| production example MinimumProtocol 48 | fixed: 49; the test checks 49 and a kept 48 | 93261454 |
+| audit details kept usernames | fixed: hostId / memberIds; the audit list's `accounts` shows the current names | ae58ffd4 |
+| AccountChanged's comment ("tickets stop counting") | fixed | 2af9afeb |
+
+Contract: "web 2026-11-06 18:15" (and the 12:50 / 15:25 entries amended in place). SEAMLESS.md 19.25 "The web lane's
+review fixes", 19.17.1's audit paragraph.
+
+Tests after the fixes: DW4Online.Tests 422 of 422 (`build/i1aweb/rev_unit.log`); DW4Online.Integration.Tests
+129 passed, 8 skipped (the 4 EndToEnd and 4 room-relay story tests as in session 1), 0 failed (`build/i1aweb/rev_it2.log`; the first full run `rev_it.log` had 1 failure, the timing test
+`LoadGateTests.A_small_in_process_cell_runs_valid_with_the_full_fan_out` at 19.68 of 18-19.5 under the parallel suite's
+load, it passed 3 of 3 alone; no code it covers changed); `python tools/online_test/test_run_verdicts.py` 12 of 12. No
+game code changed (det.sh / ctest of session 1 stand).
 
 ## Session 2 (2026-11-06 from 14:00): the trial merge
 
@@ -141,7 +165,9 @@ python tools/export_stage_graph.py --dec <main repo>/work/port-research/dec     
 
 The W scenarios after the merge (a DW4_ONLINE_DEV build of the merged client): `python tools/online_test/run.py W1 W1x ...
 --game-exe EXE --data DATA --cards DIR --mysql-port P --ports A-B` (`--capabilities fake_world_clients,old_client` and
-`--old-game-exe` for W19, W22, W29).
+`--old-game-exe` for W19, W22, W29). The last line reads "N of M scenarios passed, K skipped, F failed"; exit 1 = a
+failure, 3 = a skipped scenario (a missing capability) unless `--allow-skip`. The harness' own verdicts (no server):
+`python tools/online_test/test_run_verdicts.py`.
 
 ## What the W scenarios need (learned in the trial merges)
 
@@ -158,6 +184,12 @@ The W scenarios after the merge (a DW4_ONLINE_DEV build of the merged client): `
 
 ## Left
 
+- Review finding 4 (after the merge, with the client and relay fixes): rerun the open W scenarios. W9 / W32 / W30b need a
+  form without the explore bot through Dry Land and the Fortress: (a) recorded `route` files (the client's `route` action,
+  `tools/online_test/routes/stag0101_west.txt` is the model) for staggf01-04 and stag0201-0202; (b) for W30b a card whose
+  return mat is already dng205b2 (one recorded trip or a save edit of GATESTAGE: a card directory outside the repo, never
+  committed), so b's first trip goes; (c) stronger cards (higher level characters) for the Fortress. With the new SKIP rule
+  W30b's `requires: dry_land_walk` makes a run exit 3 until then: it is never counted as passed.
 - Other lanes (contract): CLIENT W24 (no way home after CLOSE 8), RELAY W7b (HOME stamped after the lost host's leave never
   reaches the guest; also W12's first run), RELAY / CLIENT W7d (resume after 45 s closed as abuse), minor: the online card
   keeps the entry's own story (web 15:40), `disk 8` with a k10 character.
@@ -174,6 +206,8 @@ The W scenarios after the merge (a DW4_ONLINE_DEV build of the merged client): `
   does them on an extracted tree.
 
 ## Progress
+
+- 2026-11-06 18:00-18:30 (session 3): the lane review's fixes (table "Review fixes" above).
 
 - 2026-11-06: contract entries; migration 0013 with the migrator's rights check; the domain, data, API and website moved
   from rooms to the world; the relay's two requests (NewSession, the repeated admission) and the client's REST names;
