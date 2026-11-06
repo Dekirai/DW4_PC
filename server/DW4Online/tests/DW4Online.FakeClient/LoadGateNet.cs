@@ -8,6 +8,7 @@ using System.Text.Json;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.FakeClient;
@@ -23,7 +24,7 @@ namespace DW4Online.FakeClient;
 /// </summary>
 public static class LoadGateNet
 {
-    public const string Room = "WORLD1";
+    public const string Room = Wire.WorldChannel;
     private static readonly double Freq = Stopwatch.Frequency;
     private static double Ms(long ticks) => ticks * 1000.0 / Freq;
 
@@ -41,10 +42,13 @@ public static class LoadGateNet
         var options = new RelayOptions
         {
             Enabled = true, ListenAddress = "127.0.0.1", Port = port, MaxConnectionsPerIp = 1024, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600,
+            // (DW4_LOADGATE_DIRECT_SENDS=0: the writer of every frame on the thread pool, the relay before M4 (e).)
+            DirectSends = Environment.GetEnvironmentVariable("DW4_LOADGATE_DIRECT_SENDS") != "0",
+            // (DW4_LOADGATE_PRESENCE_FLUSH_MS=0: presence frames at once, each its own send.)
+            PresenceFlushMs = int.TryParse(Environment.GetEnvironmentVariable("DW4_LOADGATE_PRESENCE_FLUSH_MS"), out var flush) ? flush : 16,
         };
         var relay = new RelayHub(options, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
-        relay.Admission = a => ValueTask.FromResult<HubAdmitted?>(new HubAdmitted((int)a.AccountId, "m" + a.AccountId, a.AccountId == 0,
-            new RoomInfo(Room, LoadGate.Protocol, 1, 2, 250)));
+        relay.Admission = a => ValueTask.FromResult<HubAdmit?>(new HubAdmit(a.AccountId, "m" + a.AccountId));
         using var stop = new CancellationTokenSource();
         await relay.StartAsync(stop.Token);
         Console.WriteLine($"LISTENING {await relay.Started}");
@@ -58,7 +62,7 @@ public static class LoadGateNet
                 if (browse > 0 && Stopwatch.GetTimestamp() >= next)
                 {
                     next += (long)(Freq / browse);
-                    _ = relay.Views(Room);
+                    _ = relay.Views();
                 }
                 Thread.Sleep(1);
             }
@@ -66,13 +70,14 @@ public static class LoadGateNet
         browsing.Start();
         TimeSpan cpu0 = default;
         long passes0 = 0, misses0 = 0, at0 = 0;
+        (long Direct, long Pooled, long Sends) written0 = default;
         int gc0 = 0;
         long[] late0 = new long[SealLateness.BoundsMs.Length + 1];
         Dictionary<string, long> counters0 = [];
         while (Console.ReadLine() is { } line)
         {
             var parts = line.Split(' ');
-            var hub = relay.Room(Room);
+            var hub = relay.World;
             switch (parts[0])
             {
                 case "browse":
@@ -84,6 +89,7 @@ public static class LoadGateNet
                     gc0 = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2);
                     passes0 = relay.SealPasses;
                     misses0 = relay.SealTryMisses;
+                    written0 = RelayHub.FramesWritten;
                     if (hub is not null)
                         lock (hub.Sync)
                         {
@@ -105,6 +111,10 @@ public static class LoadGateNet
                         ["relay_gcs"] = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2) - gc0,
                         ["relay_server_gc"] = System.Runtime.GCSettings.IsServerGC,
                     };
+                    var written = RelayHub.FramesWritten;
+                    r["relay_frames_direct_per_second"] = Math.Round((written.Direct - written0.Direct) / wall);
+                    r["relay_frames_pooled_per_second"] = Math.Round((written.Pooled - written0.Pooled) / wall);
+                    r["relay_direct_sends_per_second"] = Math.Round((written.Sends - written0.Sends) / wall);
                     var passes = relay.SealPasses - passes0;
                     var misses = relay.SealTryMisses - misses0;
                     r["seal_passes_per_second"] = Math.Round(passes / wall);

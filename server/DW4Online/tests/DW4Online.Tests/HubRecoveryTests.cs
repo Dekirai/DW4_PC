@@ -148,7 +148,7 @@ public partial class HubLogicTests
         h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 70).Frame());
         Assert.Same(inst, h.Mem("b").Instance);
         h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now); // lost before its LOG reached J
-        h.Seal(11_000);
+        h.Seal(16_000); // (a hosts: its grace keeps it; the ticks ahead of its LOG pass Instances:MaxAheadSeconds)
         h.Hub.Housekeep(h.Now);
         h.Hub.Housekeep(h.Now);
         Assert.Equal(1, h.Hub.Counters["gap_lost"]);
@@ -355,7 +355,7 @@ public partial class HubLogicTests
         Assert.Equal((BarrierDecision.New, InstanceMode.Sealed, 3), (a.Decision, a.Mode, a.CoArrivals.Count));
         var b = h.Decision("b");
         Assert.Equal(BarrierDecision.CoArrive, b.Decision);
-        Assert.Equal(new[] { (0, 0), (2, 2), (3, 3) }, b.CoArrivals.Select(c => ((int)c.Slot, (int)c.Member)).ToArray());
+        Assert.Equal(new[] { (0, h.Mem("a").Id), (2, h.Mem("c").Id), (3, h.Mem("d").Id) }, b.CoArrivals.Select(c => ((int)c.Slot, c.Member)).ToArray());
         Assert.NotEqual(e.NewInst, a.NewInst);
     }
 }

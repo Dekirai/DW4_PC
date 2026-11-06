@@ -119,6 +119,9 @@ public enum StoryRefusal : byte
     /// guest's spacing; the keeper merges it when it is due (<see cref="RoomStoryKeeper.MergeEarned"/>), so the client does
     /// not send it again (like Held, without its notice). Protocol 47; the keeper answered Wait before.</summary>
     Queued = 11,
+    /// <summary>Protocol 49 (SEAMLESS.md 19.8.4): the STORY's owner key is not the sender's current story owner (the host in an
+    /// instance, itself at home); not sent again.</summary>
+    Owner = 12,
 }
 
 public enum StoryKeyKind : byte { Phase = 0, Flag = 1, Folder = 2, Counter = 3 }

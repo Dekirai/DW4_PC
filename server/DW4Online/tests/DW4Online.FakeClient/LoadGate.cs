@@ -3,6 +3,7 @@ using System.Text.Json;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.FakeClient;
@@ -35,7 +36,7 @@ public static class LoadGate
     /// first r71 measurements (SEAMLESS.md 19.17.4) ran at 47 (<see cref="Wire.CheckpointProtocol"/>); --protocol 47 repeats
     /// them (the integration review of r71).
     /// </summary>
-    public static int Protocol { get; set; } = Wire.ReadyCheckProtocol;
+    public static int Protocol { get; set; } = Wire.WorldProtocol;
     public const ulong Context = 5;
 
     private sealed class Peer : IHubPeer
@@ -109,7 +110,8 @@ public static class LoadGate
     [
         new("base", 30, 20, 60, 1, 1, 10, false, 0),
         new("fullhub", 0, 0, 200, 1, 0, 10, false, 0),
-        new("select", 0, 0, 200, 7, 0, 10, true, 0),
+        // Round I1a: the real selection (19.13, computed off the lock) in the five hub stages (stagML11-14, stagML02; 40 each).
+        new("select", 0, 0, 200, 5, 0, 10, false, 0),
         new("storm", 30, 20, 60, 1, 1, 10, false, 10),
         new("sealonly", 30, 0, 0, 1, 0, 0, false, 0),
         new("base-wait", 30, 20, 60, 1, 1, 10, false, 0, 2),
@@ -147,6 +149,13 @@ public static class LoadGate
         return why;
     }
 
+    /// <summary>The fields the groups of three of a joins cell play at (distinct, so a joiner's first row is its target).</summary>
+    private static readonly string[] JoinStages =
+    [
+        "stag0000", "stag0001", "stag0101", "stag0102", "stag0103", "stag0104", "staggf01", "staggf02", "staggf03", "staggf04",
+        "stag0201", "stag0202", "stag0203", "stag0204", "stag0205", "stag0301", "stag0302", "stag0303", "stag0304",
+    ];
+
     /// <summary>The joins of a joins cell (one row each).</summary>
     private sealed record JoinRow(int Member, uint Target, string Outcome, double BarrierToStateMs, double BarrierToJoinMs);
 
@@ -182,6 +191,8 @@ public static class LoadGate
             }));
         using var wakeTimer = new HighResolutionTimer();
         hub.OnSealingStarted(wakeTimer.Wake);
+        // The presence selection off the lock, as the relay runs it (M4 (c)).
+        hub.SelectionRunner = f => Task.Run(f);
 
         // Members: the sealed groups (of four, or three for the joins), the solo-led ones, the lobby.
         var members = new List<Member>();
@@ -224,7 +235,9 @@ public static class LoadGate
             var size = g < cell.GroupsOfThree ? 3 : 4;
             var group = members.GetRange(at, size);
             at += size;
-            var stage = $"stagT{g:D3}";
+            // (A group of three plays at a field of the area table, one per stage: a joiner from home finds it by the world's
+            // matching, the first row by decision 40's order. The others play at stages outside the table: no matching.)
+            var stage = g < cell.GroupsOfThree ? JoinStages[g % JoinStages.Length] : $"stagT{g:D3}";
             foreach (var m in group) Send(m, new HeadingMsg(m.Hub.Instance!.Id, stage, 0, Context).Frame());
             foreach (var m in group)
             {
@@ -260,7 +273,9 @@ public static class LoadGate
             if (m.Hub.Instance is { Mode: InstanceMode.SoloLed }) ++soloOk;
             m.NextTick = 0;
         }
-        var stagesOfPresence = Enumerable.Range(0, Math.Max(1, cell.PresenceStages)).Select(k => k == 0 ? "stagML11" : $"stagML1{(char)('A' + k)}").ToArray();
+        // (The world's hub stages: presence goes by the selection only in them, 19.13.)
+        string[] hubStages = ["stagML11", "stagML12", "stagML13", "stagML14", "stagML02"];
+        var stagesOfPresence = Enumerable.Range(0, Math.Clamp(cell.PresenceStages, 1, hubStages.Length)).Select(k => hubStages[k]).ToArray();
         var lobbyMembers = new List<Member>();
         for (var l = 0; at < members.Count; ++l)
         {

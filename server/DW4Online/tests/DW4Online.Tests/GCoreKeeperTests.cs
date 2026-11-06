@@ -74,18 +74,11 @@ public class GCoreKeeperTests
     }
 
     [Fact]
-    public void Visit_age_waits_stay_wait_and_an_old_protocols_room_answers_earned_values_with_wait()
+    public void Visit_age_waits_stay_wait()
     {
         var k = Keeper();
         // A visit younger than the minimum: not earned (a plausibility rule), so the client sends it again.
         Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Folder = [2] }, "stagML02", 0, new StoryVisit(1, 1, 3, 101, 10)).Refused.Single().Reason);
-        // Protocol 46 clients do not know Queued: their room's keeper answers Wait, as before round G.
-        var old = RoomHub.NewKeeper(null, new InstanceOptions { StoryKeySeconds = 60 }, 46);
-        Assert.Equal(StoryRefusal.Wait, old.EarnedAnswer);
-        Assert.Equal(StoryRefusal.Queued, RoomHub.NewKeeper(null, new InstanceOptions(), RoomStoryKeeper.QueuedProtocol).EarnedAnswer);
-        Assert.True(old.Take(new StoryDelta { Folder = [2] }, "stagML02", 0, new StoryVisit(1, 2, 15, 101, 100)).Changed);
-        Assert.Equal(StoryRefusal.Wait, old.Take(new StoryDelta { Folder = [3] }, "stagML02", 0, new StoryVisit(1, 3, 15, 101, 120)).Refused.Single().Reason);
-        Assert.Equal(1, old.EarnedCount);
     }
 
     [Fact]

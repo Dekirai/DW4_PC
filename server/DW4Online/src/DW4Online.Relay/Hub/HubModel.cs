@@ -8,30 +8,16 @@ public interface IHubPeer
 {
     /// <summary>Queues a frame. Bulk frames (STATE_DATA and the LIVE frames behind it) pass the state budget.</summary>
     void Send(byte[] frame, bool bulk = false);
+    /// <summary>Queues a frame that may wait a few milliseconds to go out with the peer's next ones (presence, M4 (e)).</summary>
+    void SendSoon(byte[] frame) => Send(frame);
     /// <summary>Sends CLOSE and closes the connection.</summary>
     void Close(CloseReason reason, string text);
 }
 
-/// <summary>What the room service tells the relay about a room when a member connects (the story: when the room has an owner account).</summary>
-public sealed record RoomInfo(string Code, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers, RoomStoryInit? Story = null);
-
-/// <summary>
-/// The room story's start (SEAMLESS.md 8): the owner's account and online story as stored, the room's difficulty (the
-/// story is rebased on it), the owner-away policy, whether the owner is in the room and whether the owner's story has
-/// started (false: the owner has no online story yet, the room starts at zero until the owner's game enters a stage).
-/// </summary>
-public sealed record RoomStoryInit(long OwnerAccountId, RoomStoryData Story, int Difficulty, StoryPolicy Policy, bool OwnerPresent, bool Started = true);
-
-/// <summary>
-/// What a room keeps while the relay rebuilds its hub (an empty hub is dropped while the room stays open): the room story
-/// keeper with its dropped set, epochs, held values and per-member rules, the last revision handed to the saver, and the
-/// next instance id (a new instance never takes an id an engine line of the old hub names).
-/// </summary>
-public sealed class RoomSessionState
+/// <summary>The hub's identity: the world (one hub for the whole server, SEAMLESS.md 19.17.4; its code "WORLD") and its protocol.</summary>
+public sealed record RoomInfo(string Code, int Protocol, ulong DataHash = 0, ulong SettingsHash = 0, int MaxPlayers = 4)
 {
-    public RoomStoryKeeper? Story { get; set; }
-    public RoomStoryData? Saved { get; set; }
-    public uint NextInstance { get; set; } = 1;
+    public static readonly RoomInfo World = new(DW4Online.Relay.Protocol.Wire.WorldChannel, DW4Online.Relay.Protocol.Wire.WorldProtocol);
 }
 
 /// <summary>A member as the room's state lists it.</summary>
@@ -42,13 +28,64 @@ public sealed record InstanceView(uint Id, string Stage, uint Visit, string Mode
     bool BossLock, bool Joinable, uint Ticks, uint? Parent);
 
 /// <summary>A room member on the relay (one connection at a time).</summary>
-public sealed class HubMember(int index, long accountId, string name, bool owner)
+public sealed class HubMember(uint id, long accountId, string name)
 {
-    public int Index { get; } = index;
+    /// <summary>The member id (SEAMLESS.md 19.17.3): a u32 given at the account's first admission in a server run, kept while the
+    /// account is online or holds a seat, never reused in the run. The only member identity on the wire.</summary>
+    public uint Id { get; } = id;
+    /// <summary>The member id as an int (the story keepers' per-member tallies and the membership log).</summary>
+    public int Index => (int)Id;
     public long AccountId { get; } = accountId;
-    public string Name { get; } = name;
-    public bool Owner { get; set; } = owner;
+    public string Name { get; set; } = name;
     public IHubPeer? Peer { get; set; }
+
+    // The world (round I1) ------------------------------------------------------------------------------------------------
+    /// <summary>The ticket role is staff (moderator or admin), re-checked live (19.14).</summary>
+    public bool Staff { get; set; }
+    /// <summary>The bound box (1 until round D).</summary>
+    public int Box { get; set; } = 1;
+    /// <summary>The client's game data hash (the handshake's): a matching filter (19.17.3).</summary>
+    public ulong DataHash { get; set; }
+    /// <summary>The member's OWN settings, from its newest BARRIER (protocol 49): a NEW from home makes them the instance's.</summary>
+    public DW4Online.Domain.Rooms.RoomSettings Settings { get; set; } = DW4Online.Domain.Rooms.RoomSettings.Default;
+    /// <summary>online_prefs.default_visibility (Q9: the last choice remembered).</summary>
+    public Visibility DefaultVisibility { get; set; }
+    /// <summary>The social cache (loaded outside the lock, replaced as a whole on a change: the selection reads it off the lock).</summary>
+    public IReadOnlySet<long> Friends { get; set; } = new HashSet<long>();
+    public IReadOnlySet<long> Blocks { get; set; } = new HashSet<long>();
+    public IReadOnlySet<long> BlockedBy { get; set; } = new HashSet<long>();
+    /// <summary>The admission's handle for the live re-check (the relay calls the admission again with it).</summary>
+    public object? Admission { get; set; }
+    /// <summary>The live re-checks started for this member (each one gets the next number) and the newest one applied: a result that
+    /// comes after a newer one's is dropped (19.14).</summary>
+    public long RecheckSeq { get; set; }
+    public long RecheckApplied { get; set; }
+    /// <summary>INSTANCE_OP's token bucket (<see cref="RoomHub.InstanceOpBurst"/>, refilled at one a second) and when it was refilled.</summary>
+    public double InstanceOpTokens { get; set; } = double.NaN;
+    public long InstanceOpTokensAt { get; set; }
+    /// <summary>A HOME the relay owes this member (its *Leave instance* or its removal, 19.6.4 / 19.6.6), asked again in its next stage
+    /// group of that instance when a barrier overtook it; gone at the member's DISSOLVE or the instance's end.</summary>
+    public HomeWish? HomeWish { get; set; }
+    /// <summary>The instance the member has a seat in (null: home). Its stage group is <see cref="Instance"/> (null while parked,
+    /// joining or continuing alone).</summary>
+    public DW4Online.Relay.World.WorldInstance? World { get; set; }
+    /// <summary>The member asked to give up (INTENT 2) in this visit: a barrier with alive mask 0 of its copy is on purpose (M3).</summary>
+    public bool GaveUp { get; set; }
+    /// <summary>The last INPUT or PONG (a host silent this long while his slot fills is in his grace, 19.6.7).</summary>
+    public long LastInputOrPong { get; set; }
+    /// <summary>The members this receiver was told about by MEMBER_INFO, with the flags it was told.</summary>
+    public Dictionary<uint, byte> Known { get; } = [];
+    /// <summary>The ghost figures this receiver draws (the presence selection, 19.13).</summary>
+    public DW4Online.Relay.World.PresenceChoice Choice { get; set; } = DW4Online.Relay.World.PresenceChoice.Empty;
+    /// <summary>The receivers that draw this sender, and whether as one of their nearest.</summary>
+    public Dictionary<HubMember, bool> ChosenBy { get; } = [];
+    /// <summary>PRESENCE2 frames sent by this member (the farther receivers get every second one).</summary>
+    public long PresenceSeq { get; set; }
+    /// <summary>The receiver's presence budget (World:PresenceBytesPerSecond): bytes left and when refilled.</summary>
+    public double PresenceBudget { get; set; } = double.NaN;
+    public long PresenceBudgetAt { get; set; }
+    /// <summary>When the member's connection went (0: connected); it leaves the world after World:MemberTimeoutSeconds.</summary>
+    public bool LeftWorld { get; set; }
     public long DisconnectedAt { get; set; }
     public bool Connected => Peer is not null;
 
@@ -83,6 +120,8 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
 
     public uint PingNonce { get; set; }
     public long PingSentAt { get; set; }
+    /// <summary>When the member's next PING is due (one a second, spread over the housekeeping passes).</summary>
+    public long NextPingAt { get; set; }
     public long LastHeard { get; set; }
     public RttSamples Rtt { get; } = new();
     /// <summary>The delay rule of the member's newest sealed stream: the next one keeps its bar (a value that proved too low
@@ -117,10 +156,6 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     /// <see cref="LoneLineLimit"/> in a room session.</summary>
     public HashSet<uint> LoneLineVisits { get; } = [];
     public const int LoneLineLimit = 8;
-    /// <summary>The story epoch of the member's last instance visit (its engine was cleaned at that barrier).</summary>
-    public long VisitEpoch { get; set; }
-    /// <summary>The room owner has been in the member's last instance visit (<see cref="HubInstance.OwnerSeen"/>).</summary>
-    public bool VisitOwnerSeen { get; set; }
     /// <summary>The stage the member plays alone in while the server has no instance with a stage for it (taken out of its
     /// group, its connection lost in a lobby or at a barrier, a reconnect without resuming), and since when: its STORY counts
     /// against that stage (SEAMLESS.md 8.7).</summary>
@@ -202,6 +237,8 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     public long PendingReadyAt { get; set; }
     /// <summary>The members' fingerprint of the pending READY's tick never came in time: it is taken unchecked.</summary>
     public bool ReadyWaitExpired { get; set; }
+    /// <summary>The JOIN is a fresh arrival's automatic join (19.7.1): its fallback is an own instance, not a stage group of the target's.</summary>
+    public bool Fresh { get; init; }
     /// <summary>The JOIN is stamped (sealed) or JOIN_REQ went to the solo leader.</summary>
     public bool Stamped { get; set; }
 }
@@ -253,6 +290,15 @@ public sealed class ArrivalGroup
     public required byte Point { get; init; }
     public required ulong Context { get; init; }
     public required long ParkedAt { get; init; }
+    /// <summary>The barrier's alive mask (M3: 0 outside a give-up copy is a game over).</summary>
+    public byte Alive { get; init; } = 0xFF;
+    /// <summary>The members' instance (null: an arrival from home, a fresh arrival of 19.7.1).</summary>
+    public DW4Online.Relay.World.WorldInstance? World { get; set; }
+    public bool Fresh => World is null;
+    /// <summary>The client chose *New instance* (BARRIER plan id 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, client 13:30): no automatic join.</summary>
+    public bool PlanNew { get; init; }
+    /// <summary>The kind of arrival this decision is for its members (BARRIER_OK's arrival byte).</summary>
+    public ArrivalKind Arrival { get; set; }
     /// <summary>The arriving members with their slot in the arriving engine and their carry.</summary>
     public List<Arrival> Members { get; } = [];
     public List<ArrivalGroup> CoArrivals { get; } = [];
@@ -267,6 +313,15 @@ public sealed class ArrivalGroup
 }
 
 public sealed record Arrival(HubMember Member, int Slot, byte[] Carry);
+
+/// <summary>A HOME owed to a member in an instance (<see cref="HubMember.HomeWish"/>): the reason, the instance, and the stage group
+/// visit it was last asked in (a barrier between the ask and the stamp drops a stage group's unstamped HOME).</summary>
+public sealed class HomeWish(HomeReason reason, uint wid)
+{
+    public HomeReason Reason { get; } = reason;
+    public uint Wid { get; } = wid;
+    public (uint Inst, uint Visit) AskedIn { get; set; }
+}
 
 /// <summary>The barrier reports of an instance's members (the first one stops the sealing).</summary>
 public sealed class BarrierCollect(uint tick, string stage, byte point, byte alive, byte present, ulong context, long firstAt)
@@ -427,11 +482,20 @@ public sealed class HubInstance(uint id)
     public bool Joinable { get; set; }
     public bool MembershipSafe { get; set; }
     public StateReason Reason { get; set; } = StateReason.Loading;
-    /// <summary>The room story's drop epoch when this visit began (a fork's child keeps its parent's: one engine line).</summary>
-    public long StoryEpoch { get; set; }
-    /// <summary>The room owner has been in this visit (a fork's child keeps its parent's): a visit that began before a room's
-    /// story started counts from the owner's arrival on (SEAMLESS.md 8.6).</summary>
-    public bool OwnerSeen { get; set; }
+    /// <summary>The user's instance this stage group belongs to (null: a member's home, a hub stage group, or a stage group of
+    /// nobody's instance after a detach).</summary>
+    public DW4Online.Relay.World.WorldInstance? World { get; set; }
+    /// <summary>HOME waiting to be stamped (mask, reason, not before): a stage group that was not sealing yet, or a solo-led one
+    /// (JOIN_REQ kind home when it is due).</summary>
+    public (byte Mask, HomeReason Reason, long NotBefore)? PendingHome { get; set; }
+    /// <summary>JOIN_REQ kind home went to the solo leader: its JOIN_AT seals HOME (mask, reason).</summary>
+    public (byte Mask, HomeReason Reason, long AskedAt)? AskedHome { get; set; }
+    /// <summary>HOME stamped for these slots (they leave; a second HOME for them is not stamped again).</summary>
+    public byte HomeStamped { get; set; }
+    /// <summary>JOIN_REQ home went unanswered this often.</summary>
+    public int HomeTries { get; set; }
+    /// <summary>The stage group is nobody's (its HOME went unanswered, 19.6.6): its next barrier is a DISSOLVE home with the redirect.</summary>
+    public bool Detached { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

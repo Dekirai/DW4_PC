@@ -40,6 +40,11 @@ public class LoadGateTests
         // (b's own presence puts it in the stage: the hub forwards to the members whose last presence names it.)
         var own = LoadGate.LobbyPresence(1, 0, "stagML11", b.Instance!.Id, 0).Frame();
         hub.Receive(b, own[0], own.AsSpan(Wire.HeaderBytes), now);
+        // (Round I1a: a's figure goes to the receivers whose selection chose it, 19.13: a's first presence, then the selection.)
+        var first = LoadGate.LobbyPresence(0, 6.2f, "stagML11", a.Instance!.Id, 0).Frame();
+        hub.Receive(a, first[0], first.AsSpan(Wire.HeaderBytes), now);
+        now += Stopwatch.Frequency * 2;
+        hub.Housekeep(now);
         // Five minutes at the gate's 10 Hz from a phase near the top of its random start.
         var phase = 6.2f;
         for (var k = 0; k < 3000; ++k)
@@ -65,11 +70,11 @@ public class LoadGateTests
     [Fact]
     public void The_gate_runs_the_newest_protocol_and_its_checkpoint_join_is_checked()
     {
-        Assert.Equal(Wire.ReadyCheckProtocol, LoadGate.Protocol);
+        Assert.Equal(Wire.WorldProtocol, LoadGate.Protocol);
         var r = LoadGate.Join(1, _ => { });
         var classic = (Dictionary<string, object>)r["classic"];
         var checkpoint = (Dictionary<string, object>)r["checkpoint"];
-        Assert.Equal((1, (int)InstanceMode.Sealed, Wire.ReadyCheckProtocol), ((int)classic["join_reqs"], (int)classic["mode_after"], (int)classic["protocol"]));
+        Assert.Equal((1, (int)InstanceMode.Sealed, Wire.WorldProtocol), ((int)classic["join_reqs"], (int)classic["mode_after"], (int)classic["protocol"]));
         Assert.Equal((1, (int)InstanceMode.Sealed), ((int)checkpoint["join_reqs"], (int)checkpoint["mode_after"]));
         Assert.True(checkpoint.ContainsKey("check_netfp"));
         try
@@ -81,7 +86,7 @@ public class LoadGateTests
         }
         finally
         {
-            LoadGate.Protocol = Wire.ReadyCheckProtocol;
+            LoadGate.Protocol = Wire.WorldProtocol;
         }
     }
 
@@ -98,12 +103,13 @@ public class LoadGateTests
     [Fact]
     public void A_small_in_process_cell_runs_valid_with_the_full_fan_out()
     {
-        // 20 lobby members in one stage for a second (after the 3 s warm-up): each PRESENCE2 to the 19 others.
+        // 20 lobby members in one stage for a second (after the 3 s warm-up): each PRESENCE2 to the 19 others that chose it, the
+        // nearest 10 every packet, the farther 9 every second one (19.13's tiers): about 14.5 frames out per frame in.
         var r = LoadGate.Run(new LoadGate.Cell("t", 0, 0, 20, 1, 0, 0, false, 0), 1, 2, _ => { });
         Assert.True((bool)r["valid"], string.Join("; ", (List<string>)r["invalid_reasons"]));
         var sent = (double)r["presence_sent_per_second"];
         var forwarded = (double)r["frames_out_per_second"];
         Assert.InRange(sent, 150, 250);
-        Assert.InRange(forwarded / sent, 18, 19.5);
+        Assert.InRange(forwarded / sent, 13.5, 15.5);
     }
 }

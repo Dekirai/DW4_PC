@@ -10,4 +10,8 @@
     <!-- The room story's rules (SEAMLESS.md 8): DW4Online.Domain.Story. -->
     <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The connection's writer over loopback (ConnectionWriteTests). -->
+    <InternalsVisibleTo Include="DW4Online.Integration.Tests" />
+  </ItemGroup>
 </Project>

@@ -45,6 +45,17 @@ public sealed class RelayOptions
     public int ReconnectSeconds { get; set; } = 10;
     /// <summary>After this long of continuous filling the server stamps LEAVE for a lagging member.</summary>
     public int LagLeaveSeconds { get; set; } = 10;
+    /// <summary>
+    /// M4 (e), round I1a: game frames produced by a received frame, a sealing pass or the housekeeping are written by that
+    /// thread right after the hub's lock (non-blocking; a full socket buffer and state transfers go to the asynchronous
+    /// writer). Off: every frame goes through the thread pool's writer (the relay before I1a).
+    /// </summary>
+    public bool DirectSends { get; set; } = true;
+    /// <summary>
+    /// With DirectSends: a presence frame (PRESENCE / PRESENCE2 to a receiver) waits at most this long to go out with the
+    /// receiver's other frames in one send (0: at once). A figure's update is 100 ms apart; this adds 0 to this many ms.
+    /// </summary>
+    public int PresenceFlushMs { get; set; } = 16;
     /// <summary>Folder for one JSON-lines membership log per room (diagnostics and the online test stack); empty = off.</summary>
     public string DiagnosticsDirectory { get; set; } = "";
 }
@@ -53,6 +64,8 @@ public static class RelayRoles
 {
     /// <summary>A room member's ticket (DW4R2: one connection per member and room).</summary>
     public const string Member = "member";
+    /// <summary>Round I1 (SEAMLESS.md 19.14): a moderator's or admin's world ticket (from the database at POST /world/enter).</summary>
+    public const string Staff = "staff";
 }
 
 /// <summary>What a valid ticket says. <paramref name="Nonce"/> names this ticket (the room service keeps the live one per player).</summary>
@@ -94,7 +107,7 @@ public sealed partial class RelayTickets
     public IssuedTicket Create(string room, long account, string role)
     {
         if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>' (1-9 digits).", nameof(room));
-        if (role is not RelayRoles.Member) throw new ArgumentException("Unknown role.", nameof(role));
+        if (role is not (RelayRoles.Member or RelayRoles.Staff)) throw new ArgumentException("Unknown role.", nameof(role));
         var expires = _time.GetUtcNow().Add(_lifetime).ToUnixTimeSeconds();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));
         var body = Encoding.ASCII.GetBytes(FormattableString.Invariant($"{room}|{account}|{role}|{expires}|{nonce}"));

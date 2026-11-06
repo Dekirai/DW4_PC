@@ -7,6 +7,7 @@ using System.Text.Json;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.FakeClient;
@@ -85,11 +86,16 @@ public static class LossMatrix
         var tickets = new RelayTickets(key, TimeSpan.FromSeconds(60), TimeProvider.System);
         // The delay may follow the network beyond the default bound (Sealing:MaxDelayTicks 10) and nobody is taken out for
         // lag, so every cell measures the transport; the final d says what the delay rule needed.
-        var relay = new RelayOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = hubPort, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600 };
+        var relay = new RelayOptions
+        {
+            Enabled = true, ListenAddress = "127.0.0.1", Port = hubPort, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600,
+            // (As the load gate: DW4_LOADGATE_DIRECT_SENDS=0 the old writer, DW4_LOADGATE_PRESENCE_FLUSH_MS the presence flush.)
+            DirectSends = Environment.GetEnvironmentVariable("DW4_LOADGATE_DIRECT_SENDS") != "0",
+            PresenceFlushMs = int.TryParse(Environment.GetEnvironmentVariable("DW4_LOADGATE_PRESENCE_FLUSH_MS"), out var flush) ? flush : 16,
+        };
         var hub = new RelayHub(relay, new SealingOptions { MaxDelayTicks = MaxDelay }, new InstanceOptions(), tickets, NullLoggerFactory.Instance);
-        const string room = "MATRIX";
-        hub.Admission = a => ValueTask.FromResult<HubAdmitted?>(new HubAdmitted((int)a.AccountId, "m" + a.AccountId, a.AccountId == 0,
-            new RoomInfo(room, 43, 1, 0x1234, 10)));
+        const string room = Wire.WorldChannel; // (the world channel: the relay admits no other ticket)
+        hub.Admission = a => ValueTask.FromResult<HubAdmit?>(new HubAdmit(a.AccountId, "m" + a.AccountId));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var proxies = new List<ImpairmentProxy>();
         try
@@ -121,7 +127,7 @@ public static class LossMatrix
             while (inst is null && Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(10 + cell.OneWayMs / 5))
             {
                 await Task.Delay(100, ct);
-                if (hub.Room(room) is { } r)
+                if (hub.World is { } r)
                     lock (r.Sync) inst = r.Instances.FirstOrDefault(i => i.Mode == InstanceMode.Sealed && i.Sealing && i.Count == clients);
             }
             if (inst is null)
@@ -130,13 +136,13 @@ public static class LossMatrix
                 return new MatrixResult(cell, 0, [], proxies.Sum(p => p.LostSegments), proxies.Sum(p => p.Segments), false, "no sealed instance of all members");
             }
             await Task.Delay(warmup, ct);
-            var before = Snapshot(hub.Room(room)!, inst);
+            var before = Snapshot(hub.World, inst);
             var hitchesBefore = fakes.Select(f => (f.Stats.Hitches, f.Stats.StallMs)).ToList();
             var t0 = Stopwatch.GetTimestamp();
             await Task.Delay(measure, ct);
-            var after = Snapshot(hub.Room(room)!, inst);
+            var after = Snapshot(hub.World, inst);
             bool changed;
-            lock (hub.Room(room)!.Sync) changed = inst.Ended || inst.Mode != InstanceMode.Sealed || inst.Count != clients;
+            lock (hub.World.Sync) changed = inst.Ended || inst.Mode != InstanceMode.Sealed || inst.Count != clients;
             if (changed || after.Any(kv => before.TryGetValue(kv.Key, out var b0) && kv.Value.Sealed < b0.Sealed))
             {
                 await Task.WhenAll(runs);
@@ -159,7 +165,7 @@ public static class LossMatrix
             }
             await Task.WhenAll(runs);
             Dictionary<string, long> counters;
-            lock (hub.Room(room)!.Sync) counters = new Dictionary<string, long>(hub.Room(room)!.Counters);
+            lock (hub.World.Sync) counters = new Dictionary<string, long>(hub.World.Counters);
             foreach (var f in fakes)
                 foreach (var (k, v) in f.Stats.Frames) counters["client_" + k] = counters.GetValueOrDefault("client_" + k) + v;
             counters["client_pads_sent"] = fakes.Sum(f => f.Stats.OwnPadsSent);

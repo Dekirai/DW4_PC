@@ -68,6 +68,8 @@ public static class ServerApp
         var rooms = Bind<RoomOptions>(config, "Rooms");
         var sealing = Bind<SealingOptions>(config, "Sealing");
         var instances = Bind<InstanceOptions>(config, "Instances");
+        // The relay's world keys (SEAMLESS.md 19.17.5); web's WorldWebOptions binds the same section for its keys.
+        var world = Bind<DW4Online.Relay.World.WorldHubOptions>(config, "World");
         instances.PlayersPerInstance = rooms.PlayersPerInstance;
         var tls = Bind<TlsOptions>(config, "Tls");
         var database = Bind<DatabaseOptions>(config, "Database");
@@ -77,7 +79,7 @@ public static class ServerApp
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
             .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database)
-            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends);
+            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends).AddSingleton(world);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -88,9 +90,11 @@ public static class ServerApp
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<ISocialRepository, SocialRepository>();
-        // Round I2-social: nobody listens yet. Round I1's relay registers its in-process implementation BEFORE this line
-        // (then this TryAdd adds nothing) or replaces it after it (services.Replace / AddSingleton): a TryAdd after this
-        // line would be silently ignored.
+        // Round I1: the world relay is the domain's IWorldRelay and listens to its IWorldNotifier (one WorldGateway), registered
+        // BEFORE the TryAdd lines (they then add nothing; without the relay lane's registration they keep the null objects).
+        services.AddSingleton<WorldGateway>();
+        services.AddSingleton<IWorldRelay>(sp => sp.GetRequiredService<WorldGateway>());
+        services.AddSingleton<IWorldNotifier>(sp => sp.GetRequiredService<WorldGateway>());
         services.TryAddSingleton<IWorldNotifier>(NullWorldNotifier.Instance);
         // Round I1a: the world relay as the domain sees it (SEAMLESS.md 19.17). The relay lane registers its implementation
         // (admission, the browser snapshot, the play context, End and Remove) BEFORE this line; until then nobody is online.
@@ -121,6 +125,8 @@ public static class ServerApp
         {
             services.AddSingleton<RelayHub>();
             services.AddHostedService(sp => sp.GetRequiredService<RelayHub>());
+            // The world gateway sets the relay's admission, story saver and history hooks: made at the start, not at its first use.
+            services.AddHostedService(sp => new WorldGatewayStart(sp.GetRequiredService<WorldGateway>()));
         }
         services.AddSingleton<RelayGateway>();
         services.AddSingleton<IRelayGateway>(sp => sp.GetRequiredService<RelayGateway>());
@@ -343,4 +349,12 @@ internal sealed class MaintenanceService(MaintenanceRepository repository, Socia
         {
         }
     }
+}
+
+/// <summary>Makes the world gateway when the host starts (its constructor hooks the relay up).</summary>
+internal sealed class WorldGatewayStart(WorldGateway gateway) : IHostedService
+{
+    public WorldGateway Gateway { get; } = gateway;
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken) => Gateway.Queue.DrainAsync(TimeSpan.FromSeconds(5));
 }
