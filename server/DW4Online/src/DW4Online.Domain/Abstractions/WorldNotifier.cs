@@ -11,12 +11,15 @@ namespace DW4Online.Domain.Abstractions;
 public interface IWorldNotifier
 {
     /// <summary>
-    /// The friendship of <paramref name="a"/> and <paramref name="b"/>, or a request between them that the receiver can
-    /// see, changed (delivered, accepted, declined, cancelled, removed): reload the pair. A decline, a silent request
-    /// (the receiver blocks the sender) and the moment a waiting request is delivered are never shown to the sender: the
-    /// relay must not tell him.
+    /// The friendship of <paramref name="account"/> and <paramref name="other"/>, or a request between them that the
+    /// receiver can see, changed (delivered, accepted, declined, cancelled, removed): reload the pair.
+    /// <paramref name="account"/> may always learn of it; <paramref name="other"/> only when <paramref name="otherSees"/>:
+    /// a decline (<paramref name="account"/> declined <paramref name="other"/>'s request) and the delivery of a waiting
+    /// request (<paramref name="account"/> received it) are never shown to their sender, and the relay must not tell him,
+    /// not even by a changed list or count. (A silent request, to a receiver who blocks the sender, calls nothing.)
+    /// Accepting, cancelling a delivered request and removing a friend show on both sides.
     /// </summary>
-    void FriendsChanged(long a, long b);
+    void FriendsChanged(long account, long other, bool otherSees);
 
     /// <summary><paramref name="blocker"/> blocked or unblocked <paramref name="blocked"/>: reload the pair. Never told to the blocked player.</summary>
     void BlocksChanged(long blocker, long blocked);
@@ -36,7 +39,7 @@ public sealed class NullWorldNotifier : IWorldNotifier
 {
     public static readonly NullWorldNotifier Instance = new();
 
-    public void FriendsChanged(long a, long b)
+    public void FriendsChanged(long account, long other, bool otherSees)
     {
     }
 

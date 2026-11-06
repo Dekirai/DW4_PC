@@ -213,7 +213,8 @@ public class SocialServiceTests
     private sealed class Notifier : IWorldNotifier
     {
         public List<string> Calls { get; } = [];
-        public void FriendsChanged(long a, long b) => Calls.Add($"friends {a} {b}");
+        public void FriendsChanged(long account, long other, bool otherSees) =>
+            Calls.Add($"friends {account} {other}" + (otherSees ? "" : $" ({account} only)"));
         public void BlocksChanged(long blocker, long blocked) => Calls.Add($"blocks {blocker} {blocked}");
         public void PrefsChanged(long account) => Calls.Add($"prefs {account}");
         public void AccountChanged(long account) => Calls.Add($"account {account}");
@@ -276,7 +277,8 @@ public class SocialServiceTests
         Assert.Equal(["Kim"], await w.Friends(lee));
         Assert.Empty(w.Social.Requests);
         Assert.Equal(Relations.Friends, await w.Service.RelationAsync(kim, lee));
-        Assert.Equal(["friends 1 2", "friends 2 1"], w.Notifier.Calls);
+        // The delivery is Lee's alone (Kim never learns when it arrived), the friendship both sides'.
+        Assert.Equal(["friends 2 1 (2 only)", "friends 2 1"], w.Notifier.Calls);
         Assert.Empty(w.Audit.Rows); // friend changes are not audited, only refusals by a limit
 
         Assert.Equal("already_friends", await w.Code(w.Service.SendRequestAsync(kim, "Lee", Caller)));
@@ -317,7 +319,7 @@ public class SocialServiceTests
         Assert.Equal(FriendRequestState.Declined, w.Social.Requests[(kim, lee)].State);
         Assert.Equal(sentAt, (await w.Service.OverviewAsync(kim)).RequestsOut[0].SentAt);
         Assert.Empty(await w.In(lee));
-        Assert.Equal(["friends 2 1"], w.Notifier.Calls); // only the decline itself; nothing reaches Lee again
+        Assert.Equal(["friends 2 1 (2 only)"], w.Notifier.Calls); // only the decline itself, Lee's alone; nothing reaches Lee again
 
         // After Friends:RequestDays (30) it is gone for both and purged; a new request reaches Lee again.
         w.Clock.Advance(TimeSpan.FromDays(27).Add(TimeSpan.FromMinutes(1)));
@@ -371,15 +373,19 @@ public class SocialServiceTests
         var lee = w.Add("Lee");
         var max = w.Add("Max");
         await w.SendOk(kim, "Lee");
+        w.Notifier.Calls.Clear();
         Assert.Equal("ok", await w.Code(w.Service.CancelAsync(kim, "lee")));
         Assert.Empty(w.Social.Requests);
         Assert.Empty(await w.In(lee));
+        Assert.Equal(["friends 1 2"], w.Notifier.Calls); // gone from Lee's list too: both sides may learn of it
         Assert.Equal("request_not_found", await w.Code(w.Service.CancelAsync(kim, "Lee")));
 
         // Max declines; Kim cancels: gone from Kim's list, but the decline holds until it expires.
         await w.SendOk(kim, "Max");
         await w.Service.DeclineAsync(max, "Kim");
+        w.Notifier.Calls.Clear();
         Assert.Equal("ok", await w.Code(w.Service.CancelAsync(kim, "Max")));
+        Assert.Empty(w.Notifier.Calls); // Max's list does not change (he declined it), Kim's own action tells nobody
         Assert.Empty(await w.Out(kim));
         Assert.Equal(Relations.None, await w.Service.RelationAsync(kim, max));
         Assert.Equal(Relations.None, await w.Service.RelationAsync(max, kim));
@@ -427,7 +433,7 @@ public class SocialServiceTests
         Assert.Equal(Relations.RequestSent, await w.Service.RelationAsync(kim, lee));
         Assert.Equal(Relations.RequestSent, await w.Service.RelationAsync(kim, max));
         Assert.False(w.Social.Requests[(kim, lee)].Delivered);
-        Assert.Equal(["friends 1 3"], w.Notifier.Calls); // the silent request tells nobody
+        Assert.Equal(["friends 3 1 (3 only)"], w.Notifier.Calls); // Max's delivery, his alone; the silent request tells nobody
 
         // Lee sees nothing and cannot answer it; for Lee, Kim is blocked.
         Assert.Empty(await w.In(lee));
@@ -505,7 +511,9 @@ public class SocialServiceTests
         var lee = w.Add("Lee");
         await w.SendOk(kim, "Lee");
         await w.Service.AcceptAsync(lee, "Kim", Caller);
+        w.Notifier.Calls.Clear();
         Assert.Equal("Kim", (await w.Service.RemoveFriendAsync(lee, "kim")).Value);
+        Assert.Equal(["friends 2 1"], w.Notifier.Calls); // not told, but gone from Kim's list as well
         Assert.Empty(await w.Friends(kim));
         Assert.Empty(await w.Friends(lee));
         Assert.Equal("not_friends", await w.Code(w.Service.RemoveFriendAsync(kim, "Lee")));
@@ -553,7 +561,8 @@ public class SocialServiceTests
         Assert.Contains("Late", await w.In(lee));
         Assert.DoesNotContain("Silent", await w.In(lee));
         Assert.Equal(100, (await w.Service.OverviewAsync(lee)).RequestsIn.Count);
-        Assert.Equal([$"friends {lee} {senders[0]}", $"friends {late} {lee}"], w.Notifier.Calls); // the decline, then the delivery
+        // The decline, then the delivery: both Lee's alone (neither sender learns of them).
+        Assert.Equal([$"friends {lee} {senders[0]} ({lee} only)", $"friends {lee} {late} ({lee} only)"], w.Notifier.Calls);
     }
 
     /// <summary>
@@ -874,7 +883,7 @@ public class SocialServiceTests
         Assert.Equal((20, 100, 50, 100, 200, 500, 30),
             (o.RequestsPerHour, o.RequestsPerDay, o.MaxPendingOut, o.MaxPendingIn, o.MaxFriends, o.MaxBlocks, o.RequestDays));
         Assert.IsType<NullWorldNotifier>(NullWorldNotifier.Instance);
-        NullWorldNotifier.Instance.FriendsChanged(1, 2); // does nothing, throws nothing
+        NullWorldNotifier.Instance.FriendsChanged(1, 2, otherSees: false); // does nothing, throws nothing
         NullWorldNotifier.Instance.StoryReplaced(1, 1);
     }
 }

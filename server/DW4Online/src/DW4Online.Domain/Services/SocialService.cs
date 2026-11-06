@@ -177,7 +177,7 @@ public sealed class SocialService(
         if (!VisibleToReceiver(await social.GetRequestAsync(target.Id, accountId, ct), Since(now)))
             return NoRequestFrom(target);
         await social.DeclineRequestAsync(target.Id, accountId, now, ct);
-        notifier.FriendsChanged(accountId, target.Id);
+        notifier.FriendsChanged(accountId, target.Id, otherSees: false); // the sender is never told
         await DeliverAsync(accountId, Since(now), ct); // its place goes to the oldest waiting request
         return target.Username;
     }
@@ -202,7 +202,7 @@ public sealed class SocialService(
             await social.DeleteRequestAsync(accountId, target.Id, ct);
             if (mine.Delivered)
             {
-                notifier.FriendsChanged(accountId, target.Id);
+                notifier.FriendsChanged(accountId, target.Id, otherSees: true); // gone from the receiver's list
                 await DeliverAsync(target.Id, Since(now), ct); // its place goes to the oldest waiting request
             }
         }
@@ -218,7 +218,7 @@ public sealed class SocialService(
         if (held is null) return Busy();
         if (!await social.RemoveFriendshipAsync(accountId, target.Id, ct))
             return DomainError.NotFound("not_friends", $"You are not friends with {target.Username}.");
-        notifier.FriendsChanged(accountId, target.Id);
+        notifier.FriendsChanged(accountId, target.Id, otherSees: true); // not told, but gone from his list
         return target.Username;
     }
 
@@ -303,7 +303,7 @@ public sealed class SocialService(
         if (await social.CountFriendsAsync(target.Id, ct) >= options.MaxFriends)
             return DomainError.Conflict("other_friend_limit", $"{target.Username} can't take more friends right now.");
         if (!await social.AddFriendshipAsync(accountId, target.Id, now, ct)) return NoSuchPlayer();
-        notifier.FriendsChanged(accountId, target.Id);
+        notifier.FriendsChanged(accountId, target.Id, otherSees: true);
         // The requests between the two are gone: their places go to the oldest waiting requests.
         await DeliverAsync(accountId, Since(now), ct);
         await DeliverAsync(target.Id, Since(now), ct);
@@ -320,7 +320,7 @@ public sealed class SocialService(
         var places = MaxPendingIn - await social.CountIncomingAsync(to, since, ct);
         if (places <= 0) return;
         foreach (var from in await social.DeliverWaitingAsync(to, since, places, ct))
-            notifier.FriendsChanged(from, to);
+            notifier.FriendsChanged(to, from, otherSees: false); // the sender never learns when it arrived
     }
 
     private int MaxPendingIn => Math.Max(1, options.MaxPendingIn);
