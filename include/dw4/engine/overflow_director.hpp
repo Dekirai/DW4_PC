@@ -175,6 +175,19 @@ struct Tuning {
     float bot_flee = 16.0f;                      // the kite bot walks away from an enemy this near (14.1)
     int level_window_gap = 20 * 60;              // at most one level-up window (freeze) in this many run steps
     int muteki = 30;                             // MUTEKI frames after a hit (4.8 had 50: a crowd round a standing Digimon must cost)
+    // Guardians and the finale (4.4, round O1b lane E). A Guardian closes
+    // phases 1-3 (it enters when the phase's five minutes end; the phases
+    // stay on the clock, the balance of docs/OVERFLOW_DIRECTOR.md 10-11 is
+    // built on it), LordKnightmon comes at 20:00 under the quest timer: its
+    // defeat clears the run, the timer's 0:00 (end_steps) is TIME UP.
+    // guardians=false: O1a's run (the clear at end_steps, no Guardian).
+    bool guardians = true;
+    float guardian_hp = 6.0f, finale_hp = 8.0f;  // x the row's HPMAX x hp_factor (4.4: x 6, the finale x 8)
+    float elite_hp = 12.0f;                      // the elite fallback (4.4)
+    float guardian_distance = 40.0f;             // it enters this far in front of the player
+    int guardian_half_steps = 120 * 60;          // A(t) halves while a Guardian lives, at most this long
+    int guardian_first = 0;                      // (tests, spikes: the first Guardian at this run step; 0: 5:00)
+    int finale_hurry = 60 * 60;                  // QS_HURRY in the timer's last minute
 };
 
 // ---------------------------------------------------------------------------
@@ -262,10 +275,48 @@ struct RunConfig {
     int forge_from = 0;
     int forge_sure = kForgeSure; // (forge_sure=0: the balance round's offers, for its before measurement)
     float art_class = 0;     // a balance pass's own Art class factor (0: art_class_factor)
+    // Round O1b (the lobby's character select and the meta file, lanes D
+    // and F; docs/ROUND_O1B_E_NOTES.md): the starting loadout (8.3, gear keys
+    // of gear_table(); "" none), the gear the Data Records opened beyond the
+    // start set, and the Plug Lab's points of the form (8.2) by UPCNT index
+    // (GameSystem::PlayerSlot::upcnt: 0 MaxHP, 1 MaxMP, 2 Strength, 3 Def.,
+    // 4 Wisdom, 5 Spirit, 6 Speed, 7-10 Fire / Ice / Bolt / Dark RES).
+    std::string loadout_armor, loadout_chip;
+    std::vector<std::string> gear_open;
+    std::array<int, 11> plug_lab{};
+    // Guardians (tests, spikes): the families of phases 1-3 ("" drawn by the
+    // seed) and the families that come as the elite fallback (4.4).
+    std::array<std::string, 3> guardians{};
+    std::vector<std::string> elite;
+};
+
+// The four Rookies a run starts with in O1b (5.3).
+constexpr std::array<std::string_view, 4> kRookies{"p_agumon", "p_vmon", "p_girumon", "p_dorumon"};
+bool playable_form(std::string_view form);
+
+// ---------------------------------------------------------------------------
+// Guardians (4.4)
+// ---------------------------------------------------------------------------
+struct GuardianRow {
+    const char* family;  // e_blosso
+    const char* name;    // Blossomon
+    int record;          // its Normal row in the enemy table
+    const char* donor;   // the stage (main member) or separate package it loads from (H2)
+    int phase;           // 1-3, 4 the finale
+    const char* elite;   // the elite fallback's family (4.4)
+};
+const std::vector<GuardianRow>& guardian_table();
+const GuardianRow* guardian_row(std::string_view family);
+// The run's Guardians: phases 1-3 drawn from their pairs by the seed (or the
+// forced ones), then LordKnightmon.
+std::array<std::string, 4> draw_guardians(std::uint32_t seed, const std::array<std::string, 3>& forced = {});
+struct GuardianBar {
+    std::string name;
+    int hp{}, max_hp{};
 };
 
 // Why the run ended (the host maps it to its RunEnd).
-enum class Outcome : std::uint8_t { none, retired, defeated, cleared };
+enum class Outcome : std::uint8_t { none, retired, defeated, cleared, time_up };
 
 // What the overlay shows (O1a: plain boxes, docs/SURVIVAL.md 9.4-9.6).
 enum class Screen : std::uint8_t { none, level_up, pause, build, retire_ask, results };
@@ -385,6 +436,15 @@ public:
     static float knots(const std::array<float, 5>& at, double minutes);
     float art_factor() const { return config_.art_class > 0 ? config_.art_class : art_class_factor(config_.form); }
     double hp_factor(double minutes) const;   // an enemy's HPMAX factor at a run time
+    // Guardians and the finale (4.4; the HUD of lane D, the records of lane F).
+    bool finale() const { return finale_; }                  // LordKnightmon is in, the quest timer runs
+    int finale_left_steps() const;                           // the timer (0..end_steps - 20:00), 1 step = 1001/60000 s
+    bool time_up() const { return outcome_ == Outcome::time_up; }
+    std::optional<GuardianBar> guardian_bar(Engine& engine) const;
+    const std::vector<std::string>& guardians_defeated() const { return guardians_defeated_; }
+    const std::array<std::string, 4>& guardian_plan() const { return guardian_plan_; }
+    bool awakened() const { return awakened_; }
+    int casts() const;
     const Vec3f& arena_centre() const { return centre_; }
     float arena_radius() const { return radius_; }
 
@@ -422,6 +482,10 @@ private:
     void load_art_pattern(Engine& engine);
     void drop_items(Engine& engine);
     void log_minute(Engine& engine);
+    void step_guardians(Engine& engine);
+    bool spawn_guardian(Engine& engine, int stage);
+    void guardian_down(Engine& engine, bool defeated);
+    void step_music(Engine& engine);
     void notice(std::string text);
     Vec3f player_position(Engine& engine) const;
     // The stick that walks the player on the ground way (dx, dz) at this
@@ -593,6 +657,23 @@ private:
     int disks_taken_ = 0, disks_used_ = 0, plugs_picked_ = 0;
     std::string notice_;
     std::uint64_t notice_step_ = 0;
+    // Guardians and the finale
+    struct Guardian {
+        std::string family, name;
+        int ram = -1;
+        int stage = 0;               // 1-3 the phases, 4 the finale
+        std::uint64_t at = 0;        // the run step it entered
+        bool elite = false;
+    };
+    std::array<std::string, 4> guardian_plan_{};
+    int guardian_next_ = 1;          // the stage of the next Guardian (5: none left)
+    std::optional<Guardian> guardian_;
+    std::vector<std::string> guardians_defeated_;
+    bool finale_ = false;
+    std::uint64_t finale_at_ = 0;
+    std::string music_now_;
+    int count_said_ = -1;            // the timer's last counted second
+    bool awakened_ = false;
     // the kite bot
     int bot_a_ = 0, bot_l_ = 0;
     float bot_dx_ = 0, bot_dz_ = 0;  // its last way (it keeps walking)

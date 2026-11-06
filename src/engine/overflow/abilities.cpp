@@ -57,6 +57,12 @@ struct ArtDef {
 constexpr ArtDef kArts[] = {
     {"p_agumon", "Cleaver", 0, "VATCX1", "axe", 2.0f, {"a second line on the next target", "+20 % damage", "side lines", "a bigger fan"}},
     {"p_vmon", "Blade Arc", 25, "VATCS1", "slash", 1.4f, {"an arc on the next target", "+20 % damage", "the return arc", "+30 % size"}},
+    // Round O1b: Guilmon's dagger (two thrust boxes at z 11 and 16, Dyno Tooth
+    // alpha TSUYOSA 48: the weakest start, 14.3's closest case) and Dorumon's
+    // katana (the 5-box arc of x +-9, Kamikiri Maru alpha 54). Their Forge 4 / 5
+    // steps are Blade Arc's (the return line, +30 % size) until O2.
+    {"p_girumon", "Fang Thrust", 50, "VATCE1", "dagger", 2.2f, {"a thrust at the next target", "+20 % damage", "the return thrust", "+30 % size"}},
+    {"p_dorumon", "Crescent Draw", 75, "VATCS1", "slash", 1.5f, {"an arc on the next target", "+20 % damage", "the return arc", "+30 % size"}},
 };
 
 // O1a's techniques (pcTech base rows) with their cooldowns, cast sounds and
@@ -76,7 +82,23 @@ constexpr TechDef kTechniques[] = {
     {10, 150, "plMAGIC1", true, false, 1.0f},  // Bolt, 2.5 s
     {25, 120, "plIMPACT", false, false, 0.5f}, // Impact, 2.0 s
     {40, 720, "plHEAL01", false, true, 1.0f},  // Heal Lt, 12 s
+    // Round O1b: the rest of the four Rookies' lists (6.4).
+    {5, 150, "plMAGIC1", true, false, 1.0f},   // Ice, 2.5 s
+    {15, 150, "plMAGIC1", true, false, 1.0f},  // Dark, 2.5 s
+    {20, 180, "plVENOM", true, false, 1.0f},   // Venom, 3.0 s (at the densest group)
+    {35, 120, "plMAGIC1", true, false, 1.0f},  // Bomb, 2.0 s (at the densest group)
+    {75, 900, "plMIND01", false, false, 1.0f}, // Resist, 15 s (a buff on the player)
+    {80, 900, "plMIND01", false, false, 1.0f}, // Pwr Up, 15 s (a buff on the player)
+    {70, 480, "plMIND01", false, false, 1.0f}, // Freeze, 8 s (a pulse on the enemies)
+    {85, 480, "plMIND01", false, false, 1.0f}, // Pwr Dwn, 8 s (a pulse on the enemies)
+    {95, 600, "plMIND01", false, false, 1.0f}, // Bind, 10 s (a pulse on the enemies)
 };
+// The force group (6.4): a buff on the player is cast with an enemy within
+// kForceRange, a pulse on the enemies with three of them within it.
+constexpr float kForceRange = 30.0f;
+bool is_buff(int family) { return family == 75 || family == 80; }
+bool is_pulse(int family) { return family == 70 || family == 85 || family == 95; }
+bool at_group(int family) { return family == 20 || family == 35; }
 } // namespace
 
 float technique_damage(int family) {
@@ -206,6 +228,25 @@ void OverflowDirector::equip_ladder(Engine& engine, bool force_model) {
             const int row = ladder_base_ + f * 5 + g;
             if (db->number("weapon", row, "SKILLPOINT").value_or(99999) <= skill) best = row;
         }
+    // Awakening (6.5): with the last family forged and the class skill at the
+    // signature's SKILLPOINT (2500), the form's signature weapon (its SOUBI
+    // bit is the form's; rows 250-265) takes the socket by DW4's rule and
+    // stays there.
+    if (offer_state_.forge >= std::max(1, offer_state_.forge_families) && offer_state_.forge_families >= 5)
+        for (int row = 250; row < 266; ++row) {
+            const int soubi = db->number("weapon", row, "SOUBI").value_or(0);
+            if (!(soubi & (1 << player.stats.species)) || soubi == 0xFFFF) continue;
+            if (db->number("weapon", row, "SKILL").value_or(-1) != art_skill_) continue;
+            if (db->number("weapon", row, "SKILLPOINT").value_or(99999) > skill) break;
+            best = row;
+            if (!awakened_) {
+                awakened_ = true;
+                event_log_.push_back({clock_, "awakening " + std::to_string(row)});
+                detail::play_sound(engine, "plLVUP01");
+                if (started_) notice("AWAKENING: " + detail::plain_name(db->text("weapon", row, "NAME")));
+            }
+            break;
+        }
     int index = player.power_socket.empty() ? -1 : player.power_socket[0];
     if (index < 0 || index >= int(player.devices.size()) || player.devices[std::size_t(index)].type != 0) {
         ItemDevice weapon;
@@ -219,7 +260,7 @@ void OverflowDirector::equip_ladder(Engine& engine, bool force_model) {
     device.type = 0;
     device.record = best;
     device.flag = true;
-    if (before != best && started_) notice(detail::plain_name(db->text("weapon", best, "NAME")));
+    if (before != best && started_ && best < 250) notice(detail::plain_name(db->text("weapon", best, "NAME")));
     if (force_model || std::string(db->text("weapon", best, "MODEL")) != weapon_model_) weapon_dirty_ = true;
 }
 
@@ -343,6 +384,8 @@ void OverflowDirector::cast_techniques(Engine& engine) {
     const Vec3f me = ram_position(*self);
     float nearest = 1e9f;
     Vec3f nearest_at{};
+    std::vector<Vec3f> near; // (the enemies within the shells' range: the densest group, the force group's counts)
+    int within_force = 0;
     for (const auto& ram : models->rams()) {
         if (!living_enemy(*ram)) continue;
         const Vec3f q = ram_position(*ram);
@@ -350,6 +393,22 @@ void OverflowDirector::cast_techniques(Engine& engine) {
         if (d < nearest) {
             nearest = d;
             nearest_at = q;
+        }
+        if (d <= kAimRange) near.push_back(q);
+        within_force += d <= kForceRange ? 1 : 0;
+    }
+    // The densest group within 40 (6.4: Bomb and Venom): the enemy with the
+    // most others within 10 units.
+    Vec3f group_at = nearest_at;
+    {
+        int best = -1;
+        for (const auto& a : near) {
+            int count = 0;
+            for (const auto& b : near) count += flat_distance(a, b) <= 10.0f ? 1 : 0;
+            if (count > best) {
+                best = count;
+                group_at = a;
+            }
         }
     }
     for (auto& t : techniques_) {
@@ -363,6 +422,10 @@ void OverflowDirector::cast_techniques(Engine& engine) {
             const int cost = technique_mp_cost(engine, row);
             if (player.mp < cost) continue; // (a heal that lacks MP waits)
             sys->change_mp(engine, 0, -cost);
+        } else if (is_buff(t.family)) {
+            if (within_force < 1) continue;   // (a buff while enemies are near)
+        } else if (is_pulse(t.family)) {
+            if (within_force < 3) continue;   // (a pulse on a group)
         } else if (t.aim) {
             if (nearest > kAimRange) continue;
         } else if (nearest > kImpactRange) {
@@ -394,7 +457,8 @@ void OverflowDirector::cast_techniques(Engine& engine) {
         cast.strings.emplace_back(player.digimon);
         cast.ints.push_back(0);
         port_send(engine, "ACTION_BROADCAST", std::nullopt, -1, action->second, cast);
-        if (t.aim) aim_effects(engine, effects_before, std::atan2(nearest_at.x - me.x, nearest_at.z - me.z));
+        const Vec3f& aim_at = at_group(t.family) ? group_at : nearest_at;
+        if (t.aim) aim_effects(engine, effects_before, std::atan2(aim_at.x - me.x, aim_at.z - me.z));
         // The cast sound the quick panel would start, at most every 4 steps.
         if (auto& at = sound_at_[t.sound]; steps_ >= at) {
             detail::play_sound(engine, t.sound);

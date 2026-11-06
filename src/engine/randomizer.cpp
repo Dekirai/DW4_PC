@@ -363,7 +363,7 @@ void Engine::load_enemy_donors() {
 }
 
 std::set<std::string, std::less<>> Engine::route_donor(const std::shared_ptr<const IgbDocument>& document,
-                                                      const std::vector<std::string>& families) {
+                                                      const std::vector<std::string>& families, bool scripts_only) {
     if (!document->info_list_reference) return {};
     std::vector<ObjectView> infos;
     for (const auto& element : document->object_list(*document->info_list_reference))
@@ -406,6 +406,7 @@ std::set<std::string, std::less<>> Engine::route_donor(const std::shared_ptr<con
                 if (data && script_wanted(data.str(2)) && !has_script(data.str(2))) donor_scripts_.push_back(data);
             continue;
         }
+        if (scripts_only) continue;
         if (type == "beActionStarterInfo") {
             if (effects.contains(name)) donor_starters_.push_back({info, targets});
             continue;

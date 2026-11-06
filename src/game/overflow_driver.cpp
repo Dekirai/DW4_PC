@@ -140,6 +140,34 @@ public:
         for (const auto& [key, value] : pairs(option(request_, "family_damage"))) config.family_damage[key] = value;
         // (family_ring=FAMILY:R,...: a family's own spawn ring, 0-2.)
         for (const auto& [key, value] : pairs(option(request_, "family_ring"))) config.family_ring[key] = int(value);
+        // Round O1b lane E: the Guardians and the finale (guardians=0: O1a's
+        // run), the spike's keys (guardian_set=F1,F2,F3 forces the phases'
+        // Guardians, guardian_first=SECONDS brings the first one sooner,
+        // elite=F,... makes those Guardians the elite fallback) and the
+        // Guardians' HP factors.
+        if (const auto on = option(request_, "guardians"); !on.empty()) config.tuning.guardians = on != "0";
+        seconds("guardian_first", config.tuning.guardian_first);
+        real("guardian_hp", config.tuning.guardian_hp);
+        real("finale_hp", config.tuning.finale_hp);
+        auto list = [](const std::string& text) {
+            std::vector<std::string> out;
+            for (std::size_t begin = 0; begin < text.size();) {
+                const std::size_t end = std::min(text.find(',', begin), text.size());
+                if (end > begin) out.push_back(text.substr(begin, end - begin));
+                begin = end + 1;
+            }
+            return out;
+        };
+        {
+            const auto set = list(option(request_, "guardian_set"));
+            for (std::size_t i = 0; i < set.size() && i < 3; ++i) config.guardians[i] = set[i];
+        }
+        config.elite = list(option(request_, "elite"));
+        // The loadout and the opened gear (lanes D and F set them; tests: loadout=ARMOR,CHIP).
+        if (const auto loadout = list(option(request_, "loadout")); !loadout.empty()) {
+            config.loadout_armor = loadout[0] == "-" ? std::string() : loadout[0];
+            if (loadout.size() > 1) config.loadout_chip = loadout[1] == "-" ? std::string() : loadout[1];
+        }
         timing_ = option(request_, "timing") == "1";
         // commands=STEP KIND[VALUE],... (test runs with pictures): the menu keys
         // at given director steps (frozen ones count), e.g. 600p,640m1,660a: pause, the cursor down, A.
@@ -241,6 +269,7 @@ public:
             switch (director_->outcome()) {
             case ov::Outcome::defeated: end_ = RunEnd::defeated; break;
             case ov::Outcome::cleared: end_ = RunEnd::cleared; break;
+            case ov::Outcome::time_up: end_ = RunEnd::time_up; break;
             default: end_ = asked_.value_or(RunEnd::retired); break;
             }
             finish(run);

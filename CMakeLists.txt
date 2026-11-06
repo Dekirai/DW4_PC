@@ -49,7 +49,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
 target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
   src/engine/overflow/field_start.cpp src/engine/overflow/donors.cpp src/engine/overflow/director.cpp
   src/engine/overflow/spawner.cpp src/engine/overflow/abilities.cpp src/engine/overflow/offers.cpp
-  src/engine/overflow/human_bot.cpp)
+  src/engine/overflow/human_bot.cpp src/engine/overflow/guardians.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)

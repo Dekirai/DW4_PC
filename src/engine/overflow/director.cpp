@@ -46,6 +46,8 @@ OverflowDirector::OverflowDirector(RunConfig config) : config_(std::move(config)
     offer_state_.forge_sure = config_.forge_sure;
     // (The human bot's own stream: its draws leave the spawner's alone.)
     human_.random = 0x4855AA5500000000ull ^ std::uint64_t(config_.seed) * 0xD1B54A32D192ED03ull;
+    // The run's Guardians (4.4): drawn from their own stream, so the spawner's draws stay as they were.
+    if (config_.tuning.guardians) guardian_plan_ = draw_guardians(config_.seed, config_.guardians);
 }
 
 void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
@@ -60,15 +62,27 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     rules.donors.streams.clear();
     for (const auto& music : phase_music()) rules.donors.streams.push_back({music.stage, {music.name}});
     rules.donors.streams.push_back({"dngq1b1e", {"QS_START", "QS_DONOT"}});
+    // The Guardians of this run from their stages (never their ded_*.lua),
+    // BT_SBOSS from Blossomon's stage, the quest timer's sounds (4.4, 11;
+    // BT_BOSS2 is the Violet Ring's own).
+    rules.donors.guardians.clear();
+    if (config_.tuning.guardians) {
+        for (const auto& family : guardian_plan_)
+            if (const auto* row = guardian_row(family)) rules.donors.guardians.push_back({row->family, row->donor});
+        rules.donors.streams.push_back({"dng101b2", {"BT_SBOSS"}});
+        rules.donors.streams.push_back({"dngq3b1e", {"QS_HURRY", "z3COUNT1", "z3COUNT2", "z3COUNT3"}});
+    }
     // The form's element: +15 % for its techniques (5.1): Agumon fire, Veemon thunder.
     rules.damage.element_factor = {1, 1, 1, 1};
     if (config_.form == "p_agumon") rules.damage.element_factor[0] = 1.15f;
     if (config_.form == "p_vmon") rules.damage.element_factor[2] = 1.15f;
+    if (config_.form == "p_girumon") rules.damage.element_factor[3] = 1.15f; // (Dark)
+    if (config_.form == "p_dorumon") rules.damage.element_factor[1] = 1.15f; // (Ice)
     // The run's skill caps start at the first Train step (6.2); the class
     // cap follows the Forge at the field start.
     rules.skills.cap.fill(train_cap(0));
     rules.damage.tag_factor[kTagArt] = art_factor();
-    for (const int family : {0, 10, 25, 30, 40})
+    for (const int family : {0, 5, 10, 15, 20, 25, 30, 35, 40})
         if (technique_damage(family) != 1.0f) rules.damage.technique_factor[family] = technique_damage(family);
     // A normal enemy's stun, sleep or bind is a hitch, not a stop (4.8; 14.2
     // allows 5 % of the frames without control).
@@ -229,17 +243,19 @@ void OverflowDirector::step_running(Engine& engine) {
     trail_.push_back(me);
     if (trail_.size() > 30) trail_.erase(trail_.begin());
     if (clock_ % 60 == 1) update_factors(engine);
-    // The phase music (4.2).
+    // The phase (4.2), the Guardians and the finale (4.4), the music (11).
     const int now_phase = phase();
     if (steps_ >= music_at_ && music_phase_ != now_phase) {
         music_phase_ = now_phase;
-        detail::play_sound(engine, phase_music()[std::size_t(now_phase - 1)].name);
         if (now_phase > 1) event_log_.push_back({clock_, "phase " + std::to_string(now_phase)});
     }
+    step_guardians(engine);
+    if (outcome_ != Outcome::none) return; // (LordKnightmon fell)
+    step_music(engine);
     // Phase 4 goes on past its five minutes until the run's end (the forge
     // round of 05.11: the finale's five minutes, 4.4, without LordKnightmon
     // in O1a): the HUD says how long.
-    if (const auto& t = config_.tuning; t.end_steps > 4 * t.phase_steps && clock_ == std::uint64_t(4 * t.phase_steps)) {
+    if (const auto& t = config_.tuning; !t.guardians && t.end_steps > 4 * t.phase_steps && clock_ == std::uint64_t(4 * t.phase_steps)) {
         const int end = t.end_steps / 60;
         notice("Hold out until " + std::to_string(end / 60) + ":" + (end % 60 < 10 ? "0" : "") + std::to_string(end % 60));
     }
@@ -293,7 +309,9 @@ void OverflowDirector::step_running(Engine& engine) {
     }
     if (clock_ % 3600 == 0) log_minute(engine);
     if (clock_ >= std::uint64_t(config_.tuning.end_steps)) {
-        begin_end(engine, Outcome::cleared);
+        // The quest timer's 0:00 with LordKnightmon alive: TIME UP (4.4);
+        // without Guardians O1a's clear.
+        begin_end(engine, config_.tuning.guardians ? Outcome::time_up : Outcome::cleared);
         return;
     }
     // (Two steps after the level-up: its HUD values, posted a frame ahead,
@@ -668,6 +686,12 @@ std::string OverflowDirector::offer_about(const Engine& engine, const Offer& off
 void OverflowDirector::enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index) {
     (void)killer;
     (void)record;
+    if (guardian_ && guardian_->family == family && guardian_->ram == index) {
+        ++defeats_;
+        ++defeats_by_family_[std::string(family) + "!"];
+        guardian_down(engine, true);
+        return;
+    }
     const auto* row = family_row(family);
     if (!row) return;
     ++defeats_;
@@ -783,18 +807,26 @@ void OverflowDirector::begin_end(Engine& engine, Outcome outcome) {
     outcome_ = outcome;
     ending_since_ = steps_;
     ending_phase_ = 0;
-    static const char* names[] = {"none", "retired", "defeated", "cleared"};
+    static const char* names[] = {"none", "retired", "defeated", "cleared", "time_up"};
     if (end_reason_ == "-") end_reason_ = names[int(outcome)];
     event_log_.push_back({clock_, std::string("end ") + names[int(outcome)] + " (" + end_reason_ + ")"});
     log_minute(engine);
     if (outcome == Outcome::retired) {
         ending_phase_ = 99;
-    } else if (outcome == Outcome::cleared) {
-        // The simulation is complete: the enemies leave, the arena's victory music.
+    } else if (outcome == Outcome::cleared || outcome == Outcome::time_up) {
+        // The simulation is complete (or its time is up, 4.4): the enemies
+        // leave; the arena's victory music, or the timer's end and QS_DONOT.
+        if (guardian_) guardian_down(engine, false);
         if (auto* models = engine.get<ModelCtrlManager>())
             for (const auto& ram : models->rams())
                 if (living_enemy(*ram)) port_send(engine, "MODELCTRL", ram->info_name, ram->index, "SQ_ERAS");
-        detail::play_sound(engine, "BT_WIN02");
+        if (outcome == Outcome::cleared) {
+            detail::play_sound(engine, "BT_WIN02");
+        } else {
+            detail::play_sound(engine, "z3COUNT3");
+            detail::play_sound(engine, "QS_DONOT");
+            notice("TIME UP");
+        }
     }
 }
 
@@ -810,7 +842,7 @@ void OverflowDirector::step_ending(Engine& engine) {
         detail::play_sound(engine, "QS_DONOT");
         ending_phase_ = 1;
     }
-    const std::uint64_t wait = outcome_ == Outcome::defeated ? 330 : outcome_ == Outcome::cleared ? 240 : 0;
+    const std::uint64_t wait = outcome_ == Outcome::defeated ? 330 : outcome_ == Outcome::cleared || outcome_ == Outcome::time_up ? 240 : 0;
     if (ending_phase_ == 99 || age >= wait) {
         screen_ = Screen::results;
         cursor_ = 0;
@@ -1067,7 +1099,17 @@ std::vector<std::string> OverflowDirector::result_lines(const Engine& engine) co
     auto* db = const_cast<Engine&>(engine).get<DatabaseManager>();
     out.push_back("Time " + clock_text(run_seconds()));
     out.push_back("Run level " + std::to_string(level(engine)));
-    out.push_back("Digimon " + std::string(config_.form == "p_vmon" ? "Veemon" : config_.form == "p_agumon" ? "Agumon" : config_.form));
+    out.push_back("Digimon " + std::string(config_.form == "p_vmon"      ? "Veemon"
+                                           : config_.form == "p_agumon"  ? "Agumon"
+                                           : config_.form == "p_girumon" ? "Guilmon"
+                                           : config_.form == "p_dorumon" ? "Dorumon"
+                                                                         : config_.form.c_str()));
+    if (!guardians_defeated_.empty()) {
+        std::string names;
+        for (const auto& family : guardians_defeated_)
+            if (const auto* row = guardian_row(family)) names += (names.empty() ? "" : ", ") + std::string(row->name);
+        out.push_back("Guardians " + names);
+    }
     out.push_back("Defeated " + std::to_string(defeats_));
     std::vector<std::pair<int, std::string>> families;
     for (const auto& [family, count] : defeats_by_family_) {
@@ -1118,9 +1160,15 @@ std::string OverflowDirector::log_text() const {
     return out.str();
 }
 
+int OverflowDirector::casts() const {
+    int total = 0;
+    for (const auto& t : techniques_) total += t.casts;
+    return total;
+}
+
 std::string OverflowDirector::summary_text(const Engine& engine) const {
     std::ostringstream out;
-    static const char* names[] = {"none", "retired", "defeated", "cleared"};
+    static const char* names[] = {"none", "retired", "defeated", "cleared", "time_up"};
     out << "form " << config_.form << "\nseed " << config_.seed << "\nbot " << (config_.bot.empty() ? "-" : config_.bot) << "\nend "
         << names[int(outcome_)] << "\nend_reason " << end_reason_ << "\n";
     out << "run_steps " << clock_ << "\nrun_seconds " << run_seconds() << "\nlevel " << level(engine) << "\ndefeats " << defeats_
@@ -1187,6 +1235,14 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     out << "forge " << offer_state_.forge << "\ntrain " << offer_state_.train[0] << ' ' << offer_state_.train[1] << ' ' << offer_state_.train[2]
         << "\n";
     for (const auto& t : techniques_) out << "casts " << t.name << ' ' << t.casts << '\n';
+    // The Guardians (4.4, round O1b): the plan, the defeated, the finale.
+    out << "guardians";
+    for (const auto& family : guardian_plan_) out << ' ' << (family.empty() ? "-" : family);
+    out << "\nguardians_defeated " << guardians_defeated_.size();
+    for (const auto& family : guardians_defeated_) out << ' ' << family;
+    out << "\nfinale " << (finale_ ? 1 : 0) << "\nawakened " << (awakened_ ? 1 : 0) << '\n';
+    for (const auto& [step, text] : event_log_)
+        if (text.starts_with("guardian ")) out << "guardian_event " << step << ' ' << text.substr(9) << '\n';
     int lua_errors = 0;
     for (const auto& note : engine.notes()) {
         if (note.text.find("script call failed") != std::string::npos || note.text.find("script not found") != std::string::npos)
