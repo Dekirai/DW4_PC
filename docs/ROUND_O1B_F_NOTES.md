@@ -49,6 +49,9 @@ the repo); the parts that concern this lane are repeated here.
 | T8 (a write) | 4.4-9.4 ms per Plug Lab purchase (temporary file, flush, read back, rename, `.bak`), printed by T7; the results' write is one such write in one frozen step |
 | Trial merge 2 (local branch `tmp-o1b-trial2`, not for main): E a1ac5ddd, D 545ab233, F (then F again for `results_hold=`), glue commit bc1a3f39 | one conflict (game_main's includes: keep both); the glue commit is F's part of the merge (cherry-pick it after merging F); build ok; ctest 60 / 60 (`build/ctestT2.log`); det.sh 4004f056 / 396cb219 (`det_o1btrial2`, `build/detT2.log`) |
 | Hidden pictures of trial 2 (`DW4_RENDER=1`, not in git) | `build/shots3/hud_7000.png`: HUD "Defeated 203 / Bits 182" at 01:56 (the reviewer's run showed Bits 0); `build/shots2/results_850.png`: the results with "Sim Bits +0 (300)" and the yellow "NEW! Thousand opens Achilles Board" (profile with 995 defeats, `results_hold=300`, D's retire commands); `build/shots4/locked_results_850.png`: the profile locked for the whole run (`build/shots4/lock.ps1`): the `.bak`'s data used (plugs, Blossom Data's gear), "Not saved: overflow.dat was in use when the game started.", the file unchanged (hash equal) |
+| T5 with a real save (`build/t3/t5meta.sh`, not in git: t3meta.sh with a campaign segment's save card copied into both card folders first) | A (a run at story frame 3000) and B (none): 20 fingerprint lines equal (fb137c77: the save on the card changes the title's path, the same in both), the card folders equal (812bd5c2), the save byte for byte as before (cc9685b4), only A writes the profile (`build/t3/t5.log`) |
+| 13.5 replay from the log (`build/t3/replay.sh`) | a run with a profile (plugs, Brave Core + Wisdom Chip, Blossom Data), then the same request keys + the log's `meta_used` options without a profile: the same run hash twice (e9d5477a3ed64e61; `build/t3/replay.log`) |
+| Balance sample (trial 2 exe = E's final a1ac5ddd; `build/bal2/bal.sh`, `BOTS="kite human" SEEDS=4`; Agumon, Normal, stagbs02, offers=priority; `build/bal2/results.txt`) | kite without plugs: 4 / 4 cleared (22:08-23:54, Lv 38), Sim Bits +15,634 / 16,740 / 17,662 / 16,449; kite with a full Plug Lab: 4 / 4 cleared (22:05-23:25, Lv 37-39), +17,023 / 18,302 / 16,187 / 17,299; human without plugs: 3 / 4 cleared (one defeated at 21:46.8), +19,835 / 15,725 (defeated) / 19,267 / 17,740; human with a full Plug Lab: 4 / 4 cleared (22:37-24:10, Lv 38-40), +15,713 / 19,548 / 21,668 / 18,736. Every first clear: 11-12 new records |
 | Trial merge E, D, F (local branch `tmp-o1b-trial` @ 303ea640, not for main; E 57add3ee, D 8c919404, F ec80c130; superseded by trial 2) | one conflict (game_main's includes), the lobby glue added (three calls); builds; ctest 59 / 59; det.sh 4004f056 / 396cb219; T6 Agumon with a profile (plugs, Brave Core + Drain Ram, Blossom Data): cleared at 22:48.8, Lv 40, the four Guardians, Awakening, 1,724 casts, 265 Fire defeats, 20,961 Sim Bits, 12 new records, all in the file; Guilmon without a profile: cleared, 14,361 Sim Bits |
 | T9 for lane F's strings (scratch check in the trial build: record titles, conditions, opens, the unlock texts, the Plug Lab names, the results' lines against bectext.igb) | 121 strings, 0 missing glyphs |
 
@@ -87,9 +90,14 @@ the repo); the parts that concern this lane are repeated here.
   played yet. The ?????? offer, Extensions and Hard / Very Hard are opened by
   records but not built (O2-O4).
 - Balance (O4, for the user's decision): a Plug Lab form costs 38,500 in
-  all (7 x 5,500). Measured (see 2.): BALANCE_LINE. Every first clear brings
+  all (7 x 5,500). Measured (see 2., E's final head a1ac5ddd): a cleared Agumon Normal
+  run earns 15,600-18,300 Sim Bits with the kite bot and 15,700-21,700
+  with the human bot (the reviewer's 21,000-24,000 were on E's older head
+  57add3ee, before the Guardian and finale balance); a full Plug Lab adds
+  no clear for the kite bot (4 / 4 either way) and one for the human bot
+  (4 / 4 against 3 / 4) in this small sample. Every first clear brings
   12 new records (Banker included: 5,000 earned). So a form is full after
-  about two cleared runs (not "two or three"). Whether a full Plug Lab
+  two to three cleared runs (38,500 / about 17,000). Whether a full Plug Lab
   devalues Normal is open: the kite bot clears these seeds without plugs
   too. The 20-seed charge of 14.2 (with and without a full Plug Lab, kite
   and human) was not run in this round (the PC shuts down at 18:30); run it
@@ -149,8 +157,8 @@ grep -h 'overflow: run\|overflow: meta' $R/A/run.log
 | The `log=` file keeps "loadout none / meta none" | fixed: the log ends with `meta_used ...` (d9f5d784). Commit 02d20a95's title ("the run log keeps the meta state") was true only for the summary file until then. E's director lines `loadout` / `meta` stay E's |
 | Forward compatibility claimed too widely | fixed in part: a later version's known lines of another shape are kept (d9f5d784); SURVIVAL 8.5 and 1. now say exactly what is kept and dropped (6dcc63fa). Kept as is: the header is written with this program's version (the content is this version's plus the kept lines; a later program must not take it for its own format) |
 | One damaged value in a complete file is dropped silently and the file becomes the `.bak` | fixed: such a file is damaged (not complete): the `.bak` wins, `.damaged` kept, never made the `.bak` (d9f5d784) |
-| Balance claims weak | corrected in 3. with this round's sample (2.); the 20-seed charge is left (time) |
+| Balance claims weak | measured again on E's final head (2.: 16 runs, kite and human, with and without a full Plug Lab); 3. corrected; the 20-seed charge of 14.2 is left (time) |
 | F's strings not in overflow_text.inc / T9 | left for the merge (3.) |
 | `apply_meta` overrides E's `loadout=` | fixed (d9f5d784) |
 | A failed write only on stderr | fixed: "Not saved: ..." on the results and in the state message after a run (glue), `save_problem()` |
-| T8 not measured, T5 compares empty card folders, trial merge stale | T8: T7 prints a write's time (761b450a); trial 2 with the final heads (2.); T5 with a real save in both card folders: see 2. |
+| T8 not measured, T5 compares empty card folders, trial merge stale | T8: T7 prints a write's time (761b450a); trial 2 with the final heads (2.); T5 with a real save in both card folders (2.) |
