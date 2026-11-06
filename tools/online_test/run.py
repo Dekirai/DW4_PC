@@ -737,6 +737,23 @@ def card_boxes_story(path):
     return found
 
 
+def own_story_revisions(stack, connection, account_id):
+    """{story bytes (as stored_story gives them): revision} of every revision of the account's own online story it ever
+    kept (online_story_history), and the empty story as revision 0."""
+    rows = sql_rows(stack, connection, "SELECT revision, HEX(flags), HEX(folder), HEX(counters) FROM online_story_history WHERE account_id = %d"
+                    % int(account_id))
+    found = {bytes(1100): 0}
+    for row in rows:
+        parts = row.split("\t")
+        if len(parts) < 4:
+            continue
+        flags = bytes.fromhex(parts[1]).ljust(1024, b"\0")[:1024]
+        folder = bytes.fromhex(parts[2]).ljust(12, b"\0")[:12]
+        counters = struct.unpack("<16i", bytes.fromhex(parts[3]).ljust(64, b"\0")[:64])
+        found.setdefault(flags + folder + struct.pack(">16i", *counters), int(parts[0]))
+    return found
+
+
 def own_story_checks(stack, connection, sc, out, accounts, seeded, problems, notes):
     """Round G-core (G3, G4, G10): a guest's online card, its backups and its local card hold its own story, never the
     owner's; its own online_story row keeps its seeded revision."""
@@ -748,11 +765,22 @@ def own_story_checks(stack, connection, sc, out, accounts, seeded, problems, not
             glob.glob(os.path.join(out, "online_" + name, "*", "backups", "*.dat"))
         if not files:
             problems.append("%s: no online card file" % name)
+        # In the world the own story moves on at home during the session (a new account's first progress, S14z), while the
+        # card's boxes carry the own story the client had (the online character's at the entry): an earlier revision of
+        # the account's OWN story is no foreign story. Anything else (the host's story above all) is a problem.
+        earlier = own_story_revisions(stack, connection, accounts[name])
+        if name in seeded and earlier.get(bytes(1100)) == 0:
+            del earlier[bytes(1100)]  # (a seeded account started the run with its story: the empty one was never its own here)
         boxes = 0
         for path in files:
             for copy, box, story in card_boxes_story(path):
                 boxes += 1
-                if story != own:
+                if story == own:
+                    continue
+                if story in earlier:
+                    notes.append("%s: %s copy 0x%x box %d holds an earlier revision (%d) of its own story" % (
+                        name, os.path.basename(path), copy, box, earlier[story]))
+                else:
                     problems.append("%s: %s copy 0x%x box %d does not hold its own story" % (name, os.path.basename(path), copy, box))
         notes.append("%s: %d used boxes in %d online card files hold its own story (online_story revision %d)" % (name, boxes, len(files), revision))
         local = os.path.join(out, "card_" + name)
