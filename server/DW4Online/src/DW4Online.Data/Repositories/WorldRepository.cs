@@ -202,11 +202,12 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
     {
         if (!InstanceRoles.All.Contains(role)) throw new ArgumentException("Unknown role.", nameof(role));
         await using var c = await db.OpenAsync(ct);
-        // (A deleted account writes nothing; a second join at the same millisecond is the same row.)
+        // (A deleted account writes nothing; a second join at the same millisecond is the same row. The column holds
+        // milliseconds: the value is cut to them here, so MariaDB's truncation and MySQL's rounding store the same.)
         await c.ExecuteAsync(new CommandDefinition(
             "INSERT IGNORE INTO instance_history_members (instance_id, account_id, box, role, joined_at) " +
             "SELECT @id, @accountId, @box, @role, @joinedAt FROM accounts WHERE id = @accountId AND status <> 'deleted'",
-            new { id, accountId, box = Math.Clamp(box, 1, 4), role, joinedAt }, cancellationToken: ct));
+            new { id, accountId, box = Math.Clamp(box, 1, 4), role, joinedAt = Millis(joinedAt) }, cancellationToken: ct));
     }
 
     public async Task MemberLeftAsync(long id, long accountId, DateTime joinedAt, string leaveReason, DateTime leftAt, bool sharedStory,
@@ -214,10 +215,15 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
     {
         if (!InstanceLeaveReasons.All.Contains(leaveReason)) throw new ArgumentException("Unknown leave reason.", nameof(leaveReason));
         await using var c = await db.OpenAsync(ct);
+        // The relay's join key is its seat's clock (DateTime.UtcNow with sub-millisecond ticks, read apart from the join event's
+        // time), never equal to the stored milliseconds: the seat that ends is the account's NEWEST open row in that instance
+        // that started no later than a second after the key. A leave of an older seat never closes a newer one.
         await c.ExecuteAsync(new CommandDefinition(
             "UPDATE instance_history_members SET left_at = @leftAt, leave_reason = @leaveReason, shared_story = shared_story OR @sharedStory " +
-            "WHERE instance_id = @id AND account_id = @accountId AND joined_at = @joinedAt AND left_at IS NULL",
-            new { id, accountId, joinedAt, leaveReason, leftAt, sharedStory }, cancellationToken: ct));
+            "WHERE instance_id = @id AND account_id = @accountId AND left_at IS NULL AND joined_at <= @latest " +
+            "ORDER BY joined_at DESC LIMIT 1",
+            new { id, accountId, latest = Millis(joinedAt).Add(JoinKeySlack), leaveReason, leftAt = Millis(leftAt), sharedStory },
+            cancellationToken: ct));
     }
 
     public async Task<int> CloseOpenAsync(DateTime now, CancellationToken ct = default)
@@ -241,4 +247,10 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
+
+    /// <summary>How much later than the leave's join key the member row may have started (the relay reads its clock twice).</summary>
+    internal static readonly TimeSpan JoinKeySlack = TimeSpan.FromSeconds(1);
+
+    /// <summary>The time cut to whole milliseconds (the DATETIME(3) columns).</summary>
+    internal static DateTime Millis(DateTime t) => new(t.Ticks - t.Ticks % TimeSpan.TicksPerMillisecond, t.Kind);
 }

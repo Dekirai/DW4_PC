@@ -21,7 +21,11 @@ public interface IInstanceHistoryRepository
     /// <summary>A member entered (<see cref="InstanceRoles"/>); a member that comes back gets a new row.</summary>
     Task MemberJoinedAsync(long id, long accountId, int box, string role, DateTime joinedAt, CancellationToken ct = default);
 
-    /// <summary>The member row of that join ends (<see cref="InstanceLeaveReasons"/>).</summary>
+    /// <summary>
+    /// The member row of that join ends (<see cref="InstanceLeaveReasons"/>): the account's newest open row in the instance
+    /// that started no later than a second after <paramref name="joinedAt"/> (the relay's seat time; it need not equal the
+    /// stored milliseconds of <see cref="MemberJoinedAsync"/>).
+    /// </summary>
     Task MemberLeftAsync(long id, long accountId, DateTime joinedAt, string leaveReason, DateTime leftAt, bool sharedStory, CancellationToken ct = default);
 
     /// <summary>At the service start: instances a previous process left open end with 'server_stop' (their members 'ended'); returns how many.</summary>

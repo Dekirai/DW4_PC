@@ -432,6 +432,52 @@ public class WorldApiTests
         Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM instance_history_members"));
     }
 
+    /// <summary>
+    /// The relay's history keys (review of I1a): its seat time and the join event's time are two DateTime.UtcNow reads with
+    /// sub-millisecond ticks; the leave names the seat time. Every leave closes its own row (reason and time), a member that
+    /// comes back gets a second row, and a repeated leave of the older seat never closes the newer one.
+    /// </summary>
+    [DbFact]
+    public async Task Member_left_closes_the_row_with_the_relays_clock_readings()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (_, _, hostId) = await host.RegisterAsync("Keeper");
+        var (_, _, guest) = await host.RegisterAsync("Visitor");
+        var history = host.App.Services.GetRequiredService<IInstanceHistoryRepository>();
+        static DateTime At(int min, int sec, int ms) => new(2026, 11, 6, 12, min, sec, ms, DateTimeKind.Utc);
+        var t0 = At(0, 0, 123).AddTicks(4_567);                                                // 12:00:00.1234567
+        var wid = await history.StartAsync(new InstanceHistoryStart(hostId, 1, "stag0101", "public", 0, 1, "s", t0));
+        await history.MemberJoinedAsync(wid, hostId, 1, "host", t0.AddTicks(3_141));          // stored 12:00:00.123
+
+        var seat1 = t0.AddTicks(52_000);                                                       // Seat.SinceUtc 12:00:00.1286567
+        await history.MemberJoinedAsync(wid, guest, 1, "guest", seat1.AddTicks(9_876));        // HistoryJoined.At: stored .129
+        await history.MemberLeftAsync(wid, guest, seat1, "home", At(5, 0, 123).AddTicks(4_321), sharedStory: false);
+
+        var seat2 = At(10, 0, 580).AddTicks(1_568);
+        await history.MemberJoinedAsync(wid, guest, 1, "guest", seat2.AddTicks(890));          // the member comes back: a new row
+        await history.MemberLeftAsync(wid, guest, seat1, "lost", At(11, 0, 0), sharedStory: false);   // the older seat once more
+        await history.MemberLeftAsync(wid, guest, seat2, "removed", At(12, 0, 123).AddTicks(7), sharedStory: false);
+        await history.MemberLeftAsync(wid, hostId, t0.AddTicks(3_000), "left", At(13, 0, 0), sharedStory: false);
+
+        await using var c = await host.SqlAsync();
+        var rows = (await c.QueryAsync<(long Account, DateTime Joined, DateTime? Left, string? Reason)>(
+            "SELECT CAST(account_id AS SIGNED), joined_at, left_at, leave_reason FROM instance_history_members WHERE instance_id = @wid " +
+            "ORDER BY joined_at", new { wid })).ToList();
+        static DateTime? U(DateTime? t) => t is { } v ? DateTime.SpecifyKind(v, DateTimeKind.Utc) : null;
+        Assert.Equal(
+            [
+                (hostId, At(0, 0, 123), (DateTime?)At(13, 0, 0), "left"),
+                (guest, At(0, 0, 129), (DateTime?)At(5, 0, 123), "home"),
+                (guest, At(10, 0, 580), (DateTime?)At(12, 0, 123), "removed"),
+            ],
+            rows.Select(r => (r.Account, U(r.Joined)!.Value, U(r.Left), r.Reason)).ToList());
+
+        // Nothing stays open for the instance's end to call 'ended'.
+        await history.EndAsync(wid, "host_left", 2, At(14, 0, 0));
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM instance_history_members WHERE instance_id = @wid AND leave_reason = 'ended'", new { wid }));
+    }
+
     /// <summary>A story reset or a staff restore tells the relay (StoryReplaced) after it is committed.</summary>
     [DbFact]
     public async Task Story_reset_and_restore_tell_the_relay()
