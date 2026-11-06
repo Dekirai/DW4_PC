@@ -103,6 +103,7 @@ std::optional<OnlineRoom> online_enter_world(online::HttpWorker& http, const Onl
     if (options.camera) room.settings.camera_mode = *options.camera;
     if (options.light) room.settings.light_mode = *options.light;
     if (options.fast) room.settings.fast_loading = true;
+    room.difficulty = options.difficulty;
     return room;
 }
 
@@ -122,6 +123,7 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
         return std::string(stage);
     };
 #ifdef DW4_ONLINE_DEV
+    if (room_.difficulty) link_.force_difficulty(room_.difficulty);
     // DW4_ONLINE_AUTOCHOICE=first|new (development builds, 19.24): I1a has no
     // prompt, so "first" is the relay's automatic join; "new" asks for a new
     // instance at every departure from home.

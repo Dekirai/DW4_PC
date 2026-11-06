@@ -92,6 +92,9 @@ public:
     // start and set back at every DISSOLVE; a restore keeps the snapshot's.
     const RoomSettings& settings() const { return settings_; }
     void set_settings(const RoomSettings& settings) { settings_ = settings; }
+    // A test run's difficulty at every Game Start instead of the dialog's
+    // (--online-difficulty, development builds only: W12's host on Hard).
+    void force_difficulty(std::optional<int> difficulty) { forced_difficulty_ = difficulty; }
     // After every live step: once the title starts a game (GameSystem::
     // game_started, set by TITLE2 GAMESTART right after the title wrote its
     // own camera and light mode and the character select its difficulty),
@@ -142,6 +145,7 @@ private:
     EngineHooks hooks_;
     RoomSettings settings_;
     bool restored_ = false; // the engine came from a restore since its construction: the snapshot's cheats stay (M1)
+    std::optional<int> forced_difficulty_;
     std::optional<engine::RoomStory> room_story_;
     bool replay_ = false;
     int own_slot_ = 0;

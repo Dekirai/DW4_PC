@@ -484,6 +484,7 @@ bool GameEngineLink::after_live_step() {
     // Round I1a (19.8.7): the original difficulty dialog's choice stays and
     // is the own difficulty from here; the camera and light mode are the own
     // Online > Settings.
+    if (forced_difficulty_) sys->difficulty = std::clamp(*forced_difficulty_, 0, 2);
     settings_.difficulty = std::clamp(sys->difficulty, 0, 2);
     sys->camera_mode = settings_.camera_mode;
     sys->light_mode = settings_.light_mode;

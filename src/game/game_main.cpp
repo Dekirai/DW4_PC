@@ -4322,6 +4322,7 @@ int main(int argc, char** argv) {
             else if (arg == "--online-camera") options.online.camera = std::clamp(std::stoi(next()), 0, 1);
             else if (arg == "--online-light") options.online.light = std::clamp(std::stoi(next()), 0, 1);
             else if (arg == "--online-fast") options.online.fast = true;
+            else if (arg == "--online-difficulty") options.online.difficulty = std::clamp(std::stoi(next()), 0, 2); // (development builds)
             else if (arg == "--online-calibrate") options.online_calibrate = std::max(60, std::stoi(next()));
             else if (arg == "--online-calibrate-stage") options.online_calibrate_stage = next();
             else if (arg == "--port") options.net_port = std::stoi(next());

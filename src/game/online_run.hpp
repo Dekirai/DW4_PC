@@ -63,6 +63,7 @@ struct OnlineOptions {
     int box = 1;
     std::optional<int> camera, light;
     bool fast = false;
+    std::optional<int> difficulty; // --online-difficulty N (development builds: every Game Start plays it)
     bool wanted() const { return !user.empty() && play; }
 };
 
@@ -78,6 +79,7 @@ struct OnlineRoom {
     int relay_port = 52041;
     online::RoomSettings settings;
     int box = 1;
+    std::optional<int> difficulty; // a test run's (OnlineOptions::difficulty)
     std::string role = "player";
     std::string default_visibility = "public";
 };
