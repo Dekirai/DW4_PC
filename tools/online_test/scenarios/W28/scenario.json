@@ -53,7 +53,8 @@
       "name": "a",
       "script": "a.script",
       "card": "k5",
-      "start": 0
+      "start": 0,
+      "upload_card": true
     },
     {
       "name": "b",
