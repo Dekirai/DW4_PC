@@ -139,7 +139,7 @@ public sealed partial class RoomHub
                            (m.Staff ? WelcomeMsg.Staff : 0));
         peer.Send(new WelcomeMsg(m.Id, inst.Id, inst.Visit, (byte)m.Slot, inst.Mode, inst.Stage,
             resumable && m.Cursor > 0 ? m.Cursor - 1 : WelcomeMsg.NoTick, (byte)(inst.Streams[m.Slot]?.Delay.Current ?? 0),
-            (ushort)_inst.MaxCatchUpSeconds, flags, m.World?.Wid ?? 0, (byte)m.Box).Frame());
+            (ushort)_inst.MaxCatchUpSeconds, flags, m.World is { Ending: false } live ? live.Wid : 0, (byte)m.Box).Frame());
         // The own confirmed story (the title applies it at its Game Start, 19.8.2), then the instance's when the member still plays in one.
         peer.Send(StoryAck(own, 0, []));
         if (m.World is { } world)
@@ -651,7 +651,7 @@ public sealed partial class RoomHub
     private void SendInfo(HubMember m, long now)
     {
         if (m.Peer is null) return;
-        if (m.World is not { } w)
+        if (m.World is not { Ending: false } w)
         {
             m.Peer.Send(InstanceInfoMsg.Home.Frame());
             return;

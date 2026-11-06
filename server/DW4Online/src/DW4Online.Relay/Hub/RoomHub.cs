@@ -939,6 +939,8 @@ public sealed partial class RoomHub
             return;
         }
         i.Joinable = (msg.Flags & StateMsg.Joinable) != 0 && !i.LogFull;
+        // A new instance is *starting* until its stage group is first joinable (19.7.6).
+        if (i.Joinable && i.World is { StartingUntil: not 0 } starting) starting.StartingUntil = 0;
         i.MembershipSafe = (msg.Flags & StateMsg.MembershipSafe) != 0;
         var boss = (msg.Flags & StateMsg.BossLock) != 0;
         if (boss != i.BossLock) Note(boss ? "boss_lock" : "boss_clear", i);
