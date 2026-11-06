@@ -1,4 +1,4 @@
-# W12, guest b (k10, Normal, camera 0, no randomizer): Hard in a's instance, Normal again at home. It leaves at once
+# W12, guest b (k5: the L panel of a k10 character has 8 rows and the disk step never took its Gate Disk; Normal, camera 0, no randomizer): Hard in a's instance, Normal again at home. It leaves at once
 # by its gate disc (following a on Hard with the shuffled enemies killed b in the trial merge's run).
 campaign until stage=stagml11,control
 idle until frames>=120 fail difficulty=1

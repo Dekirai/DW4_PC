@@ -6,4 +6,3 @@ gate mate00 1 until stage=stag0201,control
 log b in stag0201
 idle until frames>=600 fail present>=2
 log b alone in Dry Land
-disk 8 until stage=stagml11,control

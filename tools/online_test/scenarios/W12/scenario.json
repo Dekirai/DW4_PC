@@ -38,7 +38,7 @@
     {
       "name": "b",
       "script": "b.script",
-      "card": "k10",
+      "card": "k5",
       "start": 3,
       "seed_story": true,
       "args": [
