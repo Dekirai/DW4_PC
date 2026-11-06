@@ -502,7 +502,7 @@ void refused_login_keeps_saving_into_the_cache() {
         check(http.sent.empty(), "nothing is sent later either");
         check(card.state().pending && card.state().revision == 7 && record_of_box(*card.read(), 0) == make_record(21, 13),
               "the newest save is pending in the cache, based on revision 7");
-        check(sync.status_text().find("next room entry") != std::string::npos, "the status line says where it goes");
+        check(sync.status_text().find("when you play online again") != std::string::npos, "the status line says where it goes");
     }
     {
         FakeHttp http;
@@ -635,6 +635,52 @@ void owner_records_keep_the_engine_story() {
     std::filesystem::remove_all(card.folder());
 }
 
+// Round I1a's review: every member's records carry the own story (an engine in
+// someone else's instance holds the host's), and that own story moves on at
+// home and as a host: the session's own confirmed story keeps the bytes
+// current, so a save that only moved the own story on is not "unchanged" and
+// the upload, the cache and the save room's store carry the newest.
+void own_story_follows_the_session() {
+    const OnlineCard card(fresh_folder("ownmoves"));
+    FakeHttp http;
+    auto sync = make_sync(card, http, true);
+    std::string error;
+    const auto own = with_story_bytes(make_record(66, 7, "Home"), 2, 0);
+    check(sync.enter(answer(200, character_json(3, own, 100)), error), "enter");
+    const auto played = with_story_bytes(make_record(66, 8, "Home"), 2, 0);
+    sync.auto_save(played, CharacterSync::Why::stage_change);
+    auto [id, put] = http.take();
+    sync.on_response(id, answer(200, "{\"revision\":4}"));
+    sync.auto_save(played, CharacterSync::Why::stage_change);
+    check(http.sent.empty(), "the same save is unchanged");
+    // The own story moves on in the lobby (a key item, a counter): the session's own STORY_ACK.
+    dw4::engine::RoomStory moved;
+    const auto start = story_of(own);
+    std::copy_n(start.begin(), moved.flags.size(), moved.flags.begin());
+    std::copy_n(start.begin() + std::ptrdiff_t(moved.flags.size()), moved.folder.size(), moved.folder.begin());
+    moved.revision = 9;
+    moved.flags[19] = 1;
+    moved.folder[3] = 1;
+    moved.counters[2] = 0x01020304;
+    const auto bytes = record_story_bytes(moved);
+    check(bytes[19] == 1 && bytes[1024 + 3] == 1, "flags and folder at the record's offsets");
+    check(bytes[1036 + 8] == 0x01 && bytes[1036 + 9] == 0x02 && bytes[1036 + 10] == 0x03 && bytes[1036 + 11] == 0x04,
+          "the counters big endian, as the record holds them");
+    sync.set_own_story(bytes);
+    sync.auto_save(played, CharacterSync::Why::stage_change);
+    check(!http.sent.empty(), "a save after the own story moved on is not unchanged");
+    auto [id2, put2] = http.take();
+    check(story_of(body_record(put2)) == bytes, "the upload carries the newest own story");
+    check(story_of(*record_of_box(*card.read(), 0)) == bytes, "and the cache");
+    sync.on_response(id2, answer(200, "{\"revision\":5}"));
+    auto store = card.store();
+    store.set_story_override(sync.own_story());
+    const auto before = card.read();
+    check(store.write(0, card_with_record(&*before, played, 1, true, 0)), "the save room's write");
+    for (int box = 0; box < 2; ++box) check(story_of(*record_of_box(*card.read(), box)) == bytes, "the save room's boxes hold the newest own story");
+    std::filesystem::remove_all(card.folder());
+}
+
 void sha256_vectors() {
     check(sha256_hex({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 of nothing");
     const std::string abc = "abc";
@@ -733,6 +779,7 @@ int main() {
         refused_login_keeps_saving_into_the_cache();
         guest_records_keep_the_own_story();
         owner_records_keep_the_engine_story();
+        own_story_follows_the_session();
         sha256_vectors();
         cloud_backup();
     } catch (const std::exception& e) {

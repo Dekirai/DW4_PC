@@ -103,7 +103,9 @@ std::optional<OnlineRoom> online_enter_world(online::HttpWorker& http, const Onl
     if (options.camera) room.settings.camera_mode = *options.camera;
     if (options.light) room.settings.light_mode = *options.light;
     if (options.fast) room.settings.fast_loading = true;
-    room.difficulty = options.difficulty;
+#ifdef DW4_ONLINE_DEV
+    room.difficulty = options.difficulty; // (W12's test runs; a release build ignores --online-difficulty)
+#endif
     return room;
 }
 
@@ -117,9 +119,10 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     config.settings_hash = 0; // (protocol 49: the hello's settings hash is sent as 0, 19.17.3)
     config.own_name = room_.account;
     config.box = std::uint8_t(std::clamp(room_.box, 1, 4));
-    // The toasts' stage names (19.5.6: "Kim is in Ancient Ruins B2").
+    // The toasts' stage names (19.5.6: "Kim is in Ancient Ruins B2": the
+    // place, without its region).
     config.stage_name = [](std::string_view stage) {
-        if (const auto* area = find_area(stage)) return area_display_name(*area);
+        if (const auto* area = find_area(stage)) return std::string(area->place);
         return std::string(stage);
     };
 #ifdef DW4_ONLINE_DEV
@@ -187,18 +190,28 @@ bool OnlineRun::connect(double now, std::string& error) {
 void OnlineRun::pass(double now) {
     session_->poll(now);
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
-    if (character_) character_->tick(now);
-    // A 409's reload gave the guest's own story anew (round G-core's review): the
-    // engine's card store writes the newer one from now on (before, the story
-    // of the room entry until the next entry).
+    if (character_) {
+        // Round I1a's review: the own story moves on at home and as a host; its
+        // confirmed revision (STORY_ACK with the own key) is what the card, its
+        // backups and the uploads carry from now on (before: the story of the
+        // session's entry, while the records got it put in at every save).
+        if (const auto& own = session_->confirmed_story(); own && own_story_fed_ != own->revision) {
+            own_story_fed_ = own->revision;
+            character_->set_own_story(online::record_story_bytes(*own));
+        }
+        character_->tick(now);
+    }
+    // The own story changed (the session's own STORY_ACK above, a 409's reload,
+    // round G-core's review): the engine's card store writes the newer one from
+    // now on.
     if (character_ && card_story_changed && handed_story_ && *handed_story_ != character_->own_story()) card_story_changed();
     // The Game Start's hold (round G-core): the story may have come with this pass.
     if (story_hold_since_ >= 0 && !left_ && !session_->closed()) {
         if (link_.game_start()) begin_game(now);
         if (story_hold_since_ >= 0 && now - story_hold_since_ > 15.0) {
-            std::cout << "online: the room story did not arrive within 15 s; leaving the room\n";
-            log_.line("the room story did not arrive within 15 s after the Game Start: leaving the room");
-            leave(8.0, "The room story did not arrive. Join the room again.");
+            std::cout << "online: the own story did not arrive within 15 s; going offline\n";
+            log_.line("the own story did not arrive within 15 s after the Game Start: going offline");
+            leave(8.0, "Your own story did not arrive. Press Play again.");
             return;
         }
     }
@@ -331,7 +344,8 @@ bool OnlineRun::load_character(const std::filesystem::path& online_folder, const
     config.submit = [http = http_.get()](online::HttpRequest request) { return http->submit(std::move(request)); };
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
     // (Round I1a: every member's records carry the own story; an engine in an
-    // instance holds the host's, round G-core's net, 19.8.9.)
+    // instance holds the host's, round G-core's net, 19.8.9. The own story is
+    // the session's own confirmed one, pass() keeps it current.)
     config.guest = true;
     character_ = std::make_unique<online::CharacterSync>(std::move(config));
     const auto response = http_->wait(http_->submit(online::character_api::get_request()));
@@ -347,7 +361,8 @@ save::CardStore OnlineRun::character_card() const {
     if (!character_) return save::CardStore{};
     auto store = character_->card().store();
     // The card keeps the own story (round G-core, 8.8; round I1a, 19.8.9): the save room writes the engine's records,
-    // which hold the host's story in an instance, and the file, its backups and an import of it must not.
+    // which hold the host's story in an instance, and the file, its backups and an import of it must not. (The own
+    // story follows the session's own confirmed story: pass() hands a new store to the engine when it moved on.)
     store.set_story_override(character_->own_story());
     handed_story_ = character_->own_story();
     return store;

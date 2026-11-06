@@ -1390,7 +1390,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                !sys->players[std::size_t(slot)].joined || !sys->players[std::size_t(slot)].stats.ready;
             if (menus) {
                 activity.details = "In Menus";
-                if (online) activity.state = "Online room";
+                if (online) activity.state = "Online";
                 activity.large_image = dw4::game::kLogoImageKey;
                 activity.large_text = "Digimon World 4";
                 return activity;
@@ -1404,7 +1404,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             activity.large_image = area ? area->key : dw4::game::kLogoImageKey;
             activity.large_text = area ? area->region : "Digimon World 4";
             if (net.active()) activity.large_text += " - online co-op, " + std::to_string(net.start().players) + " players";
-            if (online) activity.large_text += " - online room";
+            if (online) activity.large_text += " - online";
             if (form) activity.small_image = form->key;
             activity.small_text = dw4::game::difficulty_name(sys->difficulty);
             return activity;
@@ -1463,6 +1463,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool title_online_shown = false; // the screens over the title (the last frame)
         bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
         bool menu_shown_before = false;  // the F1 menu was open in the last frame (it opens on Online in the world)
+        bool instance_line_shown = false; // the line under the own status window showed in the last frame (19.5.4)
         dw4::game::RoomLive last_room_live; // the last frame's session facts (a UI test run's wait-instance and wait-members)
         // After the screens close, the game's pad waits until every button
         // is up (the B that closed them must not also cancel the menu).
@@ -2876,6 +2877,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const auto overlay = session.overlay(online_now);
                 std::string line = overlay.loading;
                 if (line.empty() && overlay.waiting_for_server) line = "Waiting for the server...";
+                if (line.empty()) line = overlay.status; // (19.5.5: "Kim lost the connection. Waiting for Kim... 52 s")
                 if (line.empty() && overlay.slow_uplink) line = "Your connection is slow; the others see you lag.";
                 if (online->leave_prompt) {
                     // After the loading or waiting line, never instead of it.
@@ -3263,7 +3265,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 bool online_tab_now = false;
                 // (Round I1a, 19.5.4: the F1 menu opens on the Online tab while
                 // a world session runs: its Instance page, the status line's View.)
-                if (show_menu && !menu_shown_before && online && menu_tab.empty()) menu_tab = "Online";
+                if (show_menu && !menu_shown_before && online) {
+                    menu_tab = "Online";
+                    // (From the status window's line, "View: change": the
+                    // Instance page with the visibility focused.)
+                    online_ui.focus_visibility = instance_line_shown;
+                }
                 menu_shown_before = show_menu;
                 // Overhead name tags over the picture, under the menus.
                 dw4::game::draw_tags(view, scene);
@@ -3902,9 +3909,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // The line under the own status window (19.5.4, presentation
                 // only, it takes no game button): the instance's visibility;
                 // View opens the F1 menu on the Online tab's Instance page.
+                instance_line_shown = false;
                 if (online && online->session().in_instance() && !show_menu) {
                     const auto* windows = engine.get<dw4::engine::SubWindowManager>();
-                    if (windows && windows->own_window_open(engine.view_slot())) {
+                    if (windows && windows->own_window_open(online->session().own_slot())) {
                         const auto& session = online->session();
                         static const char* kVisibility[] = {"Public", "Friends", "Private"};
                         int vis = 0;
@@ -3919,6 +3927,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                         ImGui::TextUnformatted(line.c_str());
                         ImGui::End();
+                        instance_line_shown = true;
                     }
                 }
                 // The host's exit prompt into a hub stage and his gate disk
@@ -4464,7 +4473,17 @@ int main(int argc, char** argv) {
             else if (arg == "--online-camera") options.online.camera = std::clamp(std::stoi(next()), 0, 1);
             else if (arg == "--online-light") options.online.light = std::clamp(std::stoi(next()), 0, 1);
             else if (arg == "--online-fast") options.online.fast = true;
-            else if (arg == "--online-difficulty") options.online.difficulty = std::clamp(std::stoi(next()), 0, 2); // (development builds)
+            else if (arg == "--online-difficulty") {
+                // (Development builds only, W12's test runs: it answers the
+                // Game Start's difficulty dialog. A release build ignores it.)
+                const int difficulty = std::clamp(std::stoi(next()), 0, 2);
+#ifdef DW4_ONLINE_DEV
+                options.online.difficulty = difficulty;
+#else
+                (void)difficulty;
+                std::cout << "--online-difficulty is for development builds; ignored\n";
+#endif
+            }
             else if (arg == "--online-calibrate") options.online_calibrate = std::max(60, std::stoi(next()));
             else if (arg == "--online-calibrate-stage") options.online_calibrate_stage = next();
             else if (arg == "--port") options.net_port = std::stoi(next());

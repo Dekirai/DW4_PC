@@ -240,7 +240,6 @@ void Session::lose_connection(double now) {
     }
     // A solo member plays on (its LOG waits); everyone else freezes.
     resume_after_lost_ = true;
-    previous_member_id_ = member_id_;
     ++net_.reconnects;
     log("connection to the relay lost (%s); reconnecting", mode_name(mode_));
     if (mode_ == Mode::solo || mode_ == Mode::transition) {
@@ -367,20 +366,9 @@ void Session::poll(double now) {
     // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
     // for a co-arrival, a join or a boss choice) is an answer: the five
     // seconds count from the server's last word, and a boss choice waits.
-    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout) {
-        w::BarrierOk ok;
-        ok.inst = inst_;
-        ok.visit = visit_;
-        ok.decision = w::Decision::new_instance;
-        ok.new_inst = 0; // not registered: never offered to joiners
-        ok.new_visit = visit_ + 1;
-        ok.own_slot = 0;
-        ok.slot_map = {-1, -1, -1, -1};
-        ok.slot_map[std::size_t(slot_)] = 0;
-        ok.mode = w::Mode::solo;
-        notice("The server did not answer; you continue on your own.");
-        on_barrier_ok(ok, now);
-    }
+    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout)
+        barrier_fallback(now);
+    if (leave_wanted_) send_pending_leave();
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
         flush_log(now, false);
         if (state_pending_) report_state(now, false);
@@ -765,7 +753,9 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     if (presence1) presence_v2_ = false;
 #endif
     presence_sent_.reset();
+    const auto old_own = own_key_;
     own_box_ = m.box ? m.box : config_.box;
+    own_key_ = std::make_pair(member_id_, own_box_);
     if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
     if (resume_after_lost_) {
         resume_after_lost_ = false;
@@ -773,7 +763,25 @@ void Session::on_welcome(const w::Welcome& m, double now) {
         // instance (a server restart, an end missed while away): the engine
         // takes the home departure itself, once it plays on alone.
         const bool lost_instance = wid_ != 0 && m.wid != wid_;
-        const bool restarted = previous_member_id_ != 0 && previous_member_id_ != m.member;
+        const bool restarted = old_own.first != 0 && old_own.first != m.member;
+        // The visit's story owner key (round I1a's review). A restarted relay
+        // numbers its members from 1 again, so the old key may now be this
+        // member's own (a guest that got its host's former id) or nobody's;
+        // a lost instance's host keeper is gone. An engine on its own story
+        // (at home, the host) keeps it under the new key; an engine on
+        // another's story sends no STORY until the DISSOLVE's replace gives
+        // it its own (19.6.10: what the field made after the last STORY_ACK
+        // is lost for the host).
+        if (restarted || lost_instance) {
+            if (visit_owner_ == old_own) {
+                visit_owner_ = own_key_;
+                if (own_confirmed_) confirmed_ = own_confirmed_;
+            } else {
+                forget_foreign_visit();
+            }
+            log("reconnected as member %u (was %u)%s: the story key %s", unsigned(m.member), unsigned(old_own.first),
+                lost_instance ? ", the instance is gone" : "", holds_own_story() ? "follows the new id" : "of another's story is dropped");
+        }
         if ((m.flags & w::Welcome::resumable) && m.inst == inst_ && m.visit == visit_ && m.slot == slot_ && !lost_instance) {
             // Still in the instance: only the missing ticks come (6.10).
             send(w::Type::resume, w::encode(w::Resume{inst_, visit_, std::uint8_t(slot_), tick_ ? tick_ - 1 : 0, engine_.stage()}));
@@ -826,7 +834,7 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     }
     if (mode_ != Mode::connecting) return;
     // A fresh member: the server's solo hub instance (the title), on its own story.
-    visit_owner_ = std::make_pair(member_id_, own_box_);
+    visit_owner_ = own_key_;
     trace("welcome member=%u inst=%u visit=%u slot=%u mode=%u", unsigned(m.member), m.inst, m.visit, unsigned(m.slot), unsigned(m.mode));
     log("relay welcome: member %u, instance %u, input delay %u", unsigned(m.member), m.inst, unsigned(m.delay));
     inst_ = m.inst;
@@ -858,10 +866,16 @@ void Session::take_decision(const w::BarrierOk& ok) {
     // Round I1a: the instance this visit belongs to (0: home) and how this
     // member came into it (the toast waits for its INSTANCE_INFO).
     const bool was_in = wid_ != 0;
+    if (ok.wid != wid_) host_away_until_ = -1;
     wid_ = ok.wid;
     host_ = ok.wid ? ok.host : 0;
     if (ok.decision == w::Decision::dissolve || ok.wid == 0) {
+        // (A way home that went straight from the barrier: the engine was
+        // parked when the instance turned out gone, so the local departure
+        // never ran; its notice comes with the DISSOLVE.)
+        if (instance_gone_ && ok.decision == w::Decision::dissolve && !gone_notice_.empty()) notice(std::exchange(gone_notice_, {}));
         instance_gone_ = false;
+        leave_wanted_ = false;
         arrival_pending_.reset();
         if (was_in && ok.decision == w::Decision::dissolve) notice("Back on your own story.");
     } else if (ok.arrival != w::Arrival::none) {
@@ -923,7 +937,7 @@ void Session::arrival_toast() {
     switch (arrival) {
     case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + "). View: Online menu"); break;
     case w::Arrival::auto_join: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
-    case w::Arrival::co_arrival: notice("You arrived together with " + host + ": you're a guest in " + host + "'s story. Leave: Online menu"); break;
+    case w::Arrival::co_arrival: notice("You arrived together with " + host + ": you're a guest in " + host + "'s story."); break;
     case w::Arrival::guest_new: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
     default: return;
     }
@@ -953,9 +967,28 @@ void Session::on_world_notice(const w::WorldNotice& m) {
         notice(name + " made the instance " + visibility_name(w::Visibility(std::min<std::uint32_t>(m.argument, 2))) + ".");
         break;
     case w::NoticeKind::removed: notice("You were removed from " + host_name() + "'s instance."); break;
-    case w::NoticeKind::host_away: notice(name + " lost the connection. Waiting for " + name + "... " + std::to_string(m.argument) + " s"); break;
-    case w::NoticeKind::host_back: notice(name + " is back."); break;
+    case w::NoticeKind::host_away:
+        // (A running line with its countdown, overlay().status; the relay
+        // repeats the notice every few seconds with the seconds left.)
+        host_away_name_ = name;
+        host_away_until_ = now_ + double(m.argument);
+        break;
+    case w::NoticeKind::host_back:
+        host_away_until_ = -1;
+        notice(name + " is back.");
+        break;
     case w::NoticeKind::ended:
+        host_away_until_ = -1;
+        // 19.6.10: an engine playing on apart from its instance after a
+        // reconnect (no stage group of the instance holds it, so no HOME
+        // comes for it) takes the home departure itself; its next barrier
+        // is the relay's DISSOLVE with the own story.
+        if (wid_ != 0 && mode_of_instance_ == w::Mode::hub && !is_hub_stage(engine_.stage()) && !instance_gone_) {
+            instance_gone_ = true;
+            gone_notice_.clear();
+            if (!holds_own_story()) forget_foreign_visit();
+            log("instance %u ended while this engine plays apart from it: taking the home departure", wid_);
+        }
         switch (w::EndReason(m.argument)) {
         case w::EndReason::host_left: notice(name + " left. The instance ends."); break;
         case w::EndReason::host_defeated: notice(name + " was defeated. The instance ends."); break;
@@ -974,10 +1007,36 @@ void Session::on_world_notice(const w::WorldNotice& m) {
 }
 
 bool Session::leave_instance() {
-    if (wid_ == 0 || (mode_ != Mode::solo && mode_ != Mode::sealed)) return false;
+    if (wid_ == 0) return false;
+    leave_wanted_ = true;
+    send_pending_leave();
+    // (Not sent yet: a barrier, a load, a catch-up, a reconnect, or an engine
+    // playing on apart from its instance, whose INTENT the relay files under
+    // its home instance and ignores; its next stage is decided inside the
+    // instance, and the wish goes then.)
+    if (leave_wanted_) notice("You leave the instance as soon as this stage allows it.");
+    return true;
+}
+
+void Session::send_pending_leave() {
+    if (wid_ == 0) {
+        leave_wanted_ = false;
+        return;
+    }
+    if ((mode_ != Mode::solo && mode_ != Mode::sealed) || mode_of_instance_ == w::Mode::hub || !connected() || resume_after_lost_) return;
     send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::leave, 0}));
     trace("leave instance wid=%u inst=%u visit=%u", wid_, inst_, visit_);
-    return true;
+    log("leave instance %u (INTENT leave)", wid_);
+    leave_wanted_ = false;
+}
+
+void Session::forget_foreign_visit() {
+    visit_owner_ = std::make_pair(kNoMember, std::uint8_t(0));
+    confirmed_.reset();
+    lines_.clear();
+    story_last_ = {};
+    story_retry_at_ = 0;
+    moved_on_noticed_.reset();
 }
 
 bool Session::set_visibility(w::Visibility visibility) {
@@ -1472,6 +1531,7 @@ void Session::park(double now) {
     b.visit = visit_;
     b.tick = barrier_tick_;
     b.stage = *engine_.pending_stage();
+    barrier_stage_ = b.stage;
     b.point = std::uint8_t(std::clamp(engine_.pending_point(), 0, 255));
     b.alive = engine_.alive_mask();
     b.present = present_;
@@ -1492,6 +1552,59 @@ void Session::park(double now) {
     boss_choice_ = false;
     parked_at_ = now;
     mode_ = Mode::parked;
+}
+
+void Session::barrier_fallback(double now) {
+    // A solo group parked without an answer goes on as NEW (3.4), unregistered
+    // (inst 0: never offered to joiners). Round I1a's review: in the world the
+    // answer keeps what the engine holds.
+    //  - Into a field from an instance: a NEW inside that instance (its wid,
+    //    host and the visit's owner and confirmed story stay; no arrival).
+    //  - Into a field on a story whose owner key is gone (a lost instance): no
+    //    owner either (no STORY until the way home's replace).
+    //  - Into a hub stage from another's story or from an instance: the
+    //    DISSOLVE the relay would answer (19.8.3; 19.8.9: a hub stage always
+    //    runs on the own story and settings), here: the own settings back and,
+    //    on another's story, the own confirmed story in place of the engine's.
+    //    Without an own confirmed story yet it keeps waiting: the lobby never
+    //    loads on another's story.
+    const bool to_hub = is_hub_stage(barrier_stage_);
+    const bool foreign = !holds_own_story();
+    if (to_hub && foreign && !own_confirmed_) return;
+    w::BarrierOk ok;
+    ok.inst = inst_;
+    ok.visit = visit_;
+    ok.decision = w::Decision::new_instance;
+    ok.new_inst = 0;
+    ok.new_visit = visit_ + 1;
+    ok.stage = barrier_stage_;
+    ok.own_slot = 0;
+    ok.slot_map = {-1, -1, -1, -1};
+    ok.slot_map[std::size_t(slot_)] = 0;
+    ok.mode = w::Mode::solo;
+    if (to_hub && (foreign || wid_ != 0)) {
+        ok.decision = w::Decision::dissolve;
+        ok.mode = w::Mode::hub;
+        ok.owner = member_id_;
+        ok.box = own_box_;
+        if (foreign) {
+            ok.story_mode = w::StoryMode::replace;
+            ok.story = engine::story::encode_story(*own_confirmed_);
+            ok.story_revision = own_confirmed_->revision;
+        }
+    } else if (foreign || wid_ != 0) {
+        ok.owner = visit_owner_.first;
+        ok.box = visit_owner_.second;
+        if (wid_ != 0) {
+            ok.wid = wid_;
+            ok.host = host_;
+            if (instance_ && instance_->wid == wid_) ok.visibility = instance_->visibility;
+        }
+    }
+    log("the relay did not answer the barrier into %s within %.0f s: %s", barrier_stage_.c_str(), config_.barrier_timeout,
+        ok.decision == w::Decision::dissolve ? "home on the own story and settings" : wid_ != 0 ? "a NEW inside the instance" : "a NEW");
+    notice("The server did not answer; you continue on your own.");
+    on_barrier_ok(ok, now);
 }
 
 void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
@@ -1981,7 +2094,9 @@ void Session::open_line() {
 }
 
 void Session::send_story(double now, bool at_barrier) {
-    if (!confirmed_ || !hello_done_ || !transport_) return;
+    // (Not between a reconnect's OK line and its WELCOME: the visit's owner key
+    // is checked there, round I1a's review.)
+    if (!confirmed_ || !hello_done_ || !transport_ || resume_after_lost_) return;
     if (ui_stage(engine_.stage())) return;
     const auto values = engine_.story_values();
     auto delta = engine::story::pending(*confirmed_, values);
@@ -2112,6 +2227,10 @@ Overlay Session::overlay(double now) const {
         o.lagging[std::size_t(s)] = (present_ & (1u << s)) && slot_members_[std::size_t(s)] != kNoMember &&
                                     lagging_members_.contains(slot_members_[std::size_t(s)]);
     o.slow_uplink = lagging_members_.contains(member_id_);
+    if (host_away_until_ >= 0 && wid_ != 0) {
+        const int left = int(std::ceil(std::max(0.0, host_away_until_ - now)));
+        o.status = host_away_name_ + " lost the connection. Waiting for " + host_away_name_ + "... " + std::to_string(left) + " s";
+    }
     return o;
 }
 

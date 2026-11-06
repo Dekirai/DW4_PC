@@ -208,6 +208,7 @@ private:
     double story_ignore_until_ = 0;    // DW4_ONLINE_TEST_STORY_DELAY (dev builds, G7): the story counts from then (set at the first Game Start)
     int callshop_seen_ = 0;            // Engine::callshop_refused already told
     mutable std::optional<save::StoryBytes> handed_story_; // the own story of the last character_card() (a guest's)
+    std::optional<std::uint32_t> own_story_fed_;           // the session's own confirmed revision given to the character
     std::vector<std::string> notices_;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;

@@ -77,6 +77,7 @@ struct OnlineUiState {
     // The Instance page (19.5.4): "Leave instance?" asked; out: the host's
     // visibility choice and the confirmed leave, which the host sends.
     bool leave_instance_asked = false;
+    bool focus_visibility = false;       // in: the menu opened from the status window's line ("View: change")
     int visibility_requested = -1;
     bool leave_instance_requested = false;
     online::Screen last_screen = online::Screen::welcome;

@@ -1079,6 +1079,224 @@ void world_session() {
     check(has_notice(a_notices, "The instance has ended."), "A is told the instance ended");
 }
 
+int value(const std::map<std::int32_t, std::uint8_t>& values, std::int32_t key) {
+    const auto it = values.find(key);
+    return it == values.end() ? 0 : int(it->second);
+}
+
+// Round I1a's review: B (member `id`) alone; its departure from home is an
+// automatic join into host 9's instance 7 as a guest (the replace brings the
+// host's story: flag 19, key 4); every barrier into a hub stage is a DISSOLVE
+// with B's own story (the hub's room story: flag 20, key 1) by the replace.
+fake::Client& guest_of_nine(World& world, std::uint32_t id = 2) {
+    dw4::engine::RoomStory host;
+    host.flags[19] = 1;
+    host.folder[4] = 1;
+    host.revision = 40;
+    world.hub.room_story = {};
+    world.hub.room_story.flags[20] = 1;
+    world.hub.room_story.folder[1] = 1;
+    world.hub.room_story.revision = 3;
+    world.hub.shape_ok = [host](std::uint32_t member, w::BarrierOk& ok) {
+        if (ok.decision == w::Decision::dissolve) {
+            ok.owner = member;
+            ok.story_mode = w::StoryMode::replace;
+            return;
+        }
+        ok.wid = 7;
+        ok.host = 9;
+        ok.owner = 9;
+        ok.box = 1;
+        ok.arrival = w::Arrival::guest_new;
+        ok.story_mode = w::StoryMode::replace;
+        ok.story = dw4::engine::story::encode_story(host);
+        ok.story_revision = host.revision;
+    };
+    auto& b = world.add("lee", id);
+    b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo; }), "B in the field");
+    check(b.session->wid() == 7 && b.session->host() == 9 && !b.session->is_host() && !b.session->holds_own_story() &&
+              b.session->visit_owner() == std::make_pair(std::uint32_t(9), std::uint8_t(1)),
+          "B is a guest in 9's instance");
+    check(value(b.engine.story.flags, 19) == 1 && value(b.engine.story.flags, 20) == 0 && value(b.engine.story.folder, 4) == 1,
+          "B's engine holds the host's story");
+    world.run(0.5);
+    return b;
+}
+
+// Round I1a's review (blocker): a server restart while a guest plays in a
+// field of someone else's instance. A restarted relay numbers its members
+// from 1 again, so the guest may get its host's former id (9): a STORY with
+// the old owner key would then name the guest's own story, and the relay
+// would write the host's values into it. No STORY goes while the engine holds
+// the host's story; the local way home's DISSOLVE replaces it with the own,
+// and from home the STORY carries the new own key.
+void restart_story_key(std::uint32_t new_id) {
+    World world;
+    world.hub.co_arrival_hold = 0.3;
+    world.hub.suggested_delay = 6;
+    auto& b = guest_of_nine(world);
+    // The field's progress on the host's story, made while the connection drops (the host's keeper never sees it).
+    b.engine.story.flags[393] = 1;
+    world.hub.drop(2);
+    world.run(1.0);
+    check(b.session->wants_transport(), "B reconnects");
+    const auto seen = world.hub.story_frames.size();
+    b.session->attach(world.hub.connect(new_id, "lee"), world.now, "t-lee-2");
+    check(world.run_until(25, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && !b.session->going_home(); }),
+          "B took the local way home");
+    for (std::size_t i = seen; i < world.hub.story_frames.size(); ++i) {
+        const auto& f = world.hub.story_frames[i];
+        const bool foreign = std::find(f.delta.flags.begin(), f.delta.flags.end(), 19) != f.delta.flags.end() ||
+                             std::find(f.delta.flags.begin(), f.delta.flags.end(), 393) != f.delta.flags.end() ||
+                             std::find(f.delta.folder.begin(), f.delta.folder.end(), 4) != f.delta.folder.end();
+        check(!foreign, "a STORY after the restart carried the host's values (owner " + std::to_string(f.owner) + ")");
+    }
+    check(!world.hub.room_story.flags[19] && !world.hub.room_story.flags[393] && !world.hub.room_story.folder[4],
+          "B's own keeper got none of the host's values");
+    check(b.session->wid() == 0 && b.session->holds_own_story() && b.session->visit_owner() == std::make_pair(new_id, std::uint8_t(1)),
+          "home on the new own key");
+    check(value(b.engine.story.flags, 19) == 0 && value(b.engine.story.flags, 393) == 0 && value(b.engine.story.flags, 20) == 1 &&
+              value(b.engine.story.folder, 1) == 1 && value(b.engine.story.folder, 4) == 0,
+          "B's lobby engine holds its own story (the DISSOLVE's replace)");
+    check(has_notice(b.session->take_notices(), "The server restarted. Back on your own story."), "B is told");
+    // Lobby progress goes up under the new own key.
+    const auto before = world.hub.story_frames.size();
+    b.engine.story.flags[22] = 1;
+    check(world.run_until(5, [&] { return world.hub.story_frames.size() > before; }) && world.hub.story_frames.back().owner == new_id,
+          "the lobby's STORY carries the new own key");
+    check(world.run_until(5, [&] { return world.hub.room_story.flags[22] == 1; }), "and reaches the own keeper");
+}
+
+// Round I1a's review: a restart while the member is at home. Its engine holds
+// its own story: the STORY goes under the new member id (before: the old key,
+// which the relay refuses as reason owner until the next BARRIER_OK).
+void restart_at_home() {
+    World world;
+    world.hub.room_story.flags[20] = 1;
+    world.hub.room_story.revision = 3;
+    auto& b = world.add("lee", 2);
+    b.input = press_in({{"stagis10", 20}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo; }), "B at home");
+    world.run(0.5);
+    world.hub.drop(2);
+    world.run(1.0);
+    check(b.session->wants_transport(), "B reconnects");
+    b.session->attach(world.hub.connect(5, "lee"), world.now, "t-lee-2");
+    world.run(1.0);
+    check(b.session->member_id() == 5 && b.session->holds_own_story() && b.session->visit_owner() == std::make_pair(std::uint32_t(5), std::uint8_t(1)),
+          "the own story's key follows the new id");
+    check(b.session->visit_story() && b.session->visit_story()->revision == 3, "the visit's confirmed story is the own");
+    const auto before = world.hub.story_frames.size();
+    b.engine.story.flags[22] = 1;
+    check(world.run_until(5, [&] { return world.hub.story_frames.size() > before; }) && world.hub.story_frames.back().owner == 5,
+          "the lobby's STORY carries the new own key");
+}
+
+// Round I1a's review: the client's own answer to a barrier the relay left
+// unanswered (3.4: a solo group goes on as NEW after five seconds) keeps
+// what the engine holds in the world. A guest's move between fields stays a
+// guest's in its instance (host, owner key, the host's confirmed story, no
+// replace, no own settings); a guest's way home is the DISSOLVE the relay
+// would give: the own settings and the own story in place of the host's.
+void fallback_in_world() {
+    {
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 6;
+        auto& b = guest_of_nine(world);
+        world.hub.answer_barriers = false;
+        b.engine.own_settings_set_back = false;
+        const int replaces = b.engine.story_replaces;
+        b.input = press_in({{"stag0101", b.session->tick() + 30}}, fake::kExitButton);
+        check(world.run_until(5, [&] { return b.session->mode() == Mode::parked; }), "B parked at its field exit");
+        check(world.run_until(10, [&] { return b.engine.stage() == "stag0102" && b.session->mode() == Mode::solo; }), "B's own NEW after the timeout");
+        check(b.session->wid() == 7 && b.session->host() == 9 && b.session->in_instance() && !b.session->is_host() &&
+                  b.session->visit_owner() == std::make_pair(std::uint32_t(9), std::uint8_t(1)) && !b.session->holds_own_story(),
+              "still a guest in 9's instance");
+        check(b.session->visit_story() && b.session->visit_story()->revision == 40, "the host's confirmed story stays the visit's");
+        check(b.engine.story_replaces == replaces && !b.engine.own_settings_set_back && value(b.engine.story.flags, 19) == 1,
+              "the engine keeps the host's story and settings");
+        check(has_notice(b.session->take_notices(), "The server did not answer; you continue on your own."), "B is told");
+    }
+    {
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 6;
+        auto& b = guest_of_nine(world);
+        world.hub.answer_barriers = false;
+        b.engine.own_settings_set_back = false;
+        const int replaces = b.engine.story_replaces;
+        b.engine.home(b.session->present()); // (the gate disc: a departure into stagML11)
+        check(world.run_until(5, [&] { return b.session->mode() == Mode::parked; }), "B parked at its barrier home");
+        check(world.run_until(10, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo; }), "B home after the timeout");
+        check(b.session->wid() == 0 && b.session->host() == 0 && b.session->holds_own_story(), "home, on the own story");
+        check(b.engine.story_replaces == replaces + 1 && b.engine.own_settings_set_back && value(b.engine.story.flags, 19) == 0 &&
+                  value(b.engine.story.flags, 20) == 1 && value(b.engine.story.folder, 4) == 0,
+              "the lobby loaded on the own story and settings (the local DISSOLVE)");
+        const auto notices = b.session->take_notices();
+        check(has_notice(notices, "The server did not answer; you continue on your own.") && has_notice(notices, "Back on your own story."),
+              "B is told");
+    }
+}
+
+// Round I1a's review: *Leave instance* while the INTENT cannot go is kept and
+// sent once it can: at a barrier (sent in the next stage), and for an engine
+// playing on apart from its instance after a reconnect (the relay files its
+// INTENT under the home instance and ignores it) until its next stage. The
+// host's countdown is a running line, not a toast every few seconds; the
+// instance's end takes such an engine home by itself (19.6.10: WORLD_NOTICE
+// ended, as no stage group of the instance sends it HOME).
+void leave_and_end_in_world() {
+    {
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 6;
+        auto& b = guest_of_nine(world);
+        b.input = press_in({{"stag0101", b.session->tick() + 30}}, fake::kExitButton);
+        check(world.run_until(5, [&] { return b.session->mode() == Mode::parked; }), "B parked at its field exit");
+        check(b.session->leave_instance() && b.session->leave_pending(), "the leave is kept while parked");
+        check(has_notice(b.session->take_notices(), "You leave the instance as soon as this stage allows it."), "B is told");
+        world.run(0.1);
+        check(world.hub.leave_intents == 0, "no INTENT at the barrier");
+        check(world.run_until(10, [&] { return b.engine.stage() == "stag0102" && world.hub.leave_intents == 1; }), "the INTENT goes in the next stage");
+        check(!b.session->leave_pending(), "sent once");
+    }
+    {
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 6;
+        auto& b = guest_of_nine(world);
+        // A reconnect the relay does not resume, its WELCOME still naming the instance: B plays on apart from it.
+        world.hub.welcome_wid[2] = 7;
+        world.hub.wid_forgotten.insert(2);
+        world.hub.drop(2);
+        world.run(1.0);
+        b.session->attach(world.hub.connect(2, "lee"), world.now, "t-lee-2");
+        world.run(1.0);
+        check(b.session->mode() == Mode::solo && b.session->wid() == 7 && b.engine.stage() == "stag0101", "B plays on apart from its instance");
+        b.session->take_notices();
+        check(b.session->leave_instance() && b.session->leave_pending(), "the leave is kept");
+        world.run(0.5);
+        check(world.hub.leave_intents == 0, "no INTENT the relay would ignore");
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::host_away, 9, "kim", 52, {}}), world.now);
+        world.run(0.3);
+        const auto status = b.session->overlay(world.now).status;
+        check(status.find("kim lost the connection. Waiting for kim... 5") == 0, "the host's countdown is a running line: " + status);
+        check(!has_notice(b.session->take_notices(), "lost the connection"), "not a toast");
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::ended, 9, "kim", std::uint32_t(w::EndReason::host_lost), {}}),
+                       world.now);
+        world.run(0.3);
+        check(b.session->overlay(world.now).status.empty(), "the countdown ends");
+        check(has_notice(b.session->take_notices(), "kim did not come back. The instance ends."), "B is told");
+        check(world.run_until(20, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && b.session->wid() == 0; }),
+              "B took the home departure itself");
+        check(b.session->holds_own_story() && value(b.engine.story.flags, 19) == 0 && value(b.engine.story.flags, 20) == 1 && !b.session->leave_pending() &&
+                  world.hub.leave_intents == 0,
+              "home on the own story; the kept leave is done");
+    }
+}
+
 // The input delay a member needs so that its pads reach the server before
 // their tick is sealed: two members co-arrive, then 20 s sealed play; late
 // pads counted from the second second on. Returns the late fraction.
@@ -1329,6 +1547,14 @@ int main(int argc, char** argv) {
         room_story();
         std::cout << "world session\n";
         world_session();
+        std::cout << "world: a restart's story key\n";
+        restart_story_key(9);
+        restart_story_key(3);
+        restart_at_home();
+        std::cout << "world: the barrier fallback\n";
+        fallback_in_world();
+        std::cout << "world: a kept leave, the host away, the end\n";
+        leave_and_end_in_world();
         std::cout << "checkpoint reports\n";
         checkpoint_reports();
         std::cout << "READY after a refused READY\n";

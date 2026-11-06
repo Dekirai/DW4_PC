@@ -157,8 +157,9 @@ void footer(online::OnlineLobby& lobby) {
 }
 
 void welcome(online::OnlineLobby& lobby) {
-    wrapped("Play Digimon World 4 together over the DW4Online server: rooms of up to ten players. Everyone plays an online "
-            "character that starts from zero and is saved on the server; your own save on this PC is not used online.");
+    wrapped("Play Digimon World 4 together over the DW4Online server: one online world, where up to four players share an "
+            "instance. Everyone plays an online character that starts from zero and is saved on the server; your own save on this "
+            "PC is not used online.");
     ImGui::Spacing();
     const bool open = lobby.gate() == online::Gate::open;
     if (button("Log in", open && !lobby.busy(), true)) lobby.go(Screen::login);
@@ -323,8 +324,9 @@ void reset_character(online::OnlineLobby& lobby, OnlineUiState& s) {
     ImGui::SeparatorText("Reset online character");
     if (const auto& c = lobby.character(); c && c->exists)
         wrapped(("Your online character " + (c->name.empty() ? std::string("(no name)") : c->name) + " (" + c->digimon + ", level " +
-                 std::to_string(c->level) + ") ends, and so does its online story: the rooms you open start a new story, and only Normal "
-                 "is open again. Your next online game starts a new character at level 1. A room you own closes.")
+                 std::to_string(c->level) + ") ends, and so does its online story: your lobby and the instances you host start a new "
+                 "story, and only Normal is open again. Your next online game starts a new character at level 1. An instance you host "
+                 "ends.")
                     .c_str());
     wrapped_disabled("Your local save is not touched. The server keeps the old character for 30 days, so the staff can undo a reset made "
                      "by mistake.");
@@ -468,11 +470,20 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         label_cell("Visibility");
         const int vis = std::clamp(live->visibility, 0, 2);
         if (live->is_host) {
+            // (Opened from the status window's "View: change": A cycles the
+            // visibility at once. Not in the window's first frame, where the
+            // request would find no item.)
+            if (s.focus_visibility && !ImGui::IsWindowAppearing()) {
+                ImGui::SetKeyboardFocusHere();
+                s.focus_visibility = false;
+                s.focus_pending = false;
+            }
             if (button((std::string(kVisibilities[vis]) + "##visibility").c_str(), !lobby.busy())) s.visibility_requested = (vis + 1) % 3;
             ImGui::SameLine();
             ImGui::TextDisabled("A: change");
         } else {
             ImGui::TextUnformatted(kVisibilities[vis]);
+            s.focus_visibility = false;
         }
         if (ImGui::BeginTable("members", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 2.0f);
@@ -518,11 +529,11 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             if (!live->story.empty()) wrapped_disabled(live->story.c_str());
         } else if (const auto& c = lobby.character(); c && c->exists)
             wrapped_disabled(("You play " + (c->name.empty() ? std::string("your online character") : c->name) + " (" + c->digimon + ", level " +
-                              std::to_string(c->level) + "): START and Game Start at the title, and load it from the card. "
-                              "A character made with Create Digimon is not saved online.")
+                              std::to_string(c->level) + "): Play loads it into your lobby. A character made with Create Digimon is not "
+                              "saved online.")
                                  .c_str());
         else
-            wrapped_disabled("Your online character starts new: START and Game Start at the title (your save on this PC is not used).");
+            wrapped_disabled("Your online character starts new: Play takes you to Create Digimon (your save on this PC is not used).");
     }
     if (const auto& counts = lobby.world_counts())
         ImGui::TextDisabled("Online now: %d %s, %d %s", counts->players, counts->players == 1 ? "player" : "players", counts->instances,

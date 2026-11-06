@@ -537,12 +537,14 @@ public:
     // Round I1a: the last STORY's owner key, the INTENT leaves, the wid the
     // next WELCOME of a member names (0: the relay knows none).
     std::uint32_t last_story_owner = 0;
+    std::vector<w::Story> story_frames; // every STORY that came (its owner key and delta)
     int leave_intents = 0;
     std::map<std::uint32_t, std::uint32_t> welcome_wid;
     std::set<std::uint32_t> wid_forgotten; // members whose next WELCOME is not resumable (the relay restarted)
     void on_story(Member& m, const w::Story& s, double now) {
         ++stories;
         last_story_owner = s.owner;
+        story_frames.push_back(s);
         if (story_lost) return;
         w::StoryAck answer{0, {}, w::StoryAck::answer, {}};
         using K = dw4::engine::StoryRefused::Kind;

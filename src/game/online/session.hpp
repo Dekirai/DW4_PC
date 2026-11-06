@@ -133,6 +133,9 @@ struct Overlay {
     bool slow_uplink = false;   // the server fills this member's pads
     std::array<bool, 4> lagging{};
     bool boss_choice = false;   // "Wait for <names>" / "Go alone" on the loading screen
+    // A running line while the game plays on (19.5.5: "Kim lost the
+    // connection. Waiting for Kim... 52 s", counting down).
+    std::string status;
 };
 
 class Session {
@@ -200,6 +203,13 @@ public:
     // The relay no longer knows this engine's instance (19.6.10): the engine
     // takes the home departure itself at the next membership-safe step.
     bool going_home() const { return instance_gone_; }
+    // The story owner key of the current visit (19.8.4: the host's in an
+    // instance, the own at home; {0xFFFFFFFF, 0} while the engine holds a
+    // story whose owner key is no longer known, after a server restart or a
+    // lost instance, until the DISSOLVE's replace) and whether the engine
+    // holds the member's own story.
+    std::pair<std::uint32_t, std::uint8_t> visit_owner() const { return visit_owner_; }
+    bool holds_own_story() const { return visit_owner_ == std::make_pair(member_id_, own_box_); }
 
     // Facts.
     Mode mode() const { return mode_; }
@@ -250,8 +260,12 @@ public:
     void send_intent(wire::IntentKind kind, int argument);
     // Round I1a: *Leave instance* (INTENT 3: the relay stamps HOME for the own
     // slot; for the host it ends the instance) and the host's visibility
-    // (INSTANCE_OP 1). False when not possible now.
+    // (INSTANCE_OP 1). False outside an instance. While the INTENT cannot go
+    // (a barrier, a load, a catch-up, an engine playing on apart from its
+    // instance after a reconnect, whose INTENT the relay would ignore) the
+    // wish is kept and sent once it can, with a notice.
     bool leave_instance();
+    bool leave_pending() const { return leave_wanted_; }
     bool set_visibility(wire::Visibility visibility);
     // The own settings change (the Game Start's difficulty, Online > Settings).
     void set_own_settings(const wire::Settings& settings) { config_.own_settings = settings; }
@@ -271,6 +285,16 @@ private:
     // one that does not decode is skipped (19.18).
     static bool informational(wire::Type type) noexcept;
     void on_welcome(const wire::Welcome& welcome, double now);
+    // Round I1a's review: the engine holds a story whose owner key is no longer
+    // valid (another's, after a server restart or a lost instance): no STORY
+    // goes for it (the relay may have given that key's id to this member) until
+    // a BARRIER_OK names the next visit's owner (the DISSOLVE's replace).
+    void forget_foreign_visit();
+    // The client's own answer to a barrier the relay left unanswered (3.4;
+    // round I1a's review: inside the world it keeps what the engine holds).
+    void barrier_fallback(double now);
+    // A kept *Leave instance* wish goes out once the INTENT can (leave_instance).
+    void send_pending_leave();
     void on_world_notice(const wire::WorldNotice& notice);
     // The toast of an arrival into an instance (19.5.6), once BARRIER_OK and
     // the instance's INSTANCE_INFO are both there.
@@ -348,7 +372,9 @@ private:
     std::uint32_t member_id_ = 0;
     // The HELLO answer line out of the received bytes; returns how many of them it used.
     std::size_t read_hello(double now);
-    std::uint32_t previous_member_id_ = 0; // the member id before a lost connection (a new one: the server restarted)
+    // The own story owner key as of the last WELCOME (a reconnect's WELCOME with
+    // another member id: the relay restarted and numbers its members anew).
+    std::pair<std::uint32_t, std::uint8_t> own_key_{0, 1};
 
     // The instance.
     std::uint32_t inst_ = 0, visit_ = 0;
@@ -384,6 +410,7 @@ private:
     std::optional<wire::BarrierOk> decision_;
     double parked_at_ = 0;
     std::uint8_t group_at_barrier_ = 1;
+    std::string barrier_stage_;          // the BARRIER's target stage
     std::vector<std::uint8_t> own_carry_;
     std::string loading_;
     bool boss_choice_ = false;
@@ -445,7 +472,10 @@ private:
     std::optional<wire::InstanceInfo> instance_;
     std::map<std::uint32_t, std::uint8_t> member_flags_;
     bool instance_gone_ = false;      // the local way home is due (19.6.10)
+    bool leave_wanted_ = false;       // a *Leave instance* waiting until the INTENT can go
     std::string gone_notice_;         // its text once the departure ran
+    std::string host_away_name_;      // WORLD_NOTICE host_away: the running line's host and its end (-1: none)
+    double host_away_until_ = -1;
     std::uint8_t own_box_ = 1;
     bool hello_seen_ = false;
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
