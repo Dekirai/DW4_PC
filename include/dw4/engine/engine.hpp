@@ -555,6 +555,25 @@ public:
     // Before a step: a port choice of a present slot (round S3 uses
     // go_without; give_up forks the defeated member off alone).
     void online_intent(int slot, IntentKind kind, int argument);
+    // Round I1a (docs/SEAMLESS.md 19.6.5): HOME, before a step (a stamped
+    // event, at a membership-safe step): exactly the present slots of `mask`
+    // take the home departure, defeated or not: the gate disc's records
+    // without SYSsetGateStage (the windows closed, SQ_EXIT, the fade,
+    // NEXTSTAGE stagML11 point 3). Every present slot: the original group
+    // move; part of them: a fork of ForkKind::home (no side rule). Returns
+    // whether this copy departs.
+    bool online_home(std::uint8_t mask);
+    // 19.6.10: the same departure for this engine alone, the local way home of
+    // a solo engine whose instance the relay no longer knows (no relay
+    // instance holds it, nobody joins or logs it). False (nothing done) unless
+    // online, solo and membership-safe.
+    bool online_depart_home();
+    // 19.8.3 (M2): a parked DISSOLVE redirected: the pending stage and the
+    // generate point (PlayerPointManager's point) replaced, as a NEXTSTAGE to
+    // that stage and point would have set them. Only between set_barrier
+    // (BARRIER_OK) and the load step's apply_barrier; false (nothing done)
+    // without a DISSOLVE decision or a pending stage.
+    bool redirect_pending_stage(std::string stage, int point);
     // Inside a step (the online overrides, Lua NETsplit): a fork of the
     // present members; `mask` is the side that continues the script run
     // (ForkKind). The side rule for defeated members applies. Returns whether

@@ -6,6 +6,7 @@
 // the original scripts unchanged.
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
+#include "online_detail.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -147,6 +148,56 @@ static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::strin
     r.push_back(set_record("PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", "I<" + std::to_string(point) + ">", 10));
     r.push_back(set_record("STAGECTL", std::nullopt, -1, "NEXTSTAGE", stage, 10));
     return work;
+}
+
+// Round I1a (docs/SEAMLESS.md 19.6.5): the home departure, gatedisc.lua's
+// records without SYSsetGateStage for the players of this copy: the windows
+// closed, the controls off, SQ_EXIT one after another, the full fade,
+// PLAYERPOINT 3 and NEXTSTAGE stagML11.
+static std::unique_ptr<DemoWork> home_departure_work(Engine& engine) {
+    auto work = std::make_unique<DemoWork>();
+    auto& r = work->records;
+    r.push_back(set_record("SUBWND", std::nullopt, -1, "REMOVE"));
+    r.push_back(check_record("SUBWND", std::nullopt, -1, "ISRUN", std::nullopt, "!=0"));
+    r.push_back(set_record("PLAYER", std::nullopt, -1, "OFCTRL"));
+    r.push_back(set_record("ENEMY", std::nullopt, -1, "OFCTRL"));
+    r.push_back(set_record("PLAYER", std::nullopt, -1, "ALLCLEARSTATUS"));
+    const auto* sys = engine.get<GameSystem>();
+    std::int64_t delay = 40;
+    for (int slot = 0; slot < 4 && sys; ++slot) {
+        const auto& p = sys->players[std::size_t(slot)];
+        if (!p.joined || !(engine.online().present & (1u << slot))) continue;
+        r.push_back(set_record("PLAYER", p.digimon, slot, "SQ_EXIT", std::nullopt, delay));
+        delay += 20;
+    }
+    r.push_back(set_record("MODELCTRL", "i_fadewn01", 0, "GENERATE", "SQ_STCHANGE01", delay + 40));
+    r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISRUN", std::nullopt, "!=0"));
+    r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISRUN", std::nullopt, "==0"));
+    r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISSEQNAME", "SQ_STCHANGELP", "==0"));
+    r.push_back(set_record("PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", "I<3>", 10));
+    r.push_back(set_record("STAGECTL", std::nullopt, -1, "NEXTSTAGE", "stagML11", 10));
+    return work;
+}
+
+bool Engine::online_home(std::uint8_t mask) {
+    mask &= online_.present;
+    if (!online_.enabled || !mask) return false;
+    const detail::MxcsrGuard mxcsr;
+    if (mask != online_.present) {
+        // Part of the present slots: exactly the mask forks off (no side
+        // rule); this copy stays when it is on the other side.
+        const bool leaves = online_split(mask, ForkKind::home);
+        apply_pending_fork();
+        if (!leaves) return false;
+    }
+    heading_ = ExitHeading{frame_, "stagML11", 3, mask};
+    demo_.start(home_departure_work(*this));
+    return true;
+}
+
+bool Engine::online_depart_home() {
+    if (!online_.enabled || std::popcount(unsigned(online_.present)) != 1 || !membership_safe()) return false;
+    return online_home(online_.present);
 }
 
 struct ExitPortAccess {

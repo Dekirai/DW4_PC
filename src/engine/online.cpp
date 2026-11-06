@@ -558,10 +558,12 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     if (const auto* models = get<ModelCtrlManager>())
         for (int s = 0; s < 4; ++s)
             if (const auto* player = models->player(s); player && player->generated && player->hp > 0) alive |= bit(s);
-    // 6.7, the side rule: the dead travel with the living.
+    // 6.7, the side rule: the dead travel with the living (not for HOME,
+    // a server decision about accounts: exactly the mask leaves, 19.6.5).
     if (kind == ForkKind::give_up) {
         leavers &= std::uint8_t(~alive);
         stayers = present & std::uint8_t(~leavers);
+    } else if (kind == ForkKind::home) {
     } else if (!(stayers & alive)) {
         leavers |= stayers;
         stayers = 0;
@@ -580,10 +582,10 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     // The recorded side: named by the continuing side or by the side that
     // leaves the instance id (the relay's fork lists).
     const std::uint8_t child = kept == leavers ? stayers : leavers;
-    // ForkSide::frame is the frame after the fork tick's step; a give-up
-    // forks between two steps (online_intent before the step), one frame
-    // earlier than a fork inside the step.
-    const std::uint64_t at = kind == ForkKind::give_up ? frame_ + 1 : frame_;
+    // ForkSide::frame is the frame after the fork tick's step; a give-up and
+    // a HOME fork between two steps (online_intent / online_home before the
+    // step), one frame earlier than a fork inside the step.
+    const std::uint64_t at = kind == ForkKind::give_up || kind == ForkKind::home ? frame_ + 1 : frame_;
     for (const auto& side : fork_sides_)
         if (side.frame == at && (side.leavers == leavers || side.leavers == child)) {
             take = side.leavers == leavers ? side.take_leavers : !side.take_leavers;
@@ -604,6 +606,17 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
 
 void Engine::set_barrier(const BarrierResult& barrier) { barrier_ = std::make_unique<BarrierResult>(barrier); }
 
+bool Engine::redirect_pending_stage(std::string stage, int point) {
+    // (M2, measured r71: anywhere from BARRIER_OK to the top of apply_barrier
+    // this equals a NEXTSTAGE to that stage and point, bit for bit, solo and
+    // for a parked guest of a group; the point is part of it. The target is
+    // taken as named: the zone remap belongs to NEXTSTAGE.)
+    if (!online_.enabled || pending_stage_.empty() || !barrier_ || barrier_->decision != Decision::dissolve || stage.empty()) return false;
+    request_stage(std::move(stage));
+    if (auto* points = get<PlayerPointManager>()) points->set_point_no(point);
+    return true;
+}
+
 void Engine::apply_barrier() {
     if (!barrier_) return;
     const BarrierResult b = std::move(*barrier_);
@@ -618,7 +631,13 @@ void Engine::apply_barrier() {
     // into the member's own fallback load.)
     // (pending_stage_ holds the barrier's target: a barrier into the training
     // field leaves flag 503 alone, 8.8.)
-    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
+    // Round I1a (19.8.3, 19.30.4): the return home and a guest's NEW replace
+    // the story subset instead (the own story, the host's), here at the top,
+    // before the stage's scripts and the snapshot read it.
+    if (b.story) {
+        if (b.story_mode == StoryMode::replace) story::replace(flags_, sys->flag_folder, counters_, *b.story);
+        else story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
+    }
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;

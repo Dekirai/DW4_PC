@@ -273,6 +273,18 @@ bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, s
     return removed;
 }
 
+bool in_replaced_subset(std::int32_t flag) {
+    return flag_in(sets().phase, flag) || flag_in(sets().persistent, flag) || flag_in(sets().copy, flag) || flag == tables::kTrainingFlag;
+}
+
+void replace(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, std::uint8_t>& folder,
+             std::map<std::int32_t, std::int32_t>& counters, const RoomStory& story) {
+    for (std::int32_t f = 0; f < kFlags; ++f)
+        if (in_replaced_subset(f)) put(flags, f, story.flags[std::size_t(f)]);
+    for (std::int32_t k = 0; k < tables::kKeys; ++k) put(folder, k, story.folder[std::size_t(k)]);
+    for (const auto c : tables::kCounters) put(counters, c, story.counters[std::size_t(c)]);
+}
+
 bool holds_dropped(const StoryValues& values, const RoomStory& room, const StoryKeys& dropped, std::string_view target) {
     if (dropped.empty()) return false;
     StoryValues copy = values;

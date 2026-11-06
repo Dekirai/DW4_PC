@@ -11938,6 +11938,7 @@ The design changes the results force, for the lanes:
 | M3 | Only defeated players after a HOME reach the original game over (one update after the HOME, NEXTSTAGE stagml11 374-402 frames later, as offline: 383); every such barrier, and the exit prompt's (stag0101 point 2) when HOME left a defeated member alone on an exit mat, has alive mask 0; that prompt is HOME's doing (offline, two defeats on the same mat run the game over) (19.6.5) | the relay reads "defeated" from the barrier's alive mask 0, not from the target stagML11, except in a give-up copy (INTENT *give_up* and its fork: on purpose, answers 24 and 37); such a barrier of an ended instance is redirected home | relay |
 | M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged except the hold max, read at p99.99 (question 42); the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; the max is read at p99.99 (the user's answer to question 42, 2026-11-05; the in-process holds pass, 1.9-3.2 ms); the CPU over sockets stays open | relay |
 | M5 | 30 ghost figures cost 0.40-0.45 ms a pass at 144 Hz (CPU 0.25-0.30 ms) on the RTX 5070 Ti with a hidden window; the half rate as measured skipped only the pose of the farther 20 and saved 0.03-0.04 ms (19.13) | 30 at full rate by default; the half rate and the distance cap with its F1 setting stay designed as the fallback, built only if a weaker GPU (the iGPU, a visible window) measures over the 1.5 ms budget | client |
+| M6 (round 72's first task, measured by the I1a client lane, 19.30.4) | A guest's NEW with the replace (the host's story, story mode *replace* at the top of `apply_barrier`; the host's modes and cheats at the park) against a Game Start with the host's story and settings the same way (lobby, gate to stag0201): the load snapshot equal in the GameSystem, the cheats, the point, the rules and the loader's fields, solo and as a co-arrival's base, for every settings pair tried; it differs only in the departing lobby's history (zero entries of story flags, the lobby-only flags 931 / 932, the generator and the sound state), so the net fingerprints differ from the load step; without the replace (merge) story values differ | none: 19.30.4 stands as written; the new stage group's snapshot is everyone's base, so the lobby history meets no other engine | client |
 
 | Lane | Scope |
 | --- | --- |
@@ -12565,6 +12566,75 @@ Game Start with the host's story and settings straight into stag0201
 (`dw4_world_probe`: the load snapshot's canonical hash and the net
 fingerprints for 3,000 frames), solo and as the base of a co-arrival of
 two.
+
+**Measured (round I1a, client lane, 2026-11-06; M6).** `dw4_world_probe
+DATA guestnew` (`tools/world_probe.cpp`, headless, online rules): the
+guest's engine starts on its own story S_g (chapter 2, Normal, 503 only,
+COUNTER 7 = 1) and its own settings O with the Game Start's application
+(`apply_room_story`, the modes, the cheats), stands in the lobby (stagML11
+direct start, neutral pads) and leaves at frame 1500 by the gate's
+departure to stag0201 point 0 (the probe posts SETGENERATEPOS and
+NEXTSTAGE; the lobby always runs a demo, so it is never membership-safe,
+and the gate's own departure runs inside its menu's demo as well). At the
+park it is answered NEW with the host's story and story mode *replace*
+(`BarrierResult::story_mode`, `story::replace` at the top of
+`apply_barrier`) and the host's modes and cheats set at the park (the
+place where M1 sets the own ones back at a DISSOLVE). The reference is a
+Game Start with the host's story S_h (chapter 4, Hard, 503, bosses 67-68,
+world events 19-20, keys 0-2, COUNTER 7 = 5) and settings H that goes the
+same way; its own NEW merges its confirmed story as the host's barrier
+does, and the host story the guest gets is the reference's story at its
+park (what the host's STORY before his BARRIER gives his keeper: his lobby
+set flag 501, the lobby's intro). 3,000 frames after the load step with
+the walk-and-attack pads of the other probes. Logs (worktree
+`i1a-client`) `build/meas/guestnew_r4.log`, the first runs
+`guestnew_r2.log` (the host story without the reference's lobby flag) and
+`guestnew_r3.log`.
+
+| Case (O / H) | Load step | Settings held after the load | Load snapshot (canonical) |
+| --- | --- | --- | --- |
+| solo, defaults / defaults | 1511 / 1511 | H | differs in FLAG, the generator state and the sound state only |
+| solo, defaults / Hard | 1511 / 1511 | H (diff 1) | the same three |
+| solo, defaults / Hard + randomizer 4242 (enemies 1, drops) | 1511 / 1511 | H | the same three |
+| solo, defaults / that + camera 1 + light 0 | 1511 / 1511 | H | the same three |
+| solo, defaults / Hard + randomizer + fast loading | 1502 / 1502 | H (fast on) | the same three |
+| solo, Hard + randomizer / defaults (the other way) | 1511 / 1511 | H (defaults) | the same three |
+| co-arrival of two, defaults / Hard + randomizer | 1511 / 1511 | H | the same three, and the co-arrival's personal values (its carry, taken from each engine's own lobby) |
+| co-arrival of two, defaults / defaults | 1511 / 1511 | H | the same three |
+| counter-proof: merge instead of replace, defaults / Hard + randomizer | 1511 / 1511 | H | FLAG differs in story values: 10, 74, 75, 530-532, 741, 742 (the reference 1, the guest none: the host's difficulty copies and working set) and 701 (the guest's own Normal copy, 1) |
+
+The fields were found by putting the reference's fields into the guest's
+decoded snapshot one after another until the bytes were equal: after
+FLAG, the generator state (`random`) and the sound manager's persistent
+state they are, in every case. So the GameSystem (difficulty, camera and
+light mode, the keys in FLAGFOLDER, the players), the cheats (randomizer,
+fast loading), the generate point, the online rules and the loader's
+fields are byte-equal to a Game Start with the host's story and settings,
+solo and as a co-arrival's base. The FLAG differences with the replace
+are only (a) zero entries of story flags (absent in one engine, 0 in the
+other: 5, 6, 82, 86, 701) that only one of the two lobby runs read or
+cleared (FLGisOn creates zero entries; a script reads 0 either way), and
+(b) flags 931 / 932, which stagML11's start and Digi-Elf scripts write by
+the story and difficulty the lobby ran on; they are read only in
+stagML11-13 and written again at the next lobby load. The generator and
+the sound state are the departing lobby's history (what its own story's
+scripts drew and played), as is the frame count; they are no story value
+and no setting. The net fingerprints therefore differ from the load step
+on (also with FLAG made equal after the load step: the generator and the
+sound state are in the net fingerprint).
+
+**What it means (M6):** the replace at a guest's NEW gives the host's story
+and settings completely; what it cannot give is the guest's own departure
+history (its lobby's random draws, music, lobby flags), and nothing needs
+it: the guest's NEW starts a new stage group whose load snapshot every
+co-arrival and later joiner restores, so no other engine ever compares
+with the guest's history. The design of 19.30.4 stands as written (the
+modes and cheats at BARRIER_OK before the module reload, the story subset
+at the top of `apply_barrier`); a bit-equal reference would need the same
+lobby history, i.e. the host's own departure, which a guest by definition
+did not make. The module reload's length did not depend on the stories
+or the modes here (1511 in every case without fast loading, 1502 with
+it: the host's fast loading set at the park counted for the reload).
 
 #### 19.30.5 The go-along offer
 
