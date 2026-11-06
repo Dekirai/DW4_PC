@@ -195,8 +195,8 @@ HP for Guilmon's Fang Thrust (one big target), then the kite bot's clear rate ag
 - Tests: `overflow_gear` checks both (15 checks: a second panel in the same frame is left out, the tally counts
   both; HPDRAIN 1 + (3 x cap) + 5 in one second gives 1, cap - 1, 0; a new second gives the cap again).
 - Checks on f964f0fb: build ok, `ctest -R overflow` 12/12, det.sh (`o1b_content_e2`) 4004f056 / 396cb219 in
-  both runs. r25c and the full ctest were not run again (no long runs after 18:00): the only story-side line is
-  the `overflow_run_` branch in BLTgetDamageValue, and det.sh is equal.
+  both runs; the full ctest 58/58 (e0ea58c3). r25c was not run again (no long runs after 18:00): the only
+  story-side line is the `overflow_run_` branch in BLTgetDamageValue, and det.sh is equal.
 - Still open from section 8: the 20-seed measurements, the form balance (human Agumon 22:13 > 14-18 min),
   Guilmon's Fang Thrust pierce / reach and Crescent Draw's aim, traits (O3), the Guardians' camera shake and
   the Violet Ring's return gate, Awakening's x_100charge01 burst, lane A's host tests T3 / T4 / T5 / T8 / T11.
