@@ -429,6 +429,20 @@ def restart_server(stack, base, kill=False, down=0.0):
         raise RuntimeError("the restarted server did not start (see %s)" % srv["folder"])
 
 
+def stop_server(stack, base):
+    """Ends the scenario server of `base` once its scenario is evaluated (its stop file: the service's ordered stop; killed
+    after 20 s), so a long run does not keep every finished scenario's server."""
+    srv = stack.servers.pop(base, None)
+    if not srv or srv["proc"].poll() is not None:
+        return
+    try:
+        with open(os.path.join(srv["folder"], "stop.request"), "w") as f:
+            f.write("stop")
+        srv["proc"].wait(20)
+    except (OSError, subprocess.TimeoutExpired):
+        srv["proc"].kill()
+
+
 def run_scenario(stack, sc, api, relay_port, pin, diag):
     """A --fake scenario in the world: its own server (a fresh process and database, as every game scenario), one account
     per fake client, each enters the world with a ticket of POST /world/ticket (FakeClient's client mode, protocol 49) at
@@ -2054,6 +2068,7 @@ def main():
                         results[sc["name"]] = ([], ["SKIP: needs " + ", ".join(missing)])
                         print("SKIP %-5s %s (needs %s)" % (sc["name"], sc["desc"], ", ".join(missing)), flush=True)
                     return
+                own = None
                 try:
                     # Every game scenario gets a fresh server process with its own database (19.24's harness lane): in the
                     # world every scenario on one server would see the others (Public by default, the automatic join,
@@ -2064,6 +2079,9 @@ def main():
                     problems, notes = run_real(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4], lock, own_db)
                 except Exception as e:  # a broken scenario is a failure, the others go on
                     problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+                finally:
+                    if own:
+                        stop_server(stack, own[0])  # (its processes go with it: a long run keeps only the running scenarios')
                 if sc.get("counter_proof"):
                     # A counter-proof (W1x, W30x): a client hook switches the checked behaviour off, so the checks must fail.
                     problems, notes = (["the counter-proof passed: the checks do not catch the switched-off behaviour"] if not problems
@@ -2090,12 +2108,16 @@ def main():
         for sc in wanted[:len(wanted) - len(real)]:
             t = time.time()
             # (The world: a fresh server per scenario, as for the game scenarios.)
+            own = None
             try:
                 own_db = create_database(stack)
                 own = start_server(stack, own_db, None, sc["name"])
                 problems, notes = run_scenario(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4])
             except Exception as e:
                 problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+            finally:
+                if own:
+                    stop_server(stack, own[0])
             print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)
             for n in notes:
                 print("       " + n, flush=True)
