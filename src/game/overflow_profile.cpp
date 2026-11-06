@@ -102,6 +102,11 @@ constexpr RecordGear kRecordGear[] = {
     {"crate_breaker", "rack_board"},
 };
 
+// The record gear lane E's gear_table() has rows for (round O1b: the Drain
+// Ram); the rest is opened by its record but not offered in the loadout
+// until a round adds its row (O2: add the key here with it).
+constexpr const char* kBuiltRecordGear[] = {"drain_ram"};
+
 constexpr const char* kStartGear[] = {"brave_core",  "armor_board", "fire_board",  "ice_board",  "bolt_board",
                                       "dark_board",  "wisdom_chip", "spirit_chip", "speed_chip", "pwr_medal"};
 
@@ -488,10 +493,18 @@ std::vector<std::string> gear_open(const OverflowProfile& profile) {
     return out;
 }
 
+bool gear_built(std::string_view key) {
+    for (const char* start : kStartGear)
+        if (key == start) return true;
+    for (const char* built : kBuiltRecordGear)
+        if (key == built) return true;
+    return false;
+}
+
 std::vector<std::string> opened_gear(const OverflowProfile& profile) {
     std::vector<std::string> out(std::begin(kStartGear), std::end(kStartGear));
     for (auto& gear : gear_open(profile))
-        if (std::find(out.begin(), out.end(), gear) == out.end()) out.push_back(std::move(gear));
+        if (gear_built(gear) && std::find(out.begin(), out.end(), gear) == out.end()) out.push_back(std::move(gear));
     return out;
 }
 

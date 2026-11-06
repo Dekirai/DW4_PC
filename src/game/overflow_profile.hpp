@@ -145,7 +145,12 @@ std::vector<std::string> record_gear(std::string_view key);
 std::span<const char* const> start_gear();
 // The start set plus everything the records opened (start set first, no key
 // twice), and only the record-opened ones (RunConfig::gear_open).
+// opened_gear lists only gear the run can equip (gear_built: the start set
+// and the record gear lane E's gear_table() has, in O1b the Drain Ram), so
+// the select never offers a key the director ignores; gear_open lists every
+// key the records opened (the director skips keys it has no row for).
 std::vector<std::string> opened_gear(const OverflowProfile& profile);
+bool gear_built(std::string_view key);
 std::vector<std::string> gear_open(const OverflowProfile& profile);
 // Whether a gear key is a Core / a chip that goes only into the core pocket
 // (8.3: such a chip needs a Core as the armour). Keys of lane E's start set

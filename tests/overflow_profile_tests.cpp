@@ -407,8 +407,9 @@ void records_and_bits() {
                                            "pwr_medal_fire", "mana_board", "beast_board", "bit_board"},
           "gear_open from the records");
     const auto opened = ov::opened_gear(p);
-    check(opened.size() == ov::start_gear().size() + open.size() && opened[0] == "brave_core" && opened[ov::start_gear().size()] == "cipher_core",
-          "opened_gear: the start set, then the records'");
+    check(opened.size() == ov::start_gear().size() + 1 && opened[0] == "brave_core" && opened[ov::start_gear().size()] == "drain_ram",
+          "opened_gear: the start set, then the records' gear the run can equip (O1b: the Drain Ram)");
+    for (const auto& gear : open) check(ov::gear_built(gear) == (gear == "drain_ram"), "built in O1b: " + gear);
     // A record a later version adds is checked against the totals the file has.
     ov::OverflowProfile old;
     old.totals["crates"] = 140;
@@ -431,12 +432,21 @@ void loadouts() {
     check(ov::loadout_allowed(p, {"brave_core", "wisdom_chip"}) && ov::loadout_allowed(p, {"fire_board", "pwr_medal"}), "start gear");
     check(!ov::loadout_allowed(p, {"wisdom_chip", ""}) && !ov::loadout_allowed(p, {"", "brave_core"}), "the wrong slots");
     check(!ov::loadout_allowed(p, {"", "drain_ram"}) && !ov::loadout_allowed(p, {"cipher_core", ""}), "unopened gear");
+    p.records["blossom_data"] = 1;
+    check(ov::loadout_allowed(p, {"armor_board", "drain_ram"}) && ov::loadout_allowed(p, {"", "drain_ram"}), "the Drain Ram from Blossom Data");
+    // Opened by a record but without a row in lane E's gear_table yet (O2): not offered.
     p.records["shogun_data"] = 1;
     p.records["scorpio_data"] = 1;
-    check(ov::loadout_allowed(p, {"brave_core", "resist_rom_fire"}) && ov::loadout_allowed(p, {"brave_core", "defence_rom"}), "a core-pocket chip with a Core");
+    p.records["gate_keeper"] = 1;
+    check(!ov::loadout_allowed(p, {"brave_core", "defence_rom"}) && !ov::loadout_allowed(p, {"cipher_core", ""}) &&
+              !ov::loadout_allowed(p, {"resist_board", ""}),
+          "record gear the run cannot equip yet");
+    // The rule of 8.3 itself: a core-pocket chip needs a Core.
+    check(ov::gear_core_pocket_only("defence_rom") && ov::gear_core_pocket_only("resist_rom_ice") && !ov::gear_core_pocket_only("wisdom_chip") &&
+              !ov::gear_core_pocket_only("drain_ram") && !ov::gear_core_pocket_only("brave_core"),
+          "the core-pocket chips (abChip WU 0, BLUEAB 1)");
     check(!ov::loadout_allowed(p, {"armor_board", "defence_rom"}) && !ov::loadout_allowed(p, {"", "resist_rom_ice"}),
-          "a core-pocket chip needs a Core (8.3)");
-    check(ov::loadout_allowed(p, {"resist_board", ""}), "the Resist Board from Shogun Data");
+          "a core-pocket chip without a Core (8.3)");
 }
 
 void forms() {
@@ -583,16 +593,15 @@ void lobby() {
     p.forms["p_vmon"].clears = {1, 1, 0};
     p.records["gate_keeper"] = 1;
     p.records["shogun_data"] = 1;
+    p.records["blossom_data"] = 1;
     LobbyMeta meta;
     ov::fill_lobby_meta(p, meta);
     check(meta.seen_intro && meta.sim_bits == 3000 && meta.earned_total == 7000, "the head");
     check(meta.plugs.at("p_vmon") == std::array<int, 7>{3, 4, 1, 2, 5, 6, 7}, "the Plug Lab rows: Strength, Def., MaxHP, MaxMP, Wisdom, Spirit, Speed");
     check(meta.forms.at("p_vmon").runs == 4 && meta.forms.at("p_vmon").clears == 2 && meta.forms.at("p_vmon").best_seconds == 700, "a form");
-    check(meta.records == std::vector<std::string>{"gate_keeper", "shogun_data"}, "done records");
-    check(std::find(meta.armors.begin(), meta.armors.end(), "cipher_core") != meta.armors.end() &&
-              std::find(meta.armors.begin(), meta.armors.end(), "resist_board") != meta.armors.end() &&
-              std::find(meta.chips.begin(), meta.chips.end(), "resist_rom_dark") != meta.chips.end() && meta.chips[0].empty(),
-          "the records' gear in the lists");
+    check(meta.records == std::vector<std::string>{"gate_keeper", "blossom_data", "shogun_data"}, "done records");
+    check(meta.armors == stand_in.armors && meta.chips.size() == stand_in.chips.size() + 1 && meta.chips.back() == "drain_ram" && meta.chips[0].empty(),
+          "the records' gear the run can equip in the lists (the Drain Ram), not the rest");
     check(std::find(meta.locked_forms.begin(), meta.locked_forms.end(), "p_weregaru") == meta.locked_forms.end() &&
               std::find(meta.locked_forms.begin(), meta.locked_forms.end(), "p_hekabut") != meta.locked_forms.end(),
           "Veemon's 10:00 opens WereGarurumon");
