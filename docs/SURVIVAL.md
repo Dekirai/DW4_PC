@@ -443,6 +443,19 @@ simulation:
   simulation goes on with phase 4's pool, `A(t)` +10 a minute up to the
   pool's RAMs and enemy HP x 1.3 a minute, until the Digimon falls. It has
   its own best time and no clear.
+- **As built in round O1b** (lane E, docs/ROUND_O1B_E_NOTES.md): the phases
+  stay on the run clock (the balance of docs/OVERFLOW_DIRECTOR.md 10-11 is
+  built on it); a Guardian enters when its phase's five minutes end and the
+  next phase's families come in over their ramp beside it; the next
+  Guardian waits for the one before, and one still alive at 20:00 leaves
+  for LordKnightmon. A Guardian's HP is its HPMAX x 6 (the finale x 14)
+  times the time's linear part (1 + 0.10 a minute) only; its hits carry a
+  damage factor of its own and take at most 30 % of MaxHP (no one-hit
+  Guardian). The spike found two Guardians of separate packages without
+  their scripts (TonosamaGekomon could not be damaged): their stage's main
+  member gives them now. No Guardian needs the elite fallback on the Violet
+  Ring. The return gate after the clear is not built (the results come
+  after 4 s).
 
 ### 4.5 EXP and run levels
 
@@ -1558,6 +1571,9 @@ pass.
 | D screens | the presentation actor core, the NPC (place, fade, talk via H0 with the port event rule of 3.3), the dialog, the character select for the four Rookies with loadout, the level-up window, pause with the build page, results, the HUD overlay, the finale timer, texts; hidden screenshots of each screen for review | T9 passes; T2 with the NPC shown; every screen in the screenshot set |
 | E content | the four Guardians of phases 1-3 and LordKnightmon (the spike in the Violet Ring: enters, fights, dies without its ded_; else the elite fallback), the finale with the quest timer and TIME UP, Guardian reactions, Guardian music, Guardians' drops; Guilmon and Dorumon; the four Rookies' full technique lists; gear: Brave Core, Armor and element Boards, Wisdom / Spirit / Speed Chips, the form's PWR Medal, Drain Ram, the pockets, ¶ Data power-ups; Awakening for the four Rookies | T6 per Rookie reaches the finale in some seeds; a spike note per Guardian |
 | F meta | `overflow.dat` (8.5), Sim Bits, the Plug Lab, the loadout, the records needed by O1b | T7 (profile) passes |
+
+Lane E as built, its spike notes, measurements and what is left:
+docs/ROUND_O1B_E_NOTES.md.
 
 Merge order E, D, F. **Done:** offline and alone, talking to Gekomon opens
 the menu; a run with any Rookie plays four phases with Guardians and the

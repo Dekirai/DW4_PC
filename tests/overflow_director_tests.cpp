@@ -752,6 +752,40 @@ void balance(const std::filesystem::path& data, bool report) {
 
 } // namespace
 
+// Round O1b lane E: the gear in a run (SURVIVAL.md 7): the loadout lands in
+// its slots and raises the stats; the window offers gear; a core steps by
+// its offers and opens the core pocket at beta.
+void gear(const std::filesystem::path& data) {
+    RunConfig plain;
+    plain.form = "p_girumon";
+    plain.seed = 3;
+    plain.tuning.spawning = false;
+    plain.tuning.abilities = false;
+    auto base = start_run(data, plain, true);
+    until_started(base);
+    const auto before = base.engine->get<GameSystem>()->players[0].stats;
+    RunConfig config = plain;
+    config.loadout_armor = "brave_core";
+    config.loadout_chip = "wisdom_chip";
+    auto run = start_run(data, config, true);
+    until_started(run);
+    auto& engine = *run.engine;
+    auto* sys = engine.get<GameSystem>();
+    auto& player = sys->players[0];
+    const auto* core = player.device(player.main_slot[0]);
+    const auto* chip = player.device(player.power_pocket[0]);
+    check(core && core->type == 1 && core->record == 0, "the loadout's Brave Core alpha in MAINSLOT");
+    check(chip && chip->type == 3 && chip->record == 0, "the loadout's Wisdom Chip alpha in the weapon pocket");
+    check(player.stats.mamori > before.mamori, "the core raises DEF (" + std::to_string(before.mamori) + " > " + std::to_string(player.stats.mamori) + ")");
+    check(player.stats.kashikosa > before.kashikosa, "the chip raises INT");
+    check(run.director->build_lines(engine).size() >= 4, "the build page lists the gear");
+    std::cout << "  gear: DEF " << before.mamori << " -> " << player.stats.mamori << ", INT " << before.kashikosa << " -> " << player.stats.kashikosa << '\n';
+    // Gear names in the offers: the core's next grade waits for run level 22.
+    const auto beta = Offer{OfferKind::core, gear_index("brave_core")};
+    check(run.director->offer_text(engine, beta) == "Brave Core β", "the core's next grade by its own name: " + run.director->offer_text(engine, beta));
+    check(run.director->offer_text(engine, Offer{OfferKind::board, gear_index("armor_board")}) == "Armor Board α", "a board by its own name");
+}
+
 // Round O1b lane E: the Guardians' plan (4.4), the gear table (7, the keys of
 // the lane contract) and the gear offers (4.6).
 void guardians() {
@@ -812,7 +846,8 @@ int main(int argc, char** argv) {
         if (part == "offers") offers();
         else if (part == "guardians") guardians();
         else if (part == "rng") rng();
-        else if (part == "spawn" || part == "gap" || part == "human" || part == "poison" || part == "balance" || part == "report") {
+        else if (part == "spawn" || part == "gap" || part == "human" || part == "poison" || part == "balance" || part == "report" ||
+                 part == "gear") {
             if (data.empty() || !std::filesystem::exists(data)) {
                 std::cout << "overflow " << part << ": skipped (no game data: DW4_TEST_DATA)\n";
                 return 0;
@@ -821,6 +856,7 @@ int main(int argc, char** argv) {
             else if (part == "gap") gap(data);
             else if (part == "human") human(data);
             else if (part == "poison") poison(data);
+            else if (part == "gear") gear(data);
             else balance(data, part == "report");
         } else {
             std::cerr << "unknown part " << part << '\n';
