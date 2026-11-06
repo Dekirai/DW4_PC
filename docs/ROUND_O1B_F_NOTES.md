@@ -24,13 +24,14 @@ the repo); the parts that concern this lane are repeated here.
 | The run's bits (4.7): the run drops no g_000bit yet, so the driver credits 5 % of the defeats with the original's band for the level x (100 + BITRITSU) / 100, from its own splitmix64 (seeded from the run seed). The run engine and the director's draws are untouched | `defeat_bits`, `bits_seed`; `DirectorDriver::count_bits / run_bits` |
 | The run driver: `apply_meta` puts the form's loadout, Plug Lab points and opened gear into the request (a request's own options win); `copy_meta` hands the loadout and gear to lane E's RunConfig fields where the build has them (requires-guards; checked against E's headers of 5b3fa033); the Plug Lab's UPCNT is the host's alone (`give_plug_lab`, once the run started; RunConfig::plug_lab stays at zeros, so the points are given exactly once); the run is recorded when the results open (or when the window closes: Retire); the O1a overlay shows "Sim Bits +N" and "NEW! <record>"; the HUD shows Bits | `src/game/overflow_driver.cpp` |
 | Lane D's LobbyMeta from the profile (a template on D's field names), the select's start (`remember_start`), the Plug Lab row purchase, and the merge's glue on D's OverflowLobby / LobbyAction (compiled against D's headers of d1089944) | `fill_lobby_meta`, `remember_start`, `buy_plug_row`, `connect_lobby`, `lobby_action`, `refresh_lobby` |
-| T7 (profile) | `tests/overflow_profile_tests.cpp`, ctest `overflow_profile` (787 checks) |
+| T7 (profile) | `tests/overflow_profile_tests.cpp`, ctest `overflow_profile` (798 checks) |
+| The select's lists offer only gear the run can equip (the start set and the record gear lane E's gear_table has: in O1b the Drain Ram); RunConfig::gear_open names every record-opened key | `gear_built`, `kBuiltRecordGear` (add a key there when a round adds its gear row) |
 
 ## 2. Checks (06.11)
 
 | Test | Result |
 | --- | --- |
-| T7 `overflow_profile` | 787 checks pass: the 8.5 example, round trip, later versions, damaged text, the store's writes and every corruption case (cut, garbage, empty, missing with `.bak`, both damaged, both unreadable, a failed write), migration from no file (nothing written until the first write), Plug Lab, bits, Sim Bits, records, loadouts, form unlocks, the request's options, the path rule, LobbyMeta, the story's forms, the lobby glue |
+| T7 `overflow_profile` | 798 checks pass: the 8.5 example, round trip, later versions, damaged text, the store's writes and every corruption case (cut, garbage, empty, missing with `.bak`, both damaged, both unreadable, a failed write), migration from no file (nothing written until the first write), Plug Lab, bits, Sim Bits, records, loadouts, form unlocks, the request's options, the path rule, LobbyMeta, the story's forms, the lobby glue |
 | ctest (all) | 57 of 57 (with `online` / `online_env`: DW4_OVERFLOW_PROFILE is on the presentation list) |
 | T1 det.sh (`det_o1bmeta`) | 4004f056 / 396cb219 (both runs) |
 | T3 / T5 (`build/t3/t3meta.sh`, in the worktree's build folder) | the det script with a run at story frame 3000 (Agumon, kite bot, 1,800 steps) and without: 20 fingerprint lines equal (4004f056), the card folders equal (empty), the achievement profiles equal (unlock times aside), only the run writes the `DW4_OVERFLOW_PROFILE` file |
@@ -39,6 +40,9 @@ the repo); the parts that concern this lane are repeated here.
 | the same run without a profile | nothing written (a test run keeps it in memory) |
 | T2 r25c (`EXE=<copy> NAME=seg_r25c_o1bmeta work/campaign/segments.sh r25c 4`, without the NPC) | 10 / 10 segments reached, 1,748,011 frames, every save "same story" |
 | T6 (`--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 90000`, twice) | the same run hash twice (770c6e5ef2d0a29c; defeated at 22:01, Lv 36, 13,690 Sim Bits, 5 records); with a profile (plugs str 6 def 4 mhp 8, Brave Core + Wisdom Chip) twice: the same hash twice (3bd37754fb5c94f3), the summary's `meta_used` line |
+
+| Trial merge E, D, F (local branch `tmp-o1b-trial` @ 303ea640, not for main; E 57add3ee, D 8c919404, F ec80c130) | one conflict (game_main's includes), the lobby glue added (three calls); builds; ctest 59 / 59; det.sh 4004f056 / 396cb219; T6 Agumon with a profile (plugs, Brave Core + Drain Ram, Blossom Data): cleared at 22:48.8, Lv 40, the four Guardians, Awakening, 1,724 casts, 265 Fire defeats, 20,961 Sim Bits, 12 new records, all in the file; Guilmon without a profile: cleared, 14,361 Sim Bits |
+| T9 for lane F's strings (scratch check in the trial build: record titles, conditions, opens, the unlock texts, the Plug Lab names, the results' lines against bectext.igb) | 121 strings, 0 missing glyphs |
 
 ## 3. Left / open
 
@@ -59,6 +63,11 @@ the repo); the parts that concern this lane are repeated here.
 - Endless (O4) is in the format (`best_endless`, `RunReport::endless`), not
   played yet. The ?????? offer, Extensions and Hard / Very Hard are opened by
   records but not built (O2-O4).
+- Balance (O4): a cleared Normal run earns about 14,000-21,000 Sim Bits (the
+  original's bit bands rise with the level), a Plug Lab form costs 38,500 in
+  all (7 x 5,500): two or three good runs fill a form. The initial values of
+  8.2 / 4.7 may want a lower drop share or higher prices; a round with the
+  user decides.
 - T2's second part (r25c with `DW4_OVERFLOW=show`, the NPC drawn) and T9 are
   lane D's; T10 is untouched by this lane (no engine code).
 
