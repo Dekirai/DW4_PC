@@ -1182,8 +1182,15 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         sql = check["sql"].replace("{tag}", tag)
         for n, i in accounts.items():
             sql = sql.replace("{id:%s}" % n, str(i))
-        with lock:
-            rows = sql_rows(stack, connection, sql)
+        if re.search(r"\{id:\w+\}", sql):
+            problems.append("db: %s names an account the run never made (%s)" % (check.get("name", sql[:60]), sql[:120]))
+            continue
+        try:
+            with lock:
+                rows = sql_rows(stack, connection, sql)
+        except subprocess.CalledProcessError as e:
+            problems.append("db: %s failed (%s)" % (check.get("name", sql[:60]), (e.stderr or e.stdout or str(e))[:160]))
+            continue
         text = "\n".join(rows)
         if re.search(check["expect"], text):
             notes.append("db: %s -> %s" % (check.get("name", sql[:60]), text.replace("\t", " ")[:120]))
