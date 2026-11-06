@@ -1315,6 +1315,8 @@ def check_achievements(sc, api, tag, passwords, lock, problems, notes):
     server must hold ("unlocked", in the "ruleset", standard by default, with "players" per code where given), the codes it
     must not ("locked"), and the least progress of stat achievements ("progress": code -> the counter's least value)."""
     for name, want in sorted(sc["achievements"].items()):
+        if isinstance(want, list):
+            want = {"unlocked": want}  # (a plain list names the codes the server must hold)
         with lock:
             s, body = api.call("POST", "/api/v1/auth/login", {"username": tag + name, "password": passwords[name], "deviceName": "online_test",
                                                               "protocol": WORLD_PROTOCOL})

@@ -15,12 +15,22 @@
     "stage": "stag0101"
   },
   "achievements": {
-    "a": [
-      "online_host"
-    ],
-    "b": [
-      "online_join"
-    ]
+    "a": {
+      "unlocked": [
+        "online_host"
+      ],
+      "locked": [
+        "online_join"
+      ]
+    },
+    "b": {
+      "unlocked": [
+        "online_join"
+      ],
+      "locked": [
+        "online_host"
+      ]
+    }
   },
   "clients": [
     {
