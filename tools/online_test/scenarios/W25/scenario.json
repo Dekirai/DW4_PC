@@ -34,7 +34,8 @@
       "script": "b.script",
       "card": "k2",
       "start": 3,
-      "seed_story": true
+      "seed_story": true,
+      "upload_card": true
     }
   ]
 }

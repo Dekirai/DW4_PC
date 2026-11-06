@@ -24,7 +24,8 @@
       "seed_story": true,
       "prefs": {
         "cameraMode": 1
-      }
+      },
+      "upload_card": true
     }
   ]
 }

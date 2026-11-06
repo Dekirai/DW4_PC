@@ -26,7 +26,8 @@
       "seed_story": true,
       "env": {
         "DW4_ONLINE_TEST_NO_REPLACE": "1"
-      }
+      },
+      "upload_card": true
     }
   ]
 }

@@ -27,7 +27,8 @@
         "at": 220,
         "restart": 5,
         "script": "b2.script"
-      }
+      },
+      "upload_card": true
     }
   ]
 }

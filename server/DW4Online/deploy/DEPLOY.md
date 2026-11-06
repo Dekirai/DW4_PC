@@ -825,7 +825,7 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    same path, so nothing else changes. Settings that a release asks for go into `config\appsettings.Production.json`
    before the start: an update from release 0.1.0 (its example file had 43) sets `Play:MinimumProtocol` and
    `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core,
-   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since the online world, section 9.2:
+   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since release 0.1.7, the online world, section 9.2:
    the code refuses anything below 49 whatever the file says); the room story settings work with
    their defaults (section 10). A release that raises the protocol goes on the server first and the game client after
    it: an older relay (0.1.5, minimum 47) admits a 48 client but checks its READY at the check tick only when the
@@ -998,7 +998,7 @@ with a later release that also grants `CREATE VIEW`; until then the queries abov
 
 ### 9.2 Migration 0013 `world` (round I1): the rooms give way to the online world
 
-The release with migration 0013 replaces rooms by the online world (SEAMLESS.md 19): the game's *Play* enters the
+The release with migration 0013 (DW4Online 0.1.7) replaces rooms by the online world (SEAMLESS.md 19): the game's *Play* enters the
 world, a player's lobby is always his own, and taking the gate to an area where a visible instance runs puts him into
 it. Rooms are gone after this update: `/api/v1/rooms` answers 410, the website's *Rooms* page became *Instances*, and
 the server refuses game clients older than protocol **49** (the client release of the same round). Server and client
