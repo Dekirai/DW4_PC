@@ -1190,9 +1190,11 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 data_hash = int(m.group(1))
             else:
                 fake_problems.append("fake_guests: no instance of %s to take the data hash from" % source.strip())
+            # (The fakes take the gate 20 s apart: two strangers within the co-arrival window would arrive together as an
+            # instance of their own, which decision 40's order puts before a running instance.)
             for k in range(int(spec.get("count", 1))):
                 name = "fg%d" % (k + 1)
-                script = [{"at": 1.0, "do": "exit", "stage": "stagML11"}, {"at": 4.0 + 0.2 * k, "do": "exit", "stage": spec.get("stage", "stag0101")}]
+                script = [{"at": 1.0, "do": "exit", "stage": "stagML11"}, {"at": 4.0 + 20.0 * k, "do": "exit", "stage": spec.get("stage", "stag0101")}]
                 p, accounts[name] = start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, max(10, limit - (time.time() - t0)),
                                                             200 + k, lock, data_hash)
                 fakes.append(p)
