@@ -789,8 +789,8 @@ void Session::on_welcome(const w::Welcome& m, double now) {
         // Removed meanwhile: this engine plays on alone until its next
         // barrier, where the server takes it as a lone arrival (round S4
         // uploads its state).
-        notice(wid_ != 0 ? "Reconnected. You're playing apart from " + host_name() + " until the next stage."
-                         : std::string("You were removed from the group; you continue on your own."));
+        if (wid_ != 0) notice("Reconnected. You're playing apart from " + host_name() + " until the next stage.");
+        else if (!hub_) notice("You were removed from the group; you continue on your own.");
         inst_ = m.inst;
         visit_ = m.visit;
         slot_members_ = {member_id_, kNoMember, kNoMember, kNoMember};

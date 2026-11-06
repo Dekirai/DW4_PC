@@ -1460,6 +1460,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool title_online_shown = false; // the screens over the title (the last frame)
         bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
         bool menu_shown_before = false;  // the F1 menu was open in the last frame (it opens on Online in the world)
+        dw4::game::RoomLive last_room_live; // the last frame's session facts (a UI test run's wait-instance and wait-members)
         // After the screens close, the game's pad waits until every button
         // is up (the B that closed them must not also cancel the menu).
         auto& pad_latch = view.pad_latch;
@@ -2954,6 +2955,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (ui_script.active()) {
                     dw4::game::UiScriptHost host{*lobby, online_ui, title_online, show_menu, menu_tab};
                     host.online_active = online != nullptr;
+                    host.live = online ? &last_room_live : nullptr;
                     {
                         const std::string stage = engine.stage_name();
                         const auto* title = engine.get<dw4::engine::Title2Manager>();
@@ -3158,6 +3160,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                          (e.flags & dw4::game::online::wire::InstanceMember::lagging) != 0,
                                                          (e.flags & dw4::game::online::wire::InstanceMember::host) != 0});
                 }
+                last_room_live = room_live;
                 bool online_tab_now = false;
                 // (Round I1a, 19.5.4: the F1 menu opens on the Online tab while
                 // a world session runs: its Instance page, the status line's View.)

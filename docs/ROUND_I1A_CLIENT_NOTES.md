@@ -56,7 +56,7 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   `work/campaign/bin/dw4_i1aclient_a.exe`): det.sh 4004f056 / 396cb219 both runs (`work/dref/checks/det/det_i1aclient_a`);
   r25c 10/10 reached, 1,748,011 frames, every save the same story (`build/off/r25c_a.log`, run seg_r25c_i1aclient_a);
   the save state suite 17/17 identical (`build/st/st_a.log`, own copy of work/dref/checks/st with B= this build dir).
-- 13:50 the app on the world: `--online-play [BOX]` (replaces --online-create / --online-join; --online-camera / -light / -fast
+- 13:25 the app on the world: `--online-play [BOX]` (replaces --online-create / --online-join; --online-camera / -light / -fast
   override the prefs for a test run), `online_enter_world` (status, login, POST /world/enter), reconnect tickets from
   POST /world/ticket, leave POST /world/leave; the lobby's home screen (Play: <form> Lv <n> (Box 1), Settings, Account, Log out,
   Online now), Online > Settings (PUT /me/online-prefs), the playing screen = the F1 Online tab's Instance page (host,
@@ -66,6 +66,11 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   stage names from presence_data. UI script commands: play, settings, wait-instance, visibility, leave-instance.
   ctest 56/56.
 
+- 13:45 ctest online: HOME on real engines (stag0101, a stage group of two: stayer, leaver, an observer with the
+  recorded side; the group move; the local way home); the host's exit line; name tags by relation; the UI script's
+  wait-instance / wait-members read the last frame's session facts. SEAMLESS.md 19.25 "Built, lane client".
+  Both builds compile (build/rel DEV=OFF with tests, build/dev DEV=ON without tests).
+
 ## Left (in order)
 
 1. (done) ctest for the engine paths.
@@ -73,4 +78,6 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
 3. (done) Session.
 4. (done) App.
 5. det.sh again at the end (the app commits change no engine code but the env list).
-6. SEAMLESS.md: 19.21 / 19.25 built notes; the contract decisions.
+6. (done) SEAMLESS.md 19.25 built notes; the contract decisions (contract file 13:30 entry).
+7. Not this lane's: the W scenarios with real clients (harness lane after the merge); the host's exit line for a solo
+   stage group's own prompt and the gate disc; "Welcome back" with friends (I2); the half-rate ghosts (M5 fallback).

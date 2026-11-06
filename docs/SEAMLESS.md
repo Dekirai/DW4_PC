@@ -11982,6 +11982,83 @@ I3's row action as designed (*A* the
 walk-in, *Y: Join at <host>* the travel); 42 reads the load gate's max
 at p99.99. Round I3 depends on the answers to 35 and 37 as well.
 
+*Built, lane client (2026-11-06, branch `feat-i1a-client` from main
+d0e005b0; progress note `docs/ROUND_I1A_CLIENT_NOTES.md`; the wire and
+REST decisions shared with the relay and web lanes are in the round's
+contract file `DW4_PC-wt/i1a-contract.md`, the client's entries copied
+here).*
+
+- **First task (round 72):** the guest's NEW measured against a Game
+  Start with the host's story and settings (M6 above, 19.30.4).
+- **Engine** (every path behind the online rules): `story::replace` and
+  `BarrierResult::story_mode` (merge / replace at the top of
+  `apply_barrier`), `Engine::redirect_pending_stage` (the stage and the
+  generate point; only for a parked DISSOLVE), `ForkKind::home` (exactly
+  the mask, no side rule, the give-up's frame), `Engine::online_home(mask)`
+  (the home departure: gatedisc.lua's records without SYSsetGateStage),
+  `Engine::online_depart_home()` (19.6.10, a solo engine).
+- **Protocol 49** (`kOnlineProtocol`): the layout of the contract (member
+  ids u32; the 11-byte settings block; BARRIER + travel token, plan id and
+  the own settings; BARRIER_OK + wid, host, visibility, arrival (0 none, 1
+  new instance, 2 automatic join, 3 co-arrival or starting, 4 guest's
+  NEW), settings and their hash, owner key, story mode, redirect stage and
+  point, without the dropped blob; JOIN_REQ + kind (1 join, 2 home: `slot`
+  holds the mask, 3 go); tick events HOME 6 (mask, reason) and GO 7 (I1b,
+  decoded only); INTENT 3 *leave*, 4 *go along*; STORY and STORY_ACK + the
+  owner key, refusal 12 *owner*; PRESENCE / PRESENCE2 to clients + member
+  u32 and relation flags; RESUME + the stage; WELCOME + wid and box, flags
+  8 world, 16 seat held, 32 staff; INSTANCE_OP 0x1B; INSTANCE_INFO 0x95,
+  WORLD_NOTICE 0x96, MEMBER_INFO 0x97; CLOSE 9 *account*; ROOM and ROSTER
+  retired), the relay's golden vectors in `online_wire_tests`.
+- **Session:** two confirmed stories (the own, applied at every Game
+  Start; the visit owner's, the pending set's base) and the owner key in
+  STORY; the world part of BARRIER_OK with the arrival toasts of 19.5.6 once
+  INSTANCE_INFO names the host's stage; WORLD_NOTICE in 19.5.6's words;
+  MEMBER_INFO names; HOME applied like an INTENT (pending ones follow their
+  slots at a fork); JOIN_REQ *home* answered like a join; *Leave instance*
+  (INTENT 3) and the host's visibility (INSTANCE_OP 1); the local way home
+  after a WELCOME without the own instance ("The server restarted. Back on
+  your own story." when the member id changed, else "The instance has
+  ended."); RESUME with the stage after every reconnect in a field.
+- **Settings (M1):** `GameEngineLink::start_online` applies the own cheats
+  only to the session's own engine, never after a restore (the snapshot's
+  stay); BARRIER_OK sets the host's modes and cheats for an arrival from
+  home into an instance (the replace), the own at a DISSOLVE, both before
+  the module reload; the original difficulty dialog runs online and its
+  choice is the own settings' difficulty (every BARRIER carries it).
+- **App:** `--online-play [BOX]` (replaces `--online-create` /
+  `--online-join`; `--online-camera`, `--online-light`, `--online-fast`
+  override the online preferences for a test run), `DW4_ONLINE_AUTOCHOICE`
+  (development builds: `new` sends BARRIER plan id 0xFFFF from home), Play
+  through `POST /world/enter`, reconnects through `POST /world/ticket`,
+  *Go offline* through `POST /world/leave`; the title's home screen (*Play:
+  <form> Lv <n> (Box 1)*, *Settings*, *Account*, *Log out*, "Online now: n
+  players, m instances") and Online > Settings (`PUT /me/online-prefs`) in
+  place of the room screens; the playing screen is the F1 Online tab's
+  *Instance* page (host, visibility cycled by the host, members with stage,
+  level and connection, *Leave instance* with 19.5.6's questions), and the
+  F1 menu opens on that tab while the world runs; the line under the own
+  status window; the host's extra line at an exit prompt into a hub stage
+  (the exit port's prompt of a stage group of two or more only); name tags
+  coloured by relation (party green, friend blue, staff gold); Discord's
+  party as the instance's x/4; 30 ghost figures with 32 weapon packages at
+  full rate (M5; the half rate not built); the toasts' stage names from
+  the area table (`presence_data`, whose format 2 columns the web lane
+  writes; no separate reader).
+- **Tests:** ctest 56/56 (online: the replace, the redirect, the settings
+  at a restore, at a guest's NEW and at DISSOLVE, HOME without data and on
+  real engines with an observer finding the side again, the local way
+  home; online_session: `world_session` over the fake hub; online_wire:
+  `world_messages`; online_api and online_lobby: the world's REST and the
+  home screen); offline: `det.sh` 4004f056 / 396cb219 twice, r25c 10 of 10
+  with 1,748,011 frames, the save state suite 17 of 17.
+- **Not built in this lane** (the integration's or later rounds'): the W
+  scenarios with real clients (the harness lane, after the merge); the
+  host's extra exit line for a solo stage group's own prompt and the gate
+  disc (the original prompt names no destination the client can read);
+  "Welcome back, Kim. 14 players online, 2 friends." (with I2's friends);
+  the half-rate ghost animation (M5: the fallback only).
+
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
 
