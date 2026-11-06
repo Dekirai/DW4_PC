@@ -38,15 +38,21 @@ using detail::port_send;
 using detail::ram_position;
 
 namespace {
-// 4.4: family, name, Normal record (HPMAX), donor, phase (4: the finale), elite.
+// 4.4: family, name, Normal record (HPMAX), donor, phase (4: the finale),
+// elite, damage factor. The factors (round O1b, kite runs of the four
+// Rookies with factor 1): the worst hits were Mammothmon 36-42 % of MaxHP at
+// 5:00, Blossomon 8-17 %, Anomalocarimon 5-15 % and SkullGreymon 5 % at
+// 10:00, TonosamaGekomon 8 % and Diaboromon 4-45 % at 15:00, LordKnightmon
+// 33-70 % at 20:00 (427 % with a special): about 15-20 % now, and every
+// Guardian's hit at most Tuning::guardian_clamp (30 %).
 const std::vector<GuardianRow> kGuardians = {
-    {"e_blosso", "Blossomon", 76, "dng101b2", 1, "e_ogre"},
-    {"e_mammos", "Mammothmon", 97, "dng102b3", 1, "e_ogre"},
-    {"e_skulgrey", "SkullGreymon", 187, "stag0202/separate/e_skulgrey.igb", 2, "e_tyrano"},
-    {"e_anomalo", "Anomalocarimon", 196, "dng205b3", 2, "e_tyrano"},
-    {"e_tonogeko", "TonosamaGekomon", 280, "stag0302/separate/e_tonogeko.igb", 3, "e_torta"},
-    {"e_diabolo", "Diaboromon", 289, "dng309b4", 3, "e_torta"},
-    {"e_ldknight", "LordKnightmon", 348, "dng412b4", 4, "e_megadra"},
+    {"e_blosso", "Blossomon", 76, "dng101b2", 1, "e_ogre", 1.0f},
+    {"e_mammos", "Mammothmon", 97, "dng102b3", 1, "e_ogre", 0.25f},
+    {"e_skulgrey", "SkullGreymon", 187, "stag0202/separate/e_skulgrey.igb", 2, "e_tyrano", 1.0f},
+    {"e_anomalo", "Anomalocarimon", 196, "dng205b3", 2, "e_tyrano", 1.0f},
+    {"e_tonogeko", "TonosamaGekomon", 280, "stag0302/separate/e_tonogeko.igb", 3, "e_torta", 1.0f},
+    {"e_diabolo", "Diaboromon", 289, "dng309b4", 3, "e_torta", 0.45f},
+    {"e_ldknight", "LordKnightmon", 348, "dng412b4", 4, "e_megadra", 0.4f},
 };
 constexpr int kFinale = 4;
 constexpr int kRecoveryDisk = 9; // conItem 9 Recovery
@@ -113,7 +119,13 @@ bool OverflowDirector::spawn_guardian(Engine& engine, int stage) {
         !spawn_point(engine, me, 20.0f, t.guardian_distance + 20.0f, false, point, 0.0f))
         return false;
     const float factor = elite ? t.elite_hp : stage == kFinale ? t.finale_hp : t.guardian_hp;
-    const double hp = double(db->number("enemy", record, "HPMAX").value_or(500)) * double(factor) * hp_factor(run_seconds() / 60.0);
+    // (The time's linear growth only, 1 + 0.10 a minute: with the crowd's
+    // e^(0.08 x minutes) on top TonosamaGekomon had 75,878 HP at 15:00 and
+    // LordKnightmon 203,930 at 20:00, and neither fell in five minutes of
+    // the kite bot's runs; one target takes only the Art strikes that find
+    // it nearest.)
+    const double minutes = run_seconds() / 60.0;
+    const double hp = double(db->number("enemy", record, "HPMAX").value_or(500)) * double(factor) * (1.0 + double(t.hp_per_minute) * minutes);
     const int max_hp = std::max(1, int(std::lround(hp)));
     Packet generate;
     // (It faces the player.)
@@ -153,7 +165,10 @@ void OverflowDirector::guardian_down(Engine& engine, bool defeated) {
     port_send(engine, "MODELCTRL", "i_bosshp02", 0, "SQ_CLOSE");
     const auto* row = guardian_row(guardian_plan_[std::size_t(g.stage - 1)]);
     if (!defeated) {
-        event_log_.push_back({clock_, "guardian " + g.family + " left"});
+        std::string hp;
+        if (auto* models = engine.get<ModelCtrlManager>())
+            if (const auto* ram = models->find(g.family, g.ram)) hp = " with " + std::to_string(std::max(0, ram->hp)) + " of " + std::to_string(ram->max_hp) + " HP";
+        event_log_.push_back({clock_, "guardian " + g.family + " left" + hp});
         return;
     }
     // (The stand-in of an elite fallback counts for its Guardian's record.)

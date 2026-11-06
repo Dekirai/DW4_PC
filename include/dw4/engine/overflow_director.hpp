@@ -188,15 +188,20 @@ struct Tuning {
     int guardian_half_steps = 120 * 60;          // A(t) halves while a Guardian lives, at most this long
     int guardian_first = 0;                      // (tests, spikes: the first Guardian at this run step; 0: 5:00)
     int finale_hurry = 60 * 60;                  // QS_HURRY in the timer's last minute
+    float guardian_clamp = 0.30f;                // a Guardian's hit takes at most this share of MaxHP (round O1b)
 };
 
 // ---------------------------------------------------------------------------
 // Offers (4.6): Forge, Train and Plug in O1a
 // ---------------------------------------------------------------------------
-enum class OfferKind : std::uint8_t { forge, train, plug };
+enum class OfferKind : std::uint8_t { forge, train, plug, core, board, chip };
 struct Offer {
     OfferKind kind{};
-    int value{}; // forge: the family it opens (2-5); train: the skill column (6 Blast, 7 Heal, 8 Force); plug: the UPCNT index
+    // forge: the family it opens (2-5); train: the skill column (6 Blast, 7
+    // Heal, 8 Force); plug: the UPCNT index; core / board / chip: the index
+    // into gear_table() (what it does follows from the build: equip it, or
+    // its next step).
+    int value{};
     bool operator==(const Offer&) const = default;
 };
 struct OfferState {
@@ -215,6 +220,9 @@ struct OfferState {
     // a choice that does nothing for minutes.
     std::array<int, 3> unlock_level{};
     int level = 1;                     // the run level of the window
+    // The gear offers that may show (round O1b, 4.6: Core, Board, Chip; the
+    // director fills them from the build and the opened gear).
+    std::vector<Offer> gear;
 };
 // Train shows this many run levels before its group's first technique.
 constexpr int kTrainLead = 2;
@@ -246,6 +254,25 @@ std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random);
 // The priority list of the test bot (offers=priority): Forge, Train Blast,
 // Train Heal, then the plugs in plug_stats order.
 int offer_priority(const Offer& offer);
+
+// ---------------------------------------------------------------------------
+// Gear (7, round O1b): DW4's own rows, equipped by DW4's rules
+// ---------------------------------------------------------------------------
+enum class GearSlot : std::uint8_t { core, board, chip };
+struct GearRow {
+    const char* key;      // the gear key (the loadout, the records: docs/ROUND_O1B_E_NOTES.md)
+    const char* name;     // English (the table's own name without its grade)
+    GearSlot slot;
+    int first;            // its alpha row (armor1, armor2, abChip; the PWR Medal: the fire one, + 15 per element)
+    bool weapon_pocket;   // a chip the weapon pocket takes (WU)
+    bool core_pocket;     // ... the core pocket (BLUEAB)
+    bool x_data;          // it powers up with ¶ Data (7.5)
+    bool start;           // open from the start (8.4); else a record opens it (RunConfig::gear_open)
+};
+const std::vector<GearRow>& gear_table();
+int gear_index(std::string_view key); // -1: none
+// The run's ¶ Data cost of a chip's next step: its NEXTX / 20 (7.5).
+constexpr int kXDataDivisor = 20;
 
 // The Art's class factor of a form (on top of OverflowRules' 2.5; 14.3).
 float art_class_factor(std::string_view form);
@@ -304,6 +331,7 @@ struct GuardianRow {
     const char* donor;   // the stage (main member) or separate package it loads from (H2)
     int phase;           // 1-3, 4 the finale
     const char* elite;   // the elite fallback's family (4.4)
+    float damage;        // its own damage factor (round O1b: its worst hits about 15-20 % of a Rookie's MaxHP at its time)
 };
 const std::vector<GuardianRow>& guardian_table();
 const GuardianRow* guardian_row(std::string_view family);
@@ -486,6 +514,16 @@ private:
     bool spawn_guardian(Engine& engine, int stage);
     void guardian_down(Engine& engine, bool defeated);
     void step_music(Engine& engine);
+    // Gear (gear.cpp)
+    void gear_offers(Engine& engine);
+    void take_gear(Engine& engine, const Offer& offer);
+    bool equip_gear(Engine& engine, int gear, int record);
+    void apply_loadout(Engine& engine);
+    void power_up_chips(Engine& engine);
+    int gear_row(int gear) const;          // its alpha row for this form
+    bool gear_open(int gear) const;
+    std::string gear_text(const Engine& engine, const Offer& offer) const;
+    std::string gear_detail(const Engine& engine, const Offer& offer) const;
     void notice(std::string text);
     Vec3f player_position(Engine& engine) const;
     // The stick that walks the player on the ground way (dx, dz) at this
@@ -674,6 +712,13 @@ private:
     std::string music_now_;
     int count_said_ = -1;            // the timer's last counted second
     bool awakened_ = false;
+    // Gear (7): the equipped gear (gear_table() indices, -1 none), their
+    // value steps, the run's ¶ Data and the form's element (0 fire .. 3 dark).
+    int core_gear_ = -1, board_gear_ = -1;
+    int core_steps_ = 0, board_steps_ = 0;
+    std::array<int, 2> pocket_gear_{-1, -1}; // the weapon pocket, the core pocket
+    int x_data_ = 0, x_data_total_ = 0, chip_steps_ = 0;
+    int element_ = 0;
     // the kite bot
     int bot_a_ = 0, bot_l_ = 0;
     float bot_dx_ = 0, bot_dz_ = 0;  // its last way (it keeps walking)

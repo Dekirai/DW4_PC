@@ -616,7 +616,7 @@ void balance(const std::filesystem::path& data, bool report) {
         check(!family_row(guardian), std::string("no Guardian family in the pools: ") + guardian);
     bool failed = false;
     std::string first_failure;
-    for (const char* form : {"p_agumon", "p_vmon"}) {
+    for (const char* form : {"p_agumon", "p_vmon", "p_girumon", "p_dorumon"}) {
         RunConfig config;
         config.form = form;
         config.seed = 5;
@@ -662,7 +662,8 @@ void balance(const std::filesystem::path& data, bool report) {
                 const double art = double(stats.tsuyosa * 6 + skill * 4) / double(mamori) * 2.5 * double(art_class_factor(form));
                 const int spirit = db->number("enemy", row.record, "SEISHIN").value_or(1);
                 static const char* resist[] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK"};
-                const int element = std::string(form) == "p_agumon" ? 0 : 2;
+                const std::string f(form);
+                const int element = f == "p_agumon" ? 0 : f == "p_vmon" ? 2 : f == "p_girumon" ? 3 : 1; // (fire, thunder, dark, ice)
                 const int res = db->number("enemy", row.record, resist[element]).value_or(0);
                 const double technique =
                     double(stats.kashikosa * 10 + tech_skill * 5 + 160 * 20) / double(spirit) * double(1000 - res) / 1000.0 * 1.15;
@@ -751,6 +752,57 @@ void balance(const std::filesystem::path& data, bool report) {
 
 } // namespace
 
+// Round O1b lane E: the Guardians' plan (4.4), the gear table (7, the keys of
+// the lane contract) and the gear offers (4.6).
+void guardians() {
+    for (const auto form : kRookies) check(playable_form(form), "a Rookie plays: " + std::string(form));
+    check(!playable_form("p_wargrey"), "a Mega is no O1b start");
+    std::map<std::string, int> seen;
+    for (std::uint32_t seed = 1; seed <= 200; ++seed) {
+        const auto plan = draw_guardians(seed);
+        check(plan == draw_guardians(seed), "one seed, one plan");
+        for (int phase = 1; phase <= 3; ++phase) {
+            const auto* row = guardian_row(plan[std::size_t(phase - 1)]);
+            check(row && row->phase == phase, "phase " + std::to_string(phase) + "'s Guardian is of its pair");
+            ++seen[plan[std::size_t(phase - 1)]];
+        }
+        check(plan[3] == "e_ldknight", "the finale is LordKnightmon");
+    }
+    for (const auto& row : guardian_table()) {
+        check(!family_row(row.family), std::string("a Guardian is no regular family: ") + row.family);
+        check(family_row(row.elite) != nullptr, std::string("its elite is a regular family: ") + row.elite);
+        check(row.damage > 0.0f && row.damage <= 1.0f, std::string("its damage factor: ") + row.family);
+        if (row.phase <= 3) check(seen[row.family] >= 60, std::string("both of a pair come (200 seeds): ") + row.family);
+    }
+    const auto forced = draw_guardians(7, {"e_mammos", "", "e_tonogeko"});
+    check(forced[0] == "e_mammos" && forced[2] == "e_tonogeko" && guardian_row(forced[1])->phase == 2, "forced Guardians (the spike's key)");
+    // The gear keys of the lane contract (docs/ROUND_O1B_E_NOTES.md).
+    for (const char* key : {"brave_core", "armor_board", "fire_board", "ice_board", "bolt_board", "dark_board", "wisdom_chip", "spirit_chip",
+                            "speed_chip", "pwr_medal", "drain_ram"})
+        check(gear_index(key) >= 0, std::string("gear key ") + key);
+    check(gear_index("nothing") < 0, "an unknown gear key");
+    check(!gear_table()[std::size_t(gear_index("drain_ram"))].start, "the Drain Ram waits for its record (Blossom Data)");
+    // Gear lines join the offers by their weight; a window is never empty.
+    OfferState state;
+    state.groups = {true, true, true};
+    state.gear = {{OfferKind::core, gear_index("brave_core")}, {OfferKind::board, gear_index("armor_board")}, {OfferKind::chip, gear_index("wisdom_chip")}};
+    const auto eligible = eligible_offers(state);
+    check(std::count_if(eligible.begin(), eligible.end(), [](const Offer& o) { return o.kind == OfferKind::core || o.kind == OfferKind::board || o.kind == OfferKind::chip; }) == 3,
+          "the gear offers are eligible");
+    std::uint64_t random = 99;
+    int gear_lines = 0, windows = 0;
+    for (int n = 0; n < 2000; ++n) {
+        state.drawn = 10;
+        const auto drawn = draw_offers(state, random);
+        check(drawn.size() == 3, "three lines");
+        ++windows;
+        for (const auto& o : drawn) gear_lines += o.kind == OfferKind::core || o.kind == OfferKind::board || o.kind == OfferKind::chip ? 1 : 0;
+    }
+    std::cout << "  guardians: gear in " << gear_lines << " lines of " << windows << " windows\n";
+    check(gear_lines > windows / 4 && gear_lines < windows * 2, "gear takes about its 30 % weight");
+    check(offer_priority({OfferKind::core, 0}) < offer_priority({OfferKind::plug, 2}), "the priority bot takes gear before plugs");
+}
+
 int main(int argc, char** argv) {
     const std::string part = argc > 1 ? argv[1] : "offers";
     std::string data = argc > 2 ? argv[2] : "";
@@ -758,6 +810,7 @@ int main(int argc, char** argv) {
         if (const char* env = std::getenv("DW4_TEST_DATA")) data = env;
     try {
         if (part == "offers") offers();
+        else if (part == "guardians") guardians();
         else if (part == "rng") rng();
         else if (part == "spawn" || part == "gap" || part == "human" || part == "poison" || part == "balance" || part == "report") {
             if (data.empty() || !std::filesystem::exists(data)) {

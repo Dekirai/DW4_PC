@@ -645,6 +645,23 @@ void dump_section(const ModelCtrlManager::ModelRam& self, const std::string& seq
     }
 }
 
+// names TABLE COLUMN...: every row of a database table with its NAME and the
+// given columns (round O1b: the gear rows of armor1, armor2 and abChip).
+int names(const std::string& table, const std::vector<std::string>& columns) {
+    auto run = make_run({}, "p_agumon");
+    auto& engine = *run->engine;
+    auto* db = engine.get<DatabaseManager>();
+    for (int r = 0; r < db->rows(table); ++r) {
+        std::printf("%s %d %s", table.c_str(), r, dw4::engine::game_text_utf8(db->text(table, r, "NAME")).c_str());
+        for (const auto& column : columns) {
+            if (const auto number = db->number(table, r, column)) std::printf(" %s=%d", column.c_str(), *number);
+            else std::printf(" %s='%s'", column.c_str(), dw4::engine::game_text_utf8(db->text(table, r, column)).c_str());
+        }
+        std::printf("\n");
+    }
+    return 0;
+}
+
 int patterns(const std::string& form) {
     auto run = make_run({}, form);
     auto& engine = *run->engine;
@@ -798,6 +815,7 @@ int main(int argc, char** argv) {
         if (mode == "weapon") return weapon();
         if (mode == "memory") return memory(argc > 3 ? argv[3] : "all");
         if (mode == "patterns") return patterns(argc > 3 ? argv[3] : "p_agumon");
+        if (mode == "names" && argc > 3) return names(argv[3], std::vector<std::string>(argv + 4, argv + argc));
         if (mode == "aim") return aim(argc > 3 ? argv[3] : "HFIRE1", argc > 4 ? float(std::atof(argv[4])) : 180.0f);
         if (mode == "fight" && argc > 7)
             return fight_mode(argv[3], argv[4], std::atoi(argv[5]), float(std::atof(argv[6])), std::atoi(argv[7]));

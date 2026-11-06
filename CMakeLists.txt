@@ -49,7 +49,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
 target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
   src/engine/overflow/field_start.cpp src/engine/overflow/donors.cpp src/engine/overflow/director.cpp
   src/engine/overflow/spawner.cpp src/engine/overflow/abilities.cpp src/engine/overflow/offers.cpp
-  src/engine/overflow/human_bot.cpp src/engine/overflow/guardians.cpp)
+  src/engine/overflow/human_bot.cpp src/engine/overflow/guardians.cpp src/engine/overflow/gear.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -245,6 +245,7 @@ if(BUILD_TESTING)
   target_link_libraries(dw4_overflow_director_tests PRIVATE dw4_engine)
   add_test(NAME overflow_offers COMMAND dw4_overflow_director_tests offers)
   add_test(NAME overflow_rng COMMAND dw4_overflow_director_tests rng)
+  add_test(NAME overflow_guardians COMMAND dw4_overflow_director_tests guardians)
   add_test(NAME overflow_spawn COMMAND dw4_overflow_director_tests spawn "${DW4_TEST_DATA}")
   add_test(NAME overflow_gap COMMAND dw4_overflow_director_tests gap "${DW4_TEST_DATA}")
   add_test(NAME overflow_human COMMAND dw4_overflow_director_tests human "${DW4_TEST_DATA}")

@@ -205,6 +205,7 @@ public:
         float corrupted_factor = 1.5f;
         std::map<std::string, float, std::less<>> family_factor; // a family's own damage factor (14.3; the director's table)
         float hit_clamp = 0.35f;                    // a non-Guardian hit takes at most this share of MaxHP
+        float guardian_clamp = 0.0f;                // ... and a Guardian's this share (0: none; the director: 0.30)
         // A hit from an attacker within near_distance (its body, a swing:
         // the player could have walked away) and one from farther (a shot)
         // weigh their own factors; the poison a hit leaves goes with it

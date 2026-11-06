@@ -170,6 +170,15 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
             ++tally.clamps;
         }
         tally.highest_hit_share = std::max(tally.highest_hit_share, double(out) / double(max_hp));
+    } else if (kind == EnemyClass::guardian && max_hp > 0 && damage.guardian_clamp > 0.0f) {
+        // A Guardian may throw the Digimon (its full reaction) but never takes
+        // more than guardian_clamp of MaxHP with one hit (round O1b: LordKnightmon's
+        // specials took 4.3 MaxHPs, Mammothmon's swings 36-42 % at 5:00).
+        const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.guardian_clamp))));
+        if (out > cap) {
+            out = cap;
+            last_taken.clamped = true;
+        }
     }
     return out;
 }

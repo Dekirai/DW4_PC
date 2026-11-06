@@ -93,6 +93,10 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     rules.levels.curve_base = config_.tuning.curve[0];
     rules.levels.curve_linear = config_.tuning.curve[1];
     rules.levels.curve_square = config_.tuning.curve[2];
+    // The Guardians' own damage factors (round O1b, guardians.cpp) and their clamp.
+    rules.damage.guardian_clamp = config_.tuning.guardian_clamp;
+    for (const auto& row : guardian_table())
+        if (row.damage != 1.0f) rules.damage.family_factor[row.family] = row.damage;
     // The families' own damage factors (14.3).
     for (const auto& row : family_table())
         if (family_damage(row) != 1.0f) rules.damage.family_factor[row.family] = family_damage(row);
@@ -150,8 +154,13 @@ void OverflowDirector::start_running(Engine& engine) {
                 if (!model.empty() && !weapons->labels(model)) engine.load_common_now("_common/" + model + ".igb");
             }
         equip_ladder(engine, true);
+        // The Plug Lab's points of the form (8.2, lane F's meta file).
+        for (std::size_t i = 0; i < config_.plug_lab.size(); ++i) player.upcnt[i] += std::max(0, config_.plug_lab[i]);
         sys->recalc_player(engine, 0);
         sys->store_species(0);
+        // The form's element (5.1): its PWR Medal (round O1b, gear.cpp).
+        element_ = config_.form == "p_vmon" ? 2 : config_.form == "p_girumon" ? 3 : config_.form == "p_dorumon" ? 1 : 0;
+        apply_loadout(engine);
     }
     // QS_START, then the phase's music (11).
     detail::play_sound(engine, "QS_START");
@@ -272,6 +281,7 @@ void OverflowDirector::step_running(Engine& engine) {
         }
     }
     drop_items(engine);
+    if (clock_ % 30 == 0) power_up_chips(engine);
     track_enemies(engine);
     {
         // The crowd round the player (the run log's minute lines): the living
@@ -522,6 +532,7 @@ void OverflowDirector::level_up(Engine& engine, int slot, int level) {
 void OverflowDirector::open_level_up(Engine& engine) {
     window_steps_.push_back(clock_);
     offer_state_.level = level(engine);
+    gear_offers(engine);
     offers_ = draw_offers(offer_state_, random_);
     ++offer_state_.drawn;
     screen_ = Screen::level_up;
@@ -564,6 +575,9 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
         if (player.wazalist != before) post_effect(engine, "MODELCTRL", player.digimon, 0, "i_getitempnl01", "SQ_TECUP");
         break;
     }
+    case OfferKind::core:
+    case OfferKind::board:
+    case OfferKind::chip: take_gear(engine, offer); break;
     case OfferKind::plug: {
         const int index = std::clamp(offer.value, 0, 10);
         const int points = plug_points(player.stats.level);
@@ -583,6 +597,7 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
     pending_levels_ = std::max(0, pending_levels_ - 1);
     if (pending_levels_ > 0) {
         offer_state_.level = level(engine);
+        gear_offers(engine);
         offers_ = draw_offers(offer_state_, random_);
         ++offer_state_.drawn;
         cursor_ = 0;
@@ -600,6 +615,9 @@ std::string OverflowDirector::offer_text(const Engine& engine, const Offer& offe
         return "Forge: " + (offer.value >= 1 && offer.value <= int(family_names_.size()) ? family_names_[std::size_t(offer.value - 1)] : std::string("?"));
     case OfferKind::train: return std::string("Train ") + kGroupNames[std::clamp(offer.value - kBlastSkill, 0, 2)];
     case OfferKind::plug: return std::string("Plug: ") + plug_name(offer.value);
+    case OfferKind::core:
+    case OfferKind::board:
+    case OfferKind::chip: return gear_text(engine, offer);
     }
     return {};
 }
@@ -636,6 +654,9 @@ std::string OverflowDirector::offer_detail(const Engine& engine, const Offer& of
         return std::string(kGroupNames[group]) + " +100, cap " + std::to_string(train_cap(steps)) + " > " + std::to_string(train_cap(steps + 1));
     }
     case OfferKind::plug: return std::string(plug_name(offer.value)) + " +" + std::to_string(plug_points(level(engine)));
+    case OfferKind::core:
+    case OfferKind::board:
+    case OfferKind::chip: return gear_detail(engine, offer);
     }
     return {};
 }
@@ -677,6 +698,8 @@ std::string OverflowDirector::offer_about(const Engine& engine, const Offer& off
         return plug + ".";
     }
     }
+    if (offer.kind == OfferKind::core || offer.kind == OfferKind::board || offer.kind == OfferKind::chip)
+        return "Gear for the equipment window: " + gear_detail(engine, offer) + ".";
     return {};
 }
 
@@ -709,6 +732,7 @@ void OverflowDirector::enemy_defeated(Engine& engine, int killer, int record, st
                 if (const auto* ram = models->find(family, index)) at = ram_position(*ram);
             static constexpr int kPlugRecords[7] = {4, 6, 8, 10, 12, 14, 16}; // Strgth, Def., MaxHP, MaxMP, Wisdom, Spirit, Speed (UP 1)
             drops_.push_back({"g_000xdata2", kPlugRecords[next_random(random_) % 7], 1, {at.x + 3.0f, at.y, at.z}});
+            drops_.push_back({"g_000xdata1", 2, 1, {at.x, at.y, at.z + 3.0f}}); // ¶ Data UP 20 (4.4; round O1b: the chips use it)
             if (int(next_random(random_) % 100) < config_.tuning.disk_percent) drops_.push_back({"g_000item", 0, 0, {at.x - 3.0f, at.y, at.z}});
         }
         break;
@@ -743,6 +767,12 @@ void OverflowDirector::item_taken(Engine& engine, int slot, int table, int recor
         sys->store_species(0);
         ++plugs_picked_;
         notice(std::string(plug_name(stat)) + " Plug +" + std::to_string(points + up));
+    } else if (table == 1 && record >= 1 && record <= 3) {
+        // ¶ Data (4.7, 7.5): the run's own count, spent on the chips' power-ups.
+        static constexpr int kUp[4] = {0, 5, 20, 100};
+        x_data_ += kUp[record];
+        x_data_total_ += kUp[record];
+        notice("¶ Data +" + std::to_string(kUp[record]));
     } else if (table == 0) {
         ++disks_taken_;
         notice("HP Disk");
@@ -1081,6 +1111,19 @@ std::vector<std::string> OverflowDirector::build_lines(const Engine& engine) con
         line += " (" + std::string(kGroupNames[std::clamp(group - kBlastSkill, 0, 2)]) + " " + std::to_string(player.stats.skill[std::size_t(group)]) +
                 " / cap " + std::to_string(rules_ ? rules_->skills.cap[std::size_t(group)] : 0) + ")";
         out.push_back(line);
+    }
+    // The equipment window's other parts (7): the core, the board, the pockets.
+    {
+        auto name = [&](const char* table, int index) {
+            const auto* device = player.device(index);
+            if (!device) return std::string("-");
+            std::string text = detail::plain_name(db->text(table, device->record, "NAME"));
+            if (device->value > 0) text += " +" + std::to_string(device->value);
+            return text;
+        };
+        out.push_back("Core: " + name("armor1", player.main_slot[0]) + "   Board: " + name("armor2", player.sub_slot[0]));
+        out.push_back("Chips: " + name("abChip", player.power_pocket[0]) + " / " + name("abChip", player.main_pocket[0]) + "   ¶ Data " +
+                      std::to_string(x_data_));
     }
     std::map<int, int> plugs;
     for (const auto& [stat, points] : plugs_taken_) plugs[stat] += int(points);
