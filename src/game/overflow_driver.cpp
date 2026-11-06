@@ -376,6 +376,10 @@ private:
         if (const auto path = option(request_, "log"); !path.empty()) {
             std::ofstream out(path, std::ios::binary);
             out << director_->log_text();
+            // The meta state the run used (13.5: loadout, Plug Lab points by
+            // UPCNT index, opened gear) as request options: the run again is
+            // `--overflow-run <the run's keys> <these>` without a profile.
+            out << "meta_used" << (meta_used().empty() ? std::string(" none") : meta_used()) << '\n';
         }
         if (test_ || timing_) {
             std::printf("overflow: %s", summary.substr(0, summary.find("\nnote ")).c_str());
@@ -406,6 +410,23 @@ private:
         if (!meta().last_error().empty()) std::fprintf(stderr, "overflow: the meta file was not written: %s\n", meta().last_error().c_str());
     }
 
+public:
+    // The meta's part of lane D's run screens (RunScreenData of
+    // overflow_screens.hpp; a template, so this lane builds without D):
+    // the HUD's Bits (9.3) and, on the results, the Sim Bits, the NEW!
+    // records and a save problem (9.6). D's fill_screen_data calls it last
+    // (lane F's merge adds that call).
+    template <typename ScreenData>
+    void fill_meta_screen(ScreenData& d, const engine::Engine& run) const {
+        if constexpr (requires { d.bits; })
+            d.bits = int(std::clamp<std::int64_t>(run_bits(run), 0, 2'147'483'647));
+        if constexpr (requires { d.result_lines.push_back(std::string()); })
+            if (director_->screen() == ov::Screen::results)
+                for (auto& line : meta_lines()) d.result_lines.push_back(std::move(line));
+    }
+
+private:
+
     // " armor=K chip=K plug_lab=... gear_open=..." (the request's meta options).
     std::string meta_used() const {
         std::string text;
@@ -422,6 +443,9 @@ private:
         lines.push_back("Sim Bits +" + std::to_string(reward_.sim_bits) + "   (" + std::to_string(meta().profile().sim_bits) + ")");
         for (const auto& key : reward_.new_records)
             if (const auto* record = find_record(key)) lines.push_back(std::string("NEW! ") + record->title + "   opens " + record->opens);
+        // The player learns when the profile is not saved (locked at the
+        // start, a failed write): the progress lives only until the game ends.
+        if (const auto problem = meta().save_problem(); !problem.empty()) lines.push_back(problem);
         return lines;
     }
 

@@ -12,8 +12,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <ctime>
 #include <sstream>
+#include <thread>
 
 namespace dw4::game::overflow {
 
@@ -347,6 +349,10 @@ std::optional<OverflowProfile> OverflowProfile::parse(std::string_view text, boo
     if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3); // a BOM (an editor's)
     OverflowProfile profile;
     bool header = false, ended = false;
+    // A line this version should read but cannot (a bad value, a wrong
+    // shape, damaged bytes): the file is damaged, not complete, so the
+    // store prefers the .bak and never makes this file the .bak.
+    bool damaged = false;
     std::size_t at = 0;
     while (at < text.size()) {
         std::size_t end = text.find('\n', at);
@@ -377,7 +383,10 @@ std::optional<OverflowProfile> OverflowProfile::parse(std::string_view text, boo
             ended = true;
             continue;
         }
-        if (line.size() > kMaxLine || !plain_text(line)) continue; // damaged bytes: skipped
+        if (line.size() > kMaxLine || !plain_text(line)) { // damaged bytes: skipped
+            damaged = true;
+            continue;
+        }
         const auto f = fields(line);
         if (f.empty()) continue;
         const std::string_view kind = f[0];
@@ -398,6 +407,7 @@ std::optional<OverflowProfile> OverflowProfile::parse(std::string_view text, boo
                 for (std::size_t i = 2; i + 1 < f.size(); i += 2) {
                     const int slot = plug_slot(f[i]);
                     const auto v = number(f[i + 1]);
+                    if (slot >= 0 && !v) damaged = true;
                     if (slot < 0 || !v) continue; // a later version's stat: not this one's
                     steps[std::size_t(slot)] = int(std::clamp<std::int64_t>(*v, 0, kPlugLabSteps));
                 }
@@ -449,11 +459,23 @@ std::optional<OverflowProfile> OverflowProfile::parse(std::string_view text, boo
         } else {
             known = false;
         }
-        (void)good;
-        if (!known && plain_key(kind) && profile.unknown.size() < kMaxUnknownLines) profile.unknown.push_back(std::string(line));
+        if (known && !good) {
+            // A later version's file: a known line in a shape this version
+            // cannot read is that version's, kept as it was (not damage).
+            // This version's own file: damaged.
+            if (profile.version > kProfileVersion) {
+                if (profile.unknown.size() < kMaxUnknownLines) profile.unknown.push_back(std::string(line));
+            } else {
+                damaged = true;
+            }
+        }
+        if (!known) {
+            if (!plain_key(kind)) damaged = true; // no version writes such a line
+            else if (profile.unknown.size() < kMaxUnknownLines) profile.unknown.push_back(std::string(line));
+        }
     }
     if (!header) return std::nullopt;
-    if (complete) *complete = ended;
+    if (complete) *complete = ended && !damaged;
     return profile;
 }
 
@@ -676,7 +698,8 @@ std::array<int, 11> parse_plug_lab(std::string_view text) {
 
 void apply_meta(const OverflowProfile& profile, RunRequest& request) {
     const Loadout loadout = profile.loadout(request.form);
-    if (loadout_allowed(profile, loadout)) {
+    // A test's loadout=ARMOR,CHIP (lane E's key) is the request's own choice.
+    if (!request.options.contains("loadout") && loadout_allowed(profile, loadout)) {
         if (!loadout.armor.empty()) request.options.try_emplace("armor", loadout.armor);
         if (!loadout.chip.empty()) request.options.try_emplace("chip", loadout.chip);
     }
@@ -700,8 +723,28 @@ void MetaStore::open(const std::filesystem::path& path) {
     error_.clear();
     last_report_.reset();
     last_reward_ = {};
+    read_only_ = false;
     if (path_.empty()) return;
-    const auto main = save::read_whole_file(path_);
+    // A file that is there but cannot be read now (another program or a
+    // second instance has it open, no permission) is not damaged: a few
+    // tries, then this session reads what it can and never writes, so the
+    // real file and its .bak are never replaced by a new profile.
+    bool locked = false;
+    auto read_file = [&locked](const std::filesystem::path& file) -> std::optional<std::vector<std::uint8_t>> {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec)) return std::nullopt;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            if (auto bytes = save::read_whole_file(file)) return bytes;
+        }
+        locked = true;
+        return std::nullopt;
+    };
+    const auto main = read_file(path_);
+    if (locked) {
+        read_only_ = true;
+        note_ = path_.filename().string() + " cannot be read now (in use by another program?); this session does not save";
+    }
     bool complete = false;
     std::optional<OverflowProfile> parsed;
     if (main) {
@@ -716,7 +759,7 @@ void MetaStore::open(const std::filesystem::path& path) {
     auto backup = path_;
     backup += ".bak";
     const auto name = path_.filename().string();
-    if (main) {
+    if (main && !read_only_) {
         // The damaged file stays beside it until the next damaged one.
         auto damaged = path_;
         damaged += ".damaged";
@@ -724,7 +767,16 @@ void MetaStore::open(const std::filesystem::path& path) {
         std::filesystem::copy_file(path_, damaged, std::filesystem::copy_options::overwrite_existing, ec);
         note_ = name + " was damaged (kept as " + damaged.filename().string() + ")";
     }
-    if (const auto bak = save::read_whole_file(backup)) {
+    const bool main_locked = locked;
+    const auto bak = read_file(backup);
+    if (locked && !main_locked) {
+        // The file is damaged or missing and its .bak cannot be read now: a
+        // write would replace both.
+        read_only_ = true;
+        note_ += (note_.empty() ? name + " was missing" : std::string()) + "; " + backup.filename().string() +
+                 " cannot be read now; this session does not save";
+    }
+    if (bak) {
         bool bak_complete = false;
         if (auto from_backup = OverflowProfile::parse(std::string_view(reinterpret_cast<const char*>(bak->data()), bak->size()), &bak_complete);
             from_backup && bak_complete) {
@@ -744,8 +796,18 @@ void MetaStore::open(const std::filesystem::path& path) {
     if (main) note_ += "; a new profile starts";
 }
 
+std::string MetaStore::save_problem() const {
+    if (read_only_) return "Not saved: " + path_.filename().string() + " was in use when the game started.";
+    if (!error_.empty()) return "Not saved: the profile file cannot be written.";
+    return {};
+}
+
 bool MetaStore::save() {
     if (path_.empty()) return true; // a test run's profile: memory only
+    if (read_only_) {
+        error_ = note_;
+        return false;
+    }
     const auto text = profile_.serialize();
     error_.clear();
     return save::write_file_atomic(path_, std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size()), true, &error_,

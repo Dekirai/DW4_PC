@@ -24,6 +24,16 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 namespace ov = dw4::game::overflow;
 namespace fs = std::filesystem;
@@ -137,6 +147,17 @@ void format() {
               later->serialize().find("best_score 99") != std::string::npos && later->serialize().find("\nsigil p_vmon 3 2\n") != std::string::npos,
           "a later version's form key and line are kept");
     check(later->serialize().starts_with("DW4OVERFLOW 1\n"), "this version writes its own header");
+    // A later version's known lines in a shape this one cannot read are that
+    // version's: kept as they were, and the file is still complete (not damage).
+    const auto later_shape = ov::OverflowProfile::parse("DW4OVERFLOW 2\nsim_bits 7\nrecord blossom_data 20261101 hard\n"
+                                                        "total defeats 500 since_v2\nloadout p_agumon armor brave_core chip - slot2 x\nend\n",
+                                                        &complete);
+    check(later_shape && complete && later_shape->sim_bits == 7 && !later_shape->record("blossom_data") && later_shape->loadouts.empty(),
+          "a later version's other shapes: complete, not read");
+    check(later_shape->serialize().find("\nrecord blossom_data 20261101 hard\n") != std::string::npos &&
+              later_shape->serialize().find("\ntotal defeats 500 since_v2\n") != std::string::npos &&
+              later_shape->serialize().find("\nloadout p_agumon armor brave_core chip - slot2 x\n") != std::string::npos,
+          "... but kept for the write");
     // Times.
     check(ov::time_text(0) == "0:00.0" && ov::time_text(1272.44) == "21:12.4" && ov::time_text(3600) == "60:00.0", "time text");
     check(ov::parse_time("21:12.4") && std::abs(*ov::parse_time("21:12.4") - 1272.4) < 1e-9 && ov::parse_time("1:05") == 65.0 &&
@@ -172,13 +193,21 @@ void damaged_text() {
                                                 "loadout p_agumon armor brave_core\nsim\xFF\xFE bits 7\nseen_intro\n"
                                                 "Weird Line\nend\n",
                                                 &complete);
-    check(odd && complete, "a complete file with damaged lines");
+    check(odd && !complete, "a file with damaged lines is damaged (8.5: the .bak wins, it never becomes the .bak)");
     check(odd->sim_bits == 0 && odd->earned_total == 0, "negative bits clamp, a bad number is dropped");
     check(odd->plug_steps("p_agumon", 2) == 10 && odd->plug_steps("p_agumon", 3) == 0, "plug steps clamp to 0-10");
     check(!odd->form("p_agumon") && odd->form("p_vmon") && odd->form("p_vmon")->best_level == 4, "a form line with a bad time is dropped");
     check(!odd->record("first_clear") && odd->record("ten_minutes") && odd->records.at("ten_minutes") == 20261106, "records need a date");
     check(odd->total("defeats") == 0 && odd->loadouts.empty() && !odd->seen_intro, "bad totals, loadouts and flags are dropped");
     check(odd->unknown.empty(), "damaged or odd lines are not kept as unknown lines");
+    // One bad value in an otherwise whole file is enough.
+    for (const char* line : {"sim_bits 5x000\n", "plug p_agumon str x\n", "record gate_keeper\n", "Sim_Bits 5\n", "total runs 1 2\n"}) {
+        const auto one = ov::OverflowProfile::parse(std::string("DW4OVERFLOW 1\nseen_intro 1\n") + line + "end\n", &complete);
+        check(one && !complete && one->seen_intro, std::string("one damaged line: ") + line);
+    }
+    // A later stat on a plug line, an unknown line: not damage.
+    check(ov::OverflowProfile::parse("DW4OVERFLOW 1\nplug p_agumon str 1 luck 3\nnew_thing 1\nend\n", &complete) && complete,
+          "a later key or line is no damage");
 }
 
 void store() {
@@ -261,6 +290,25 @@ void store() {
         ov::MetaStore again;
         again.open(file);
         check(again.source() == ov::LoadSource::backup && again.load_note().find("missing") != std::string::npos, "no file: the .bak");
+    }
+    // Corruption 4b: one value damaged in a file that still ends with "end"
+    // (a bit flip, an editor): the .bak wins, the file is kept as .damaged,
+    // and the next write does not make it the .bak.
+    {
+        ov::MetaStore good_store;
+        good_store.open(file); // the .bak (corruption 4)
+        check(good_store.save(), "a whole file again");
+        const std::string whole = read(file);
+        const std::string backup_before = read(bak);
+        std::string flipped = whole;
+        const auto at = flipped.find("sim_bits ");
+        flipped.replace(at, flipped.find('\n', at) - at, "sim_bits 5x000");
+        write(file, flipped);
+        ov::MetaStore again;
+        again.open(file);
+        check(again.source() == ov::LoadSource::backup && again.profile().sim_bits > 0, "a damaged value: the .bak is read");
+        check(read(damaged) == flipped, "... the damaged file is kept");
+        check(again.buy_plug("p_agumon", 4) == ov::BuyResult::bought && read(bak) == backup_before, "... and never becomes the .bak");
     }
     // Corruption 5: both damaged: a cut file keeps what it holds.
     write(file, latest.substr(0, latest.find("\nform ")));
@@ -520,6 +568,13 @@ void request_and_path() {
     ov::apply_meta(p, own);
     check(own.options.at("chip") == "speed_chip" && own.options.at("armor") == "brave_core" && own.options.at("plug_lab") == "0,0,0,0,0,0,0,0,0,0,0",
           "the request's own options win");
+    // Lane E's test key loadout=ARMOR,CHIP is the request's own loadout.
+    ov::RunRequest keyed;
+    keyed.form = "p_agumon";
+    keyed.options["loadout"] = "-,-";
+    ov::apply_meta(p, keyed);
+    check(!keyed.options.contains("armor") && !keyed.options.contains("chip") && keyed.options.contains("plug_lab"),
+          "loadout= keeps the profile's loadout out");
     // A form without meta: nothing added.
     ov::RunRequest plain;
     plain.form = "p_vmon";
@@ -544,8 +599,8 @@ void request_and_path() {
     check(day > 20200101 && day < 21000101, "today");
 }
 
-// Lane D's LobbyMeta as overflow_lobby.hpp has it (feat-o1b-screens), for
-// fill_lobby_meta.
+// Lane D's LobbyMeta as overflow_lobby.hpp has it (feat-o1b-screens
+// 545ab233), for fill_lobby_meta.
 struct FormRecord {
     int runs = 0;
     double best_seconds = 0;
@@ -560,6 +615,7 @@ struct LobbyMeta {
     std::map<std::string, std::array<int, 7>, std::less<>> plugs;
     std::vector<std::string> armors{"", "brave_core", "armor_board", "fire_board", "ice_board", "bolt_board", "dark_board"};
     std::vector<std::string> chips{"", "wisdom_chip", "spirit_chip", "speed_chip", "pwr_medal"};
+    std::map<std::string, std::pair<std::string, std::string>, std::less<>> loadouts; // per form: {armour, chip} last chosen (8.3)
     std::vector<std::string> records;
     std::vector<std::string> locked_forms;
 };
@@ -594,8 +650,13 @@ void lobby() {
     p.records["gate_keeper"] = 1;
     p.records["shogun_data"] = 1;
     p.records["blossom_data"] = 1;
+    p.loadouts["p_vmon"] = {"brave_core", "drain_ram"};
+    p.loadouts["p_agumon"] = {"cipher_core", ""}; // not opened (an edited file): not offered
     LobbyMeta meta;
+    meta.loadouts["p_dorumon"] = {"x", "y"}; // a stale entry goes
     ov::fill_lobby_meta(p, meta);
+    check(meta.loadouts.size() == 1 && meta.loadouts.at("p_vmon") == std::pair<std::string, std::string>{"brave_core", "drain_ram"},
+          "the select starts at the form's last loadout (8.3, 8.5)");
     check(meta.seen_intro && meta.sim_bits == 3000 && meta.earned_total == 7000, "the head");
     check(meta.plugs.at("p_vmon") == std::array<int, 7>{3, 4, 1, 2, 5, 6, 7}, "the Plug Lab rows: Strength, Def., MaxHP, MaxMP, Wisdom, Spirit, Speed");
     check(meta.forms.at("p_vmon").runs == 4 && meta.forms.at("p_vmon").clears == 2 && meta.forms.at("p_vmon").best_seconds == 700, "a form");
@@ -660,11 +721,81 @@ void lobby() {
 
 } // namespace
 
+// The file is there but locked (another program, a second instance): the
+// session reads what it can and never writes; the file and its .bak stay.
+void locked_file() {
+#ifdef _WIN32
+    Folder folder;
+    const fs::path file = folder.root / "overflow.dat";
+    auto bak = file;
+    bak += ".bak";
+    {
+        ov::MetaStore first;
+        first.open(file);
+        auto p = first.profile();
+        p.sim_bits = 50000;
+        p.seen_intro = true;
+        check(first.replace(p), "the profile written");
+        p.sim_bits = 60000;
+        check(first.replace(p), "and again (a .bak)");
+    }
+    const std::string before = read(file), backup_before = read(bak);
+    HANDLE lock = CreateFileW(file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(lock != INVALID_HANDLE_VALUE, "the file is locked (no sharing)");
+    {
+        ov::MetaStore s;
+        s.open(file);
+        check(s.read_only() && !s.load_note().empty(), "a locked file: read only, and the log says so");
+        check(s.source() == ov::LoadSource::backup && s.profile().sim_bits == 50000, "... the .bak's data meanwhile");
+        check(s.buy_plug("p_agumon", 2) == ov::BuyResult::bought && !s.last_error().empty(), "a purchase stays in memory, the error is told");
+        check(s.save_problem().find("in use") != std::string::npos, "the screens' line");
+    }
+    CloseHandle(lock);
+    check(read(file) == before && read(bak) == backup_before, "the locked file and its .bak are untouched");
+    // Both locked: a new profile in memory, still never written.
+    lock = CreateFileW(file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE lock_bak = CreateFileW(bak.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    {
+        ov::MetaStore s;
+        s.open(file);
+        check(s.read_only() && s.profile().sim_bits == 0, "both locked: read only, a profile in memory");
+        check(!s.mark_intro_seen() && !s.last_error().empty() && !s.save_problem().empty(), "... a write is refused and said");
+        ov::RunReport report;
+        report.bits = 900;
+        s.record_run(report, 20261106);
+        check(s.profile().sim_bits == 900, "... the run counts in memory");
+    }
+    CloseHandle(lock);
+    CloseHandle(lock_bak);
+    check(read(file) == before && read(bak) == backup_before, "both untouched");
+    // The .bak locked while the file is damaged: a write would replace both.
+    write(file, "garbage");
+    lock_bak = CreateFileW(bak.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    {
+        ov::MetaStore s;
+        s.open(file);
+        check(s.read_only() && !s.save(), "a damaged file and a locked .bak: read only");
+    }
+    CloseHandle(lock_bak);
+    check(read(file) == "garbage" && read(bak) == backup_before, "the .bak is untouched");
+    {
+        ov::MetaStore s;
+        s.open(file);
+        check(!s.read_only() && s.source() == ov::LoadSource::backup && s.profile().sim_bits == 50000, "unlocked: the .bak as usual");
+    }
+    // A folder in the file's place is not a locked file (a failed write, as before).
+    ov::MetaStore folder_store;
+    folder_store.open(folder.root);
+    check(!folder_store.read_only(), "a folder is no locked file");
+#endif
+}
+
 int main() {
     try {
         format();
         damaged_text();
         store();
+        locked_file();
         plug_lab();
         defeat_bits();
         records_and_bits();

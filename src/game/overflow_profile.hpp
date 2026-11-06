@@ -268,6 +268,12 @@ public:
     // What the load had to do (empty for a good file or none): for the log.
     const std::string& load_note() const { return note_; }
     const std::string& last_error() const { return error_; }
+    // The file was there but could not be read at open (locked): this
+    // session never writes (the change stays in memory, last_error says so).
+    bool read_only() const { return read_only_; }
+    // A short line for the screens when the profile is not being saved
+    // (read only, or the last write failed); empty when all is well.
+    std::string save_problem() const;
 
     // The writes of 8.5 (each saves at once; false when nothing changed or
     // the step is not allowed; a failed write keeps the change in memory and
@@ -290,6 +296,7 @@ private:
     std::filesystem::path path_;
     OverflowProfile profile_;
     LoadSource source_ = LoadSource::none;
+    bool read_only_ = false;
     std::string note_, error_;
     std::optional<RunReport> last_report_;
     RunReward last_reward_;
@@ -333,6 +340,13 @@ void fill_lobby_meta(const OverflowProfile& profile, LobbyMeta& meta, std::uint3
     for (auto& key : opened_gear(profile)) {
         if (gear_is_chip(key)) meta.chips.push_back(key);
         else meta.armors.push_back(key);
+    }
+    // The last loadout per form (8.3, 8.5: the select starts there), only
+    // one this profile may still start with.
+    if constexpr (requires { meta.loadouts; }) {
+        meta.loadouts.clear();
+        for (const auto& [model, loadout] : profile.loadouts)
+            if (loadout_allowed(profile, loadout)) meta.loadouts[model] = {loadout.armor, loadout.chip};
     }
     meta.records.clear();
     for (const auto& record : record_table())
