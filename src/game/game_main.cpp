@@ -2826,8 +2826,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
                 }
                 // Play's title drive (19.5.1): its end, and the lobby's welcome
-                // ("Welcome back, Kim. 14 players online."; the friends' count
-                // comes with round I2) once GET /world had a moment to answer.
+                // ("Welcome back, Kim. 14 players online, 2 friends.") once GET
+                // /world and GET /friends had a moment to answer.
                 if (title_driver.changed()) {
                     using Phase = dw4::game::online::TitleDriver::Phase;
                     std::printf("[%d] online: Play's title drive: %s (%s), %d steps, %d presses\n", frame,
