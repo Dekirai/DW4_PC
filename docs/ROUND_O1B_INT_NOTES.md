@@ -67,3 +67,16 @@ timing-sensitive online scenarios); no process of another workflow was touched.
 No non-Guardian clamp in any run. Each run hash equals lane E's head measurement of the same request
 (ROUND_O1B_E_NOTES.md 12.2: `runs_b1`, `runs_gB`, `runs_g3`), so the integration did not change a run: lane E's
 20-seed tables for the four Rookies and both bots are the integrated build's (section 5).
+
+### 3.2 The story stays the story (T2-T5, T11, the save state suite; exe i2)
+
+| Check | Result | Log / files |
+| --- | --- | --- |
+| T2 r25c, NPC hidden (`EXE=<i2> NAME=int_o1b_r25c_hidden nice -n 15 work/campaign/segments.sh r25c 3`) | 10 / 10 segments, 1,748,011 frames, every save "same story"; every segment's frames as lane E's (`o1b_content_fin_r25c`) and lane D's (`o1bD_show_0e105d02`) runs | `r25c_hidden.log`, main's `work/campaign/runs/seg/int_o1b_r25c_hidden` |
+| T2 r25c, NPC shown (`ENV="DW4_OVERFLOW=show"`, NAME `int_o1b_r25c_show`) | 10 / 10, 1,748,011 frames, every save "same story", the same segment frames (as lane D's run: without pictures, segments.sh's default; the NPC's state, its actor load and the lobby's port events run) | `r25c_show.log`, `.../runs/seg/int_o1b_r25c_show` |
+| T3 / T5 with the talk (`build/t/t3talk.sh`: lane D's walkback scripts; the lobby intro, GOTO to Gekomon, the talk by H0 ("talk box at (48.3, 14.0, -74.6) reaches Gekomon"), the select, a kite run of 600 steps at story frame 7710, Welcome back, B, A, three GOTOs; reference: the same walk without the NPC and the dialog's presses) | 186 of 186 fingerprint lines equal (every 50 frames to 9,300, the generator in them; the last 8a7778daab28a43e at the same place); the card folders equal, the achievement profiles equal (ccc3b2c5), only the run wrote `overflow.dat` | `chk_i2_t3talk.log`, `t/t3talk_i2/` |
+| T3 / T5 with the det script (lane E's `t35.sh`: a run at story frame 3000, Agumon kite or Guilmon circle, a Guardian after 10 s, 1,800 steps, against none) | A, A2 and B: 20 fingerprint lines 4004f056 each, the card folders equal, the achievement profiles equal (9f14f1fc); Mammothmon / Blossomon entered at run step 600 | `chk_i2_t35.log` |
+| T4 (lane E's `t4.sh`: DW4_STATE_TEST 2990 / 3400 / 4400 with the run at 3000, through DW4_STATE_FILE) | identical after loading, all three (3010, 2600, 1600 frames compared) | `chk_i2_t4.log` |
+| T4 as 14.1 words it (`build/t/t4talk.sh`: the T3 walk with DW4_STATE_TEST 7400 (before the talk: the replay spans talk, run, return and walk), 7900 (after the return) and 8500 (on the walk)) | identical after loading, all three (1900, 1400, 800 frames compared); the 7400 replay ran the run again (four run lines) | `chk_i2_t4talk.log` |
+| T11 (lane E's `t11.sh`: hidden pictures of the det script at 1400 / 2600 / 4800 / 5900 and the new game's lobby at 4800 / 5900, main's client d0e005b0 against i2) | all six pictures equal | `chk_i2_t11.log`, `t/t11_i2/` |
+| The save state suite (main's `work/dref/checks/st` copied to `build/t/st`, nice 15, three at a time) | 17 of 17 identical after loading | `chk_i2_st.log` |
