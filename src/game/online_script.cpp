@@ -207,6 +207,10 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
             if (s != facts.own_slot && (facts.present & (1u << s))) each(s, models ? models->player(s) : nullptr);
     };
     if (c.key == "stage") return playing(engine, facts) && lower(engine.stage_name()) == lower(c.text);
+    if (c.key == "offers") return compare(facts.offers);
+    if (c.key == "notices") return compare(facts.notices);
+    if (c.key == "go") return facts.go == c.text;
+    if (c.key == "offerstage") return lower(facts.offer_stage) == lower(c.text);
     if (c.key == "stagechange") return lower(engine.stage_name()) != step_stage_;
     if (c.key.rfind("flag:", 0) == 0) {
         const auto found = engine.flags().find(std::atoi(c.key.c_str() + 5));
@@ -395,6 +399,24 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         out.x = c.x;
         out.z = c.z;
         out.reach = c.reach;
+        return out;
+    }
+    if (step.action == "goalong" || step.action == "cancelgo" || step.action == "closeoffer") {
+        // Round I1b (19.30.6): the box's A / Cancel / B, once per step.
+        if (!departed_ && step.action == "goalong" && facts.newest_offer != 0 && facts.go == "none") {
+            out.go_along = facts.newest_offer;
+            departed_ = true;
+        } else if (!departed_ && step.action == "cancelgo" && facts.go != "none") {
+            out.go_cancel = true;
+            departed_ = true;
+        } else if (!departed_ && step.action == "closeoffer" && facts.newest_offer != 0) {
+            out.go_close = facts.newest_offer;
+            departed_ = true;
+        }
+        if (out.go_along || out.go_cancel || out.go_close) {
+            std::printf("online-script: %s offer %u (frame %d)\n", step.action.c_str(), unsigned(facts.newest_offer), facts.frame);
+            std::fflush(stdout);
+        }
         return out;
     }
     if (step.action == "idle" || !playing(engine, facts)) return out;

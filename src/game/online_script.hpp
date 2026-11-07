@@ -53,6 +53,11 @@
 //                       enemies that come within 15 units on the way), strike
 //                       it (A) and page through the talk this starts with A
 //   log TEXT            one trace line
+//   goalong             round I1b (19.30.6): A on the newest open go-along
+//                       offer's row, once a notice of it is on screen or
+//                       its row is there (as the *Instance* page's box does)
+//   cancelgo            A on the own waiting row (the withdraw)
+//   closeoffer          B in the box on the newest offer (no further notice)
 //   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
 //                       --screenshot's file (the ghost figures' look,
 //                       docs/SEAMLESS.md 12; a run without --screenshot
@@ -84,6 +89,10 @@
 //         scenes=N (present members in their own talk)
 //         lost>=N (HP this member lost since the step began)
 //         enemy<N (a living enemy within N units of this member)
+//         offers>=N (open go-along offers on this member's page, round I1b)
+//         notices>=N (go-along notices on screen now)
+//         go=NAME (the own go-along request: none, asked, waiting, boss,
+//         stamped, going)  offerstage=NAME (the newest open offer's stage)
 //
 // Without "until", hold / press / log / shot end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
@@ -114,6 +123,12 @@ struct OnlineScriptFacts {
     const engine::RoomStory* room_story = nullptr; // the session's confirmed room story (none yet: nullptr)
     int ghosts = 0;              // ghost figures shown (GhostFigures::shown, presentation)
     int figures = 0;             // of them staying, not fading out (GhostFigures::staying)
+    // Round I1b's go along (the session's view): open offers, notices on
+    // screen, the newest open offer (0: none) and its stage, the own request.
+    int offers = 0, notices = 0;
+    std::uint16_t newest_offer = 0;
+    std::string offer_stage;
+    std::string go = "none";
 };
 
 class OnlineScript {
@@ -125,6 +140,10 @@ public:
         float x{}, z{};
         float reach{4.0f};
         std::string shot; // a "shot" step ended in this update: its name
+        // Round I1b: the box's answers (applied by the host as the UI's).
+        std::uint16_t go_along{};
+        bool go_cancel{};
+        std::uint16_t go_close{};
     };
     struct Condition {
         std::string key, op, text;

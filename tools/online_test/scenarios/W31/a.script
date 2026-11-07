@@ -1,0 +1,22 @@
+# W31, host a (k10): hosts Dry Land (the gate to stag0201), waits for b and c, and after c went on to stag0202 takes
+# stag0201's matz01 into dng204b1 alone (b is not on the mat: the exit port asks nobody else). b goes along and joins it;
+# after c's notice ran out a takes dng204b1's matz02 to dng204b2 (b stays in B1), where c joins it by going along.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until present=3,sealed>=300 or epoch>=@420 fail stagechange
+log b and c joined
+idle until present=2 or epoch>=@600 fail stagechange
+log c went on
+explore matz01 yes until stage=dng204b1,control fail epoch>=@800
+log a in dng204b1
+idle until present=2,sealed>=600 fail epoch>=@1000
+log b joined a in B1
+idle until frames>=2400
+explore matz02 yes until stage=dng204b2,control fail epoch>=@1400
+log a in dng204b2
+idle until present=2,sealed>=600 fail epoch>=@1700
+log c joined a in B2
+idle until frames>=120

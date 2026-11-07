@@ -2256,11 +2256,30 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.mode = dw4::game::online::mode_name(online->session().mode());
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
+                        // (Round I1b: the go-along view.)
+                        const auto& session = online->session();
+                        for (const auto& offer : session.go_offers())
+                            if (offer.open) {
+                                ++facts.offers;
+                                if (!facts.newest_offer) {
+                                    facts.newest_offer = offer.id;
+                                    facts.offer_stage = offer.stage;
+                                }
+                            }
+                        facts.notices = int(session.go_notices(steady_seconds()).size());
+                        static const char* kGo[] = {"none", "asked", "waiting", "boss", "stamped", "going"};
+                        facts.go = kGo[std::min<std::size_t>(std::size_t(session.go_state()), 5)];
                     }
                     facts.ghosts = ghosts.shown();
                     facts.figures = ghosts.staying();
                     const auto out = online_script.update(engine, facts);
                     if (!out.shot.empty() && !options.screenshot.empty()) ui_shot = out.shot;
+                    if (online && (out.go_along || out.go_cancel || out.go_close)) {
+                        auto& session = online->session();
+                        if (out.go_along && session.go_along(out.go_along)) std::cout << "online: go along (offer " << out.go_along << ") at frame " << frame << '\n';
+                        if (out.go_cancel && session.cancel_go_along()) std::cout << "online: go along cancelled at frame " << frame << '\n';
+                        if (out.go_close) session.close_go_notices(out.go_close);
+                    }
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
                     input |= out.buttons;
