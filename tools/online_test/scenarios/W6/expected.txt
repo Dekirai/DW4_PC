@@ -1,8 +1,10 @@
-# W6 (19.24, 19.6.5).
+# W6 (19.24, 19.6.5): the host's gate disc ends the instance while the guest plays in another stage group of it.
+a: online-script: step .* log: a in dng101b1
 a: online-script: step .* log: a home
-b: online-script: step .* log: b in dng101b1
+b: online-script: step .* log: b in stag0101 apart from a
 b: online: .*The instance ends
 b: online-script: step .* log: b home after the end
 b: online-script: step .* log: own story
+relay: instance_join .*how=new_group
 relay: instance_end .*reason=host_left
 !b: online-script: FAIL

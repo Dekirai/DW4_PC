@@ -1,13 +1,11 @@
-# W6, guest b (k9, level 19: k2, p4 and k5 characters fall on stag0101's rock slope on the way to matz00; its own story has key item 9, a's k5 has not): joins a, goes into dng101b1 alone; a's gate disc ends the instance: the notice, then b's home
-# departure about 3 s later; b is in its lobby on its own story within 5 s of the end.
+# W6, guest b (k9: its own story has key item 9, a's k5 has not): takes the gate to stag0101 while a's instance has
+# nobody there (a is in dng101b1): a guest's NEW, a stage group of its own in a's instance with a's story. a's gate disc
+# ends the instance: the notice, then b's home departure; b is in its lobby on its own story.
 campaign until stage=stagml11,control
-idle until epoch>=@100
+idle until epoch>=@160
 explore mate00 yes until stage=stag0101,control
-log b joined a
-follow 40 until sealed>=900
-explore matz00 yes until stage=dng101b1,control
-log b in dng101b1
-wander 0 0 30 until stage=stagml11,control fail epoch>=@330
+log b in stag0101 apart from a
+wander 460 200 20 until stage=stagml11,control fail epoch>=@400
 log b home after the end
 idle until frames>=120 fail key:9=0
 log own story

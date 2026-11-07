@@ -1,5 +1,5 @@
 {
-  "desc": "the host's gate disc with b in another stage group: the instance ends (host_left), b goes home on its own story",
+  "desc": "the host's gate disc with b in another stage group: the instance ends (host_left), b goes home on its own story (a goes into dng101b1 first by the depart action, b arrives at stag0101 as a new stage group of a's instance: the explore bot's k9 fell on stag0101's rock slope on the way to matz00)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
