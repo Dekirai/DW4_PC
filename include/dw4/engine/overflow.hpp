@@ -205,6 +205,8 @@ public:
         float corrupted_factor = 1.5f;
         std::map<std::string, float, std::less<>> family_factor; // a family's own damage factor (14.3; the director's table)
         float hit_clamp = 0.35f;                    // a non-Guardian hit takes at most this share of MaxHP
+        float guardian_clamp = 0.0f;                // ... and a Guardian's this share (0: none; the director: 0.30)
+        float drain_cap = 0.02f;                    // HPDRAIN (the Drain Ram) returns at most this share of MaxHP a second (4.8; 0: DW4's)
         // A hit from an attacker within near_distance (its body, a swing:
         // the player could have walked away) and one from farther (a shot)
         // weigh their own factors; the poison a hit leaves goes with it
@@ -288,6 +290,25 @@ public:
     // P2ESKILLUP replaced (true: handled).
     bool skill_up(Engine& engine, int slot, int kind, int critical);
     int technique_level(int lock) const;
+    // The skill up panel (i_getitempnl01 SQ_TECUP) over the player under the
+    // panel gap: every SQ_TECUP of the run goes through it (the skill ups,
+    // the train offers, the chips' ¶ Data power-ups; round O1b lane E).
+    // false: inside the gap, left out (tally.panels_skipped).
+    bool show_panel(Engine& engine, int slot, const std::string& digimon);
+    // HPDRAIN's heal of a weapon hit under the run's cap (damage.drain_cap of
+    // the slot's MaxHP a second, 60 steps; SURVIVAL.md 4.8): the HP to give.
+    int drain(Engine& engine, int slot, int heal);
+    // The force buffs on the players (Speed, Resist, Pwr Up: support_magic's
+    // SETSPEEDUP / SETREFRACT / SETPOWERUP) may last at most buff_steps +
+    // rank x buff_rank_steps frames in a run (SURVIVAL.md 6.4's 6-10 s by
+    // rank: buff_steps 360, buff_rank_steps 60). Off (0: DW4's TIME of 30-54 s,
+    // plus the caster's INT for Speed and Pwr Up): round O1b lane E measured
+    // 6-10 s and 10-14 s and the kite bot's Agumon fell at 16-22 minutes
+    // (docs/ROUND_O1B_E_NOTES.md 12); the director's Pwr Up cooldown (60 s)
+    // is the lever instead. Request key buff=STEPS,RANK_STEPS.
+    int buff_steps = 0, buff_rank_steps = 60;
+    std::set<int> buff_kept; // pcTech base rows that keep DW4's time (a balance pass)
+    int buff_time(int family, int rank, int time) const;
 
     // ---- H5 (forwarded to the director).
     void enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index);
@@ -303,10 +324,11 @@ public:
     struct Tally {
         std::uint64_t steps{};             // run engine steps seen by step()
         std::uint64_t no_control_steps{};  // steps without control (4.8: <= 5 %)
-        int hits_taken{}, misses{}, clamps{};
+        int hits_taken{}, misses{}, clamps{}, guardian_clamps{}; // (guardian_clamps: guardian_clamp, not 14.2's clamp)
         double highest_hit_share{};        // of MaxHP, non-Guardians
         int panels{};                      // SQ_TECUP panels shown
         int panels_skipped{};              // panels the 30-frame gap or "nothing visible" left out
+        std::int64_t drain_given{}, drain_capped{}; // HPDRAIN HP given / left out by the run's cap
         // Damage dealt by source: a port hitbox tag (> 0) or -(bullet kind)
         // of every other player hit (techniques: -(4xxxx)).
         std::map<std::int32_t, std::int64_t> dealt_by;
@@ -316,11 +338,15 @@ public:
 
     // The frame the last SQ_TECUP panel showed (-1 none).
     std::int64_t last_panel_frame = -1;
+    // The Drain Ram's cap per slot: the second (engine frame / 60) and the HP given in it.
+    std::array<std::int64_t, 4> drain_second{-1, -1, -1, -1};
+    std::array<int, 4> drain_second_hp{};
     // The last damage-taken rule's result (taken()): the player hit handler
     // reports it with the hit (HitTaken).
     struct LastTaken {
         int raw{};
-        bool clamped{};
+        bool clamped{};          // 14.2's hit clamp (non-Guardians only)
+        bool guardian_clamped{}; // a Guardian's hit at guardian_clamp
         double range = 1.0; // the hit's near or far factor (its poison's too)
     } last_taken;
 

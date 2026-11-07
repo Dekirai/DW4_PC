@@ -61,12 +61,18 @@ struct PortEvent {
         // online character (docs/SEAMLESS.md 9) decides at the Game Start
         // whether the game is a new character (new_character) or a called one.
         character_called,
+        // The main lobby's A pushed the talk hitbox of slot (model_ctrl.cpp,
+        // kind 60000; docs/SURVIVAL.md 3.3, H0): x / y / z its centre in
+        // world units. The host's Data Overflow NPC is no model, so the box
+        // hits nothing; the host only looks at the event (never the engine).
+        talk_box,
     };
     Kind kind{};
     std::int32_t slot = -1;
     std::int32_t value{};
     std::int32_t extra{};
     std::string text;
+    float x{}, y{}, z{}; // a place (talk_box: the box's centre)
 };
 
 const char* port_event_name(PortEvent::Kind kind);

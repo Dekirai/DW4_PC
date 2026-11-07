@@ -1454,6 +1454,20 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 talk.offset = {0, 4, 7};
                 talk.size = {3, 3, 3};
                 ram.hitboxes.push_back(talk);
+                // H0 (docs/SURVIVAL.md 3.3): an observe-only port event with
+                // the box's centre, for the host's Data Overflow NPC (no
+                // model: the box hits nothing). Nothing here reads it.
+                if (engine.port_events_enabled() && ram.node) {
+                    const auto& m = ram.node->matrix;
+                    const Vec3f o = talk.offset;
+                    PortEvent event;
+                    event.kind = PortEvent::Kind::talk_box;
+                    event.slot = ram.index;
+                    event.x = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
+                    event.y = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
+                    event.z = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
+                    engine.port_event(std::move(event));
+                }
             } else if (Packet pick; (pick.ints.push_back(ram.index), engine.messenger().count("DROPITEM", std::nullopt, -1)) &&
                        (engine.messenger().send(engine, "DROPITEM", std::nullopt, -1, "ACTION1", pick), !pick.bools.empty())) {
                 return; // 8034CEB0: DROPITEM ACTION1 took an item instead of attacking

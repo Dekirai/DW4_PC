@@ -291,6 +291,17 @@ example "You lasted 12:41. Not bad at all!", "Simulation complete! You beat
 the whole thing!" or, after a defeat by Gekomon or TonosamaGekomon, "Beaten
 by a Gekomon? I will pretend I did not see that."
 
+As built in round O1b (lane D, the integration): "Welcome back" opens once,
+at the first step the NPC talks and player 1 has the control (so after the
+story's own talk, never over it), and only after a run the select started
+(not after `--overflow-run` or the F1 dev start, review fix). Interactive
+play: from the step the dialog opens on, the pass's further steps get
+neutral pads and the story's pad waits for released buttons (3.3). The defeating family is the director's
+`defeated_by()` (the last damaging hit's shooter once the run ended in a
+defeat; a poison tick never takes the last HP), handed through the driver's
+`RunStatus`, `RunOutcome` and game_main to `RunSummary::defeated_by`; the
+run's summary file has the line `defeated_by FAMILY` (`-` otherwise).
+
 ## 4. A run
 
 ### 4.1 Arenas and the route
@@ -443,6 +454,35 @@ simulation:
   simulation goes on with phase 4's pool, `A(t)` +10 a minute up to the
   pool's RAMs and enemy HP x 1.3 a minute, until the Digimon falls. It has
   its own best time and no clear.
+- **As built in round O1b** (lane E, docs/ROUND_O1B_E_NOTES.md): the phases
+  stay on the run clock (the balance of docs/OVERFLOW_DIRECTOR.md 10-11 is
+  built on it); a Guardian enters when its phase's five minutes end and the
+  next phase's families come in over their ramp beside it; the next
+  Guardian waits for the one before, and one still alive at 20:00 leaves
+  for LordKnightmon. A Guardian's HP is its HPMAX x 6 (the finale x 14)
+  times the time's linear part (1 + 0.10 a minute) only; its hits carry a
+  damage factor of its own and take at most 30 % of MaxHP (no one-hit
+  Guardian). The spike found two Guardians of separate packages without
+  their scripts (TonosamaGekomon could not be damaged): their stage's main
+  member gives them now. No Guardian needs the elite fallback on the Violet
+  Ring. A Guardian's entry shakes the camera with the original's stomp
+  shake (CAMERA SHAKE 37/F<0.3>/F<3.0>/F<60.0>, Mammothmon's in dng102b3).
+  The return gate (the finish of lane E): 2 s after LordKnightmon's fall the
+  Violet Ring's own g_dreturngate comes where Belphemon's hit script puts
+  it (V<0,10,-60>, SQ_ENTR, SQ_POWERON 30 frames later); the arena's mats
+  pause (its matz01 would open the stage change prompt), and walking into
+  matz01's box ends the run with the results. A player standing there
+  when it comes steps out and in again, as with the original's mat; a test
+  bot walks in (and gets the results after 60 s without it).
+  The clear banner (the integration of round O1b): the run sends no
+  i_bgclear; the HUD shows "SIMULATION COMPLETE" for 4 s after
+  LordKnightmon's fall (`RunScreenData::clear_frames`), the quest timer
+  stops with the run's clock, and "The return gate is open" follows when
+  the gate comes. TIME UP shows the quest timer at 0:00 with a large
+  "TIME UP" over the arena (once: the director's notice line is not drawn
+  under it). The quest-timer plate sits top left, the original's place
+  (V<-290,217>), with the level under it: top centre it hid LordKnightmon's
+  boss bar (i_bosshp02 runs across the top from about x 90; review fix).
 
 ### 4.5 EXP and run levels
 
@@ -584,6 +624,15 @@ at once with the rank's HP, the effect and sound of the original Raise and
 120 frames of MUTEKI. Otherwise the run ends: the original Game Over picture
 (i_fadewn01 SQ_GAMEOVER, QS_DONOT), then the results. No bit capsule, no
 end_g_000bcaps.lua, no stage change.
+
+As built (the O1b integration's review): the director generates the fade
+model as every stage script's game over does (`MODELCTRL i_fadewn01
+GENERATE SQ_GAMEOVER`, then the original waits for it, fades the music,
+plays QS_DONOT and opens its message window); a bare SQ_GAMEOVER command
+found the model gone after the field start's SQ_BLIN60 and showed nothing.
+The original's Game Over picture is that fade to black; SimUi's HUD fades
+out with it, and the results come over the black 330 steps after the
+defeat.
 
 ### 4.9 End of a run, results, rewards
 
@@ -880,6 +929,19 @@ The force buffs are the original status effects with their icons
 Bind). Cooldowns are initial values; Speed Chips and the Speed buff shorten
 them.
 
+As built in round O1b (lane E's finish): the buffs keep DW4's own times
+(pcTech TIME 1800-3240 frames, 30-54 s by rank, plus the caster's INT for
+Speed and Pwr Up), not the 6-10 s above: with 6-10 s the kite bot's Agumon
+fell at 16-22 minutes as early as the newcomer's (docs/ROUND_O1B_E_NOTES.md
+12.1; the cap stays as the balance key `buff=360,60`). With the 15 s
+cooldown Pwr Up never ends (Agumon's TECH2 from run level 8, Guilmon's TECH5:
++80 to +1920 STR, DEF and MaxHP), and the late game's damage is built on
+that DEF: every shorter uptime measured (a cooldown of 60 s from the start
+or 120 s from 10:00, the 6-10 s cap) let late hits pass 35 % of MaxHP or
+ended newcomers' runs at the phase 2 start. It stays at 15 s until the late
+damage curve is redone (an open point of 14.2 for Agumon and Dorumon's human
+runs).
+
 ### 6.5 Awakening
 
 When the class skill reaches 2500 with the fifth family forged, the form's
@@ -895,6 +957,21 @@ signatures carry). The weapon model in hand becomes the signature's (w_*06 /
 w_*07), the SQ_TECUP panel, plLVUP01 and an "AWAKENING" line show it. With
 the gain of 6.2 a Rookie reaches it around 14-17 minutes (estimate), a Mega
 start (skill 810) a few minutes earlier.
+
+As built in round O1b (lane E): x_100charge01 is the original's charge
+effect, started only by the player's charge actions of SQ_ATCK1 (KATC?1:
+the charge glow, SQ_<class>01 / 02; KATC?2: the release, SQ_KIRIKAE and
+SQ_OWARI on the player). The awakened Art broadcasts its class's release
+(KATCX2 for the axe, KATCS2 for sword and katana, KATCE2 for the dagger)
+once for every strike that hits: a picture only, no damage of its own.
+
+As built for Guilmon and Dorumon (round O1b lane E, 6.3): Fang Thrust's
+Forge 3 lays two more boxes beyond the tip (the thrust goes on through its
+target: "pierces 2"), Forge 4 is one more thrust, Forge 5 reaches 30
+standing; Crescent Draw's first arc goes to the target with the most living
+enemies within 10 units. Its wider arc and its crit steps, and the 22-24
+unit ranges of 6.3's table, wait for O2 (every Art reaches 14 standing and
+34 walking since the balance round of 05.11).
 
 ## 7. Gear
 
@@ -1038,23 +1115,56 @@ DW4OVERFLOW 1
 seen_intro 1
 sim_bits 3420
 earned_total 18950
+last p_agumon normal
 plug p_agumon str 4 def 2 mhp 3
-loadout p_agumon armor1 0 chip 105
+loadout p_agumon armor brave_core chip drain_ram
 form p_agumon runs 14 clears_normal 1 best_time 21:12.4 best_level 41 best_defeats 3511
 form p_vmon runs 3 best_time 11:42.3 best_level 27 best_defeats 1290
-record gate_keeper 1
-record blossom_data 1
-recorded_tech p_agumon
-total defeats 21877
-total runs 17
+record blossom_data 20261106
+record gate_keeper 20261106
 total casts 6120
 total crates 133
+total defeat_e_blosso 2
+total defeats 21877
+total guardians 2
+total runs 17
 end
 ```
 
 What a record opens is derived from the records, not stored twice. A record
 that a later version adds is checked against the totals the file already
 has.
+
+As built in round O1b (lane F, `src/game/overflow_profile.*`,
+docs/ROUND_O1B_F_NOTES.md): a loadout names lane E's gear keys (`-` for
+none); a record keeps its date (yyyymmdd); `last` is the select's last form
+and tier; the totals are `runs, defeats, casts, crates, seconds, clears,
+awakenings, guardians, defeat_<Guardian family>, tech_fire / ice / bolt /
+dark`. What an older program keeps of a later version's file: whole lines
+of a kind it does not know, a later key on a `form` line, and (when the
+header's version is higher than its own) a known line in a shape it cannot
+read, each written back as it was; it drops a later key on a `plug` line,
+at most 512 unknown lines are kept, and it writes its own version in the
+header. A known line in a later version's shape is written back under the
+marker `keep <its version> <line>` (an unknown kind of line for every
+version up to that one): under this version's header the bare line would
+read as damage at the next start, and the `.bak` (still the later file)
+would win at every start (review fix). A later version reads `keep <n>
+<line>` in a file of a lower header as its own line when n is its version
+or lower. A session that opened read only (locked) and has changed nothing
+reads the file again (one try) when Gekomon's dialog opens. Every line ends with a line end and `end` closes the file; a file
+that does not (cut, empty, garbage) or that has a line its own version
+cannot read (a bad value, a wrong shape: a bit flip, an editor) is damaged
+and never trusted over the `.bak`, and never becomes the `.bak`: the load
+takes the file, else the `.bak`, else what the damaged file still holds,
+else a new profile, and keeps a damaged file as `overflow.dat.damaged`. A
+file (or the `.bak` of a damaged file) that is there but cannot be read
+(another program or a second instance has it open) is tried again; then
+the session is read only: it never writes (the results and the state
+message say "Not saved"), so the file and its `.bak` are never replaced by
+a new profile. Until the run drops g_000bit (4.7, O2) the run
+driver credits each defeat's bits itself (5 %, the original's band x
+BITRITSU, its own seeded generator), so the run's engine is not touched.
 
 ## 9. Screens
 
@@ -1106,6 +1216,15 @@ models yet); O1b brings the window models.
    its date) or open (grey with its condition). *Digimon*: per form, runs,
    best time, best level, clears per tier.
 
+As built in round O1b (the integration's review fixes): the select starts
+at the last form chosen (8.5 `last`); the Plug Lab answers every A for
+about 2 s beside the next price ("Bought." green; "Not enough Sim Bits.",
+"This plug is at its last step." orange); a record whose unlock this build
+does not have yet says "opens X (coming later)" in grey (in O1b only Blossom
+Data's Drain Ram is built; Hard, Extensions, Endless, the ?????? offer and
+the other gear come with O2-O4); every dialog screen shows the save problem
+("Not saved: ...") at the top when the profile is not being saved.
+
 ### 9.3 HUD in a run
 
 - The original player HUD (i_stpnl01..05 at V<-260,-160>: face and HP
@@ -1151,6 +1270,24 @@ board), the six techniques with their ranks and skills, and the run's
 numbers (time, level, defeats). *Retire* asks "End the simulation? Yes /
 No".
 
+As built in round O1b (lane D, docs/ROUND_O1B_D_NOTES.md; the integration,
+docs/ROUND_O1B_INT_NOTES.md): every run screen is drawn with SimUi in the
+game font as windows in the game's window colours (quads; the window
+models and their clips are not played yet, 13.6's fallback). The HUD has
+the run timer (the quest-timer plate top left from 20:00 while LordKnightmon
+is in, 4.4),
+the EXP bar inside the level, Lv, Defeated, Bits (the run player's BIT and
+the credited defeats' bits, 4.7), the build row (the weapon in its value
+colour with its bar, the six technique glyphs with their ranks, the gear as
+∋ / ∨ / ∧ with each part's grade, read from the build page's "Core: /
+Board:" and "Chips:" lines) and the notice line; the arena's own boss bar
+(i_bosshp02) is the Guardian bar on the Violet Ring. The build page is the
+director's build lines. Review fixes: the HUD's text has a dark shadow and
+the build row a dark band (the grey of a technique not learned was lost in
+the arena's glow); Pwr Up and Pwr Dwn show as the game's arrows ↑ / ↓ (not
+"P" beside the rank letter P); the build page's chips read "Chips: A, B" or
+"none" (the font has no '/', its stand-in '-' made "- / -" read "- - -").
+
 ### 9.6 Results
 
 After the Game Over picture, TIME UP or the clear banner: the status window
@@ -1160,6 +1297,23 @@ defeats (total and the top five families), the damage of each ability (top
 six), the highest hit, the build, Sim Bits, and the new Data Records with
 "NEW!" in yellow. "A: Return to the lobby." The screen fades and the lobby
 comes back with Gekomon's comment (3.4).
+
+As built in round O1b: the director's lines (time, run level, Digimon, the
+Guardians defeated, defeats with the top five families, damage dealt by
+ability, the highest hit, the weapon and its Forge), then lane F's lines,
+added once by the driver's `fill_meta_screen`: "Bits N" (the run's bits as
+the meta file got them), "Sim Bits +N   (balance)", "NEW! <record>   opens
+<what>" (yellow; "opens" only for an unlock this build has, review fix) and
+"Not saved: ..." when the profile is not saved. Past 16 lines two columns,
+broken between groups (a heading and its indented entries stay in one
+column); a line wider than its column wraps; past 32 the run's lines are
+cut and the Bits, Sim Bits and NEW! lines stay. "Highest hit taken" counts
+every hit, the Guardians' too (the summary's `highest_hit_share`, 14.2's
+measure, stays non-Guardian). A returns from the results only once every
+line is there, at least after 1 s (the player's A; the test bots' results
+end by `results_hold`), and "A: Return to the lobby." shows from then on. On
+the Violet Ring a clear's results open when the player walks into the return
+gate (4.4).
 
 ### 9.7 Texts
 
@@ -1172,6 +1326,13 @@ hidden screenshots: Goblimon, Numemon, Sukamon, Ogremon, Kokatorimon,
 Mummymon, Minotarumon, Pharaohmon, Tyrannomon, Otamamon, Gekomon,
 MarineDevimon, Tortomon (e_torta?), Infermon, Megadramon, e_rare, e_mecha1-5
 (MRα01 / MRβ02 / MRγ03 / MRδ04 / MRε05?).
+
+As built in round O1b: the meta file's texts (the 23 Data Records' titles,
+conditions and what they open, the 16 forms' unlock texts, the Plug Lab's
+names and purchase answers, the save problems) stay in
+`src/game/overflow_profile.cpp` beside their data, the results' Bits / Sim
+Bits / NEW! lines in the run driver, the notices in the director; T9 checks
+them with the table's strings (14.1).
 
 ## 10. Controls
 
@@ -1468,10 +1629,10 @@ H10 handlers), `tables.inc` (the design tables of sections 4-8 as code),
 | T3 isolation | hidden smoke run: new game into the lobby, a scripted talk (O1a: the dev start), a 60 s run with the kite bot, Retire, back, 2,000 more lobby frames. Reference: the same script with the dialog's frames as neutral pads and no run | `net_fingerprint()` (with the generator state) and the canonical snapshot bytes equal at the return and at the end |
 | T4 save states | F5 before the talk, talk, run, return, walk, F9 | no "the replay differs"; the replay reaches the same fingerprint |
 | T5 story files | the test card folder and `DW4_PROFILE` file hashed before and after T3 | unchanged; only the `DW4_OVERFLOW_PROFILE` file is new |
-| T6 scripted run | `--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 90000` (headless), twice, and the 20-seed batch of 14.2 | the same run hash twice; no Lua error; no budget overrun in the log; the targets of 14.2; a summary file |
+| T6 scripted run | `--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 100000` (headless; the run clock alone needs 90000 steps to 25:00, plus the start frames), twice, and the 20-seed batch of 14.2 | the same run hash twice; no Lua error; no budget overrun in the log; the targets of 14.2; a summary file |
 | T7 unit tests (ctest) | `overflow_profile_tests` (read, write, unknown lines, `.bak`), `overflow_offers_tests` (eligibility, weights, no empty window), `overflow_spawn_tests` (ring points on walkable cells, encirclement reuses RAMs), `overflow_rng_tests` (generator saved and restored across an Engine's construction), `overflow_balance_tests` (14.3) | pass; ctest 40 + 5 |
 | T8 performance | T6 with per-step timing (as DW4_TRACE_TRAVERSAL_TIME) and a hidden render pass | inside the budget of section 12 |
-| T9 texts | every string of overflow_text.inc against the font's character list | no missing glyph |
+| T9 texts | every string of overflow_text.inc against the font's character list; since the O1b integration also lane F's texts (records, unlock texts, Plug Lab names and answers, save problems, the results' Bits / Sim Bits / NEW! lines) and the director's fixed notices (`overflow_screens`) | no missing glyph |
 | T10 native scripts | (a) the native player hit handler with the rule set "original" against `hit_p_<form>.lua` on every hit of a recorded hidden fight (dng101b1, staggf01): HP, sequence, statuses, HUD sends; (b) each arena's native start against its first.lua with the boss lines skipped: switch states, layers, panels, camera mode | equal |
 | T11 host extraction | det.sh and hidden screenshots in three scenes (title, lobby, a dng101b1 fight) before and after O1a lane A's extraction | det unchanged, screenshots pixel-identical |
 
@@ -1558,6 +1719,28 @@ pass.
 | D screens | the presentation actor core, the NPC (place, fade, talk via H0 with the port event rule of 3.3), the dialog, the character select for the four Rookies with loadout, the level-up window, pause with the build page, results, the HUD overlay, the finale timer, texts; hidden screenshots of each screen for review | T9 passes; T2 with the NPC shown; every screen in the screenshot set |
 | E content | the four Guardians of phases 1-3 and LordKnightmon (the spike in the Violet Ring: enters, fights, dies without its ded_; else the elite fallback), the finale with the quest timer and TIME UP, Guardian reactions, Guardian music, Guardians' drops; Guilmon and Dorumon; the four Rookies' full technique lists; gear: Brave Core, Armor and element Boards, Wisdom / Spirit / Speed Chips, the form's PWR Medal, Drain Ram, the pockets, ¶ Data power-ups; Awakening for the four Rookies | T6 per Rookie reaches the finale in some seeds; a spike note per Guardian |
 | F meta | `overflow.dat` (8.5), Sim Bits, the Plug Lab, the loadout, the records needed by O1b | T7 (profile) passes |
+
+Lane E as built, its spike notes, measurements and what is left:
+docs/ROUND_O1B_E_NOTES.md.
+
+**Integrated** on branch `int-o1b` (docs/ROUND_O1B_INT_NOTES.md; lanes D and
+F: docs/ROUND_O1B_D_NOTES.md, docs/ROUND_O1B_F_NOTES.md), with the review
+round's fixes (the notes' 7): ctest 61 / 61, det.sh 4004f056 / 396cb219,
+r25c 10 / 10 with 1,748,011 frames with the NPC hidden and shown (shown
+also drawn), T3 with the fingerprint, the generator, the net fingerprint
+and the canonical snapshot equal, T4 with the det script (replays across
+a run inside dng101b1) and with a real talk, T5 with a real save on the
+card, T9 over every screen string, T10, T11 and the save state suite's 14
+real cases pass (its other three saved nothing; DW4_STATE_TEST now fails
+such a case instead of passing it empty; main has since moved them onto
+frames that save, 17 of 17 real, INT notes 7.2); T6 runs every Rookie to its
+clear or TIME UP with lane E's run hashes; every screen is in the hidden
+picture set. Not met: seven of 14.2's thirteen targets (the human median
+for all four Rookies, Dorumon's kite median, every seed clearing with
+Agumon and Guilmon, the kite's 3-minute margin, Dorumon's wall, 2 of 40
+early Agumon defeats, Dorumon's first level-up at 18.2 s; the notes' 5)
+and T8's step time under load. Open: T5 with a story save written after a
+run. The user's own run is the last part of "done".
 
 Merge order E, D, F. **Done:** offline and alone, talking to Gekomon opens
 the menu; a run with any Rookie plays four phases with Guardians and the

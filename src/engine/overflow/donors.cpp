@@ -80,6 +80,21 @@ void Engine::load_overflow_donors() {
             }
             const auto targets = route_donor(document, families);
             for (const auto& name : families) text += " " + name + " (" + donor + ")";
+            // A separate package has the family's model and infos, its stage's
+            // main member the family's scripts (hit_e_tonogeko.lua,
+            // bck_e_skulgrey.lua; the round O1b spike): take those too.
+            if (const auto separate = donor.find("/separate/"); separate != std::string::npos) {
+                const std::string stage = donor.substr(0, separate);
+                const auto descriptor = load_package_descriptor(resources_, stage + ".igb");
+                for (const auto& member : descriptor.members) {
+                    if (member.suffix == "/s") continue;
+                    auto scripts = std::make_shared<const IgbDocument>(read_package_member(resources_, member));
+                    files_.push_back({stage + member.specifier, scripts, false});
+                    route_donor(scripts, families, true);
+                    text += " scripts (" + stage + ")";
+                    break;
+                }
+            }
             // Their SE sets and banks (a separate package carries its own).
             if (auto* sound = get<SoundManager>()) {
                 for (const auto& bank : sound->add_donor_sounds(*this, sounds ? *sounds : *document, targets)) text += " +" + bank;

@@ -108,6 +108,9 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_TITLE_ONLINE",
         // a Data Overflow run keeps the test characters' variables and cheats (src/game/overflow_run.hpp)
         "DW4_OVERFLOW_TEST_CHEATS",
+        // Data Overflow's lobby in test runs (round O1b lane D, game_main.cpp): the NPC shown (1 / show), a screen
+        // opened at once, the first meeting counted as done, run keys for a run started from the select
+        "DW4_OVERFLOW", "DW4_OVERFLOW_SCREEN", "DW4_OVERFLOW_SEEN", "DW4_OVERFLOW_TEST_RUN",
         // round 63's analysis switch: parts of the status window's pause left out (subwnd.cpp)
         "DW4_TEST_SUBWND_SKIP"};
     return names;
@@ -128,6 +131,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_TRACE", "DW4_ONLINE_SCRIPT_EVERY",
         // the online account's achievement profile of a test run (online_achievements.hpp, round S2)
         "DW4_ONLINE_PROFILE",
+        // Data Overflow's meta file of a test run (src/game/overflow_profile.hpp, round O1b lane F; the mode is
+        // offline only and the file never reaches an engine)
+        "DW4_OVERFLOW_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
         // round J's damaged checkpoint and the tick state that misses a field (DW4_ONLINE_DEV builds only, session.cpp,

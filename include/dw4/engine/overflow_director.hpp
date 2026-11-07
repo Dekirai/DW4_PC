@@ -148,6 +148,8 @@ struct Tuning {
     // (The balance round of 05.11: 0.7 / 1.0 / 1.3 / 1.5 / 1.6 and 0.8 /
     // 0.7 / 0.65 / 0.6 / 0.6; the forge round raised the late contact and
     // lowered the late shots: after 10:00 skill decides, docs/OVERFLOW_DIRECTOR.md 11.)
+    // (Round O1b lane E measured 1.1 / 2.4 / 3.6 / 3.8 from 5:00 for the gear: Agumon's human bot
+    // 22:16, every other form's 9-11 minutes; kept O1a's knots, docs/ROUND_O1B_E_NOTES.md 5.)
     std::array<float, 5> contact_at{0.7f, 1.0f, 1.3f, 2.2f, 2.4f};
     std::array<float, 5> shot_at{0.8f, 0.7f, 0.5f, 0.4f, 0.3f};
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
@@ -175,15 +177,51 @@ struct Tuning {
     float bot_flee = 16.0f;                      // the kite bot walks away from an enemy this near (14.1)
     int level_window_gap = 20 * 60;              // at most one level-up window (freeze) in this many run steps
     int muteki = 30;                             // MUTEKI frames after a hit (4.8 had 50: a crowd round a standing Digimon must cost)
+    // Guardians and the finale (4.4, round O1b lane E). A Guardian closes
+    // phases 1-3 (it enters when the phase's five minutes end; the phases
+    // stay on the clock, the balance of docs/OVERFLOW_DIRECTOR.md 10-11 is
+    // built on it), LordKnightmon comes at 20:00 under the quest timer: its
+    // defeat clears the run, the timer's 0:00 (end_steps) is TIME UP.
+    // guardians=false: O1a's run (the clear at end_steps, no Guardian).
+    bool guardians = true;
+    // x the row's HPMAX x (1 + 0.10 a minute) (4.4: x 6, the finale x 8; round O1b: the finale x 14,
+    // with x 8 the kite bot cleared 11 of 12 runs, LordKnightmon falling after 96-198 s)
+    float guardian_hp = 6.0f, finale_hp = 14.0f;
+    float elite_hp = 12.0f;                      // the elite fallback (4.4)
+    float guardian_distance = 40.0f;             // it enters this far in front of the player
+    int guardian_half_steps = 120 * 60;          // A(t) halves while a Guardian lives, at most this long
+    int guardian_first = 0;                      // (tests, spikes: the first Guardian at this run step; 0: 5:00)
+    int finale_hurry = 60 * 60;                  // QS_HURRY in the timer's last minute
+    float guardian_clamp = 0.30f;                // a Guardian's hit takes at most this share of MaxHP (round O1b)
+    // Pwr Up's cooldown from pwr_up_late_from on (0: its 15 s throughout; a
+    // balance pass's key pwr_up_late=SECONDS,FROM). Round O1b lane E's finish
+    // measured 60 s from the start (newcomers' runs ended at the phase 2
+    // start), 60 s from 10:00 (still on: Giga to infinity last 42-54 s plus
+    // INT) and 120 s from 10:00 (the human Agumon 1.5 minutes shorter, but
+    // late hits over 35 % of MaxHP, the clamp, in 2 of 20 kite runs):
+    // docs/ROUND_O1B_E_NOTES.md 12.1.
+    int pwr_up_late_from = 600 * 60, pwr_up_late_cooldown = 0;
+    // The Violet Ring's return gate after the clear (4.4): g_dreturngate comes
+    // gate_wait steps after LordKnightmon's fall (the enemies leave first) and
+    // walking into its mat (matz01) ends the run; elsewhere, or with
+    // return_gate=false, the results come after 4 s. A test bot that has not
+    // reached it after gate_bot_steps gets the results anyway.
+    bool return_gate = true;
+    int gate_wait = 120;
+    int gate_bot_steps = 60 * 60;
 };
 
 // ---------------------------------------------------------------------------
 // Offers (4.6): Forge, Train and Plug in O1a
 // ---------------------------------------------------------------------------
-enum class OfferKind : std::uint8_t { forge, train, plug };
+enum class OfferKind : std::uint8_t { forge, train, plug, core, board, chip };
 struct Offer {
     OfferKind kind{};
-    int value{}; // forge: the family it opens (2-5); train: the skill column (6 Blast, 7 Heal, 8 Force); plug: the UPCNT index
+    // forge: the family it opens (2-5); train: the skill column (6 Blast, 7
+    // Heal, 8 Force); plug: the UPCNT index; core / board / chip: the index
+    // into gear_table() (what it does follows from the build: equip it, or
+    // its next step).
+    int value{};
     bool operator==(const Offer&) const = default;
 };
 struct OfferState {
@@ -202,6 +240,9 @@ struct OfferState {
     // a choice that does nothing for minutes.
     std::array<int, 3> unlock_level{};
     int level = 1;                     // the run level of the window
+    // The gear offers that may show (round O1b, 4.6: Core, Board, Chip; the
+    // director fills them from the build and the opened gear).
+    std::vector<Offer> gear;
 };
 // Train shows this many run levels before its group's first technique.
 constexpr int kTrainLead = 2;
@@ -234,6 +275,25 @@ std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random);
 // Train Heal, then the plugs in plug_stats order.
 int offer_priority(const Offer& offer);
 
+// ---------------------------------------------------------------------------
+// Gear (7, round O1b): DW4's own rows, equipped by DW4's rules
+// ---------------------------------------------------------------------------
+enum class GearSlot : std::uint8_t { core, board, chip };
+struct GearRow {
+    const char* key;      // the gear key (the loadout, the records: docs/ROUND_O1B_E_NOTES.md)
+    const char* name;     // English (the table's own name without its grade)
+    GearSlot slot;
+    int first;            // its alpha row (armor1, armor2, abChip; the PWR Medal: the fire one, + 15 per element)
+    bool weapon_pocket;   // a chip the weapon pocket takes (WU)
+    bool core_pocket;     // ... the core pocket (BLUEAB)
+    bool x_data;          // it powers up with ¶ Data (7.5)
+    bool start;           // open from the start (8.4); else a record opens it (RunConfig::gear_open)
+};
+const std::vector<GearRow>& gear_table();
+int gear_index(std::string_view key); // -1: none
+// The run's ¶ Data cost of a chip's next step: its NEXTX / 20 (7.5).
+constexpr int kXDataDivisor = 20;
+
 // The Art's class factor of a form (on top of OverflowRules' 2.5; 14.3).
 float art_class_factor(std::string_view form);
 // A run technique's own damage factor (pcTech base row; 1 for most).
@@ -262,10 +322,54 @@ struct RunConfig {
     int forge_from = 0;
     int forge_sure = kForgeSure; // (forge_sure=0: the balance round's offers, for its before measurement)
     float art_class = 0;     // a balance pass's own Art class factor (0: art_class_factor)
+    // Round O1b (the lobby's character select and the meta file, lanes D
+    // and F; docs/ROUND_O1B_E_NOTES.md): the starting loadout (8.3, gear keys
+    // of gear_table(); "" none), the gear the Data Records opened beyond the
+    // start set, and the Plug Lab's points of the form (8.2) by UPCNT index
+    // (GameSystem::PlayerSlot::upcnt: 0 MaxHP, 1 MaxMP, 2 Strength, 3 Def.,
+    // 4 Wisdom, 5 Spirit, 6 Speed, 7-10 Fire / Ice / Bolt / Dark RES).
+    std::string loadout_armor, loadout_chip;
+    std::vector<std::string> gear_open;
+    std::array<int, 11> plug_lab{};
+    // Guardians (tests, spikes): the families of phases 1-3 ("" drawn by the
+    // seed) and the families that come as the elite fallback (4.4).
+    std::array<std::string, 3> guardians{};
+    std::vector<std::string> elite;
+    // (Tests, pictures: the Forge families open at the start, 1-5; the Awakening's test.)
+    int forge_start = 1;
+    int art_skill_start = 0; // (... and the Art's class skill at the start: forge_start=5 art_skill=2500 awakens)
+    // (A balance pass's own technique cooldowns by pcTech base row, in steps; 0: the technique is never cast.)
+    std::map<int, int> technique_cooldown;
+};
+
+// The four Rookies a run starts with in O1b (5.3).
+constexpr std::array<std::string_view, 4> kRookies{"p_agumon", "p_vmon", "p_girumon", "p_dorumon"};
+bool playable_form(std::string_view form);
+
+// ---------------------------------------------------------------------------
+// Guardians (4.4)
+// ---------------------------------------------------------------------------
+struct GuardianRow {
+    const char* family;  // e_blosso
+    const char* name;    // Blossomon
+    int record;          // its Normal row in the enemy table
+    const char* donor;   // the stage (main member) or separate package it loads from (H2)
+    int phase;           // 1-3, 4 the finale
+    const char* elite;   // the elite fallback's family (4.4)
+    float damage;        // its own damage factor (round O1b: its worst hits about 15-20 % of a Rookie's MaxHP at its time)
+};
+const std::vector<GuardianRow>& guardian_table();
+const GuardianRow* guardian_row(std::string_view family);
+// The run's Guardians: phases 1-3 drawn from their pairs by the seed (or the
+// forced ones), then LordKnightmon.
+std::array<std::string, 4> draw_guardians(std::uint32_t seed, const std::array<std::string, 3>& forced = {});
+struct GuardianBar {
+    std::string name;
+    int hp{}, max_hp{};
 };
 
 // Why the run ended (the host maps it to its RunEnd).
-enum class Outcome : std::uint8_t { none, retired, defeated, cleared };
+enum class Outcome : std::uint8_t { none, retired, defeated, cleared, time_up };
 
 // What the overlay shows (O1a: plain boxes, docs/SURVIVAL.md 9.4-9.6).
 enum class Screen : std::uint8_t { none, level_up, pause, build, retire_ask, results };
@@ -383,8 +487,32 @@ public:
     float family_damage(const FamilyRow& row) const; // a family's own damage factor
     // A(t) and the refill rate at a run time (Tuning's knots).
     static float knots(const std::array<float, 5>& at, double minutes);
+    int alive_target() const; // A(t) now: the knots, a surge, halved while a Guardian lives (4.4)
     float art_factor() const { return config_.art_class > 0 ? config_.art_class : art_class_factor(config_.form); }
     double hp_factor(double minutes) const;   // an enemy's HPMAX factor at a run time
+    // Guardians and the finale (4.4; the HUD of lane D, the records of lane F).
+    bool finale() const { return finale_; }                  // LordKnightmon is in, the quest timer runs
+    int finale_left_steps() const;                           // the timer (0..end_steps - 20:00), 1 step = 1001/60000 s
+    bool time_up() const { return outcome_ == Outcome::time_up; }
+    std::optional<GuardianBar> guardian_bar(Engine& engine) const;
+    const std::vector<std::string>& guardians_defeated() const { return guardians_defeated_; }
+    const std::array<std::string, 4>& guardian_plan() const { return guardian_plan_; }
+    bool awakened() const { return awakened_; }
+    int awakening_bursts() const { return bursts_; }        // the x_100charge01 bursts of the awakened Art (6.5)
+    // The Violet Ring's return gate (4.4): it is up after the clear and the
+    // player may walk into it (the results follow); its mat's box.
+    bool return_gate_open() const { return gate_ == 2; }
+    bool gate_entered() const { return gate_entered_; }
+    int casts() const;
+    // The defeats whose last hit was a technique of Fire, Ice, Bolt or Dark
+    // (pcTech rows 0-19; lane F's Adept records), and the crates broken
+    // (none on O1b's arena yet).
+    const std::array<int, 4>& tech_defeats() const { return tech_defeats_; }
+    int crates() const { return 0; }
+    // The family whose hit took the last HP (lane D's "Welcome back", 3.4:
+    // the Gekomon joke); empty unless the run ended in a defeat. (A poison
+    // tick never takes the last HP, so the last damaging hit is the one.)
+    std::string defeated_by() const { return outcome_ == Outcome::defeated ? last_hit_family_ : std::string(); }
     const Vec3f& arena_centre() const { return centre_; }
     float arena_radius() const { return radius_; }
 
@@ -422,6 +550,25 @@ private:
     void load_art_pattern(Engine& engine);
     void drop_items(Engine& engine);
     void log_minute(Engine& engine);
+    void step_guardians(Engine& engine);
+    bool spawn_guardian(Engine& engine, int stage);
+    void guardian_down(Engine& engine, bool defeated);
+    void step_music(Engine& engine);
+    // The return gate (4.4): its pad for the test bots while it is up.
+    bool gate_walk() const { return gate_ > 0 && outcome_ == Outcome::cleared && screen_ == Screen::none; }
+    PadSample gate_pad(Engine& engine);
+    void step_gate(Engine& engine);
+    bool gate_inside(const Vec3f& at) const;
+    // Gear (gear.cpp)
+    void gear_offers(Engine& engine);
+    void take_gear(Engine& engine, const Offer& offer);
+    bool equip_gear(Engine& engine, int gear, int record);
+    void apply_loadout(Engine& engine);
+    void power_up_chips(Engine& engine);
+    int gear_row(int gear) const;          // its alpha row for this form
+    bool gear_open(int gear) const;
+    std::string gear_text(const Engine& engine, const Offer& offer) const;
+    std::string gear_detail(const Engine& engine, const Offer& offer) const;
     void notice(std::string text);
     Vec3f player_position(Engine& engine) const;
     // The stick that walks the player on the ground way (dx, dz) at this
@@ -487,6 +634,7 @@ private:
         int art_hits = 0;
         bool other_damage = false;       // a technique hit it too
         bool last_art = false;           // the last hit was the Art's
+        std::int32_t last_source = 0;    // the last hit's source (damage_dealt)
         bool alive = true;
     };
     std::vector<Enemy> enemies_;
@@ -519,6 +667,13 @@ private:
     std::vector<Box> pattern_;
     float pattern_tip_ = 17.0f;
     std::string art_name_, art_swing_, art_label_;
+    // The class's charge release (KATC?2 of the Art's SQ_ATCK1 section:
+    // x_100charge01 SQ_KIRIKAE / SQ_OWARI), the awakened Art's burst (6.5):
+    // once for every strike that hits.
+    std::string art_burst_;
+    bool burst_pending_ = false;
+    std::uint64_t burst_done_ = ~std::uint64_t(0); // the art_ready_ of the strike that burst last
+    int bursts_ = 0;
     std::array<std::string, 4> forge_steps_;     // what Forge 2-5 add to the Art
     std::vector<std::string> family_names_;      // the class's five weapon families (Forge's names)
     int ladder_base_ = 0, art_skill_ = 0;
@@ -584,8 +739,10 @@ private:
     int minute_art_kills_ = 0, minute_tech_kills_ = 0;
     std::uint64_t minute_trapped_ = 0, minute_steps_ = 0;
     std::string end_reason_ = "-";   // what ended the run (RunEnd's reason, retire, clear)
+    std::string last_hit_family_;    // the last damaging hit's shooter (defeated_by)
     std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
-    double highest_hit_ = 0;
+    double highest_hit_ = 0;     // non-Guardian hits (14.2's clamp measure, the summary)
+    double highest_hit_all_ = 0; // every hit (the results' "Highest hit taken")
     int panels_min_gap_ = 1 << 30;
     std::int64_t last_panel_frame_ = -1;
     int last_panel_count_ = 0;
@@ -593,6 +750,38 @@ private:
     int disks_taken_ = 0, disks_used_ = 0, plugs_picked_ = 0;
     std::string notice_;
     std::uint64_t notice_step_ = 0;
+    // Guardians and the finale
+    struct Guardian {
+        std::string family, name;
+        int ram = -1;
+        int stage = 0;               // 1-3 the phases, 4 the finale
+        std::uint64_t at = 0;        // the run step it entered
+        bool elite = false;
+    };
+    std::array<std::string, 4> guardian_plan_{};
+    int guardian_next_ = 1;          // the stage of the next Guardian (5: none left)
+    std::optional<Guardian> guardian_;
+    std::vector<std::string> guardians_defeated_;
+    bool finale_ = false;
+    std::uint64_t finale_at_ = 0;
+    std::string music_now_;
+    int count_said_ = -1;            // the timer's last counted second
+    bool awakened_ = false;
+    // The return gate: 0 none, 1 coming (gate_since_ the clear's step), 2 up
+    // (gate_open_at_); the box of its mat.
+    int gate_ = 0;
+    std::uint64_t gate_since_ = 0, gate_open_at_ = 0;
+    bool gate_entered_ = false;
+    bool gate_out_ = false;          // the player stood outside its box since it came
+    Vec3f gate_min_{-6.0f, -1e9f, -66.0f}, gate_max_{6.0f, 1e9f, -54.0f};
+    // Gear (7): the equipped gear (gear_table() indices, -1 none), their
+    // value steps, the run's ¶ Data and the form's element (0 fire .. 3 dark).
+    int core_gear_ = -1, board_gear_ = -1;
+    int core_steps_ = 0, board_steps_ = 0;
+    std::array<int, 2> pocket_gear_{-1, -1}; // the weapon pocket, the core pocket
+    int x_data_ = 0, x_data_total_ = 0, chip_steps_ = 0;
+    int element_ = 0;
+    std::array<int, 4> tech_defeats_{};
     // the kite bot
     int bot_a_ = 0, bot_l_ = 0;
     float bot_dx_ = 0, bot_dz_ = 0;  // its last way (it keeps walking)

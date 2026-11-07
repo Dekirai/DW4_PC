@@ -1173,7 +1173,11 @@ private:
     std::shared_ptr<overflow::OverflowRules> overflow_;
     bool overflow_run_{};
     // The targets (families and the effects they start) it registered.
-    std::set<std::string, std::less<>> route_donor(const std::shared_ptr<const IgbDocument>& document, const std::vector<std::string>& families);
+    // (scripts_only: only the families' scripts of the document; the Data
+    // Overflow run takes a separate package's scripts from its stage's main
+    // member that way, docs/ROUND_O1B_E_NOTES.md. The story's randomizer never sets it.)
+    std::set<std::string, std::less<>> route_donor(const std::shared_ptr<const IgbDocument>& document, const std::vector<std::string>& families,
+                                                   bool scripts_only = false);
     std::unique_ptr<Lua4Vm> lua_;
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
     // The label of every chunk compiled in this visit (the cache's key: two

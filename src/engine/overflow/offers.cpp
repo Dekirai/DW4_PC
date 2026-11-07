@@ -11,7 +11,7 @@ namespace {
 
 // The offer weights of 4.6 (initial): Forge 25 %, Train 25 % (over its
 // groups), Plug 20 % (over its stats). (Gear's 30 % comes with O1b.)
-constexpr double kForgeWeight = 25.0, kTrainWeight = 25.0, kPlugWeight = 20.0;
+constexpr double kForgeWeight = 25.0, kTrainWeight = 25.0, kPlugWeight = 20.0, kGearWeight = 30.0;
 } // namespace
 
 const std::vector<FamilyRow>& family_table() {
@@ -53,6 +53,7 @@ std::vector<Offer> eligible_offers(const OfferState& state) {
     for (int g = 0; g < 3; ++g)
         if (state.groups[std::size_t(g)] && state.train[std::size_t(g)] < 4 && state.level + kTrainLead >= state.unlock_level[std::size_t(g)])
             out.push_back({OfferKind::train, kBlastSkill + g});
+    for (const auto& gear : state.gear) out.push_back(gear);
     for (const int stat : kPlugStats) out.push_back({OfferKind::plug, stat});
     return out;
 }
@@ -71,10 +72,11 @@ std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random) {
     auto pool = eligible_offers(state);
     // (A resistance plug weighs a quarter of a stat plug: UPCNT 7-10.)
     auto plug_share = [](int stat) { return stat >= 7 ? 0.25 : 1.0; };
-    int trains = 0;
+    int trains = 0, gears = 0;
     double plugs = 0;
     for (const auto& offer : pool) {
         trains += offer.kind == OfferKind::train ? 1 : 0;
+        gears += offer.kind == OfferKind::core || offer.kind == OfferKind::board || offer.kind == OfferKind::chip ? 1 : 0;
         if (offer.kind == OfferKind::plug) plugs += plug_share(offer.value);
     }
     auto weight = [&](const Offer& offer) {
@@ -82,6 +84,9 @@ std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random) {
         case OfferKind::forge: return kForgeWeight;
         case OfferKind::train: return kTrainWeight / double(std::max(1, trains));
         case OfferKind::plug: return kPlugWeight * plug_share(offer.value) / std::max(0.25, plugs);
+        case OfferKind::core:
+        case OfferKind::board:
+        case OfferKind::chip: return kGearWeight / double(std::max(1, gears));
         }
         return 0.0;
     };
@@ -118,6 +123,11 @@ int offer_priority(const Offer& offer) {
     switch (offer.kind) {
     case OfferKind::forge: return 0;
     case OfferKind::train: return 1 + (offer.value - kBlastSkill);
+    // (Round O1b: the gear after the Train lines, before the plugs; the
+    // core first, then the chips, then a board.)
+    case OfferKind::core: return 5;
+    case OfferKind::chip: return 6;
+    case OfferKind::board: return 7;
     case OfferKind::plug:
         for (std::size_t i = 0; i < kPlugStats.size(); ++i)
             if (kPlugStats[i] == offer.value) return 10 + int(i);

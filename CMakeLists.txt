@@ -49,7 +49,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
 target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
   src/engine/overflow/field_start.cpp src/engine/overflow/donors.cpp src/engine/overflow/director.cpp
   src/engine/overflow/spawner.cpp src/engine/overflow/abilities.cpp src/engine/overflow/offers.cpp
-  src/engine/overflow/human_bot.cpp)
+  src/engine/overflow/human_bot.cpp src/engine/overflow/guardians.cpp src/engine/overflow/gear.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -182,6 +182,11 @@ if(BUILD_TESTING)
   add_executable(dw4_overflow_host_tests tests/overflow_host_tests.cpp src/game/overflow_run.cpp src/game/presence_data.cpp)
   target_link_libraries(dw4_overflow_host_tests PRIVATE dw4_engine)
   add_test(NAME overflow_host COMMAND dw4_overflow_host_tests)
+  # Data Overflow's meta file (round O1b lane F, docs/SURVIVAL.md 8; T7 overflow_profile): the
+  # format, the .bak and the corruption cases, the Plug Lab, the loadout, Sim Bits and the Data Records.
+  add_executable(dw4_overflow_profile_tests tests/overflow_profile_tests.cpp src/game/overflow_profile.cpp)
+  target_link_libraries(dw4_overflow_profile_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_profile COMMAND dw4_overflow_profile_tests)
   add_executable(dw4_interpolation_tests tests/interpolation_tests.cpp src/game/interpolation.cpp)
   target_link_libraries(dw4_interpolation_tests PRIVATE dw4_engine)
   add_test(NAME interpolation COMMAND dw4_interpolation_tests)
@@ -204,6 +209,16 @@ if(BUILD_TESTING)
   target_include_directories(dw4_ghosts_tests PRIVATE src/game)
   target_link_libraries(dw4_ghosts_tests PRIVATE dw4_engine)
   add_test(NAME ghosts COMMAND dw4_ghosts_tests "${DW4_TEST_DATA}")
+  # Data Overflow's screens (round O1b lane D, docs/SURVIVAL.md 3, 9, 14.1 T9):
+  # every string against the game font's characters (with the game data;
+  # without, against the glyph list of 9.1), the NPC's rules, the talk, the
+  # dialog's state machine, the screens' 2D items and the NPC actor.
+  add_executable(dw4_overflow_screens_tests tests/overflow_screens_tests.cpp src/game/overflow_text.cpp src/game/sim_ui.cpp
+    src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp src/game/overflow_run.cpp
+    src/game/ghost_figures.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp src/game/overflow_profile.cpp)
+  target_include_directories(dw4_overflow_screens_tests PRIVATE src/game)
+  target_link_libraries(dw4_overflow_screens_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_screens COMMAND dw4_overflow_screens_tests "${DW4_TEST_DATA}")
   # Seamless online co-op, the engine side. With the game data (a disc image
   # or an extracted folder, never in the repository) it also plays membership
   # scenarios in real stages; without, those are skipped.
@@ -245,6 +260,9 @@ if(BUILD_TESTING)
   target_link_libraries(dw4_overflow_director_tests PRIVATE dw4_engine)
   add_test(NAME overflow_offers COMMAND dw4_overflow_director_tests offers)
   add_test(NAME overflow_rng COMMAND dw4_overflow_director_tests rng)
+  add_test(NAME overflow_guardians COMMAND dw4_overflow_director_tests guardians)
+  add_test(NAME overflow_gear COMMAND dw4_overflow_director_tests gear "${DW4_TEST_DATA}")
+  add_test(NAME overflow_finale COMMAND dw4_overflow_director_tests finale "${DW4_TEST_DATA}")
   add_test(NAME overflow_spawn COMMAND dw4_overflow_director_tests spawn "${DW4_TEST_DATA}")
   add_test(NAME overflow_gap COMMAND dw4_overflow_director_tests gap "${DW4_TEST_DATA}")
   add_test(NAME overflow_human COMMAND dw4_overflow_director_tests human "${DW4_TEST_DATA}")
@@ -336,12 +354,15 @@ if(DW4_BUILD_APP)
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
-    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
+    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp
+    src/game/overflow_text.cpp src/game/sim_ui.cpp src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
+  # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
+  target_sources(dw4_game PRIVATE src/game/overflow_profile.cpp)
   if(WIN32)
     target_link_libraries(dw4_game PRIVATE ws2_32)
   endif()

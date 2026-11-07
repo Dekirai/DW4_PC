@@ -31,6 +31,13 @@
 //                       its end), quick early kills of the start Art and
 //                       TECH1, enough RAMs per phase, no Guardian family in
 //                       the pools
+//   finale   (data)     round O1b lane E (4.4, 6.5): a Guardian by
+//                       guardian_first (the boss bar, the camera shake, A(t)
+//                       halved, its clamp counted as guardian_clamps, its
+//                       defeat and drops, the separate packages' scripts),
+//                       the finale's quest timer and TIME UP, the Awakening
+//                       by a set skill with its burst, the Drain Ram through
+//                       BLTgetDamageValue, the clear and the return gate
 // `report` prints the balance table without failing (the tuning pass).
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -616,7 +623,7 @@ void balance(const std::filesystem::path& data, bool report) {
         check(!family_row(guardian), std::string("no Guardian family in the pools: ") + guardian);
     bool failed = false;
     std::string first_failure;
-    for (const char* form : {"p_agumon", "p_vmon"}) {
+    for (const char* form : {"p_agumon", "p_vmon", "p_girumon", "p_dorumon"}) {
         RunConfig config;
         config.form = form;
         config.seed = 5;
@@ -662,7 +669,8 @@ void balance(const std::filesystem::path& data, bool report) {
                 const double art = double(stats.tsuyosa * 6 + skill * 4) / double(mamori) * 2.5 * double(art_class_factor(form));
                 const int spirit = db->number("enemy", row.record, "SEISHIN").value_or(1);
                 static const char* resist[] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK"};
-                const int element = std::string(form) == "p_agumon" ? 0 : 2;
+                const std::string f(form);
+                const int element = f == "p_agumon" ? 0 : f == "p_vmon" ? 2 : f == "p_girumon" ? 3 : 1; // (fire, thunder, dark, ice)
                 const int res = db->number("enemy", row.record, resist[element]).value_or(0);
                 const double technique =
                     double(stats.kashikosa * 10 + tech_skill * 5 + 160 * 20) / double(spirit) * double(1000 - res) / 1000.0 * 1.15;
@@ -749,7 +757,367 @@ void balance(const std::filesystem::path& data, bool report) {
     if (!report) check(!failed, first_failure);
 }
 
+// ---------------------------------------------------------------------------
+// finale (round O1b lane E, SURVIVAL.md 4.4 and 6.5): the Guardians, the
+// finale, the Awakening and the return gate on the run's engine
+// ---------------------------------------------------------------------------
+bool generated(Engine& engine, std::string_view name) {
+    for (const auto& ram : engine.get<ModelCtrlManager>()->rams())
+        if (ram->generated && ram->info_name == name) return true;
+    return false;
+}
+
+bool has_event(const OverflowDirector& director, const std::string& text) { return director.log_text().find(text) != std::string::npos; }
+
+float view_change(const Mat4& a, const Mat4& b) {
+    float most = 0.0f;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) most = std::max(most, std::fabs(a(r, c) - b(r, c)));
+    return most;
+}
+
+void finale(const std::filesystem::path& data) {
+    // (1) A Guardian by guardian_first: the scripts of the separate packages
+    // (Engine::route_donor's scripts_only), the boss bar, the camera shake at
+    // its entry, A(t)'s half, its clamp (guardian_clamps, not 14.2's clamp),
+    // its defeat and its drops.
+    {
+        RunConfig config;
+        config.seed = 5;
+        config.offers = "priority";
+        config.guardians = {"e_blosso", "e_skulgrey", "e_tonogeko"};
+        config.tuning.guardian_first = 90;
+        config.tuning.guardian_half_steps = 600;
+        config.tuning.spawning = false;
+        auto run = start_run(data, config, true);
+        until_started(run);
+        auto& engine = *run.engine;
+        auto& director = *run.director;
+        auto& rules = *run.rules;
+        check(engine.has_script("bck_e_skulgrey.lua"), "SkullGreymon's bck_ script comes from its stage's main member (scripts_only)");
+        check(engine.has_script("hit_e_tonogeko.lua"), "TonosamaGekomon's hit script comes from its stage's main member (scripts_only)");
+        auto* cameras = engine.get<CameraManager>();
+        FrameCamera last;
+        cameras->frame_camera(engine, last);
+        float before = 0.0f, after = 0.0f;
+        std::uint64_t entered = 0;
+        for (int i = 0; i < 400 && !director.guardian_bar(engine); ++i) {
+            run_step(run, false);
+            FrameCamera now;
+            cameras->frame_camera(engine, now);
+            if (director.run_steps() >= 40) before = std::max(before, view_change(now.view, last.view));
+            last = now;
+        }
+        const auto bar = director.guardian_bar(engine);
+        check(bar.has_value(), "the first Guardian comes at guardian_first");
+        entered = director.run_steps();
+        check(entered >= 90 && entered <= 100, "... at its run step (" + std::to_string(entered) + ")");
+        for (int i = 0; i < 40; ++i) {
+            run_step(run, false);
+            FrameCamera now;
+            cameras->frame_camera(engine, now);
+            after = std::max(after, view_change(now.view, last.view));
+            last = now;
+        }
+        std::cout << "  finale: " << bar->name << " " << bar->hp << " / " << bar->max_hp << " HP at run step " << entered
+                  << ", the view's largest step " << before << " before its entry, " << after << " after it\n";
+        check(bar->name == "Blossomon" && bar->hp == bar->max_hp && bar->max_hp >= 250 * 6, "the bar shows Blossomon at full HP (HPMAX x 6)");
+        check(generated(engine, "i_bosshp02"), "the arena's boss bar i_bosshp02 is up");
+        check(after > 0.05f && after > 4.0f * before, "the camera shakes at the Guardian's entry");
+        int guardian_ram = -1;
+        for (const auto& ram : engine.get<ModelCtrlManager>()->rams())
+            if (ram->generated && ram->info_name == "e_blosso") guardian_ram = ram->index;
+        check(guardian_ram >= 0, "Blossomon's RAM");
+        check(rules.enemy_class("e_blosso", guardian_ram) == EnemyClass::guardian, "its hits take the Guardian rules");
+        const auto& t = director.config().tuning;
+        const int full = std::min(t.alive_cap, int(OverflowDirector::knots(t.alive_at, director.run_seconds() / 60.0)));
+        check(director.alive_target() == full / 2, "A(t) halves while a Guardian lives (" + std::to_string(director.alive_target()) + " of " + std::to_string(full) + ")");
+        // Its clamp: a hit of three MaxHP takes guardian_clamp (30 %), counted apart.
+        auto* sys = engine.get<GameSystem>();
+        const int max_hp = sys->players[0].max_hp;
+        ModelScriptContext hit;
+        hit.name = sys->players[0].digimon;
+        hit.index = 0;
+        hit.shooter_name = "e_blosso";
+        hit.shooter = guardian_ram;
+        const int clamps = rules.tally.clamps, guardian_clamps = rules.tally.guardian_clamps;
+        const int taken = rules.taken(engine, hit, 0, max_hp, max_hp * 3);
+        check(taken == int(std::lround(double(max_hp) * double(t.guardian_clamp))), "a Guardian's hit takes at most 30 % of MaxHP (" + std::to_string(taken) + ")");
+        check(rules.last_taken.guardian_clamped && !rules.last_taken.clamped, "... as the Guardian clamp, not 14.2's");
+        check(rules.tally.guardian_clamps == guardian_clamps + 1 && rules.tally.clamps == clamps, "guardian_clamps counts it, clamps does not");
+        check(director.summary_text(engine).find("\nguardian_clamps " + std::to_string(rules.tally.guardian_clamps) + "\n") != std::string::npos,
+              "the summary's guardian_clamps line");
+        // A(t) is whole again after guardian_half_steps.
+        while (director.run_steps() < entered + 610) run_step(run, false);
+        check(director.guardian_bar(engine).has_value(), "Blossomon still stands (no one-hit yet)");
+        check(director.alive_target() == std::min(t.alive_cap, int(OverflowDirector::knots(t.alive_at, director.run_seconds() / 60.0))),
+              "A(t) is whole again after guardian_half_steps");
+        // Its defeat (the one-hit cheat: the Art takes all its HP) and its drops.
+        engine.cheats().one_hit = true;
+        bool xdata = false, disk = false;
+        for (int i = 0; i < 3600 && !(xdata && disk); ++i) {
+            run_step(run, false);
+            if (!director.guardians_defeated().empty()) {
+                xdata = xdata || generated(engine, "g_000xdata1");
+                disk = disk || generated(engine, "g_000item");
+            }
+        }
+        check(director.guardians_defeated().size() == 1 && director.guardians_defeated()[0] == "e_blosso", "the Art defeats Blossomon");
+        check(!director.guardian_bar(engine), "its bar is gone");
+        check(xdata && disk, "it drops the ¶ Data UP 100 and the Recovery disk");
+        check(has_event(director, "guardian e_blosso defeated"), "the run log has its defeat");
+        std::cout << "  finale: Blossomon defeated at run step " << director.run_steps() << ", both drops\n";
+    }
+    // (2) The finale under the quest timer and TIME UP (short phases: 5 s).
+    {
+        RunConfig config;
+        config.seed = 6;
+        config.offers = "priority";
+        config.guardians = {"e_mammos", "", ""};
+        config.tuning.phase_steps = 300;
+        config.tuning.end_steps = 1500;
+        config.tuning.spawning = false;
+        config.tuning.abilities = false;
+        auto run = start_run(data, config, true);
+        until_started(run);
+        auto& engine = *run.engine;
+        auto& director = *run.director;
+        while (director.run_steps() < 1210) run_step(run, false);
+        const auto bar = director.guardian_bar(engine);
+        check(director.finale() && bar && bar->name == "LordKnightmon", "LordKnightmon comes at 4 phases (the finale)");
+        check(has_event(director, "guardian e_mammos left"), "the phase Guardian still alive leaves for it");
+        check(director.finale_left_steps() == int(1500 - director.run_steps()), "the quest timer counts to the run's end");
+        while (director.outcome() == Outcome::none && director.run_steps() < 1600) run_step(run, false);
+        std::cout << "  finale: outcome " << int(director.outcome()) << " at run step " << director.run_steps() << ", notice '" << director.notice() << "'\n";
+        check(director.outcome() == Outcome::time_up && director.time_up(), "the timer's 0:00 is TIME UP (Outcome::time_up)");
+        check(director.notice() == "TIME UP", "TIME UP shows");
+        check(director.guardians_defeated().empty(), "no Guardian fell");
+        for (int i = 0; i < 300 && director.screen() != Screen::results; ++i) run_step(run, false);
+        check(director.screen() == Screen::results && !director.return_gate_open(), "the results come without a return gate");
+    }
+    // (3) The Awakening by a set skill, its burst, the Drain Ram's hook in
+    // BLTgetDamageValue, the finale's clear and the Violet Ring's return gate.
+    {
+        RunConfig config;
+        config.seed = 7;
+        config.bot = "kite";
+        config.offers = "priority";
+        config.forge_start = 5;
+        config.loadout_chip = "drain_ram";
+        config.gear_open = {"drain_ram"};
+        config.guardians = {"e_blosso", "e_skulgrey", "e_tonogeko"};
+        config.tuning.phase_steps = 600;
+        config.tuning.end_steps = 6000;
+        auto run = start_run(data, config, true);
+        until_started(run);
+        auto& engine = *run.engine;
+        auto& director = *run.director;
+        auto& rules = *run.rules;
+        auto* sys = engine.get<GameSystem>();
+        auto* db = engine.get<DatabaseManager>();
+        auto& player = sys->players[0];
+        check(player.stats.hp_drain > 0, "the Drain Ram in the weapon pocket gives HPDRAIN");
+        const int skill = db->number("weapon", 0, "SKILL").value_or(0);
+        const int panels = rules.tally.panels + rules.tally.panels_skipped;
+        player.stats.skill[std::size_t(skill)] = 2500;
+        director.skill_changed(engine, 0, skill, 1, 2500);
+        const auto* weapon = player.device(player.power_socket[0]);
+        check(director.awakened() && weapon && weapon->record >= 250 && weapon->record < 266, "the Awakening puts the signature in the socket");
+        check(director.notice().rfind("AWAKENING: ", 0) == 0, "the AWAKENING line (" + director.notice() + ")");
+        check(rules.tally.panels + rules.tally.panels_skipped == panels + 1, "the Awakening's SQ_TECUP panel (6.5)");
+        engine.cheats().one_hit = true;
+        bool charge = false;
+        for (int i = 0; i < 9000 && director.outcome() == Outcome::none; ++i) {
+            run_step(run, true);
+            charge = charge || generated(engine, "x_100charge01");
+        }
+        std::cout << "  finale: " << director.awakening_bursts() << " bursts, " << director.defeats() << " defeats, drain " << rules.tally.drain_given
+                  << " given / " << rules.tally.drain_capped << " capped, outcome " << int(director.outcome()) << " at run step " << director.run_steps() << '\n';
+        check(director.awakening_bursts() > 0 && charge, "the awakened Art's hits burst (KATCX2: x_100charge01)");
+        check(rules.tally.drain_given > 0, "the Drain Ram's HPDRAIN goes through the run's cap (lua_host BLTgetDamageValue)");
+        check(director.outcome() == Outcome::cleared, "LordKnightmon falls (the one-hit cheat): the run is cleared");
+        // The return gate: no results after the old 4 s; the bot walks in.
+        const std::uint64_t cleared = director.steps();
+        for (int i = 0; i < 160 && director.screen() != Screen::results; ++i) run_step(run, true);
+        check(generated(engine, "g_dreturngate") && has_event(director, "gate open"), "the return gate g_dreturngate comes");
+        for (int i = 0; i < 3600 && director.screen() != Screen::results; ++i) run_step(run, true);
+        std::cout << "  finale: results at director step " << director.steps() << ", gate entered " << director.gate_entered() << '\n';
+        check(director.screen() == Screen::results && director.gate_entered(), "walking into the gate ends the run");
+        check(director.steps() > cleared + 150, "the results waited for the gate (" + std::to_string(director.steps() - cleared) + " steps after the clear)");
+        check(has_event(director, "gate entered"), "the run log has the gate");
+        check(director.summary_text(engine).find("\ngate 1 entered\n") != std::string::npos, "the summary's gate line");
+    }
+    // (4) The force buffs last 6-10 s by rank in a run (6.4): Agumon's Pwr Up
+    // (TECH2, run level 8) with enemies near; the original's TIME is 30-54 s.
+    {
+        RunConfig config;
+        config.seed = 8;
+        config.offers = "priority";
+        config.tuning.spawning = false;
+        config.tuning.guardians = false;
+        auto run = start_run(data, config, true);
+        until_started(run);
+        auto& engine = *run.engine;
+        auto& rules = *run.rules;
+        check(rules.buff_steps == 0 && rules.buff_time(80, 0, 1920) == 1920, "the run's force buffs keep DW4's time by default");
+        rules.buff_steps = 360; // (the 6-10 s of SURVIVAL.md 6.4, a balance pass's key buff=360,60)
+        check(rules.buff_time(80, 0, 1800 + 120) == 360 && rules.buff_time(80, 4, 3240) == 600 && rules.buff_time(75, 2, 300) == 300,
+              "buff=360,60: 6 s at Petty, 10 s at ∞, never longer than DW4's");
+        rules.buff_kept = {75};
+        check(rules.buff_time(75, 0, 1800) == 1800, "buff_kept keeps a technique's DW4 time");
+        rules.buff_kept.clear();
+        set_level(engine, 10);
+        spawn_around(engine, *family_row("e_goburi"), 3, 18.0f);
+        const auto* self = engine.get<ModelCtrlManager>()->player(0);
+        int longest = 0;
+        for (int i = 0; i < 900; ++i) {
+            run_step(run, false);
+            if (self && self->status) longest = std::max(longest, self->status->timer[6]);
+        }
+        std::cout << "  finale: Pwr Up's POWERUP timer at most " << longest << " frames\n";
+        check(longest > 0 && longest <= 360, "buff=360,60: Agumon's Petty Pwr Up lasts at most 6 s in a run (" + std::to_string(longest) + " frames)");
+    }
+}
+
 } // namespace
+
+// Round O1b lane E: the gear in a run (SURVIVAL.md 7): the loadout lands in
+// its slots and raises the stats; the window offers gear; a core steps by
+// its offers and opens the core pocket at beta.
+void gear(const std::filesystem::path& data) {
+    RunConfig plain;
+    plain.form = "p_girumon";
+    plain.seed = 3;
+    plain.tuning.spawning = false;
+    plain.tuning.abilities = false;
+    auto base = start_run(data, plain, true);
+    until_started(base);
+    const auto before = base.engine->get<GameSystem>()->players[0].stats;
+    RunConfig config = plain;
+    config.loadout_armor = "brave_core";
+    config.loadout_chip = "wisdom_chip";
+    auto run = start_run(data, config, true);
+    until_started(run);
+    auto& engine = *run.engine;
+    auto* sys = engine.get<GameSystem>();
+    auto& player = sys->players[0];
+    const auto* core = player.device(player.main_slot[0]);
+    const auto* chip = player.device(player.power_pocket[0]);
+    check(core && core->type == 1 && core->record == 0, "the loadout's Brave Core alpha in MAINSLOT");
+    check(chip && chip->type == 3 && chip->record == 0, "the loadout's Wisdom Chip alpha in the weapon pocket");
+    check(player.stats.mamori > before.mamori, "the core raises DEF (" + std::to_string(before.mamori) + " > " + std::to_string(player.stats.mamori) + ")");
+    check(player.stats.kashikosa > before.kashikosa, "the chip raises INT");
+    check(run.director->build_lines(engine).size() >= 4, "the build page lists the gear");
+    // The run log's header carries the loadout, the meta state and the Guardian keys (SURVIVAL.md 13).
+    const std::string log = run.director->log_text();
+    check(log.find("\nloadout brave_core wisdom_chip\n") != std::string::npos, "the run log's header names the loadout");
+    check(log.find("\nmeta plug_lab 0 0 0 0 0 0 0 0 0 0 0 gear_open -\n") != std::string::npos, "the run log's header names the meta state");
+    check(log.find("\nguardians 1 guardian_set - - - elite - guardian_hp 6 finale_hp 14\n") != std::string::npos, "the run log's header names the Guardian keys");
+    check(log.find("loadout none") == std::string::npos, "no fixed 'loadout none' in the header");
+    std::cout << "  gear: DEF " << before.mamori << " -> " << player.stats.mamori << ", INT " << before.kashikosa << " -> " << player.stats.kashikosa << '\n';
+    // Gear names in the offers: the core's next grade waits for run level 22.
+    const auto beta = Offer{OfferKind::core, gear_index("brave_core")};
+    check(run.director->offer_text(engine, beta) == "Brave Core β", "the core's next grade by its own name: " + run.director->offer_text(engine, beta));
+    check(run.director->offer_text(engine, Offer{OfferKind::board, gear_index("armor_board")}) == "Armor Board α", "a board by its own name");
+    // Every SQ_TECUP of the run (skill ups, train offers, the chips' ¶ Data
+    // power-ups) counts in the rules' panel gap: a second panel in the same
+    // frame is left out.
+    auto& rules = *run.rules;
+    rules.last_panel_frame = -1;
+    const int shown = rules.tally.panels, skipped = rules.tally.panels_skipped;
+    const bool first = rules.show_panel(engine, 0, player.digimon);
+    const bool second = rules.show_panel(engine, 0, player.digimon);
+    check(first && !second, "a second SQ_TECUP inside the panel gap is left out");
+    check(rules.tally.panels == shown + 1 && rules.tally.panels_skipped == skipped + 1, "the panel gap's tally counts both");
+    check(rules.last_panel_frame == std::int64_t(engine.frame()), "the panel gap starts at the shown panel");
+    // The Drain Ram's run cap (4.8): HPDRAIN gives at most 2 % of MaxHP a second.
+    rules.drain_second = {-1, -1, -1, -1};
+    const int drain_cap = std::max(1, int(std::lround(double(player.max_hp) * double(rules.damage.drain_cap))));
+    check(rules.damage.drain_cap > 0.019f && rules.damage.drain_cap < 0.021f, "the Drain Ram's cap is 2 % of MaxHP a second");
+    const int small = rules.drain(engine, 0, 1);
+    const int big = rules.drain(engine, 0, drain_cap * 3);
+    const int after_cap = rules.drain(engine, 0, 5);
+    check(small == 1 && big == drain_cap - 1 && after_cap == 0,
+          "HPDRAIN stops at the second's cap (" + std::to_string(small) + ", " + std::to_string(big) + ", " + std::to_string(after_cap) + " of " + std::to_string(drain_cap) + ")");
+    rules.drain_second[0] = -1; // (a new second)
+    check(rules.drain(engine, 0, drain_cap) == drain_cap, "a new second gives the cap again");
+    std::cout << "  gear: Drain Ram cap " << drain_cap << " HP a second (MaxHP " << player.max_hp << ")\n";
+}
+
+// Round O1b lane E: the Guardians' plan (4.4), the gear table (7, the keys of
+// the lane contract) and the gear offers (4.6).
+void guardians() {
+    for (const auto form : kRookies) check(playable_form(form), "a Rookie plays: " + std::string(form));
+    check(!playable_form("p_wargrey"), "a Mega is no O1b start");
+    std::map<std::string, int> seen;
+    for (std::uint32_t seed = 1; seed <= 200; ++seed) {
+        const auto plan = draw_guardians(seed);
+        check(plan == draw_guardians(seed), "one seed, one plan");
+        for (int phase = 1; phase <= 3; ++phase) {
+            const auto* row = guardian_row(plan[std::size_t(phase - 1)]);
+            check(row && row->phase == phase, "phase " + std::to_string(phase) + "'s Guardian is of its pair");
+            ++seen[plan[std::size_t(phase - 1)]];
+        }
+        check(plan[3] == "e_ldknight", "the finale is LordKnightmon");
+    }
+    for (const auto& row : guardian_table()) {
+        check(!family_row(row.family), std::string("a Guardian is no regular family: ") + row.family);
+        check(family_row(row.elite) != nullptr, std::string("its elite is a regular family: ") + row.elite);
+        check(row.damage > 0.0f && row.damage <= 1.0f, std::string("its damage factor: ") + row.family);
+        if (row.phase <= 3) check(seen[row.family] >= 60, std::string("both of a pair come (200 seeds): ") + row.family);
+    }
+    const auto forced = draw_guardians(7, {"e_mammos", "", "e_tonogeko"});
+    check(forced[0] == "e_mammos" && forced[2] == "e_tonogeko" && guardian_row(forced[1])->phase == 2, "forced Guardians (the spike's key)");
+    // The gear keys of the lane contract (docs/ROUND_O1B_E_NOTES.md).
+    for (const char* key : {"brave_core", "armor_board", "fire_board", "ice_board", "bolt_board", "dark_board", "wisdom_chip", "spirit_chip",
+                            "speed_chip", "pwr_medal", "drain_ram"})
+        check(gear_index(key) >= 0, std::string("gear key ") + key);
+    check(gear_index("nothing") < 0, "an unknown gear key");
+    check(!gear_table()[std::size_t(gear_index("drain_ram"))].start, "the Drain Ram waits for its record (Blossom Data)");
+    // Gear lines join the offers by their weight; a window is never empty.
+    OfferState state;
+    state.groups = {true, true, true};
+    state.gear = {{OfferKind::core, gear_index("brave_core")}, {OfferKind::board, gear_index("armor_board")}, {OfferKind::chip, gear_index("wisdom_chip")}};
+    const auto eligible = eligible_offers(state);
+    check(std::count_if(eligible.begin(), eligible.end(), [](const Offer& o) { return o.kind == OfferKind::core || o.kind == OfferKind::board || o.kind == OfferKind::chip; }) == 3,
+          "the gear offers are eligible");
+    std::uint64_t random = 99;
+    int gear_lines = 0, windows = 0;
+    for (int n = 0; n < 2000; ++n) {
+        state.drawn = 10;
+        const auto drawn = draw_offers(state, random);
+        check(drawn.size() == 3, "three lines");
+        ++windows;
+        for (const auto& o : drawn) gear_lines += o.kind == OfferKind::core || o.kind == OfferKind::board || o.kind == OfferKind::chip ? 1 : 0;
+    }
+    std::cout << "  guardians: gear in " << gear_lines << " lines of " << windows << " windows\n";
+    check(gear_lines > windows / 4 && gear_lines < windows * 2, "gear takes about its 30 % weight");
+    check(offer_priority({OfferKind::core, 0}) < offer_priority({OfferKind::plug, 2}), "the priority bot takes gear before plugs");
+    // defeated_by (the O1b integration: lane D's "Welcome back" joke): the
+    // last damaging hit's family, only once the run ended in a defeat.
+    {
+        Engine run{dw4::MountedResources{}};
+        OverflowDirector director(RunConfig{});
+        HitTaken hit;
+        hit.shooter = "e_mecha1";
+        hit.damage = 10;
+        hit.max_hp = 100;
+        director.player_hit(run, hit);
+        hit.shooter = "e_geko";
+        director.player_hit(run, hit);
+        HitTaken missed;
+        missed.shooter = "e_torta";
+        missed.missed = true;
+        director.player_hit(run, missed);
+        check(director.defeated_by().empty(), "defeated_by is empty while the run goes on");
+        director.run_end(run, dw4::engine::overflow::RunEnd{EndReason::player_defeated, {}});
+        check(director.outcome() == Outcome::defeated && director.defeated_by() == "e_geko", "defeated_by names the last damaging hit's family");
+        OverflowDirector retired(RunConfig{});
+        retired.player_hit(run, hit);
+        retired.run_end(run, dw4::engine::overflow::RunEnd{EndReason::stage_exit, "stagml11"});
+        check(retired.outcome() == Outcome::retired && retired.defeated_by().empty(), "no defeated_by for a run that did not end in a defeat");
+    }
+}
 
 int main(int argc, char** argv) {
     const std::string part = argc > 1 ? argv[1] : "offers";
@@ -758,8 +1126,10 @@ int main(int argc, char** argv) {
         if (const char* env = std::getenv("DW4_TEST_DATA")) data = env;
     try {
         if (part == "offers") offers();
+        else if (part == "guardians") guardians();
         else if (part == "rng") rng();
-        else if (part == "spawn" || part == "gap" || part == "human" || part == "poison" || part == "balance" || part == "report") {
+        else if (part == "spawn" || part == "gap" || part == "human" || part == "poison" || part == "balance" || part == "report" ||
+                 part == "gear" || part == "finale") {
             if (data.empty() || !std::filesystem::exists(data)) {
                 std::cout << "overflow " << part << ": skipped (no game data: DW4_TEST_DATA)\n";
                 return 0;
@@ -768,6 +1138,8 @@ int main(int argc, char** argv) {
             else if (part == "gap") gap(data);
             else if (part == "human") human(data);
             else if (part == "poison") poison(data);
+            else if (part == "gear") gear(data);
+            else if (part == "finale") finale(data);
             else balance(data, part == "report");
         } else {
             std::cerr << "unknown part " << part << '\n';

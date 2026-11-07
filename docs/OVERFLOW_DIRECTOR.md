@@ -136,7 +136,7 @@ ENDED": time, level, form, defeats and the top five families, the damage of
 each ability, the highest hit taken, the weapon) close with A.
 
 **Defeat (4.8).** The player hit rule reports 0 HP; the knock-down plays, two
-seconds later the original Game Over picture (i_fadewn01 SQ_GAMEOVER) and
+seconds later the original Game Over picture (i_fadewn01 GENERATE SQ_GAMEOVER, a fade to black, as the stage scripts' game over) and
 QS_DONOT, then the results. Poison never ends a run: its ticks go through the
 run's damage-taken rule, at most five of them and 10 % of MaxHP a poisoning,
 and a tick never takes the last HP (SURVIVAL_O1A.md 3, the review round), so
@@ -936,3 +936,40 @@ before 10:00: 4 of 60 (seeds 1-20, 101-120, 201-220; before the round
   into main a475b98 without conflicts.
 - **Fixed in the check**: the pause screen said "Forge N of 5"; it says the
   form's Forge families now (the weapon table's, as the offers).
+
+## 12. Round O1b lane E (content)
+
+Branch `feat-o1b-content`; everything as built, the spike per Guardian, the
+measurements before and after and what is left: docs/ROUND_O1B_E_NOTES.md.
+In short: the Guardians of phases 1-3 and LordKnightmon's finale under the
+quest timer (`guardians.cpp`; the timer's 0:00 is `Outcome::time_up`),
+Guilmon and Dorumon, every TECH1-6 of the four Rookies, Awakening, the gear
+of 7 (`gear.cpp`), Tortomon x 0.085, Bomb x 0.5, Mammothmon x 0.15, LordKnightmon x 14 HP;
+O1a's damage numbers stand (a stronger late contact was measured and reverted). The open points of 10.7, 11.5 and 11.6
+are answered in the notes' sections 5 and 6.
+
+The lane's finish (notes 12): the return gate, the Guardians' camera shake, the awakened Art's burst, Fang Thrust's
+pierce and reach, Crescent Draw's aim, ctest `overflow_finale`; the head measured over 20 seeds a form and bot. 11.6 is
+answered (kite Veemon 201-220: Tortomon x 0.085 22:19, x 0.10 22:54; x 0.085 stays). The Agumon levers (its Art's
+class factor, Bomb, Cutter) do not shorten the newcomer's runs; its Pwr Up does (DW4's 30-54 s outlast the 15 s
+cooldown), but every shorter uptime lets the late hits pass 35 % of MaxHP: nothing shipped. On the head all four
+Rookies' human runs last 21-22.5 minutes (14.2: 14-18) and Agumon's and Guilmon's kite runs always clear: the next
+balance round redoes the late curve for every form.
+
+## 13. The integration of round O1b (branch `int-o1b`)
+
+Lanes E, D and F merged in that order, then lane F's glue commit (docs/ROUND_O1B_INT_NOTES.md). What the
+integration changed on the director's side:
+
+- `OverflowDirector::defeated_by()`: the last damaging hit's family (`HitTaken::shooter`) once the run ended in a
+  defeat (empty otherwise); the summary gains `defeated_by FAMILY` (`-`). The driver's `RunStatus` and the host's
+  `RunOutcome` carry it to the lobby's "Welcome back" (SURVIVAL.md 3.4: the Gekomon joke). Nothing else reads it:
+  the run's draws and its run hash are unchanged.
+- The driver's screen data reads `finale()`, `finale_left_steps()` and `time_up()` directly (the O1a stand-in and the
+  lanes' requires-guards are gone); the results' meta lines are added once, by `fill_meta_screen` (D's guarded copy
+  added them a second time after the glue commit). The results gain "Bits N" (the run's bits as the meta file got
+  them); the HUD shows the clear banner for 4 s after LordKnightmon falls, and the build row's gear glyphs come from
+  the build page's "Core: / Board:" and "Chips:" lines.
+- T6 on the integrated build, seed 1, kite bot, offers=priority: the run hashes of lane E's head measurement for all
+  four Rookies (Agumon 52e34d6ed1cbaebd twice, Veemon f8ea436b118dbfdf, Guilmon 12b363fa1e29d593, Dorumon
+  c47b55c29e20d031), so lane E's 20-seed tables (ROUND_O1B_E_NOTES.md 12.2) stand for the integrated build.

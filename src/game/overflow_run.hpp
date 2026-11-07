@@ -72,6 +72,7 @@ struct RunStatus {
     std::string form_name; // "Agumon"
     int level = 1;
     double seconds = 0;    // the run clock
+    std::string defeated_by; // the family whose hit ended a defeated run ("" otherwise; the lobby's Gekomon joke)
 };
 
 // The system generator of the story (13.2): saved when made, put back when
