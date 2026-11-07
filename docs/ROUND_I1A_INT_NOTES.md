@@ -23,24 +23,43 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
 | 8 | CLIENT W7d (contract web 16:40): while the pacer runs a backlog at once, pads for ticks already sealed go 32 to an INPUT (2,761 single frames after a 45 s cut broke the relay's frame budget 400/s, burst 2,000: CLOSE abuse); session test `long_cut_resume_pads` (counter-proof `build/int/sess_cp_w7d.log`: 2761 frames for 2761 pads) | 2a43fa15 |
 | 9 | HARNESS W27 (contract web 17:45): the lone defeated host held START (`giveup`), which pauses the original game over (offline too); measured with `dw4_world_probe homeover` cases 14-19 (`build/int/meas/`): stag0101 solo defeat -> stagML11 at +546 (online and offline, also after a HOME took the living partner), with START held no stage change in 6,000 frames. a.script idles instead; expectations unchanged | 91cecbbd |
 | 10 | HARNESS / RELAY log W29 (contract web 17:40): the relay's `instance_start` names the instance's session context; FakeClient `--context HEX` reports it instead of the stand-in's; the harness passes the host's to the fake guests (the relay matches arrivals only by context, 19.7.2) | 8e789072 |
+| 11 | HARNESS W1 / W24: the own-story card check accepts the keeper's rebased own story (flag 503 derived from COUNTER 7 etc., StoryMerge.Rebase): the card carries the session's own confirmed story since the client review fix 79aaf163 | 791fbe6b |
+| 12 | CLIENT W6 / W7b: a sealed stretch whose events carry LEAD_FROM within it (JOIN_REQ home, orphan JOIN_AT: the relay seals J alone) runs without the pacer's full playout buffer; W6's guest froze at J for the rest of the run. Session test `solo_leader_home` + the fake hub's JOIN_REQ home (counter-proof `build/int/sess_cp_w6.log`) | 7d6ad52a |
+| 13 | CLIENT / HARNESS W7e: `DW4_ONLINE_TEST_CUT_AT_PARK=SECONDS` (DEV builds; on the online env list) cuts the link at the member's first park with another member and holds the reconnect; W7e uses it instead of the timed proxy cut (which missed the park: the route stalled, the cut hit a sealed field), a idles at the entrance until b joined | 8b3c332a |
+| 14 | HARNESS W9: the online script's `depart STAGE [POINT]` (DEV builds only, once, only alone in the stage group) posts an exit's departure records; W9's b departs into stagML02 point 1 from stag0101 after a went into dng101b1 (the Fortress walk to staggf03's math00 killed every test character) | 72f7b90e |
+| 15 | W27 corrected (1ce57d09 over 91cecbbd): the game over's message waits for A (funcOneMessage for player 0), START is irrelevant; probe cases 18-21 (`build/int/meas/ho_c18..21.err`): START alone, nothing: no stage change in 6,000 frames; START with A every 40 frames: stagML11 at 1766. W27's host uses `talk` (A now and then without a player) | 1ce57d09 |
+| 16 | RELAY W32: `AreaTable.InScope` (stag0205's plateau is in Death Valley's scope, 19.30.2, as AreaTableTests pins); the relay's area_escape check uses it. Test `The_Fortress_and_stag0205s_plateau_are_in_Death_Valleys_scope` (counter-proof `build/int/cp_w32.log`) | 4b6bfc2e |
+| 17 | HARNESS: the disk action walks the L panel by its cursor (`PanelManager::disk_under_cursor`): a k10's 8-row panel never reached the Gate Disk with the counted walk (contract web 16:30) | ba4a2f8e |
+| 18 | HARNESS W30b / W32: the ways through Dry Land and the Fortress by `depart` with the exits' own targets; W30b no longer `requires: dry_land_walk`; W32 walks the design's whole way to stag0205's plateau and back | 7354806d |
 
 ## Test results
 
 | What | Result | Log |
 | --- | --- | --- |
 | ctest (Release DEV=OFF, before 2a43fa15) | 57/57 | `build/int/ctest2.log` |
-| online_session tests after 2a43fa15 | 340 checks | `build/int/sess2.log` |
-| server unit (after 8e789072) | 466/466 | `build/int/unit3.log` |
-| server integration (before 8d439bbe) | 140 passed, 1 skipped (the certificate-store test) | `build/int/it1.log` |
+| online_session tests (7d6ad52a) | 346 checks | `build/int/sess4.log` |
+| online_script tests (7354806d) | 292 checks (every scenario script loads) | - |
+| server unit (4b6bfc2e) | 467/467 | `build/int/unit4.log` |
+| server integration (4b6bfc2e, mysqld 3641) | 139 passed, 2 skipped; the skipped Python spike passes with DW4ONLINE_PYTHON (EndToEnd 3 passed, 1 skipped: the certificate-store test, opt-in) | `build/int/it2.log`, `build/int/it2_e2e.log` |
+| load gate in-process (FakeClient Release `loadgate --seconds 30`, busy machine) | every cell valid; hold_all p99 13.5-19.2 us, p99.99 0.50-1.19 ms, max 3.6-24.2 ms | `build/int/gate/loadgate49_r1.{json,log}` |
+| det.sh (DEV=OFF copy of 8b3c332a, `build/int/off/dw4_int_off_a.exe`) | run1 and run2 4004f056 / audio 396cb219 | `build/int/off/det_a.log`, `work/dref/checks/det/det_int_i1a_a` |
+| r25c (same exe, `segments.sh r25c 4`) | 10/10 reached, 1,748,011 frames, every save the same story | `build/int/off/r25c_a.log`, run `seg_r25c_int_i1a_a` |
+| save state suite (same exe, own copy `build/int/st`) | 17/17 identical after loading | `build/int/st/st_a.log` |
+
+### Scenario rounds
+
+- r1 (exe b = 2a43fa15, `build/int/scen_r1.log`, run folder `tools/online_test/.work/run_20261107_085349`): W1 and W24
+  failed only on the own-story card check (both clients home, the rest held) -> fix 11. W27 (idle host) stayed defeated in
+  stag0101 for 1,000 ticks -> fix 15. The round was stopped there (own PIDs, mysqld SHUTDOWN "Shutdown complete") to rerun
+  with the later fixes.
+- r2a (exe e = 7354806d): W1 W24 W27 W29 W30b W32 W6 W7b W7d W7e W9, `build/int/scen_r2a.log` (running).
 
 ## Left
 
-- Scenario round r1 (W1, W24, W7b, W7d, W27, W29) running: `build/int/scen_r1.log`.
-- The rest of the W set: W3, W4, W4b, W5, W6, W7, W7c, W7e, W8, W9, W11, W12, W18, W19, W22, W25, W26, W28, W30, W30x,
-  W30b, W32, W1x; the ported regression (`run.py` without names runs every game scenario; `--fake` the fake ones).
-- Open analyses: W6 (b too slow to matz00 before a's gate disc), W7e (the host "taken out of the group" at the barrier),
-  W9 / W32 / W30b (the explore bot falls in the Fortress and Dry Land: a form without it).
-- ctest again, integration and load tests again, det.sh twice, r25c 10/10, save state suite 17/17 on the final tree.
+- Round r2a's results; then r2b: W1x W3 W4 W4b W5 W7 W7c W8 W11 W12 W18 W19 W22 W25 W26 W28 W30 W30x; then the ported
+  regression (the other game scenarios, `--fake`, `ui`).
+- At the end on the final tree: ctest, det.sh, r25c, the save state suite again (C++ changed after 8b3c332a: the online
+  script's depart and disk actions, the probe).
 
 ## How to run
 
