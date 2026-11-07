@@ -771,6 +771,37 @@ def own_story_revisions(stack, connection, account_id):
     return found
 
 
+def rebased_story(story, difficulty):
+    """A stored story (as stored_story gives it) as the relay's keeper hands it out (StoryMerge.Rebase, round G-core 8.8): the
+    phase, the working set and the keys from the copies of `difficulty`, and flag 503 when the story shows the training was
+    played (StoryMerge.PlayedTraining). The online card carries the session's own confirmed story from STORY_ACK (client
+    review fix 79aaf163), so a stored row whose 503 the rebase derives is the same own story as a card box that holds it."""
+    sets = json.load(open(STORY_SETS, encoding="utf-8"))
+    flags, folder = bytearray(story[:1024]), bytearray(story[1024:1036])
+    counters = struct.unpack(">16i", story[1036:1100])
+    t = sets["training"]["flag"]
+    phase, copies = sets["phase"], sets["phaseCopies"]
+    trained = bool(flags[t]) or counters[7] > 0
+    trained = trained or any(flags[phase[i]] or any(flags[copies[d][i]] for d in range(3)) for i in range(2, len(phase)))
+    trained = trained or any(folder[k] or any(flags[sets["keyCopies"][d] + k] for d in range(3)) for k in range(sets["keys"]))
+    for f in sets["training"]["proof"]:
+        if flags[f]:
+            trained = True
+        for g in sets["working"]:
+            if g["first"] <= f < g["first"] + g["count"] and any(flags[g["copies"][d] + f - g["first"]] for d in range(3)):
+                trained = True
+    for i, f in enumerate(phase):
+        flags[f] = 1 if flags[copies[difficulty][i]] else 0
+    for g in sets["working"]:
+        for j in range(g["count"]):
+            flags[g["first"] + j] = 1 if flags[g["copies"][difficulty] + j] else 0
+    for k in range(12):
+        folder[k] = 1 if k < sets["keys"] and flags[sets["keyCopies"][difficulty] + k] else 0
+    if trained:
+        flags[t] = 1
+    return bytes(flags) + bytes(folder) + story[1036:1100]
+
+
 def own_story_checks(stack, connection, sc, out, accounts, seeded, problems, notes):
     """Round G-core (G3, G4, G10): a guest's online card, its backups and its local card hold its own story, never the
     owner's; its own online_story row keeps its seeded revision."""
@@ -789,10 +820,15 @@ def own_story_checks(stack, connection, sc, out, accounts, seeded, problems, not
         if name in seeded and earlier.get(bytes(1100)) == 0:
             del earlier[bytes(1100)]  # (a seeded account started the run with its story: the empty one was never its own here)
         boxes = 0
+        rebased = {rebased_story(own, d) for d in range(3)} - {own}
         for path in files:
             for copy, box, story in card_boxes_story(path):
                 boxes += 1
                 if story == own:
+                    continue
+                if story in rebased:
+                    notes.append("%s: %s copy 0x%x box %d holds its own story as the keeper rebased it (flag 503 derived)" % (
+                        name, os.path.basename(path), copy, box))
                     continue
                 if story in earlier:
                     notes.append("%s: %s copy 0x%x box %d holds an earlier revision (%d) of its own story" % (
