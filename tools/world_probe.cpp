@@ -1198,6 +1198,28 @@ void guestnew_probe() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// mats STAGE: the stage's mat boxes after a direct start (the online
+// scenarios' walks to a mat, e.g. stagML11's return mat mate02 for W30b)
+// ---------------------------------------------------------------------------
+void mats_probe(const std::string& stage) {
+    std::optional<Engine> holder;
+    new_engine(holder);
+    auto& engine = *holder;
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    sys->players[0].joined = true;
+    sys->players[0].digimon = "p_agumon";
+    engine.request_stage(stage);
+    for (int i = 0; i < 3000 && !(engine.stage_name() == stage && engine.membership_safe()); ++i) step(engine, pads_at(engine.frame()));
+    for (int i = 0; i < 120; ++i) step(engine, pads_at(engine.frame()));
+    std::printf("mats of %s (frame %llu):\n", engine.stage_name().c_str(), static_cast<unsigned long long>(engine.frame()));
+    if (const auto* mats = engine.get<MatCtrlManager>())
+        for (const auto& box : mats->mat_boxes())
+            std::printf("  %-8s x %.0f..%.0f  y %.0f..%.0f  z %.0f..%.0f\n", box.name.c_str(), box.min.x, box.max.x, box.min.y, box.max.y, box.min.z,
+                        box.max.z);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1221,6 +1243,7 @@ int main(int argc, char** argv) {
         else if (what == "redirect") redirect_probe();
         else if (what == "homeover") homeover_probe(argc > 3 ? std::atoi(argv[3]) : -1);
         else if (what == "guestnew") guestnew_probe();
+        else if (what == "mats" && argc > 3) mats_probe(argv[3]);
         else {
             std::fprintf(stderr, "unknown probe %s\n", what.c_str());
             return 2;

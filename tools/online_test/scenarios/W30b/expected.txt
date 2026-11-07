@@ -1,10 +1,12 @@
-# W30b (19.24, 19.30.3): b's return mat (the gate disc's GATESTAGE) leads to dng205b2, set by b's own first trip.
-b: online-script: step .* log: b home before a hosts
+# W30b (19.24, 19.30.3): b's arrivals from home at dng205b2 (the return mat's departure): a NEW of its own while a's
+# instance never was there, a join once a is there.
+a: online-script: step .* log: a hosts Dry Land
 b: online-script: step .* log: b alone on dng205b2
+b: online-script: step .* log: b home again
 a: online-script: step .* log: a in dng205b2
 b: online-script: step .* log: b joined a on dng205b2
 relay: instance_start .*stage=stag0201
-relay: instance_start .*stage=stag0201
 relay: instance_start .*stage=dng205b2
+relay: instance_join .*how=join
 !a: online-script: FAIL
 !b: online-script: FAIL

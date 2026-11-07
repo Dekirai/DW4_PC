@@ -1,22 +1,16 @@
-# W30b, b (k10). First, with nothing running, its own trip to dng205b2 (the gate to Dry Land, then the depart action into
-# dng205b2 point 0, dng205b1's matz02 target), where its gate disc takes it home and sets its return mat (GATESTAGE) to
-# dng205b2. Then, while a's Dry Land instance has never been at dng205b2, the lobby's return mat puts b there: a NEW of
-# its own (I1a; I1b shows a's row greyed "Story not here yet"); home again, and after a reached dng205b2 the next arrival
-# there joins a without leaving a's story.
+# W30b, b (k10). The lobby's return mat (stagML11 mate02) takes a player to the stage of his last Security Gate
+# (dng205b2 point 2, 19.30.1 fact 4): its departure is posted by the depart action (the return mat needs the gate, which
+# only dng205b2's GENE-03 wave powers). While a's Dry Land instance has never been at dng205b2, b's arrival there is a NEW
+# of its own (I1a; I1b shows a's row greyed "Story not here yet"); home again by its gate disc, and after a reached
+# dng205b2 the next arrival there joins a without leaving a's story.
 campaign until stage=stagml11,control
-idle until epoch>=@40
-explore mate00 until onme:mate00
-gate mate00 1 until stage=stag0201,control
-depart dng205b2 0 until stage=dng205b2,control
-log b set its return mat
-disk 8 until stage=stagml11,control fail epoch>=@350
-log b home before a hosts
-idle until epoch>=@480
-explore mate02 yes until stage=dng205b2,control
+idle until epoch>=@250
+depart dng205b2 2 until stage=dng205b2,control
 log b alone on dng205b2
 idle until frames>=300 fail present>=2
 disk 8 until stage=stagml11,control
-idle until epoch>=@700
-explore mate02 yes until stage=dng205b2,control
-wander 0 0 30 until present=2,sealed>=600 fail epoch>=@1000
+log b home again
+idle until epoch>=@520
+depart dng205b2 2 until stage=dng205b2,control
+wander 0 0 30 until present=2,sealed>=600 fail epoch>=@900
 log b joined a on dng205b2

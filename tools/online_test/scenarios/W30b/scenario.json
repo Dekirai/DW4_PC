@@ -1,10 +1,10 @@
 {
-  "desc": "the visited rule (I1a part): b, its return mat set to dng205b2 by its own earlier trip, arrives there while a's Dry Land instance never was: a NEW of its own; later it joins a there (the ways into dng205b1 and dng205b2 are the development build's depart action with the exits' own targets: the explore bot's characters fell in stag0201-0202)",
+  "desc": "the visited rule (I1a part): b arrives from home at dng205b2 (the lobby's return mat's departure) while a's Dry Land instance never was there: a NEW of its own; after a reached dng205b2, b's next arrival there joins a (the return mat's departure and a's ways on are the development build's depart action: the explore bot's characters fell in stag0201-0202, and the return mat needs dng205b2's Security Gate, which only an enemy wave powers)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
   "frames": 60000,
-  "timeout": 1500,
+  "timeout": 1200,
   "min_shared_ticks": 0,
   "clients": [
     {
