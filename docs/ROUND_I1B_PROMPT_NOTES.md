@@ -64,14 +64,22 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- The scenario runs (status below, "Runs"); the I1a W set again with autochoice first (the harness's default).
-- The integration suite again after the LoadGate fix on mysqld 3651 (the harness uses the same port: never both at once).
-- det.sh with a DEV=OFF copy (online off must stay 4004f056 / 396cb219; the engine change is a read-only accessor and two
-  read-only fields).
+- W30c again after its b.script fix (8aee0bfd); the I1a W set again with autochoice first (the harness's default): run r3
+  below.
 
 ## Runs
 
-- r1 (exe a = d154e706, `build/i1bp/scen_r1.log`): W1 W2 W2b W11b (running).
+- r1 (exe a = d154e706, `build/i1bp/scen_r1.log`): W1, W11b failed on their expectations' wording (fixed in d57f06c5,
+  b15119ec); W2, W2b broke on the harness's mysqld (the run was cut off), no finding.
+- At b15119ec (exe b = the DEV=ON game of fe468a54; b15119ec changed only expected files): ctest 57/57 (`presence`, a
+  timing test of the waits, failed once under the machine's load with the scenarios running and passed alone), server unit
+  478/478, integration 141 passed / 3 skipped (mysqld 3651), det.sh with the DEV=OFF copy
+  `build/i1bp/off/dw4_i1bp_off_b15119ec.exe`: 4004f056 / 396cb219 twice (online off unchanged).
+- r2 (exe b, `build/i1bp/scen_r2.log`): **W1, W11b, W2, W2b, W30b passed**; W30c: the first prompt as expected (c's row
+  with Here (1) first, a's row second, the cursor on c's, B), then b stood on the mat after B and the gate's menu never
+  opened again (the mat's script opens it only on a new step onto it): b.script walks back to its start first (8aee0bfd).
+- r3 (exe b, `build/i1bp/scen_r3.log`): W30c, W2 (now with its picture), then the I1a W set W3 W4 W4b W4bx W5 W6 W7 W7b W7c
+  W7d W7e W8 W9 W11 W12 W18 W19 W22 W24-W29 W30 W32 and the counter-proofs W1x W30x (running).
 
 ## How to run the tests
 
