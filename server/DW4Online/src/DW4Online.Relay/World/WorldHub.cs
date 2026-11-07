@@ -346,6 +346,7 @@ public sealed partial class RoomHub
     {
         if (!w.Seats.Remove(m, out var seat)) return;
         if (m.World == w) m.World = null;
+        GoSeatFreed(w, m, now);
         History?.Invoke(new HistoryLeft(w, m.AccountId, seat.SinceUtc, reason, UtcNow));
         Note("instance_leave", null, ("wid", w.Wid), ("account", m.AccountId), ("member", m.Id), ("reason", reason));
         foreach (var x in w.Members) x.Peer?.Send(Notice(x, WorldNoticeKind.Left, m, 0, ""));
@@ -389,6 +390,8 @@ public sealed partial class RoomHub
         Note("instance_end", null, ("wid", w.Wid), ("reason", EndReasons.Text(reason)));
         History?.Invoke(new HistoryEnd(w, EndReasons.Text(reason), w.PeakPlayers, UtcNow));
         foreach (var x in w.Members) x.Peer?.Send(Notice(x, WorldNoticeKind.Ended, w.Host, (uint)reason, ""));
+        // (Round I1b: the offers close, waiting requests end; HOME and the end's redirect win over a stamped GO, 19.30.8.)
+        UpdateOffers(w, now);
         var ahead = (uint)Math.Max(0, _world.EndNoticeTicks);
         foreach (var g in w.Groups.ToList())
             if (!g.Ended) SendHome(g, g.PresentMask, HomeReason.Ended, now, ahead);
@@ -592,6 +595,8 @@ public sealed partial class RoomHub
             if (w.StartingUntil != 0 && (now >= w.StartingUntil || w.Groups.Any(g => g.Joinable))) w.StartingUntil = 0;
             var players = Math.Min(w.Seats.Count, Wire.MaxSlots);
             w.SeenWithPlayers[players] = now;
+            // Round I1b: the offers follow their entrants, late notices, the requests' waits (once a pass).
+            if (w.Offers.Count > 0 || w.Members.Any(x => x.Go is not null)) UpdateOffers(w, now);
             foreach (var g in w.Groups.ToList())
                 if (g.PendingHome is not null)
                 {

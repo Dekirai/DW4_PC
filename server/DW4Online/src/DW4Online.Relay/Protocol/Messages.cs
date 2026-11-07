@@ -44,6 +44,28 @@ public sealed record TickEvent(byte Type, byte[] Payload)
     /// <summary>Protocol 49: exactly the slots of <paramref name="mask"/> take the home departure (19.6.5).</summary>
     public static TickEvent Home(byte mask, HomeReason reason) => new(Ev.Home, [(byte)(mask & Wire.SlotMask), (byte)reason]);
 
+    /// <summary>Protocol 49, round I1b (19.30.7): the slot goes along to <paramref name="stage"/> at <paramref name="point"/> (taken as named).
+    /// Applied like INTENT at the first membership-safe step; every GO of a step together; expires 300 ticks after its tick.</summary>
+    public static TickEvent Go(int slot, int point, string stage)
+    {
+        var w = new WireWriter(0);
+        w.U8((byte)slot).U8((byte)point).Str(stage);
+        return new TickEvent(Ev.Go, w.Payload());
+    }
+
+    /// <summary>GO's stage and point (null for other events).</summary>
+    public (string Stage, byte Point)? GoTarget
+    {
+        get
+        {
+            if (Type != Ev.Go || Payload.Length < 3) return null;
+            var r = new WireReader(Payload);
+            r.U8();
+            var point = r.U8();
+            return (StageNames.Read(ref r), point);
+        }
+    }
+
     /// <summary>HOME's slot mask (0 for other events).</summary>
     public byte HomeMask => Type == Ev.Home && Payload.Length > 0 ? Payload[0] : (byte)0;
 
@@ -53,8 +75,8 @@ public sealed record TickEvent(byte Type, byte[] Payload)
     /// <summary>An event's payload length is a u16.</summary>
     public const int MaxPayload = ushort.MaxValue;
 
-    /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY), or -1.</summary>
-    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay && Payload.Length > 0 ? Payload[0] : -1;
+    /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY, GO), or -1.</summary>
+    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay or Ev.Go && Payload.Length > 0 ? Payload[0] : -1;
 }
 
 /// <summary>
@@ -177,17 +199,20 @@ public sealed record LogMsg(uint Inst, uint Visit, uint FirstTick, Pad[] Pads)
 /// HEADING: a member confirmed an exit or the gate disc (one to two seconds before its barrier), with the session context
 /// hash its engine will arrive with (co-arrivals need the same context).
 /// </summary>
-public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong ContextHash)
+/// <summary>HEADING: inst | stage | point | context u64 | asked u8 (protocol 49, round I1b: the slots the exit port asked on the mat
+/// for this departure that stay; no go-along notice for them, SEAMLESS.md 19.30.5).</summary>
+public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong ContextHash, byte Asked = 0)
 {
     public static HeadingMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var m = new HeadingMsg(r.U32(), StageNames.Read(ref r), r.U8(), r.U64());
+        var m = new HeadingMsg(r.U32(), StageNames.Read(ref r), r.U8(), r.U64(), r.U8());
         r.End();
+        if ((m.Asked & ~Wire.SlotMask) != 0) throw new ProtocolException("asked mask beyond slot 3");
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.Heading).U32(Inst).Str(Stage).U8(Point).U64(ContextHash).Frame();
+    public byte[] Frame() => new WireWriter(Msg.Heading).U32(Inst).Str(Stage).U8(Point).U64(ContextHash).U8((byte)(Asked & Wire.SlotMask)).Frame();
 }
 
 /// <summary>BARRIER: after the barrier tick (the step that executed NEXTSTAGE); carry = the sender's own player carry. Protocol 49

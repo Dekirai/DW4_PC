@@ -42,6 +42,13 @@ public sealed class WorldHubOptions
     public int HostAwayNoticeSeconds { get; set; } = 5;
     /// <summary>A story keeper nobody plays on any more (its owner left the world, no instance runs on it) is dropped after this.</summary>
     public int KeeperIdleMinutes { get; set; } = 5;
+    /// <summary>Round I1b (19.30.5): a member who goes into the same dungeon again this soon after the offer that named him closed
+    /// reopens it silently (no notice, no closing line).</summary>
+    public int OfferReopenSeconds { get; set; } = 120;
+    /// <summary>Round I1b: how long a go-along notice is on screen (the party's *Follow* notice uses the same, 19.12).</summary>
+    public int AnswerNoticeSeconds { get; set; } = 20;
+    /// <summary>Round I1b (19.30.7): a go-along request waits this long for the target's floor (no limit while it is boss-locked).</summary>
+    public int GoAlongWaitSeconds { get; set; } = 60;
 
     public bool AdmitsData(ulong dataHash) =>
         DataHashes.Count == 0 || DataHashes.Any(h => ulong.TryParse(h, out var v) && v == dataHash);
@@ -132,6 +139,10 @@ public sealed class WorldInstance(uint wid)
     public bool InfoDirty { get; set; }
     /// <summary>The players of the last minute (achievements' play context): when the housekeeping last saw n seats taken.</summary>
     public long[] SeenWithPlayers { get; } = new long[Wire.MaxSlots + 1];
+    /// <summary>Round I1b (19.30.5): the go-along offers, open and recently closed (a re-entry within World:OfferReopenSeconds reopens
+    /// one); at most four open.</summary>
+    public List<GoOffer> Offers { get; } = [];
+    public ushort NextOfferId { get; set; } = 1;
 
     public bool HostAway => HostAwaySince != 0;
     public int Players => Seats.Count;

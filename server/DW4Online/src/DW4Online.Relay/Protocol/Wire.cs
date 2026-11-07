@@ -99,6 +99,8 @@ public static class Msg
     public const byte WorldNotice = 0x96;
     /// <summary>Round I1 (protocol 49): a member's name, level and relation, before its first mention to a receiver.</summary>
     public const byte MemberInfo = 0x97;
+    /// <summary>Round I1b (protocol 49, 19.30.5): a go-along offer for the receiver (open, changed, closed).</summary>
+    public const byte Offer = 0x9B;
 
     public static string Name(byte type) => type switch
     {
@@ -111,7 +113,7 @@ public static class Msg
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
         Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
-        MemberInfo => "MEMBER_INFO",
+        MemberInfo => "MEMBER_INFO", Offer => "OFFER",
         _ => "0x" + type.ToString("X2"),
     };
 }
@@ -132,7 +134,8 @@ public static class Ev
     /// <summary>Protocol 49 (19.6.5): slot mask u8, reason u8 (<see cref="HomeReason"/>): exactly the masked slots take the home
     /// departure, defeated or not (ForkKind::home). At a fork the mask is split by side.</summary>
     public const byte Home = 6;
-    /// <summary>Reserved for round I1b's GO (slot u8, point u8, stage str).</summary>
+    /// <summary>Round I1b's GO (slot u8, point u8, stage str, 19.30.7): applied like INTENT at the first membership-safe step, every GO
+    /// of a step together (ForkKind::go); expires 300 ticks after its tick on every engine. At a fork it follows its slot.</summary>
     public const byte Go = 7;
 }
 
@@ -265,7 +268,44 @@ public enum WorldNoticeKind : byte
     LagOver = 10,
     SharedProgress = 11,
     ServerRestart = 12,
+    /// <summary>Round I1b: a go-along request ended without a GO (argument: <see cref="GoRefusal"/>; text: the dungeon's stage).</summary>
     GoRefused = 13,
+}
+
+/// <summary>WORLD_NOTICE go refused's argument (round I1b, 19.30.6; i1b-contract.md "go 2026-11-07 16:15").</summary>
+public enum GoRefusal : uint
+{
+    /// <summary>The offer closed (the entrants left the dungeon) or is unknown: "Couldn't go along: Kim left Ancient Ruins."</summary>
+    Closed = 1,
+    /// <summary>"Couldn't go along: you were defeated."</summary>
+    Defeated = 2,
+    /// <summary>World:GoAlongWaitSeconds without a stamp (no boss fight): "Couldn't go along: Kim's floor stayed busy."</summary>
+    Busy = 3,
+    /// <summary>The sender's own stage group took a barrier into a dungeon or home (no text).</summary>
+    Moved = 4,
+    /// <summary>The instance ended (no text: the END's own notice).</summary>
+    Ended = 5,
+    /// <summary>Not offered, not allowed now, a second request: "Couldn't go along."</summary>
+    NotOffered = 6,
+}
+
+/// <summary>OFFER's op (round I1b).</summary>
+public enum OfferOp : byte
+{
+    Open = 1,
+    Changed = 2,
+    Closed = 3,
+}
+
+/// <summary>OFFER's close reason (round I1b): left (the last entrant left the dungeon), defeated (their game over), ended (the instance),
+/// gone (over for this receiver: it went along, entered a dungeon, left or was removed; no closing line).</summary>
+public enum OfferClose : byte
+{
+    None = 0,
+    Left = 1,
+    Defeated = 2,
+    Ended = 3,
+    Gone = 4,
 }
 
 /// <summary>JOIN_REQ kinds (protocol 49) for solo-led stage groups.</summary>
@@ -536,6 +576,9 @@ public sealed class WireWriter
         U32((uint)b.Length);
         return Bytes(b);
     }
+
+    /// <summary>The bytes written so far without the frame header (an event payload).</summary>
+    public byte[] Payload() => _buf.AsSpan(Wire.HeaderBytes, _len - Wire.HeaderBytes).ToArray();
 
     /// <summary>The finished frame with its header.</summary>
     public byte[] Frame()

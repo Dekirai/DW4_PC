@@ -124,6 +124,58 @@ public sealed record WorldNoticeMsg(WorldNoticeKind Kind, uint Member, string Na
     public byte[] Frame() => new WireWriter(Msg.WorldNotice).U8((byte)Kind).U32(Member).Str(Name).U32(Argument).Str(Text).Frame();
 }
 
+/// <summary>
+/// OFFER (server, protocol 49, round I1b, SEAMLESS.md 19.30.5): offer id u16 | op u8 | flags u8 | entrant count u8 + member u32 each (the
+/// first entrant first) | stage str (where the first entrant still in the dungeon is) | notice seconds u8 | close reason u8.
+/// </summary>
+public sealed record OfferMsg(ushort Id, OfferOp Op, byte Flags, IReadOnlyList<uint> Entrants, string Stage, byte NoticeSeconds, OfferClose Close)
+{
+    /// <summary>Show the notice now.</summary>
+    public const byte Notice = 1;
+    /// <summary>A late notice: it names where the entrants are now.</summary>
+    public const byte Late = 2;
+    /// <summary>Reserved for round I2's blocks (no notice naming a blocked entrant).</summary>
+    public const byte Unnamed = 4;
+    /// <summary>The receiver's own request waits.</summary>
+    public const byte Waiting = 8;
+    /// <summary>The receiver's GO is stamped.</summary>
+    public const byte Stamped = 16;
+    /// <summary>The target is boss-locked.</summary>
+    public const byte Boss = 32;
+    /// <summary>The receiver closed it with B (kept by the client).</summary>
+    public const byte ClosedByB = 64;
+    /// <summary>A silent reopen (a re-entry within World:OfferReopenSeconds).</summary>
+    public const byte Reopened = 128;
+
+    public static OfferMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var id = r.U16();
+        var op = (OfferOp)r.U8();
+        var flags = r.U8();
+        var n = r.U8();
+        if (id == 0) throw new ProtocolException("offer id 0");
+        if (op is not (OfferOp.Open or OfferOp.Changed or OfferOp.Closed)) throw new ProtocolException("unknown offer op");
+        if (n > Wire.MaxSlots) throw new ProtocolException("more than four entrants");
+        var entrants = new List<uint>(n);
+        for (var i = 0; i < n; ++i) entrants.Add(r.U32());
+        var stage = StageNames.Read(ref r, allowEmpty: true);
+        var seconds = r.U8();
+        var close = (OfferClose)r.U8();
+        r.End();
+        if (close > OfferClose.Gone) throw new ProtocolException("unknown offer close reason");
+        return new OfferMsg(id, op, flags, entrants, stage, seconds, close);
+    }
+
+    public byte[] Frame()
+    {
+        if (Entrants.Count > Wire.MaxSlots) throw new ArgumentException("more than four entrants");
+        var w = new WireWriter(Msg.Offer, 16 + Entrants.Count * 4).U16(Id).U8((byte)Op).U8(Flags).U8((byte)Entrants.Count);
+        foreach (var e in Entrants) w.U32(e);
+        return w.Str(Stage).U8(NoticeSeconds).U8((byte)Close).Frame();
+    }
+}
+
 /// <summary>MEMBER_INFO (server, protocol 49): member u32 | name str | level u16 | flags u8 (<see cref="Relation"/>): before a member's
 /// first mention to a receiver, and again when its flags change.</summary>
 public sealed record MemberInfoMsg(uint Member, string Name, ushort Level, byte Flags)
