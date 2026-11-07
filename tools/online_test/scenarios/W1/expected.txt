@@ -14,7 +14,7 @@ b: online-script: step .* log: b home by the gate disc
 b: online-script: step .* log: own story again at home
 a: online-script: step .* log: b joined a
 relay: instance_start .*stage=stag0101
-relay: plan .*purpose=gate.*stage=stag0101.*preselected=[1-9]
+relay: plan .*stage=stag0101.*purpose=gate.*preselected=[1-9]
 relay: choice .*choice=join
 relay: instance_join .*how=join
 relay: instance_leave .*reason=home
