@@ -186,7 +186,7 @@ private:
     int answer_at_ = -1000;
     int answers_ = 0;           // prompt answers given in this step
     // The disk action: the disk's row, the rows above it, its start.
-    int disk_line_ = -1, disk_ups_ = 0, disk_at_ = 0;
+    int disk_line_ = -1, disk_ups_ = 0, disk_at_ = 0, disk_dir_ = 1;
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
 };
 

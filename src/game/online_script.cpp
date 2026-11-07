@@ -691,8 +691,7 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         return out;
     }
     if (step.action == "disk") {
-        // A disk of the L panel (the campaign driver's start_disk): L, the
-        // cursor up to the first row, down to the disk's row, A, L.
+        // A disk of the L panel: L, the cursor walked to the disk, A.
         const auto* sys = engine.get<engine::GameSystem>();
         if (!sys) return out;
         const auto& slot = sys->players[std::size_t(facts.own_slot & 3)];
@@ -707,17 +706,34 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
             std::printf("online-script: disk %d in row %d of %d (frame %d)\n", record, line, rows, frame);
             if (line < 0) return out;
             disk_line_ = line;
-            disk_ups_ = std::max(rows - 1, 0);
+            disk_ups_ = -1; // (the record under the cursor at the last press: none yet)
+            disk_dir_ = 1;
             disk_at_ = frame;
         }
         const int t = frame - disk_at_;
-        const int downs_at = 4 + 2 * disk_ups_, a_at = downs_at + 2 * disk_line_ + 2;
+        // Round I1a's integration: the panel's cursor is read back
+        // (PanelManager::disk_under_cursor) instead of counted. Online a
+        // press on every other frame may fall into a frame without a step
+        // or merge with the next sample, and the counted walk of an 8-row
+        // panel (a k10 character's) never reached its Gate Disk ("disk 8 in
+        // row 6 of 8", again every 90 frames for minutes). One press every 8
+        // frames, A once the disk is under the cursor; a press that did not
+        // move the cursor turns the walk round (an end of the list, or a
+        // press lost: the next pass finds the disk from the other side).
+        const auto* panels = engine.get<engine::PanelManager>();
+        const auto under = panels ? panels->disk_under_cursor(facts.own_slot) : std::nullopt;
         if (t < 1) out.buttons = dw4::pad_button::l;
-        else if (t >= 4 && t < downs_at && t % 2 == 0) out.buttons = dw4::pad_button::up;
-        else if (t >= downs_at && t < downs_at + 2 * disk_line_ && t % 2 == 0) out.buttons = dw4::pad_button::down;
-        else if (t == a_at) out.buttons = dw4::pad_button::a;
-        else if (t == a_at + 24 && me->panel_open) out.buttons = dw4::pad_button::l;
-        else if (t > a_at + 90) disk_line_ = -1; // (again, if the step goes on)
+        else if (!me->panel_open || !under) {
+            if (t > 60) disk_line_ = -1; // (the panel did not open or closed: again)
+        } else if (*under == record) {
+            if (t % 8 == 0) out.buttons = dw4::pad_button::a;
+        } else if (t > 600) {
+            disk_line_ = -1; // (no way to the disk: L again, which closes the panel, and a new try after it)
+        } else if (t % 8 == 0) {
+            if (disk_ups_ == *under) disk_dir_ = -disk_dir_;
+            disk_ups_ = *under; // (the record under the cursor at the last press)
+            out.buttons = disk_dir_ > 0 ? dw4::pad_button::down : dw4::pad_button::up;
+        }
         return out;
     }
     if (step.action == "die") {
