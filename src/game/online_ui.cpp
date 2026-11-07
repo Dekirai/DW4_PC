@@ -474,7 +474,10 @@ void player_card(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive& l
     const auto focus = [&] {
         if (s.card_focus && !ImGui::IsWindowAppearing()) {
             ImGui::SetKeyboardFocusHere();
-            s.card_focus = false;
+            // (A pad's A on the row had the cursor shown already, a click
+            // hides it; a UI script's card opens it as the pad does.)
+            if (s.card_cursor) ImGui::SetNavCursorVisible(true);
+            s.card_focus = s.card_cursor = false;
         }
     };
     if (s.card_remove_asked) {

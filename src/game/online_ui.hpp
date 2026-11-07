@@ -89,6 +89,7 @@ struct OnlineUiState {
     std::uint32_t card_member = 0;
     bool card_remove_asked = false, card_report_open = false;
     bool card_focus = false;             // the controller's focus goes to the card's first button
+    bool card_cursor = false;            // (UI scripts' card: as A on the row with the controller, its cursor shown)
     std::uint32_t remove_requested = 0;
     std::uint32_t report_requested = 0;
     int report_reason_requested = 0;

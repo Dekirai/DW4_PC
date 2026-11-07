@@ -1,10 +1,10 @@
 {
-  "desc": "the player card on the Instance page (round I1b): host a opens b's card (Report, Remove), reports b (the relay's answer as a toast), then removes b (b's toast, b goes home); screenshots of the card, the report's reasons, the question and the toasts",
+  "desc": "the player card on the Instance page (round I1b): host a opens b's card and works it with the controller: Report, its reasons, Griefing (the relay's answer as a toast), then Remove with its question (b's toast, b goes home); screenshots of the card, the report's reasons, the question and the toasts",
   "timeout": 900,
   "clients": [
-    {"name": "a", "script": "a.txt", "registered": true, "card": "k5", "online_script": "a.script",
-     "log_expect": ["^online: Report sent\. Thank you\.", "^online: remove member \d+ at frame", "^online: report member \d+ at frame"]},
-    {"name": "b", "script": "b.txt", "registered": true, "card": "k2", "online_script": "b.script", "start": 3,
-     "log_expect": ["^online: You were removed from .*'s instance\."]}
+    {"name": "a", "script": "a.txt", "registered": true, "card": "k5", "seed_story": true, "online_script": "a.script",
+     "log_expect": ["^online: Report sent\\. Thank you\\.", "^online: remove member \\d+ at frame", "^online: report member \\d+ at frame"]},
+    {"name": "b", "script": "b.txt", "registered": true, "card": "k2", "seed_story": true, "online_script": "b.script", "start": 3,
+     "log_expect": ["^online: You were removed from .*'s instance\\."]}
   ]
 }

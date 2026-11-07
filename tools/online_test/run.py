@@ -1821,6 +1821,12 @@ def run_ui(stack, sc, connection, servers):
             s, body = api.call("POST", "/api/v1/auth/register", {"username": env["UI_%s_NAME" % up], "password": env["UI_%s_PASSWORD" % up]})
             if s != 201:
                 raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
+            if c.get("seed_story"):
+                # (Round I1b: a client whose pad script plays from its card's story point, the player card scenario: the
+                # account's online story from its card, as the game scenarios' "seed_story".)
+                folder = c["card"] if os.path.isabs(c["card"]) else os.path.join(a.cards, c["card"])
+                ids = sql_rows(stack, connection, "SELECT id FROM accounts WHERE username = '%s'" % env["UI_%s_NAME" % up])
+                seed_story(stack, connection, int(ids[0]), folder)
     campaign = os.path.join(out, "campaign.txt")
     with open(campaign, "w") as f:
         f.write("0 SEEK 400000 campaign\n")
