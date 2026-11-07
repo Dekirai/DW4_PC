@@ -92,12 +92,13 @@ constexpr TechDef kTechniques[] = {
     {20, 180, "plVENOM", true, false, 1.0f},   // Venom, 3.0 s (at the densest group)
     {35, 120, "plMAGIC1", true, false, 0.5f},  // Bomb, 2.0 s (at the densest group; x 0.5 as Impact: round O1b lane E)
     {75, 900, "plMIND01", false, false, 1.0f}, // Resist, 15 s (a buff on the player)
-    // Pwr Up, 60 s (a buff on the player; round O1b lane E's finish: DW4's own
-    // 30-54 s plus the caster's INT outlast 15 s, so it was on for good and the
-    // human bot's Agumon (TECH2, run level 8) reached the finale in 15 of 20
-    // seeds; with 60 s it is off for a while at the lower ranks; the 6-10 s of
-    // 6.4 (OverflowRules::buff_time) ended the kite bot's Agumon at 16-22 min).
-    {80, 3600, "plMIND01", false, false, 1.0f},
+    // Pwr Up, 15 s, from 10:00 Tuning::pwr_up_late_cooldown (60 s) (a buff on
+    // the player; round O1b lane E's finish: DW4's own 30-54 s plus the
+    // caster's INT outlast 15 s, so it was on for good and the human bot's
+    // Agumon (TECH2, run level 8) reached the finale in 15 of 20 seeds; 60 s
+    // from the start ended 6 of 37 in the first minute of phase 2; the 6-10 s
+    // of 6.4 (OverflowRules::buff_time) ended the kite bot's Agumon at 16-22 min).
+    {80, 900, "plMIND01", false, false, 1.0f},
     {70, 480, "plMIND01", false, false, 1.0f}, // Freeze, 8 s (a pulse on the enemies)
     {85, 480, "plMIND01", false, false, 1.0f}, // Pwr Dwn, 8 s (a pulse on the enemies)
     {95, 600, "plMIND01", false, false, 1.0f}, // Bind, 10 s (a pulse on the enemies)
@@ -547,7 +548,10 @@ void OverflowDirector::cast_techniques(Engine& engine) {
             detail::play_sound(engine, t.sound);
             at = steps_ + 4;
         }
-        t.ready = clock_ + std::uint64_t(t.cooldown);
+        int cooldown = t.cooldown;
+        if (t.family == 80 && clock_ >= std::uint64_t(std::max(0, config_.tuning.pwr_up_late_from)))
+            cooldown = std::max(cooldown, config_.tuning.pwr_up_late_cooldown);
+        t.ready = clock_ + std::uint64_t(cooldown);
         ++t.casts;
     }
 }

@@ -158,6 +158,14 @@ public:
         // length, the finale at four of them: pictures of the finale and the gate.)
         if (const auto skill = option(request_, "art_skill"); !skill.empty()) config.art_skill_start = std::atoi(skill.c_str());
         seconds("phase", config.tuning.phase_steps);
+        // (pwr_up_late=SECONDS,FROM_SECONDS: Pwr Up's cooldown from that run time on.)
+        if (const auto late = option(request_, "pwr_up_late"); !late.empty()) {
+            double cooldown = 0, from = 0;
+            if (std::sscanf(late.c_str(), "%lf,%lf", &cooldown, &from) == 2) {
+                config.tuning.pwr_up_late_cooldown = int(std::lround(cooldown * 60.0));
+                config.tuning.pwr_up_late_from = int(std::lround(from * 60.0));
+            }
+        }
         real("guardian_hp", config.tuning.guardian_hp);
         real("finale_hp", config.tuning.finale_hp);
         auto list = [](const std::string& text) {

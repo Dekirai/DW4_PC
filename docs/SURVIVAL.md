@@ -900,6 +900,15 @@ The force buffs are the original status effects with their icons
 Bind). Cooldowns are initial values; Speed Chips and the Speed buff shorten
 them.
 
+As built in round O1b (lane E's finish): the buffs keep DW4's own times
+(pcTech TIME 1800-3240 frames, 30-54 s by rank, plus the caster's INT for
+Speed and Pwr Up), not the 6-10 s above: with 6-10 s the kite bot's Agumon
+fell at 16-22 minutes as early as the newcomer's (docs/ROUND_O1B_E_NOTES.md
+12.1; the cap stays as the balance key `buff=360,60`). Pwr Up's cooldown is
+60 s: with 15 s it never ended (Agumon's TECH2 from run level 8: +80 to
++1920 STR, DEF and MaxHP), and the newcomer's Agumon reached the finale in
+15 of 20 runs.
+
 ### 6.5 Awakening
 
 When the class skill reaches 2500 with the fifth family forged, the form's
