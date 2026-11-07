@@ -1,10 +1,28 @@
 {
-  "desc": "a joiner whose target leaves the stage during the catch-up falls back to NEW",
+  "desc": "a joiner whose target leaves the stage during the catch-up falls back to NEW (classic joins: Instances:CheckpointJoins off, since round J's checkpoint join ends a catch-up in 0.15 s, before the target can leave)",
   "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [
-    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
-    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "env": {"DW4_ONLINE_RATE": "300"}}
-  ]
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "env": {
+        "DW4_ONLINE_RATE": "300"
+      }
+    }
+  ],
+  "server": {
+    "Instances": {
+      "CheckpointJoins": false
+    }
+  }
 }

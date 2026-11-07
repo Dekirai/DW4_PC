@@ -1,11 +1,34 @@
 {
-  "desc": "a joiner whose target forks during the catch-up follows the instance id",
+  "desc": "a joiner whose target forks during the catch-up follows the instance id (classic joins: Instances:CheckpointJoins off, since round J's checkpoint join ends a catch-up in under half a second, before the target can fork)",
   "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [
-    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
-    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "env": {"DW4_ONLINE_RATE": "300"}},
-    {"name": "c", "script": "c.script", "card": "k10", "start": 6}
-  ]
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "env": {
+        "DW4_ONLINE_RATE": "300"
+      }
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6
+    }
+  ],
+  "server": {
+    "Instances": {
+      "CheckpointJoins": false
+    }
+  }
 }
