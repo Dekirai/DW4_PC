@@ -284,6 +284,26 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_gos_barrier_whose_entrants_left_meanwhile_becomes_a_new_stage_group_of_the_instance_there()
+    {
+        // W31c2: b's GO is stamped while a is in dng204b1; the test hold keeps b's barrier undecided while a goes back out.
+        var h = GoPair(out var o, world: new WorldHubOptions { TestGoBarrierHoldMs = 5000 });
+        _ = StampedGoEvents(h, o);
+        var w = W(h, "a");
+        h.Barrier("b", "dng204b1");
+        Assert.Contains(h.Mem("b"), o.Entrants); // (an entrant from its GO barrier on: the offer stays open for it)
+        h.Snapshot("a");
+        h.Barrier("a", "stag0202");
+        Assert.True(o.Open);
+        h.Advance(6000);
+        h.Hub.Housekeep(h.Now);
+        var ok = h.Decision("b");
+        Assert.Equal(BarrierDecision.New, ok.Decision);
+        Assert.Equal(w, h.Mem("b").World); // the seat kept: a new stage group of the instance, not home, not another instance
+        Assert.Contains(w.Groups, x => !x.Ended && x.Stage == "dng204b1" && x.Members.Contains(h.Mem("b")));
+    }
+
+    [Fact]
     public void Go_events_follow_their_slot_at_a_fork_and_the_wire_round_trips()
     {
         var e = TickEvent.Go(2, 3, "dng204b1");
