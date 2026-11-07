@@ -11,6 +11,6 @@ relay: plan .*stage=stag0101
 relay: choice .*choice=back
 !b: online-trace: barrier to=stag0101
 !b: online-trace: prompt plan-timeout
-!relay: instance_join
+!relay: instance_join .*role=guest
 !a: online-script: FAIL
 !b: online-script: FAIL

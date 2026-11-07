@@ -13,7 +13,6 @@ relay: choice .*choice=back
 relay: prompt_back .*stage=stagml11.*point=3
 relay: redirect .*stage=stagml11
 !a: online-trace: prompt hold
-!relay: plan .*plan=[1-9]
-!relay: instance_join
+!relay: instance_join .*role=guest
 !a: online-script: FAIL
 !c: online-script: FAIL
