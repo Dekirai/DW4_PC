@@ -905,10 +905,11 @@ As built in round O1b (lane E's finish): the buffs keep DW4's own times
 Speed and Pwr Up), not the 6-10 s above: with 6-10 s the kite bot's Agumon
 fell at 16-22 minutes as early as the newcomer's (docs/ROUND_O1B_E_NOTES.md
 12.1; the cap stays as the balance key `buff=360,60`). Pwr Up's cooldown is
-15 s until 10:00 and 60 s after: with 15 s throughout it never ended
+15 s until 10:00 and 120 s after: with 15 s throughout it never ended
 (Agumon's TECH2 from run level 8: +80 to +1920 STR, DEF and MaxHP) and the
 newcomer's Agumon reached the finale in 15 of 20 runs; 60 s from the start
-ended 6 of 37 newcomers' runs right after the phase 2 start.
+ended 6 of 37 newcomers' runs right after the phase 2 start, and 60 s from
+10:00 still kept it on (Giga to ∞ last 42-54 s plus INT).
 
 ### 6.5 Awakening
 
