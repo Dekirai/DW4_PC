@@ -37,6 +37,9 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
 | What | Result | Log |
 | --- | --- | --- |
 | ctest (Release DEV=OFF, before 2a43fa15) | 57/57 | `build/int/ctest2.log` |
+| ctest (code of dc8da0da) | 57/57 | `build/int/ctest3.log` |
+| det.sh (DEV=OFF copy of dc8da0da, `build/int/off/dw4_int_off_b.exe`) | run1 and run2 4004f056 / audio 396cb219 | `build/int/off/det_b.log`, `work/dref/checks/det/det_int_i1a_b` |
+| save state suite (build b) | 17/17 identical after loading | `build/int/st/st_b.log` |
 | online_session tests (7d6ad52a) | 346 checks | `build/int/sess4.log` |
 | online_script tests (7354806d) | 292 checks (every scenario script loads) | - |
 | server unit (4b6bfc2e) | 467/467 | `build/int/unit4.log` |
@@ -70,7 +73,12 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
   arrival a NEW of its own, its way home held; a died in dng205b1 after four minutes; 58ee8395), W7b (b home on its own
   story through JOIN_REQ home, 1 s after the script's epoch bound @275: a timing failure, repeated in r2c), W7e (the cut at
   the park, a's return and join held; a's script end ended the instance before b's 900 sealed ticks; dc8da0da).
-- r2c (exe g = dc8da0da): W11 W19 W30 W30b W7b W7e, `build/int/scen_r2c.log` (running).
+- r2c (exe g = dc8da0da, `build/int/scen_r2c.log`, run folder `run_20261107_125656`): 4 of 6 passed: **W11** (302 s),
+  **W19** (115 s: 30 staying figures, never 31), **W30** (402 s), **W7e** (266 s: the cut at the park, b on at once, a back
+  after 20 s joins b in stag0102, still host). Failed: W30b (b's NEW and its way home held again; a, fighting in dng205b1,
+  died within 60 s; 2b277403), W7b (the timing failure again: b's control in the lobby at about @276, the bound @275;
+  a43028e4 with the measured timeline).
+- r2d (exe g, scenarios at a43028e4): W7b W30b, `build/int/scen_r2d.log` (running).
 
 ### Findings for later (not changed here)
 
