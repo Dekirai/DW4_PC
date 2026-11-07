@@ -184,6 +184,7 @@ private:
     void begin_game(double now);
     std::optional<engine::RoomStory> story_for_start(double now);
     void save_character(online::CharacterSync::Why why);
+    void test_cut_at_park(double now); // DW4_ONLINE_TEST_CUT_AT_PARK (development builds, W7e)
     online::character_api::Context character_context() const;
 
     std::unique_ptr<online::HttpWorker> http_;

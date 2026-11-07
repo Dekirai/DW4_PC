@@ -188,13 +188,14 @@ bool OnlineRun::connect(double now, std::string& error) {
     return true;
 }
 
-void OnlineRun::pass(double now) {
-    session_->poll(now);
+void OnlineRun::test_cut_at_park(double now) {
 #ifdef DW4_ONLINE_DEV
     // DW4_ONLINE_TEST_CUT_AT_PARK=SECONDS (development builds, scenario W7e): the
     // link is cut once, the first time this member parks at a barrier with
     // another member in its stage group, and the reconnect waits that long (a
-    // proxy's cut is timed by the clock and misses the short park).
+    // proxy's cut is timed by the clock and misses the short park). Checked
+    // right after the live step that parked and before the next poll, which
+    // may bring BARRIER_OK on loopback within the same frame.
     if (test_cut_park_ > 0 && !test_cut_done_ && session_->mode() == online::Mode::parked && std::popcount(unsigned(session_->present())) >= 2) {
         test_cut_done_ = true;
         std::cout << "online: test: the link is cut at the barrier for " << test_cut_park_ << " s" << std::endl;
@@ -202,7 +203,14 @@ void OnlineRun::pass(double now) {
         session_->test_cut(now);
         next_reconnect_ = now + test_cut_park_;
     }
+#else
+    (void)now;
 #endif
+}
+
+void OnlineRun::pass(double now) {
+    test_cut_at_park(now);
+    session_->poll(now);
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
     if (character_) {
         // Round I1a's review: the own story moves on at home and as a host; its
@@ -452,6 +460,7 @@ void OnlineRun::save_character(online::CharacterSync::Why why) {
 }
 
 void OnlineRun::after_live_step(double now) {
+    test_cut_at_park(now);
     // The title starts a game: the confirmed room story replaces the
     // character's FLAG / FLAGFOLDER / COUNTER before gameStart.lua runs
     // (GameEngineLink applies it with the room's modes on this very step).
