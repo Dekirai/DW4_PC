@@ -297,6 +297,11 @@ int OverflowRules::drain(Engine& engine, int slot, int heal) {
     return out;
 }
 
+int OverflowRules::buff_time(int rank, int time) const {
+    if (buff_steps <= 0) return time;
+    return std::min(time, buff_steps + std::clamp(rank, 0, 4) * buff_rank_steps);
+}
+
 int OverflowRules::technique_level(int lock) const { return run_technique_level(lock, levels.tech_lock_num, levels.tech_lock_den); }
 
 // ---------------------------------------------------------------------------

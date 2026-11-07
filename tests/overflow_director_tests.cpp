@@ -947,6 +947,31 @@ void finale(const std::filesystem::path& data) {
         check(has_event(director, "gate entered"), "the run log has the gate");
         check(director.summary_text(engine).find("\ngate 1 entered\n") != std::string::npos, "the summary's gate line");
     }
+    // (4) The force buffs last 6-10 s by rank in a run (6.4): Agumon's Pwr Up
+    // (TECH2, run level 8) with enemies near; the original's TIME is 30-54 s.
+    {
+        RunConfig config;
+        config.seed = 8;
+        config.offers = "priority";
+        config.tuning.spawning = false;
+        config.tuning.guardians = false;
+        auto run = start_run(data, config, true);
+        until_started(run);
+        auto& engine = *run.engine;
+        auto& rules = *run.rules;
+        check(rules.buff_time(0, 1800 + 120) == 360 && rules.buff_time(4, 3240) == 600 && rules.buff_time(2, 300) == 300,
+              "the run's buff time: 6 s at Petty, 10 s at ∞, never longer than DW4's");
+        set_level(engine, 10);
+        spawn_around(engine, *family_row("e_goburi"), 3, 18.0f);
+        const auto* self = engine.get<ModelCtrlManager>()->player(0);
+        int longest = 0;
+        for (int i = 0; i < 900; ++i) {
+            run_step(run, false);
+            if (self && self->status) longest = std::max(longest, self->status->timer[6]);
+        }
+        std::cout << "  finale: Pwr Up's POWERUP timer at most " << longest << " frames\n";
+        check(longest > 0 && longest <= 360, "Agumon's Petty Pwr Up lasts at most 6 s in a run (" + std::to_string(longest) + " frames)");
+    }
 }
 
 } // namespace

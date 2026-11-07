@@ -298,6 +298,15 @@ public:
     // HPDRAIN's heal of a weapon hit under the run's cap (damage.drain_cap of
     // the slot's MaxHP a second, 60 steps; SURVIVAL.md 4.8): the HP to give.
     int drain(Engine& engine, int slot, int heal);
+    // The force buffs on the players (Speed, Resist, Pwr Up: support_magic's
+    // SETSPEEDUP / SETREFRACT / SETPOWERUP) last buff_steps + rank x
+    // buff_rank_steps frames at most in a run (SURVIVAL.md 6.4: 6-10 s by
+    // rank, cast every 15 s). The original's TIME (30-54 s, plus the caster's
+    // INT for Speed and Pwr Up) outlasted the run's cooldown: Agumon's Pwr Up
+    // from run level 8 was on for good (round O1b lane E, the finish's
+    // balance). buff_steps 0: DW4's times.
+    int buff_steps = 360, buff_rank_steps = 60;
+    int buff_time(int rank, int time) const;
 
     // ---- H5 (forwarded to the director).
     void enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index);
