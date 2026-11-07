@@ -1462,6 +1462,38 @@ void go_along_session() {
         check(b.engine.go_calls.size() == 1 && b.engine.gos == 1, "one GO");
     }
     {
+        // The side rule (W31d): a defeated partner goes along with the last living member (the group move, no game over);
+        // a GO for a defeated slot does nothing on every machine ("Couldn't go along: you were defeated.", the withdraw).
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        const std::uint8_t abit = std::uint8_t(1u << a.session->own_slot()), bbit = std::uint8_t(1u << b.session->own_slot());
+        a.engine.dead = b.engine.dead = abit;
+        world.hub.stamp_go(2, "dng101b1", 0);
+        check(world.run_until(5, [&] { return a.engine.gos == 1 && b.engine.gos == 1; }), "both copies depart: the defeated partner is taken along");
+        check(a.engine.go_calls.size() == 1 && a.engine.go_calls[0].mask == bbit, "the GO named only the living member");
+        World other;
+        other.hub.co_arrival_hold = 3.0;
+        other.hub.suggested_delay = 6;
+        auto& c = other.add("kim", 1);
+        auto& d = other.add("lee", 2);
+        co_arrive(other, c, d);
+        other.run(3);
+        d.session->take_notices();
+        const std::uint8_t dbit = std::uint8_t(1u << d.session->own_slot());
+        c.engine.dead = d.engine.dead = dbit;
+        other.hub.stamp_go(2, "dng101b1", 0);
+        check(other.run_until(5, [&] { return !c.engine.go_calls.empty() && !d.engine.go_calls.empty(); }), "the GO reached both");
+        check(c.engine.gos == 0 && d.engine.gos == 0, "the GO did nothing on either machine");
+        other.run(0.3);
+        check(has_notice(d.session->take_notices(), "Couldn't go along: you were defeated."), "the defeated member is told");
+        check(!other.hub.go_intents.empty() && other.hub.go_intents.back().second.argument == 0, "and withdraws");
+    }
+    {
         // The offers, the notice, INTENT 4, the withdraw and the refusals.
         World world;
         world.hub.co_arrival_hold = 0.3;
