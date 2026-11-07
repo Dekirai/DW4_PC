@@ -40,6 +40,7 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
 | ctest (code of dc8da0da) | 57/57 | `build/int/ctest3.log` |
 | det.sh (DEV=OFF copy of dc8da0da, `build/int/off/dw4_int_off_b.exe`) | run1 and run2 4004f056 / audio 396cb219 | `build/int/off/det_b.log`, `work/dref/checks/det/det_int_i1a_b` |
 | save state suite (build b) | 17/17 identical after loading | `build/int/st/st_b.log` |
+| r25c (build b) | 10/10 reached, 1,748,011 frames, every save the same story | `build/int/off/r25c_b.log`, run `seg_r25c_int_i1a_b` |
 | online_session tests (7d6ad52a) | 346 checks | `build/int/sess4.log` |
 | online_script tests (7354806d) | 292 checks (every scenario script loads) | - |
 | server unit (4b6bfc2e) | 467/467 | `build/int/unit4.log` |
@@ -78,10 +79,24 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
   after 20 s joins b in stag0102, still host). Failed: W30b (b's NEW and its way home held again; a, fighting in dng205b1,
   died within 60 s; 2b277403), W7b (the timing failure again: b's control in the lobby at about @276, the bound @275;
   a43028e4 with the measured timeline).
-- r2d (exe g, scenarios at a43028e4): W7b W30b, `build/int/scen_r2d.log` (running).
+- r2d (exe g, scenarios at a43028e4, `build/int/scen_r2d.log`): **W7b** passed (285 s); W30b: the visited rule held
+  (candidates `1:Greyed:0:story_not_here`, a NEW of its own), a reached dng205b2, but b's second arrival was refused as
+  another context (COUNTER 2: dng205b1's start.lua sets 205, b's lobby had 0).
+- r2e / r2f (W30b alone): the cards' COUNTER 2 (4eb49382) does not reach the lobby (the context stayed 5917e7d34c9798f9),
+  reverted in 976801d7, both players visit dng205b1 first; a's second lobby gate stood still (4d510afa: depart).
+- r2g (`build/int/scen_r2g.log`): **W30b** passed (333 s).
+- **The W set of I1a's Done-when passes**: W1, W3, W4, W4b, W5, W6, W7, W7b, W7c, W7d, W7e, W8, W9, W11, W12, W18, W19,
+  W22, W24, W25, W26, W27, W28, W29, W30, W30b (I1a part), W32, and the counter-proofs W1x and W30x fail as they must
+  (rounds r2a-r2g above; the scenarios whose files changed after their pass: none).
+- r3 (exe g, `build/int/scen_r3.log`): the ported regression, every other game scenario (37), running.
 
 ### Findings for later (not changed here)
 
+- The candidates of an arrival with no stage group at its stage compare the instance's own context (`WorldInstance.Context`,
+  its first NEW's) while its groups' contexts move with the session values (COUNTER 2 is the dungeon, set by each first
+  floor's start.lua): a return-mat arrival into a dungeon floor of an instance whose host entered from a field before any
+  dungeon is filtered as another context instead of reaching the visited rule (W30b gives both players COUNTER 2 = 205
+  first). Whether the no-group comparison should take the instance's newest context is a design question (19.7.2, 3.7).
 - `data/online/stage_graph.json` (`tools/export_stage_graph.py`) records funcStageChange's fourth argument as the point;
   the point is the second (`SETGENERATEPOS I<a1>`), and NEXTSTAGE's last argument is a frame delay. The edges (what
   AreaTableTests and the scopes use) are right, the points are not.
