@@ -1067,7 +1067,18 @@ int Session::steps_allowed(int host_steps, double elapsed) {
         // Only consecutive ticks from the next one count as waiting.
         std::size_t waiting = 0;
         for (auto it = ticks_.find(tick_); it != ticks_.end() && it->first == tick_ + waiting; ++it) ++waiting;
-        const int due = pace_.due_steps(elapsed, waiting);
+        int due = pace_.due_steps(elapsed, waiting);
+        if (due == 0 && mode_ == Mode::sealed && waiting > 0 && !pace_.primed()) {
+            // A sealed stretch whose end is in hand (LEAD_FROM among its
+            // events: JOIN_REQ home or an orphan JOIN_AT, where the relay
+            // seals J alone and the member leads alone from J + 1) never fills
+            // the playout buffer: its ticks run one a pass (round I1a's
+            // integration, W6: the member froze at J for good).
+            auto it = ticks_.find(tick_);
+            for (std::size_t k = 0; k < waiting && due == 0; ++k, ++it)
+                for (const auto& e : it->second.events)
+                    if (e.kind == w::EventKind::lead_from && e.tick <= tick_ + std::uint32_t(waiting)) due = 1;
+        }
         if (pace_.catching_up()) {
             ++backlog_runs_;
             trace("backlog inst=%u visit=%u tick=%u waiting=%zu run=%d", inst_, visit_, tick_, waiting, due);

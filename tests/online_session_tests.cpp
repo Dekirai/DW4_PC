@@ -1223,6 +1223,24 @@ void close_stopping_reconnects() {
     check(has_notice(b.session->take_notices(), "The server restarted. Back on your own story."), "B is told");
 }
 
+// Round I1a's integration (W6, W7b): HOME for a member that leads its stage
+// group alone comes through JOIN_REQ home; the relay seals only J (HOME,
+// LEAD_FROM J + 1) and the member leads alone again after it. That one sealed
+// tick never filled the pacer's playout buffer (two waiting ticks), so the
+// member froze at J for good (W6: b in dng101b1 after a's gate disc).
+void solo_leader_home() {
+    World world;
+    world.hub.co_arrival_hold = 0.3;
+    world.hub.suggested_delay = 4;
+    auto& b = guest_of_nine(world);
+    world.run(2.0);
+    check(b.session->mode() == Mode::solo, "B leads its stage group alone");
+    world.hub.ask_home(2, std::uint8_t(1u << b.session->own_slot()), w::HomeReason::ended, world.now);
+    check(world.run_until(20, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && !b.session->going_home(); }),
+          "B took the home departure from the one sealed tick J");
+    check(b.session->wid() == 0 && b.session->holds_own_story(), "B is home on its own story");
+}
+
 // Round I1a's review: a restart while the member is at home. Its engine holds
 // its own story: the STORY goes under the new member id (before: the old key,
 // which the relay refuses as reason owner until the next BARRIER_OK).
@@ -1608,6 +1626,8 @@ int main(int argc, char** argv) {
         restart_story_key(9);
         restart_story_key(3);
         restart_at_home();
+        std::cout << "world: HOME through JOIN_REQ home\n";
+        solo_leader_home();
         std::cout << "world: CLOSE stopping reconnects\n";
         close_stopping_reconnects();
         std::cout << "world: the barrier fallback\n";

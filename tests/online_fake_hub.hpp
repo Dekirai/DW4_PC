@@ -436,6 +436,7 @@ public:
         std::map<std::uint32_t, std::vector<w::Event>> events; // tick -> events
         std::set<std::uint32_t> observers;
         std::optional<std::uint32_t> pending_joiner;
+        std::optional<std::pair<std::uint8_t, std::uint8_t>> pending_home; // JOIN_REQ home asked of the solo leader: mask, reason
         std::map<std::uint32_t, std::map<std::uint32_t, std::uint64_t>> netfp; // tick -> member -> hash
         std::map<std::uint32_t, std::uint64_t> snaphash; // member -> hash
         std::set<std::uint32_t> splits;                  // fork ticks already processed
@@ -934,6 +935,19 @@ public:
     // The relay stamps a member's LEAVE (its connection timed out, or it
     // left): at the next seal + 8, its pads end with that tick, the remaining
     // member leads alone after it (LEAD_FROM).
+    // HOME for a solo-led stage group (19.6.5, the relay's TrySoloHome): JOIN_REQ
+    // kind home to its leader; its JOIN_AT(J) seals J alone with HOME and
+    // LEAD_FROM(J + 1), so the leader leads alone again after it.
+    void ask_home(std::uint32_t member, std::uint8_t mask, w::HomeReason reason, double now) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        inst.pending_home = std::make_pair(mask, std::uint8_t(reason));
+        w::JoinReq req{inst.id, inst.visit, mask, std::uint8_t(suggested_delay)};
+        req.kind = w::JoinKind::home;
+        send(member, w::Type::join_req, w::encode(req), now);
+        log_lines.push_back("join_req home " + m.name);
+    }
+
     std::uint32_t stamp_leave(std::uint32_t member) {
         auto& m = members[member];
         auto& inst = instances[m.inst];
@@ -1190,6 +1204,24 @@ public:
         case w::Type::join_at: {
             const auto j = w::decode_join_at(f.payload);
             auto it = instances.find(j.inst);
+            if (it != instances.end() && it->second.pending_home) {
+                auto& inst = it->second;
+                w::Event home{w::EventKind::home};
+                home.mask = inst.pending_home->first;
+                home.reason = inst.pending_home->second;
+                inst.pending_home.reset();
+                inst.events[j.tick].push_back(home);
+                w::Event lead{w::EventKind::lead_from};
+                lead.tick = j.tick + 1;
+                inst.events[j.tick].push_back(lead);
+                inst.lead_from = j.tick + 1;
+                inst.sealed = true;
+                inst.next_seal = j.tick;
+                const double logged = inst.log.empty() ? 0.0 : double(inst.log.rbegin()->first + 1);
+                inst.s0 = now - double(j.tick) * kFieldSeconds + std::max(0.0, double(j.tick) - logged) * kFieldSeconds + latency;
+                log_lines.push_back("home at " + std::to_string(j.tick));
+                break;
+            }
             if (it == instances.end() || !it->second.pending_joiner) break;
             auto& inst = it->second;
             const auto joiner = *inst.pending_joiner;

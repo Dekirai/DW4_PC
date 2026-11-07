@@ -35,6 +35,8 @@ public:
     double ratio() const { return ratio_; }
     // The last due_steps ran a backlog at once: no pictures for those steps.
     bool catching_up() const { return catching_up_; }
+    // The playout buffer held its tick once since the last reset (steps run).
+    bool primed() const { return primed_; }
     // The smoothed number of waiting ticks (diagnostics, tests).
     double level() const { return level_; }
     // Steps that found no sealed tick when they were due (diagnostics).
