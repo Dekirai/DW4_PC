@@ -568,6 +568,18 @@ public:
     // instance holds it, nobody joins or logs it). False (nothing done) unless
     // online, solo and membership-safe.
     bool online_depart_home();
+    // Round I1b (docs/SEAMLESS.md 19.30.7): GO, before a step (stamped events
+    // at a membership-safe step, every GO of the step together): the slots of
+    // `mask` that are present, not leaving and alive go along to `stage` and
+    // `point` (the stage group they join is already there: the target is taken
+    // as named, the zone shuffle's remap is skipped). The leavers follow the
+    // exit's side rule (exit_leavers: the defeated go along when no living
+    // member stays); every present slot: the original group move; part of
+    // them: a fork of ForkKind::go. In the leavers' copy the exit port's
+    // departure runs (the controls off, the fade, SQ_EXIT, SETGENERATEPOS,
+    // NEXTSTAGE) with a HEADING. Returns whether this copy departs (false when
+    // the mask drops to nothing: the GO does nothing on every engine alike).
+    bool online_go(std::uint8_t mask, const std::string& stage, int point);
     // 19.8.3 (M2): a parked DISSOLVE redirected: the pending stage and the
     // generate point (PlayerPointManager's point) replaced, as a NEXTSTAGE to
     // that stage and point would have set them. Only between set_barrier

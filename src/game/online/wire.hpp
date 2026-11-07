@@ -36,7 +36,9 @@
 //   DELAY 5     u8 slot | u8 delay
 //   HOME 6      u8 slot mask | u8 reason (1 leave, 2 ended, 3 removed, 4
 //               staff): exactly these slots take the home departure (19.6.5)
-//   GO 7        u8 slot | u8 point | str stage (round I1b; decoded, not applied)
+//   GO 7        u8 slot | u8 point | str stage (round I1b, 19.30.7: applied like
+//               INTENT at the first membership-safe step, every GO of that step
+//               together; it expires engine::kGoExpiryTicks after its tick)
 // Unknown event types are skipped (a newer server).
 #include "dw4/engine/online_story.hpp"
 #include "pad_wire.hpp"
@@ -133,6 +135,8 @@ enum class Type : std::uint8_t {
     instance_info = 0x95,
     world_notice = 0x96,
     member_info = 0x97,
+    // round I1b's go along (19.30.5, 19.18): a go-along offer for this member
+    offer = 0x9B,
 };
 const char* type_name(Type type) noexcept;
 
@@ -242,6 +246,10 @@ namespace state_flag {
 // the relay takes the first such STATE's context as the visit's entry context
 // (docs/SEAMLESS.md 3.7), joinable or not.
 inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4, load_ended = 8;
+// Round I1b (19.18, 19.30.7): no present slot alive (the go-along wait and the
+// join holds read it: no rescue joins).
+inline constexpr std::uint8_t no_living = 16;
+inline constexpr std::uint8_t known = joinable | membership_safe | boss_lock | load_ended | no_living;
 }
 
 // The settings block of protocol 49 (11 bytes: BARRIER's own, BARRIER_OK's
@@ -291,11 +299,14 @@ struct Log {           // inst | visit | u32 first tick | u16 count (1-1200) | p
     std::uint32_t inst{}, visit{}, first{};
     std::vector<WirePad> pads;
 };
-struct Heading {       // inst | str stage | u8 point | u64 session context hash
+// Protocol 49 (round I1b, 19.30.5) appends u8 asked: the slots the exit port
+// asked on the mat for this departure that stay (no go-along notice for them).
+struct Heading {       // inst | str stage | u8 point | u64 session context hash | u8 asked
     std::uint32_t inst{};
     std::string stage;
     std::uint8_t point{};
     std::uint64_t context{};
+    std::uint8_t asked{};
 };
 // Protocol 49 appends u32 travel token (0 in I1a) | u16 plan id (0 in I1a;
 // 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, development builds) | the member's own
@@ -644,6 +655,31 @@ struct WorldNotice {
     std::uint32_t argument{};
     std::string text;
 };
+// WORLD_NOTICE go_refused's argument (round I1b, 19.30.6).
+enum class GoRefused : std::uint8_t { closed = 1, defeated = 2, busy = 3, moved = 4, ended = 5, not_offered = 6 };
+// OFFER (round I1b, 19.30.5): u16 offer id | u8 op (1 open, 2 changed, 3
+// closed) | u8 flags | u8 n + n x u32 entrant (the first entrant first) | str
+// stage (where the first entrant still in the dungeon is) | u8 notice seconds |
+// u8 close reason (0 none, 1 left, 2 defeated, 3 ended, 4 gone: over for
+// this receiver, no closing line).
+enum class OfferOp : std::uint8_t { open = 1, changed = 2, closed = 3 };
+enum class OfferClose : std::uint8_t { none = 0, left = 1, defeated = 2, ended = 3, gone = 4 };
+struct Offer {
+    std::uint16_t id{};
+    OfferOp op{};
+    std::uint8_t flags{};
+    std::vector<std::uint32_t> entrants;
+    std::string stage;
+    std::uint8_t notice_seconds{};
+    OfferClose close{};
+    // flags: show the notice now; a late notice (names where they are now);
+    // reserved (I2's blocks); the receiver's own request waits; its GO is
+    // stamped; the target is boss-locked; the receiver closed it with B; a
+    // silent reopen.
+    static constexpr std::uint8_t notice = 1, late = 2, unnamed = 4, waiting = 8, stamped = 16, boss = 32, closed_by_b = 64,
+                                  reopened = 128;
+    bool operator==(const Offer&) const = default;
+};
 // MEMBER_INFO: u32 member | str name | u16 level | u8 flags (1 friend, 2
 // party, 4 staff tag, 8 in the receiver's instance).
 struct MemberInfo {
@@ -727,6 +763,7 @@ std::vector<std::uint8_t> encode(const InstanceInfo&);
 std::vector<std::uint8_t> encode(const WorldNotice&);
 std::vector<std::uint8_t> encode(const MemberInfo&);
 std::vector<std::uint8_t> encode(const InstanceOp&);
+std::vector<std::uint8_t> encode(const Offer&);
 std::vector<std::uint8_t> encode(const Ping&);
 std::vector<std::uint8_t> encode(const NetStat&);
 std::vector<std::uint8_t> encode(const Close&);
@@ -771,6 +808,7 @@ InstanceInfo decode_instance_info(std::span<const std::uint8_t>);
 WorldNotice decode_world_notice(std::span<const std::uint8_t>);
 MemberInfo decode_member_info(std::span<const std::uint8_t>);
 InstanceOp decode_instance_op(std::span<const std::uint8_t>);
+Offer decode_offer(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
 NetStat decode_netstat(std::span<const std::uint8_t>);
 Close decode_close(std::span<const std::uint8_t>);

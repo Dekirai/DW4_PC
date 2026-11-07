@@ -125,6 +125,29 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
         if (const auto* area = find_area(stage)) return std::string(area->place);
         return std::string(stage);
     };
+    // Round I1b's go along (19.30.6): a dungeon or boss stage, a stage with
+    // its floor ("Ancient Ruins B2": the dungeon key's suffix, b2 -> B2, f1 ->
+    // F1), a dungeon's name ("Ancient Ruins").
+    config.dungeon_stage = [](std::string_view stage) {
+        const auto* area = find_area(stage);
+        return area && (std::string_view(area->kind) == "dungeon" || std::string_view(area->kind) == "boss");
+    };
+    config.floor_name = [](std::string_view stage) {
+        const auto* area = find_area(stage);
+        if (!area) return std::string(stage);
+        std::string name = area->place;
+        if (area->dungeon && std::string_view(area->kind) == "dungeon") {
+            const std::string_view key = area->dungeon, folder = area->folder;
+            if (folder.size() >= key.size() + 2 && (folder[key.size()] == 'b' || folder[key.size()] == 'f') &&
+                folder[key.size() + 1] >= '0' && folder[key.size() + 1] <= '9')
+                name += std::string(" ") + char(folder[key.size()] - 'a' + 'A') + folder[key.size() + 1];
+        }
+        return name;
+    };
+    config.dungeon_name = [](std::string_view stage) {
+        if (const auto* area = find_area(stage)) return std::string(area->place);
+        return std::string(stage);
+    };
 #ifdef DW4_ONLINE_DEV
     if (room_.difficulty) link_.force_difficulty(room_.difficulty);
     // DW4_ONLINE_AUTOCHOICE=first|new (development builds, 19.24): I1a has no

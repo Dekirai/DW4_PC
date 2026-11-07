@@ -112,8 +112,12 @@ static void prompt_records(DemoWork& work, int slot, const std::optional<std::st
 // The departure of the original (funcStageChange case 0, 212..447) for the
 // members this copy still has: the controls off, the half fade back, the
 // defeated players' models done, the exit sequences, the full fade and
-// NEXTSTAGE.
-static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::string& stage, int point, const std::string& kind) {
+// NEXTSTAGE. `as_named` (round I1b's GO, 19.30.7): the NEXTSTAGE carries
+// I<1> after the stage, which makes STAGECTL take the stage as named (the
+// zone shuffle's remap skipped: the GO's target is a stage group's barrier
+// target, remapped already). No script sends NEXTSTAGE with an int.
+static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::string& stage, int point, const std::string& kind,
+                                                bool as_named = false) {
     auto work = std::make_unique<DemoWork>();
     auto& r = work->records;
     r.push_back(set_record("STAGECTL", std::nullopt, -1, "PADINPUT", "DISABLE"));
@@ -146,7 +150,7 @@ static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::strin
     r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISRUN", std::nullopt, "==0"));
     r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISSEQNAME", "SQ_STCHANGELP", "==0"));
     r.push_back(set_record("PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", "I<" + std::to_string(point) + ">", 10));
-    r.push_back(set_record("STAGECTL", std::nullopt, -1, "NEXTSTAGE", stage, 10));
+    r.push_back(set_record("STAGECTL", std::nullopt, -1, "NEXTSTAGE", as_named ? stage + "/I<1>" : stage, 10));
     return work;
 }
 
@@ -192,6 +196,32 @@ bool Engine::online_home(std::uint8_t mask) {
     }
     heading_ = ExitHeading{frame_, "stagML11", 3, mask};
     demo_.start(home_departure_work(*this));
+    return true;
+}
+
+bool Engine::online_go(std::uint8_t mask, const std::string& stage, int point) {
+    if (!online_.enabled || stage.empty()) return false;
+    std::uint8_t alive = 0;
+    if (const auto* models = get<ModelCtrlManager>())
+        for (int s = 0; s < 4; ++s)
+            if (const auto* player = models->player(s); player && player->generated && player->hp > 0) alive |= std::uint8_t(1u << s);
+    // (A slot that is not present, already leaving or defeated at this step
+    // drops out, on every engine alike.)
+    mask &= std::uint8_t(online_.present & ~online_.leaving & alive);
+    if (!mask) return false;
+    const detail::MxcsrGuard mxcsr;
+    // 6.7, the exit's side rule: the living of the mask go; the defeated stay
+    // with the living who stay, or all go when nobody living stays.
+    const std::uint8_t leavers = exit_leavers(online_.present, alive, mask);
+    if (!leavers) return false;
+    if (leavers != online_.present) {
+        const bool leaves = online_split(leavers, ForkKind::go);
+        apply_pending_fork();
+        if (!leaves) return false;
+    }
+    heading_ = ExitHeading{frame_, stage, point, leavers, 0};
+    // The exit motion and the fade, as through an exit (19.30.6).
+    demo_.start(departure_work(*this, stage, point, "trans", true));
     return true;
 }
 
@@ -350,7 +380,9 @@ struct ExitPortAccess {
                     finish_in(42);
                     continue;
                 }
-                engine.heading_ = ExitHeading{engine.frame(), exit.stage, exit.point, leavers};
+                // (The members it asked that stay get no go-along notice for
+                // this departure, 19.30.5.)
+                engine.heading_ = ExitHeading{engine.frame(), exit.stage, exit.point, leavers, std::uint8_t(exit.asked & ~leavers)};
                 view.sees_fade = engine.online().present;
                 engine.demo().start(departure_work(engine, exit.stage, exit.point, exit.kind));
                 exit.state = State::done;

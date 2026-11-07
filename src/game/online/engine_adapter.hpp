@@ -85,6 +85,8 @@ public:
     void intent(int slot, wire::IntentKind kind, int argument) override;
     void home(std::uint8_t mask) override;
     bool depart_home() override;
+    bool go(std::uint8_t mask, const std::string& stage, int point) override;
+    bool own_scene(int slot) const override;
     void set_view_slot(int slot) override;
 
     // The member's own settings (round I1a, 19.8.7): its Game Start's

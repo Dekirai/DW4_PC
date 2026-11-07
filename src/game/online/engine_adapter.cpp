@@ -204,7 +204,7 @@ std::optional<SplitInfo> GameEngineLink::take_split() {
 
 std::optional<HeadingInfo> GameEngineLink::take_heading() {
 #ifdef DW4_ONLINE_ENGINE_API
-    if (auto heading = e().take_heading()) return HeadingInfo{std::move(heading->stage), heading->point};
+    if (auto heading = e().take_heading()) return HeadingInfo{std::move(heading->stage), heading->point, heading->asked};
 #endif
     return std::nullopt;
 }
@@ -473,6 +473,10 @@ void GameEngineLink::intent(int slot, wire::IntentKind kind, int argument) {
 void GameEngineLink::home(std::uint8_t mask) { e().online_home(mask); }
 
 bool GameEngineLink::depart_home() { return e().online_depart_home(); }
+
+bool GameEngineLink::go(std::uint8_t mask, const std::string& stage, int point) { return e().online_go(mask, stage, point); }
+
+bool GameEngineLink::own_scene(int slot) const { return e().own_scene_running(slot); }
 
 void GameEngineLink::set_view_slot(int slot) {
 #ifdef DW4_ONLINE_ENGINE_API
