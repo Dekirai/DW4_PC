@@ -750,6 +750,9 @@ struct HomeCase {
     std::uint64_t kill_from = 1200;
     bool online = true;       // online rules (else offline: the original's rules)
     int onto_mat = -1;        // this slot is put onto dng101b1's matz01 (the way back) 60 frames before the defeats and stands there
+    const char* stage = "dng101b1";
+    bool home_first = false;  // HOME takes its slots 300 frames before the defeats (a guest that left: the host falls alone, W27)
+    bool hold_start = false;  // the kept slot holds START (and nothing else) from its defeat on (W27's give-up attempt)
 };
 
 void homeover_probe(int only) {
@@ -768,6 +771,12 @@ void homeover_probe(int only) {
         {"offline: 2 players, both defeated", 2, 0b0011, 0b0000, 300, 1200, false},
         {"offline: 1 player on matz01 from 1140, defeat due at 1200", 1, 0b0001, 0b0000, 300, 1200, false, 0},
         {"1 player on matz01 from 1140, defeat due at 1200 (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, 0},
+        {"stag0101: 1 player defeated (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, -1, "stag0101"},
+        {"stag0101: offline, 1 player defeated", 1, 0b0001, 0b0000, 300, 1200, false, -1, "stag0101"},
+        {"stag0101: HOME takes living 1, then 0 defeated (online rules)", 2, 0b0001, 0b0010, 300, 1500, true, -1, "stag0101", true},
+        {"dng101b1: HOME takes living 1, then 0 defeated (online rules)", 2, 0b0001, 0b0010, 300, 1500, true, -1, "dng101b1", true},
+        {"stag0101: 1 player defeated, START held (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, -1, "stag0101", false, true},
+        {"stag0101: offline, 1 player defeated, START held", 1, 0b0001, 0b0000, 300, 1200, false, -1, "stag0101", false, true},
     };
     const char* species[4] = {"p_agumon", "p_dorumon", "p_agumon", "p_dorumon"}; // (three or four players load the q_ packages: these two exist)
     std::printf("homeover probe: dng101b1 direct start; HOME emulated in the copy that keeps the other slots\n"
@@ -804,7 +813,7 @@ void homeover_probe(int only) {
             }
         engine.set_split_identity(keep);
         engine.set_view_slot(keep);
-        engine.request_stage("dng101b1");
+        engine.request_stage(c.stage);
         std::uint64_t kills_done_at = 0, home_at = 0, first_change = 0;
         int next_kill = 0;
         std::string events, mat_at_kill;
@@ -814,13 +823,18 @@ void homeover_probe(int only) {
             // Onto the mat a second before the defeat, standing still from then on
             // (a defeat in the frame of the move did not take: the mat's script
             // takes and gives back control in that frame).
-            if (c.onto_mat >= 0 && !on_mat && frame + 60 >= c.kill_from && engine.stage_name() == "dng101b1" && engine.membership_safe()) {
+            if (c.onto_mat >= 0 && !on_mat && frame + 60 >= c.kill_from && engine.stage_name() == c.stage && engine.membership_safe()) {
                 const auto* mats = engine.get<MatCtrlManager>();
                 const auto centre = mats ? mats->mat_centre("matz01") : std::nullopt;
                 if (!centre || !teleport(engine, c.onto_mat, *centre)) mat_at_kill += "(teleport failed) ";
                 on_mat = true;
             }
-            if (frame >= c.kill_from && !kills_done_at && engine.stage_name() == "dng101b1" && engine.membership_safe()) {
+            if (c.home_first && !home_at && frame + 300 >= c.kill_from && engine.stage_name() == c.stage && engine.membership_safe()) {
+                for (int s = 0; s < 4; ++s)
+                    if (c.home & (1u << s)) engine.online_remove_player(s);
+                home_at = frame;
+            }
+            if (frame >= c.kill_from && !kills_done_at && engine.stage_name() == c.stage && engine.membership_safe() && (!c.home_first || home_at)) {
                 while (next_kill < 4 && !(c.killed & (1u << next_kill))) ++next_kill;
                 if (next_kill < 4) {
                     kill(engine, next_kill); // one defeat a frame
@@ -834,7 +848,7 @@ void homeover_probe(int only) {
                     }
                 }
             }
-            if (kills_done_at && !home_at && c.home && frame >= kills_done_at + c.home_after && engine.membership_safe()) {
+            if (kills_done_at && !home_at && c.home && !c.home_first && frame >= kills_done_at + c.home_after && engine.membership_safe()) {
                 for (int s = 0; s < 4; ++s)
                     if (c.home & (1u << s)) engine.online_remove_player(s);
                 home_at = frame;
@@ -844,6 +858,11 @@ void homeover_probe(int only) {
             if (on_mat) {
                 pads[std::size_t(c.onto_mat)] = PadSample{};
                 pads[std::size_t(c.onto_mat)].connected = true;
+            }
+            if (c.hold_start && kills_done_at) {
+                pads[std::size_t(keep)] = PadSample{};
+                pads[std::size_t(keep)].connected = true;
+                pads[std::size_t(keep)].buttons = dw4::pad_button::start;
             }
             step(engine, pads);
             if (!before && engine.pending_stage()) {
