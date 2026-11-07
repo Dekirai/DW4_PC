@@ -135,6 +135,14 @@ bool OverflowDirector::spawn_guardian(Engine& engine, int stage) {
     port_send(engine, "MODELCTRL", family, ram, "GENERATE", generate);
     port_send(engine, "MODELCTRL", family, ram, "ONCTRL");
     if (rules_) rules_->set_enemy_class(family, ram, EnemyClass::guardian);
+    // The camera shakes at its entry (4.4): the original's own shake of a
+    // big mid-boss's stomp (Mammothmon, dng102b3 wht_e_mammos.lua: pattern
+    // 37, 0.3 units, a step every 3 frames, 60 frames).
+    {
+        Packet shake;
+        parse_packet_arguments("37/F<0.3>/F<3.0>/F<60.0>", shake);
+        port_send(engine, "CAMERA", std::nullopt, -1, "SHAKE", shake);
+    }
     // The arena's boss bar (stagBS02's first.lua does the same for its boss).
     {
         Packet bar;

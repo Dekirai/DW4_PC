@@ -158,6 +158,8 @@ void OverflowDirector::start_running(Engine& engine) {
                 if (!model.empty() && !weapons->labels(model)) engine.load_common_now("_common/" + model + ".igb");
             }
         equip_ladder(engine, true);
+        // (Tests, pictures: Forge families opened at the start, as their offers would.)
+        for (int f = 2; f <= std::min({config_.forge_start, 5, offer_state_.forge_families}); ++f) take_offer(engine, Offer{OfferKind::forge, f});
         // The Plug Lab's points of the form (8.2, lane F's meta file).
         for (std::size_t i = 0; i < config_.plug_lab.size(); ++i) player.upcnt[i] += std::max(0, config_.plug_lab[i]);
         sys->recalc_player(engine, 0);
@@ -752,6 +754,8 @@ void OverflowDirector::damage_dealt(Engine& engine, std::string_view family, int
         if (e.ram != index || e.family != family) continue;
         if (source == kTagArt) ++e.art_hits;
         else e.other_damage = true;
+        // The awakened Art bursts once for each strike that hits (6.5; cast_art fires it).
+        if (source == kTagArt && awakened_ && burst_done_ != art_ready_) burst_pending_ = true;
         e.last_art = source == kTagArt;
         e.last_source = source;
         break;
@@ -859,6 +863,22 @@ void OverflowDirector::begin_end(Engine& engine, Outcome outcome) {
                 if (living_enemy(*ram)) port_send(engine, "MODELCTRL", ram->info_name, ram->index, "SQ_ERAS");
         if (outcome == Outcome::cleared) {
             detail::play_sound(engine, "BT_WIN02");
+            // On the Violet Ring the return gate comes (4.4): Belphemon's
+            // hit_f_belvam.lua generates g_dreturngate at V<0,10,-60> and its
+            // mat matz01 changes the stage once every player stands in it. Here
+            // the run pauses the arena's mats (the stage change prompt would
+            // follow) and walking into that mat's box ends the run.
+            if (config_.tuning.return_gate && engine.stage_name() == "stagbs02") {
+                gate_ = 1;
+                gate_since_ = steps_;
+                if (const auto* mats = engine.get<MatCtrlManager>())
+                    for (const auto& box : mats->mat_boxes())
+                        if (box.name == "matz01") {
+                            gate_min_ = box.min;
+                            gate_max_ = box.max;
+                        }
+                port_send(engine, "MATCTRL", std::nullopt, -1, "PAUSE");
+            }
         } else {
             detail::play_sound(engine, "z3COUNT3");
             detail::play_sound(engine, "QS_DONOT");
@@ -871,6 +891,10 @@ void OverflowDirector::step_ending(Engine& engine) {
     const std::uint64_t age = steps_ - ending_since_;
     if (screen_ == Screen::results) {
         if (config_.results_hold > 0 && steps_ - results_since_ >= std::uint64_t(config_.results_hold)) over_ = true;
+        return;
+    }
+    if (gate_ > 0 && outcome_ == Outcome::cleared && ending_phase_ != 99) { // (a Retire: the results at once)
+        step_gate(engine);
         return;
     }
     if (outcome_ == Outcome::defeated && ending_phase_ == 0 && age >= 120) {
@@ -888,12 +912,72 @@ void OverflowDirector::step_ending(Engine& engine) {
     }
 }
 
+// The return gate after the clear (4.4): it comes gate_wait steps after the
+// clear (the enemies leave first), powers on 30 steps later (the original's
+// SQ_POWERON at 480 after the GENERATE at 450), and the results open when the
+// player walks into its mat's box (as the original's mat: a player already
+// standing there when it comes has to step out and in again). A test bot that
+// has not reached it after gate_bot_steps gets them anyway (a run must end).
+void OverflowDirector::step_gate(Engine& engine) {
+    const auto& t = config_.tuning;
+    if (gate_ == 1 && steps_ - gate_since_ >= std::uint64_t(std::max(0, t.gate_wait))) {
+        Packet generate;
+        parse_packet_arguments("V<0,10,-60>/V<0,0,0>/SQ_ENTR", generate);
+        port_send(engine, "MODELCTRL", "g_dreturngate", 0, "GENERATE", generate);
+        gate_ = 2;
+        gate_open_at_ = steps_;
+        notice("The return gate is open");
+        event_log_.push_back({clock_, "gate open"});
+    }
+    if (gate_ != 2) return;
+    const std::uint64_t open = steps_ - gate_open_at_;
+    if (open == 30) port_send(engine, "MODELCTRL", "g_dreturngate", 0, "SQ_POWERON");
+    const Vec3f me = player_position(engine);
+    const bool inside = gate_inside(me);
+    if (!inside) gate_out_ = true;
+    const bool entered = inside && gate_out_;
+    const bool late = !config_.bot.empty() && open >= std::uint64_t(std::max(0, t.gate_bot_steps));
+    if (!entered && !late) return;
+    gate_entered_ = entered;
+    event_log_.push_back({clock_, entered ? "gate entered" : "gate not reached"});
+    detail::play_sound(engine, "CURSOR_DECIDE");
+    gate_ = 3;
+    screen_ = Screen::results;
+    cursor_ = 0;
+    results_since_ = steps_;
+    freeze(engine, true);
+}
+
+bool OverflowDirector::gate_inside(const Vec3f& at) const {
+    return at.x >= gate_min_.x && at.x <= gate_max_.x && at.z >= gate_min_.z && at.z <= gate_max_.z;
+}
+
+// The test bots walk into the open gate (to its mat's middle; one that stands
+// in it when it comes steps out towards the arena's centre first).
+PadSample OverflowDirector::gate_pad(Engine& engine) {
+    HostPadInput input;
+    if (gate_ != 2) return host_pad_sample(input);
+    const Vec3f me = player_position(engine);
+    float gx = 0.5f * (gate_min_.x + gate_max_.x), gz = 0.5f * (gate_min_.z + gate_max_.z);
+    if (!gate_out_) gz = gate_max_.z + 8.0f;
+    const float dx = gx - me.x, dz = gz - me.z;
+    const float d = std::hypot(dx, dz);
+    if (d > 0.5f) input.stick = stick_for(engine, me, dx / d, dz / d, d > 8.0f ? 1.0f : 0.6f);
+    return host_pad_sample(input);
+}
+
 // ---------------------------------------------------------------------------
 // Pads: move only (10) and the kite bot (14.1)
 // ---------------------------------------------------------------------------
 PadSample OverflowDirector::filter_pad(Engine& engine, const PadSample& live) {
     PadSample out;
     out.connected = live.connected;
+    // (After the clear the player walks to the return gate: the stick only.)
+    if (gate_walk() && started_) {
+        out.left = live.left;
+        out.buttons = live.buttons & (pad_button::up | pad_button::down | pad_button::left | pad_button::right);
+        return out;
+    }
     if (screen_ != Screen::none || outcome_ != Outcome::none || !started_) return out;
     out.left = live.left;
     std::uint32_t keep = pad_button::up | pad_button::down | pad_button::left | pad_button::right | pad_button::l;
@@ -915,6 +999,7 @@ PadSample OverflowDirector::filter_pad(Engine& engine, const PadSample& live) {
 
 PadSample OverflowDirector::bot_pad(Engine& engine) {
     HostPadInput input;
+    if (gate_walk() && started_) return gate_pad(engine);
     if (screen_ != Screen::none || outcome_ != Outcome::none || !started_) return host_pad_sample(input);
     auto* models = engine.get<ModelCtrlManager>();
     auto* sys = engine.get<GameSystem>();
@@ -1306,6 +1391,7 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     out << "\nguardians_defeated " << guardians_defeated_.size();
     for (const auto& family : guardians_defeated_) out << ' ' << family;
     out << "\nfinale " << (finale_ ? 1 : 0) << "\nawakened " << (awakened_ ? 1 : 0) << '\n';
+    out << "awakening_bursts " << bursts_ << "\ngate " << (gate_ >= 2 ? 1 : 0) << ' ' << (gate_entered_ ? "entered" : "-") << '\n';
     for (const auto& [step, text] : event_log_)
         if (text.starts_with("guardian ")) out << "guardian_event " << step << ' ' << text.substr(9) << '\n';
     int lua_errors = 0;

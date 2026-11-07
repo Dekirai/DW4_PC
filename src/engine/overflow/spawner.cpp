@@ -280,6 +280,19 @@ float OverflowDirector::knots(const std::array<float, 5>& at, double minutes) {
     return float(double(at[std::size_t(i)]) + (double(at[std::size_t(i + 1)]) - double(at[std::size_t(i)])) * (k - double(i)));
 }
 
+// A(t) now (4.3): the knots (at most alive_cap), a surge's extra and, while
+// a Guardian lives, half of it for at most guardian_half_steps (4.4, round O1b).
+int OverflowDirector::alive_target() const {
+    const auto& t = config_.tuning;
+    int target = std::min(t.alive_cap, int(knots(t.alive_at, run_seconds() / 60.0)));
+    // Surges: every 90 s, 12 more for 20 s (the first at surge_first).
+    if (clock_ >= std::uint64_t(t.surge_first) &&
+        ((clock_ - std::uint64_t(t.surge_first)) % std::uint64_t(t.surge_every)) < std::uint64_t(t.surge_length))
+        target += t.surge_extra;
+    if (guardian_ && clock_ < guardian_->at + std::uint64_t(std::max(0, t.guardian_half_steps))) target /= 2;
+    return target;
+}
+
 void OverflowDirector::spawner(Engine& engine) {
     const auto& t = config_.tuning;
     // Corrupted: from 1:30 one a minute (the next spawn).
@@ -295,13 +308,7 @@ void OverflowDirector::spawner(Engine& engine) {
     if (clock_ < next_spawn_) return;
     next_spawn_ = clock_ + std::uint64_t(t.spawn_every);
     const double minutes = run_seconds() / 60.0;
-    int target = std::min(t.alive_cap, int(knots(t.alive_at, minutes)));
-    // Surges: every 90 s, 12 more for 20 s (the first at surge_first).
-    if (clock_ >= std::uint64_t(t.surge_first) &&
-        ((clock_ - std::uint64_t(t.surge_first)) % std::uint64_t(t.surge_every)) < std::uint64_t(t.surge_length))
-        target += t.surge_extra;
-    // While a Guardian lives, A(t) halves for at most guardian_half_steps (4.4, round O1b).
-    if (guardian_ && clock_ < guardian_->at + std::uint64_t(std::max(0, t.guardian_half_steps))) target /= 2;
+    const int target = alive_target();
     // The refill rate: spawns a second, kept as a credit of whole spawns.
     refill_credit_ = std::min(refill_credit_ + double(knots(t.refill_at, minutes)) * double(t.spawn_every) / 60.0,
                               double(std::max(1, t.spawns_per_tick)));

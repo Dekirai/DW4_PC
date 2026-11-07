@@ -193,6 +193,14 @@ struct Tuning {
     int guardian_first = 0;                      // (tests, spikes: the first Guardian at this run step; 0: 5:00)
     int finale_hurry = 60 * 60;                  // QS_HURRY in the timer's last minute
     float guardian_clamp = 0.30f;                // a Guardian's hit takes at most this share of MaxHP (round O1b)
+    // The Violet Ring's return gate after the clear (4.4): g_dreturngate comes
+    // gate_wait steps after LordKnightmon's fall (the enemies leave first) and
+    // walking into its mat (matz01) ends the run; elsewhere, or with
+    // return_gate=false, the results come after 4 s. A test bot that has not
+    // reached it after gate_bot_steps gets the results anyway.
+    bool return_gate = true;
+    int gate_wait = 120;
+    int gate_bot_steps = 60 * 60;
 };
 
 // ---------------------------------------------------------------------------
@@ -319,6 +327,8 @@ struct RunConfig {
     // seed) and the families that come as the elite fallback (4.4).
     std::array<std::string, 3> guardians{};
     std::vector<std::string> elite;
+    // (Tests, pictures: the Forge families open at the start, 1-5; the Awakening's test.)
+    int forge_start = 1;
 };
 
 // The four Rookies a run starts with in O1b (5.3).
@@ -466,6 +476,7 @@ public:
     float family_damage(const FamilyRow& row) const; // a family's own damage factor
     // A(t) and the refill rate at a run time (Tuning's knots).
     static float knots(const std::array<float, 5>& at, double minutes);
+    int alive_target() const; // A(t) now: the knots, a surge, halved while a Guardian lives (4.4)
     float art_factor() const { return config_.art_class > 0 ? config_.art_class : art_class_factor(config_.form); }
     double hp_factor(double minutes) const;   // an enemy's HPMAX factor at a run time
     // Guardians and the finale (4.4; the HUD of lane D, the records of lane F).
@@ -476,6 +487,11 @@ public:
     const std::vector<std::string>& guardians_defeated() const { return guardians_defeated_; }
     const std::array<std::string, 4>& guardian_plan() const { return guardian_plan_; }
     bool awakened() const { return awakened_; }
+    int awakening_bursts() const { return bursts_; }        // the x_100charge01 bursts of the awakened Art (6.5)
+    // The Violet Ring's return gate (4.4): it is up after the clear and the
+    // player may walk into it (the results follow); its mat's box.
+    bool return_gate_open() const { return gate_ == 2; }
+    bool gate_entered() const { return gate_entered_; }
     int casts() const;
     // The defeats whose last hit was a technique of Fire, Ice, Bolt or Dark
     // (pcTech rows 0-19; lane F's Adept records), and the crates broken
@@ -523,6 +539,11 @@ private:
     bool spawn_guardian(Engine& engine, int stage);
     void guardian_down(Engine& engine, bool defeated);
     void step_music(Engine& engine);
+    // The return gate (4.4): its pad for the test bots while it is up.
+    bool gate_walk() const { return gate_ > 0 && outcome_ == Outcome::cleared && screen_ == Screen::none; }
+    PadSample gate_pad(Engine& engine);
+    void step_gate(Engine& engine);
+    bool gate_inside(const Vec3f& at) const;
     // Gear (gear.cpp)
     void gear_offers(Engine& engine);
     void take_gear(Engine& engine, const Offer& offer);
@@ -631,6 +652,13 @@ private:
     std::vector<Box> pattern_;
     float pattern_tip_ = 17.0f;
     std::string art_name_, art_swing_, art_label_;
+    // The class's charge release (KATC?2 of the Art's SQ_ATCK1 section:
+    // x_100charge01 SQ_KIRIKAE / SQ_OWARI), the awakened Art's burst (6.5):
+    // once for every strike that hits.
+    std::string art_burst_;
+    bool burst_pending_ = false;
+    std::uint64_t burst_done_ = ~std::uint64_t(0); // the art_ready_ of the strike that burst last
+    int bursts_ = 0;
     std::array<std::string, 4> forge_steps_;     // what Forge 2-5 add to the Art
     std::vector<std::string> family_names_;      // the class's five weapon families (Forge's names)
     int ladder_base_ = 0, art_skill_ = 0;
@@ -722,6 +750,13 @@ private:
     std::string music_now_;
     int count_said_ = -1;            // the timer's last counted second
     bool awakened_ = false;
+    // The return gate: 0 none, 1 coming (gate_since_ the clear's step), 2 up
+    // (gate_open_at_); the box of its mat.
+    int gate_ = 0;
+    std::uint64_t gate_since_ = 0, gate_open_at_ = 0;
+    bool gate_entered_ = false;
+    bool gate_out_ = false;          // the player stood outside its box since it came
+    Vec3f gate_min_{-6.0f, -1e9f, -66.0f}, gate_max_{6.0f, 1e9f, -54.0f};
     // Gear (7): the equipped gear (gear_table() indices, -1 none), their
     // value steps, the run's ¶ Data and the form's element (0 fire .. 3 dark).
     int core_gear_ = -1, board_gear_ = -1;

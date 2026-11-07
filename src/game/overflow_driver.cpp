@@ -148,6 +148,10 @@ public:
         if (const auto on = option(request_, "guardians"); !on.empty()) config.tuning.guardians = on != "0";
         seconds("guardian_first", config.tuning.guardian_first);
         seconds("guardian_half", config.tuning.guardian_half_steps);
+        // (return_gate=0: the results 4 s after the clear on the Violet Ring too;
+        // forge_start=N: Forge families open at the start, tests and pictures.)
+        if (const auto gate = option(request_, "return_gate"); !gate.empty()) config.tuning.return_gate = gate != "0";
+        if (const auto forge = option(request_, "forge_start"); !forge.empty()) config.forge_start = std::atoi(forge.c_str());
         real("guardian_hp", config.tuning.guardian_hp);
         real("finale_hp", config.tuning.finale_hp);
         auto list = [](const std::string& text) {

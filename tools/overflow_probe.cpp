@@ -707,6 +707,18 @@ int effects(const std::string& needle, const std::string& form) {
     return 0;
 }
 
+// mats: the arena's mats (name and box) and where a model's RAM 0 stands
+// (round O1b lane E: the Violet Ring's matz01 and its return gate).
+int mats() {
+    auto run = make_run({}, "p_agumon");
+    auto& engine = *run->engine;
+    if (const auto* mats = engine.get<MatCtrlManager>())
+        for (const auto& box : mats->mat_boxes())
+            std::printf("mat %s (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)\n", box.name.c_str(), box.min.x, box.min.y, box.min.z, box.max.x, box.max.y,
+                        box.max.z);
+    return 0;
+}
+
 // names TABLE COLUMN...: every row of a database table with its NAME and the
 // given columns (round O1b: the gear rows of armor1, armor2 and abChip).
 int names(const std::string& table, const std::vector<std::string>& columns) {
@@ -877,6 +889,7 @@ int main(int argc, char** argv) {
         if (mode == "weapon") return weapon();
         if (mode == "memory") return memory(argc > 3 ? argv[3] : "all");
         if (mode == "patterns") return patterns(argc > 3 ? argv[3] : "p_agumon");
+        if (mode == "mats") return mats();
         if (mode == "names" && argc > 3) return names(argv[3], std::vector<std::string>(argv + 4, argv + argc));
         if (mode == "effects" && argc > 3) return effects(argv[3], argc > 4 ? argv[4] : "p_agumon");
         if (mode == "aim") return aim(argc > 3 ? argv[3] : "HFIRE1", argc > 4 ? float(std::atof(argv[4])) : 180.0f);
