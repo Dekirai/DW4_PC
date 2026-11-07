@@ -76,7 +76,7 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 bool OnlineScript::known_action(std::string_view name) {
     static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
                                                  "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log",
-                                                 "menu",     "browse", "talkto", "shot", "depart"};
+                                                 "menu",     "browse", "talkto", "shot", "depart", "goalong", "cancelgo", "closeoffer"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
@@ -85,7 +85,7 @@ bool OnlineScript::known_condition(std::string_view key) {
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
                                                  "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts",
-                                                 "figures"};
+                                                 "figures", "offers", "notices", "go", "offerstage"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
