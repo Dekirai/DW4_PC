@@ -13446,6 +13446,50 @@ nobody of it is left, never home. *Go to <member>* (I3, 19.9.6) uses the
 same request, wait and GO with the target member's stage and the spawn
 next to him.
 
+**Measured (round I1b, go lane, 2026-11-07; the lane's first task).**
+`dw4_world_probe DATA go` (`tools/world_probe.cpp`, headless, online
+rules, two members in stag0201: slot 0 walks, slot 1 walks until 600
+frames after the load and then stands). The exit port's own departure:
+slot 1 is put onto matz01 (`funcStageChange("dng204b1", 0, ...)`,
+`g_StChangeKind` "run") and answers its prompt Yes; the port forks it off
+(`ForkKind::exit`, inside the step) and its copy departs. The GO: slot 1
+is put 60 units beside the mat at the same frame and `Engine::online_go`
+(slot 1, the port's barrier target) runs before the step in which the
+port forked. Each in both copies of the fork (split identity 1 and 0) and
+replayed as an observer (identity -1) with the side from the fork list as
+the client builds it (`GameEngineLink::set_fork_sides`: the frame after
+the reported tick's step). Log `build/go/meas/go_r2.log` (worktree
+`i1b-go`).
+
+| | zone shuffle off | on, seed 4242, zones 1 | on, zones 2 |
+| --- | --- | --- | --- |
+| the port's barrier (matz01 names dng204b1 point 0) | dng204b1 point 0 | dng205b1 point 0 | dng205b1 point 0 |
+| the GO's barrier (that target as named) | the same | the same | the same |
+| the fork's recorded frame (port / GO) | 1143 / 1143 | the same | the same |
+| replay of the stayers' / leavers' side (GO) | equal over 2,642 / 1,334 frames, and 1,201 after the leavers' load | the same | the same |
+| counter-proof: the GO's side recorded with an exit's frame (one earlier) | the replay takes the stayers' side: differs from 1143 | the same | the same |
+| counter-proof: the GO's NEXTSTAGE with the remap, from stag0202 | - | dng204b1 (wrong) | dng204b1 (wrong) |
+| fork to park (the step that executed NEXTSTAGE): port / GO | 110 / 169 frames | the same | the same |
+| the leavers' load snapshot, GO against port | differs only in frame and time, the generator state, the sound state and the pads | the same | the same |
+
+What it means: GO's departure lands where the port's does, the
+entrants' remapped target taken as named (the remap is keyed by the
+field a departure leaves, so a GO from a field whose own entrance names
+the target would otherwise be sent on: from stag0202 dng205b1 becomes
+dng204b1). `ForkKind::go` records the frame after the step it came
+before, as the client's fork list names it; an exit's convention (the
+fork inside the step) would make every replay and resync take the
+stayers' side. The leavers' load equals the port's in every field but
+the departure's history (frame and time, the generator and sound state,
+the pads of the barrier tick), as at a guest's NEW (M6); the stayers' copy
+is untouched by the GO (a fork like any). The departure is longer than
+19.30.7's estimate: the GO starts the half fade the prompt would have
+started (the port's records wait for `i_fadewn01`) and uses the exit
+motion ("trans": SQ_EXIT before the full fade), 169 frames (2.8 s) from
+the GO's step to the park, then 22 to the load step; the port's own
+"run" departure of matz01 takes 110. From the stamp to control it is
+therefore about 3.5 s with a checkpoint join (W31 measures it).
+
 #### 19.30.8 Edge cases
 
 | Case | Answer |

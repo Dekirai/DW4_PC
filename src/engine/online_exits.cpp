@@ -120,6 +120,10 @@ static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::strin
                                                 bool as_named = false) {
     auto work = std::make_unique<DemoWork>();
     auto& r = work->records;
+    // (A GO has no prompt before it: the half fade the prompt's work starts,
+    // stage_change_port's first record, comes first, so the records below find
+    // i_fadewn01 running as after a Yes in the prompt.)
+    if (as_named) r.push_back(set_record("MODELCTRL", "i_fadewn01", 0, "GENERATE", "SQ_BHLFOUT30"));
     r.push_back(set_record("STAGECTL", std::nullopt, -1, "PADINPUT", "DISABLE"));
     r.push_back(set_record("MODELCTRL", "i_fadewn01", 0, "SQ_BHLFIN30", std::nullopt, 10));
     r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISRUN", std::nullopt, "==0"));
