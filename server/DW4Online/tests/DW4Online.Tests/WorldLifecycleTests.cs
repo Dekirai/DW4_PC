@@ -1,5 +1,6 @@
 using DW4Online.Domain.Rooms;
 using DW4Online.Domain.Story;
+using DW4Online.Domain.World;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
@@ -411,6 +412,28 @@ public partial class HubLogicTests
         Assert.Equal(1, h.Hub.Counters["area_escape"]);
         Assert.Same(w, W(h, "a"));
         Assert.False(w.Ending);
+    }
+
+    [Fact]
+    public void The_Fortress_and_stag0205s_plateau_are_in_Death_Valleys_scope()
+    {
+        // 19.30.2: a Death Valley host walks through the Fortress to stag0205's plateau (Dry Land's by its card) and back:
+        // all of it inside his instance's scope, no area_escape (W32).
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        var w = W(h, "a");
+        foreach (var stage in new[] { "staggf01", "staggf02", "staggf04", "stag0205", "staggf04" })
+        {
+            h.Barrier("a", stage);
+            h.Snapshot("a");
+        }
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("area_escape"));
+        Assert.Same(w, W(h, "a"));
+        Assert.Equal(AreaTable.DeathValley, w.Area);
+        Assert.True(AreaTable.Default.InScope(AreaTable.DeathValley, "stag0205"));
+        Assert.False(AreaTable.Default.InScope(AreaTable.DryLand, "staggf04"));
     }
 
     [Fact]

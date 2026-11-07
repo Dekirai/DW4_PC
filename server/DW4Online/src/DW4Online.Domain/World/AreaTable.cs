@@ -76,6 +76,14 @@ public sealed class AreaTable
 
     public bool IsGate(string? stage) => Find(stage)?.Gate == true;
 
+    /// <summary>
+    /// Whether a stage lies in the scope of an instance of <paramref name="area"/> (19.30.2: every stage reachable from the
+    /// area's arrival stages without a hub stage). The one stage in two scopes is stag0205: Dry Land's by its card, and its
+    /// gate field plateau (point 1) is reached on foot from Death Valley's Fortress (AreaTableTests pins both scopes).
+    /// </summary>
+    public bool InScope(string? area, string? stage) =>
+        area is not null && (AreaOf(stage) == area || (area == DeathValley && string.Equals(stage?.Trim(), "stag0205", StringComparison.OrdinalIgnoreCase)));
+
     /// <summary>The stages of an area in the file's order.</summary>
     public IReadOnlyList<AreaStage> Stages(string area) => All.Where(s => s.Area == area).ToList();
 

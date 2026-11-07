@@ -1015,7 +1015,7 @@ public sealed partial class RoomHub
     private void ArrivedInside(WorldInstance w, ArrivalGroup g)
     {
         if (StageNames.IsHub(g.Stage)) return;
-        if (w.Area is not null && _areas.AreaOf(g.Stage) is { } to && to != w.Area && !_areas.IsHub(g.Stage))
+        if (w.Area is not null && _areas.AreaOf(g.Stage) is not null && !_areas.InScope(w.Area, g.Stage) && !_areas.IsHub(g.Stage))
         {
             // Not ended, not refused: a table mistake must not end a player's instance (19.30.2).
             Count("area_escape");
