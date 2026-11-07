@@ -293,7 +293,10 @@ by a Gekomon? I will pretend I did not see that."
 
 As built in round O1b (lane D, the integration): "Welcome back" opens once,
 at the first step the NPC talks and player 1 has the control (so after the
-story's own talk, never over it). The defeating family is the director's
+story's own talk, never over it), and only after a run the select started
+(not after `--overflow-run` or the F1 dev start, review fix). Interactive
+play: from the step the dialog opens on, the pass's further steps get
+neutral pads and the story's pad waits for released buttons (3.3). The defeating family is the director's
 `defeated_by()` (the last damaging hit's shooter once the run ended in a
 defeat; a poison tick never takes the last HP), handed through the driver's
 `RunStatus`, `RunOutcome` and game_main to `RunSummary::defeated_by`; the
@@ -476,7 +479,10 @@ simulation:
   LordKnightmon's fall (`RunScreenData::clear_frames`), the quest timer
   stops with the run's clock, and "The return gate is open" follows when
   the gate comes. TIME UP shows the quest timer at 0:00 with a large
-  "TIME UP" over the arena.
+  "TIME UP" over the arena (once: the director's notice line is not drawn
+  under it). The quest-timer plate sits top left, the original's place
+  (V<-290,217>), with the level under it: top centre it hid LordKnightmon's
+  boss bar (i_bosshp02 runs across the top from about x 90; review fix).
 
 ### 4.5 EXP and run levels
 
@@ -618,6 +624,15 @@ at once with the rank's HP, the effect and sound of the original Raise and
 120 frames of MUTEKI. Otherwise the run ends: the original Game Over picture
 (i_fadewn01 SQ_GAMEOVER, QS_DONOT), then the results. No bit capsule, no
 end_g_000bcaps.lua, no stage change.
+
+As built (the O1b integration's review): the director generates the fade
+model as every stage script's game over does (`MODELCTRL i_fadewn01
+GENERATE SQ_GAMEOVER`, then the original waits for it, fades the music,
+plays QS_DONOT and opens its message window); a bare SQ_GAMEOVER command
+found the model gone after the field start's SQ_BLIN60 and showed nothing.
+The original's Game Over picture is that fade to black; SimUi's HUD fades
+out with it, and the results come over the black 330 steps after the
+defeat.
 
 ### 4.9 End of a run, results, rewards
 
@@ -1130,7 +1145,14 @@ of a kind it does not know, a later key on a `form` line, and (when the
 header's version is higher than its own) a known line in a shape it cannot
 read, each written back as it was; it drops a later key on a `plug` line,
 at most 512 unknown lines are kept, and it writes its own version in the
-header. Every line ends with a line end and `end` closes the file; a file
+header. A known line in a later version's shape is written back under the
+marker `keep <its version> <line>` (an unknown kind of line for every
+version up to that one): under this version's header the bare line would
+read as damage at the next start, and the `.bak` (still the later file)
+would win at every start (review fix). A later version reads `keep <n>
+<line>` in a file of a lower header as its own line when n is its version
+or lower. A session that opened read only (locked) and has changed nothing
+reads the file again (one try) when Gekomon's dialog opens. Every line ends with a line end and `end` closes the file; a file
 that does not (cut, empty, garbage) or that has a line its own version
 cannot read (a bad value, a wrong shape: a bit flip, an editor) is damaged
 and never trusted over the `.bak`, and never becomes the `.bak`: the load
@@ -1194,6 +1216,15 @@ models yet); O1b brings the window models.
    its date) or open (grey with its condition). *Digimon*: per form, runs,
    best time, best level, clears per tier.
 
+As built in round O1b (the integration's review fixes): the select starts
+at the last form chosen (8.5 `last`); the Plug Lab answers every A for
+about 2 s beside the next price ("Bought." green; "Not enough Sim Bits.",
+"This plug is at its last step." orange); a record whose unlock this build
+does not have yet says "opens X (coming later)" in grey (in O1b only Blossom
+Data's Drain Ram is built; Hard, Extensions, Endless, the ?????? offer and
+the other gear come with O2-O4); every dialog screen shows the save problem
+("Not saved: ...") at the top when the profile is not being saved.
+
 ### 9.3 HUD in a run
 
 - The original player HUD (i_stpnl01..05 at V<-260,-160>: face and HP
@@ -1243,14 +1274,19 @@ As built in round O1b (lane D, docs/ROUND_O1B_D_NOTES.md; the integration,
 docs/ROUND_O1B_INT_NOTES.md): every run screen is drawn with SimUi in the
 game font as windows in the game's window colours (quads; the window
 models and their clips are not played yet, 13.6's fallback). The HUD has
-the run timer (the quest-timer plate from 20:00 while LordKnightmon is in),
+the run timer (the quest-timer plate top left from 20:00 while LordKnightmon
+is in, 4.4),
 the EXP bar inside the level, Lv, Defeated, Bits (the run player's BIT and
 the credited defeats' bits, 4.7), the build row (the weapon in its value
 colour with its bar, the six technique glyphs with their ranks, the gear as
 ∋ / ∨ / ∧ with each part's grade, read from the build page's "Core: /
 Board:" and "Chips:" lines) and the notice line; the arena's own boss bar
 (i_bosshp02) is the Guardian bar on the Violet Ring. The build page is the
-director's build lines.
+director's build lines. Review fixes: the HUD's text has a dark shadow and
+the build row a dark band (the grey of a technique not learned was lost in
+the arena's glow); Pwr Up and Pwr Dwn show as the game's arrows ↑ / ↓ (not
+"P" beside the rank letter P); the build page's chips read "Chips: A, B" or
+"none" (the font has no '/', its stand-in '-' made "- / -" read "- - -").
 
 ### 9.6 Results
 
@@ -1267,10 +1303,17 @@ Guardians defeated, defeats with the top five families, damage dealt by
 ability, the highest hit, the weapon and its Forge), then lane F's lines,
 added once by the driver's `fill_meta_screen`: "Bits N" (the run's bits as
 the meta file got them), "Sim Bits +N   (balance)", "NEW! <record>   opens
-<what>" (yellow) and "Not saved: ..." when the profile is not saved. Past 16
-lines two columns; past 32 the run's lines are cut and the Bits, Sim Bits
-and NEW! lines stay. On the Violet Ring a clear's results open when the
-player walks into the return gate (4.4).
+<what>" (yellow; "opens" only for an unlock this build has, review fix) and
+"Not saved: ..." when the profile is not saved. Past 16 lines two columns,
+broken between groups (a heading and its indented entries stay in one
+column); a line wider than its column wraps; past 32 the run's lines are
+cut and the Bits, Sim Bits and NEW! lines stay. "Highest hit taken" counts
+every hit, the Guardians' too (the summary's `highest_hit_share`, 14.2's
+measure, stays non-Guardian). A returns from the results only once every
+line is there, at least after 1 s (the player's A; the test bots' results
+end by `results_hold`), and "A: Return to the lobby." shows from then on. On
+the Violet Ring a clear's results open when the player walks into the return
+gate (4.4).
 
 ### 9.7 Texts
 

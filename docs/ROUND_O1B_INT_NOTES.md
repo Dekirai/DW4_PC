@@ -128,30 +128,52 @@ use a copy of the profile the gate run wrote (`shots/prof/overflow.dat`: Dorumon
 
 ## 5. SURVIVAL.md 14.2 on the integrated build
 
-The integration changed no run (3.1: the four Rookies' run hashes are lane E's head runs), so lane E's measurement
-over 20 seeds a form and bot (ROUND_O1B_E_NOTES.md 12.2) is the integrated build's: every form within 7 % of the
-others; human medians 21:05-22:34 (target 14:00-18:00: MISSED for all four), kite medians 22:58-23:07 (Dorumon 25:01,
-14 TIME UP: MISSED), Agumon's and Guilmon's kite runs clear every seed (MISSED: "not every seed clears"), the kite bot
-less than 3 minutes over the human bot (MISSED for all four), 2 of 40 human Agumon runs before 10:00 (MISSED
-narrowly); no non-Guardian clamp (highest 15.8 %), frames without control at most 4 %, close-in at least 87 %, panels
-30 frames apart, no Lua error, the first level-up at 15.7-18.2 s: met. Lane E's 12.1 shows why no Agumon lever fixes
-the newcomer target; the next balance round redoes the late curve for every form.
+The integration changed no run (3.1: the four Rookies' run hashes are lane E's head runs; the review fixes of section
+7 change no run that does not end in a defeat, 7.3), so lane E's measurement over 20 seeds a form and bot
+(ROUND_O1B_E_NOTES.md 12.2) is the integrated build's. Corrected after the review (the first version listed only
+the newcomer target and T8 as missed, and called the first level-up met): **seven of its thirteen targets are missed**, target by
+target:
+
+| 14.2 target | Agumon | Veemon | Guilmon | Dorumon | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| human median 14:00-18:00 | 22:34 | 21:05 | 21:59 | 22:09 | **MISSED** (all four) |
+| kite median 20:00-24:00, at least 6 of 20 at 22:00 | 23:02, 20 | 23:07, 14 | 22:58, 20 | **25:01** (14 TIME UP), 19 | **MISSED** (Dorumon) |
+| not every seed clears (kite) | **20 of 20** | 2 | **20 of 20** | 3 | **MISSED** (Agumon, Guilmon) |
+| kite at least 3 minutes over human | **+0.5** | **+2.0** | **+1.0** | **+2.9** | **MISSED** (all four) |
+| no wall: at most 9 of 20 defeats inside any two minutes | 9 / 0 | 9 / 9 | 5 / 0 | **human 11** / 0 | **MISSED** (Dorumon human; Agumon and Veemon at the limit) |
+| forms within 15 % | human 22:34 / 21:05 (7 %), kite 23:02 / 23:07 | | | | met |
+| at most 1 of 40 human Agumon runs before 10:00 | **2 of 40** (seeds 14 and 117, both 6:31) | | | | **MISSED** narrowly |
+| no defeat before 3:00, no Lua error | ok | ok | ok | ok | met |
+| highest non-Guardian hit at most 35 %, no clamp | 11.1 / 10.9 % | 13.3 / 15.8 % | 12.8 / 10.7 % | 10.7 / 14.3 % | met |
+| first level-up at most 18 s | 15.7 s | 18.0 s | 17.9 s | **18.2 s** (human) | **MISSED** narrowly (Dorumon) |
+| frames without control at most 5 % | 2.1 / 3.2 % | 2.0 / 4.0 % | 1.8 / 2.6 % | 2.0 / 3.1 % | met |
+| enemies that close in at least 80 % | 98 / 94 % | 94 / 87 % | 93 / 93 % | 98 / 92 % | met |
+| skill-up panels at most one every 30 frames | 30 | 30 | 30 | 30 | met |
+
+(Pairs are human / kite. The "no wall" counts: the largest number of the 20 human runs' defeats inside any two-minute
+window, recomputed by the review from lane E's `build/f/final`: Dorumon 11, Veemon 9, Agumon 9.) Lane E's 12.1 shows
+why no Agumon lever fixes the newcomer target; the next balance round redoes the late curve for every form, and with
+it the kite margin, the clear rate, the wall and the early defeats. T8's step time under load (3.3) is missed too.
 
 ## 6. Open after the integration
 
-- **Balance (14.2):** the newcomer's runs last 21-22.5 minutes for every Rookie; the late damage curve needs a round
-  of its own (lane E notes 12.1, 12.4). The Sim Bits per run (a cleared Agumon Normal run about 13,700-21,700) and
+- **Balance (14.2), seven targets missed (section 5):** the human median (all four), the kite median (Dorumon 25:01),
+  not every seed clears (Agumon, Guilmon 20 of 20), the kite's 3-minute margin (all four), no wall (Dorumon human
+  11 of 20 in two minutes), 2 of 40 human Agumon runs before 10:00, the first level-up (Dorumon 18.2 s); the late
+  damage curve needs a round of its own (lane E notes 12.1, 12.4). The Sim Bits per run (a cleared Agumon Normal run about 13,700-21,700) and
   the Plug Lab's price (38,500 a form) wait for that round and the user's decision (lane F notes 3).
 - **T8:** the step's p95 / max over the budget under load; measure again on a quiet machine.
 - **The user's own run:** SURVIVAL.md 15.2's "done" includes the user talking to Gekomon and playing a run; nothing
   here replaces his verdict.
 - **Lane D's left items** (D notes 4): the game's window models and their open / close clips (SimUi draws quads),
-  the UI sounds, the select's face sheet, STR / INT and the locked faces' record conditions, the PWR Medal's element;
-  the interactive path's several story steps in one pass while the dialog opens. TIME UP shows twice (E's notice line
-  and D's banner); the build page draws "Chips: - / -" with the font's '/' stand-in as "- - -".
+  the UI sounds (the Plug Lab's answers are text only), the select's face sheet, STR / INT and the locked faces'
+  record conditions, the PWR Medal's element; the level-up lines without the ∈ / ⊂ / ∧ glyphs of 9.4. (Fixed in the
+  review round, section 7: the interactive path's several story steps in one pass while the dialog opens, TIME UP
+  twice, "Chips: - - -".)
 - **Lane F's left items** (F notes 3): the 20-seed Sim Bits charge with and without a full Plug Lab; Endless,
   Hard / Very Hard, Extensions and the ?????? offer are in the format but not built (O2-O4).
 - **Lane E's left items** (E notes 12.4): Crescent Draw's and Fang Thrust's numbers of 6.3 (O2), the traits (O3).
 - **Not run here:** the Gekomon line of Welcome back in a real run (a defeat by e_geko / e_tonogeko could not be
-  staged; `welcome_back` and `defeated_by` are unit tested), the r25c segments with pictures (segments.sh draws none
-  by default, as lane D's run).
+  staged; `welcome_back` and `defeated_by` are unit tested); T5 with a story save written after a run (no input
+  script saves at a lobby terminal yet; section 7, finding 5); the interactive path's per-step pads (needs real
+  input; the scripted path is unchanged).

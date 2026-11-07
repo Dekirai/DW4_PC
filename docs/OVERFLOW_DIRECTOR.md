@@ -136,7 +136,7 @@ ENDED": time, level, form, defeats and the top five families, the damage of
 each ability, the highest hit taken, the weapon) close with A.
 
 **Defeat (4.8).** The player hit rule reports 0 HP; the knock-down plays, two
-seconds later the original Game Over picture (i_fadewn01 SQ_GAMEOVER) and
+seconds later the original Game Over picture (i_fadewn01 GENERATE SQ_GAMEOVER, a fade to black, as the stage scripts' game over) and
 QS_DONOT, then the results. Poison never ends a run: its ticks go through the
 run's damage-taken rule, at most five of them and 10 % of MaxHP a poisoning,
 and a tick never takes the last HP (SURVIVAL_O1A.md 3, the review round), so
