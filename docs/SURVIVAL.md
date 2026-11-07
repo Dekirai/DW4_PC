@@ -454,8 +454,15 @@ simulation:
   Guardian). The spike found two Guardians of separate packages without
   their scripts (TonosamaGekomon could not be damaged): their stage's main
   member gives them now. No Guardian needs the elite fallback on the Violet
-  Ring. The return gate after the clear is not built (the results come
-  after 4 s).
+  Ring. A Guardian's entry shakes the camera with the original's stomp
+  shake (CAMERA SHAKE 37/F<0.3>/F<3.0>/F<60.0>, Mammothmon's in dng102b3).
+  The return gate (the finish of lane E): 2 s after LordKnightmon's fall the
+  Violet Ring's own g_dreturngate comes where Belphemon's hit script puts
+  it (V<0,10,-60>, SQ_ENTR, SQ_POWERON 30 frames later); the arena's mats
+  pause (its matz01 would open the stage change prompt), and walking into
+  matz01's box ends the run with the results. A player standing there
+  when it comes steps out and in again, as with the original's mat; a test
+  bot walks in (and gets the results after 60 s without it).
 
 ### 4.5 EXP and run levels
 
@@ -908,6 +915,21 @@ signatures carry). The weapon model in hand becomes the signature's (w_*06 /
 w_*07), the SQ_TECUP panel, plLVUP01 and an "AWAKENING" line show it. With
 the gain of 6.2 a Rookie reaches it around 14-17 minutes (estimate), a Mega
 start (skill 810) a few minutes earlier.
+
+As built in round O1b (lane E): x_100charge01 is the original's charge
+effect, started only by the player's charge actions of SQ_ATCK1 (KATC?1:
+the charge glow, SQ_<class>01 / 02; KATC?2: the release, SQ_KIRIKAE and
+SQ_OWARI on the player). The awakened Art broadcasts its class's release
+(KATCX2 for the axe, KATCS2 for sword and katana, KATCE2 for the dagger)
+once for every strike that hits: a picture only, no damage of its own.
+
+As built for Guilmon and Dorumon (round O1b lane E, 6.3): Fang Thrust's
+Forge 3 lays two more boxes beyond the tip (the thrust goes on through its
+target: "pierces 2"), Forge 4 is one more thrust, Forge 5 reaches 30
+standing; Crescent Draw's first arc goes to the target with the most living
+enemies within 10 units. Its wider arc and its crit steps, and the 22-24
+unit ranges of 6.3's table, wait for O2 (every Art reaches 14 standing and
+34 walking since the balance round of 05.11).
 
 ## 7. Gear
 
