@@ -42,7 +42,20 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 
 ### Scenario rounds
 
-- r1 (exe a = 4f540be7 + scenarios 9bc4f94f, `build/mod/scen_r1.log`): running.
+- r1 (exe a = 4f540be7, `build/mod/scen_r1.log`): stopped (own PIDs, the harness's mysqld by SQL SHUTDOWN): a's `remove b`
+  named the account's short name, which no member has (`member_by_name` found none) and `remove_member` sent 0xFFFFFFFF.
+  Fixed in e4dc1739: `remove_member` only for a member INSTANCE_INFO lists; the scripts name the member `{user:b}`,
+  which run.py expands to the account name.
+- r2 (exe b = e4dc1739, `build/mod/scen_r2.log`, run folder `tools/online_test/.work/run_20261107_164346`): **W10 passed**
+  (482 s: the removal at a's 1200 sealed ticks with b, "You were removed from ...'s instance.", HOME reason Removed, b home
+  on its own story, b's next arrival `candidates rows=[]` and an instance of its own, the API check as b without a's
+  instance while the admin's list had it, audit instance_remove, leave_reason removed). W10b: everything held (b removed while
+  defeated went home, a played on 1800 frames alone) but the expected file forbade any `instance_end`, and a's script end
+  ends the instance (host_left): the check now expects that end at the end. W10c: everything held (JOIN_REQ home asked 3
+  times, unanswered; `story_owner` for the STORY b made 6 s after its removal; `detached` 16 s after the removal; b's
+  gate disc a DISSOLVE with its own story) but its gate disc names stagML11 point 3 itself, so no `redirect` line: b now
+  leaves by an exit into the field dng101b1 (the depart action), which the relay must redirect home (1b0ab745).
+- r3 (exe c = 1b0ab745, `build/mod/scen_r3.log`): W10b, W10c; then the UI scenario `card` (`build/mod/scen_ui1.log`).
 
 ## Left
 
