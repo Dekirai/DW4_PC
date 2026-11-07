@@ -152,6 +152,8 @@ public sealed class AccountRepository(Database db) : IAccountRepository
             "DELETE FROM friendships WHERE account_lo = @id OR account_hi = @id",
             "DELETE FROM friend_requests WHERE from_account_id = @id OR to_account_id = @id",
             "DELETE FROM account_blocks WHERE account_id = @id OR blocked_account_id = @id",
+            // Report player (round I1b): the account's own reports go; reports about it keep its (now anonymous) id for staff.
+            "DELETE FROM player_reports WHERE reporter_account_id = @id",
         ];
         foreach (var sql in pairs)
             await c.ExecuteAsync(new CommandDefinition(sql, new { id }, tx, cancellationToken: ct));

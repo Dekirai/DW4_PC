@@ -1,8 +1,8 @@
 -- DW4Online migration 0013: the world (round I1a, SEAMLESS.md 19.17.1 and 19.22). Rooms give way to one world per
 -- server: the online preferences (the host settings a player's instances start with, the default visibility and the
 -- social switches), the history of instances and their members, when an account was last online, the instance an
--- achievement or a speedrun time came from, the story history's reason 'mirror' (round I2), and views with user
--- names for HeidiSQL. rooms and room_members stay read-only for one release (a cleanup migration drops them).
+-- achievement or a speedrun time came from, the story history's reason 'mirror' (round I2), the players' reports
+-- (round I1b, Report player) and views with user names for HeidiSQL. rooms and room_members stay read-only for one release (a cleanup migration drops them).
 -- Players who were only guests keep an empty story (question 36 (b)): nothing of a room's story is copied to them.
 -- Every table and column carries a COMMENT (HeidiSQL's table editor shows it); enums are text, there are no blobs.
 -- The views need the right CREATE VIEW, which the restricted service user of DEPLOY.md section 2 gets in section 9.2
@@ -82,6 +82,35 @@ CREATE TABLE instance_history_members (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='who was in which instance and when; account deletion removes the account''s rows';
 
+-- Report player (round I1b, 19.16, 19.26 idea 5): a player's report about another, with a reason from a fixed list (no
+-- free text); staff work them off on the website's /admin/reports (state open -> done, audited report_handled). Written by
+-- the report service (the game's REPORT through the relay, POST /api/v1/reports); a reporter's rows go when his account
+-- is deleted, rows about a deleted account keep its (anonymous) id for staff.
+CREATE TABLE player_reports (
+  id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT 'the report id (the website''s /admin/reports)',
+  reporter_account_id BIGINT UNSIGNED NOT NULL COMMENT 'who reported (accounts.id)',
+  reported_account_id BIGINT UNSIGNED NOT NULL COMMENT 'whom he reported (accounts.id)',
+  reason      ENUM('griefing','cheating','name','other') NOT NULL
+              COMMENT 'the reason the reporter picked from the fixed list: griefing, cheating, an offensive name, other (no free text)',
+  source      ENUM('game','web') NOT NULL DEFAULT 'game' COMMENT 'game: the player card in the game (the relay); web: POST /api/v1/reports',
+  instance_id BIGINT UNSIGNED NULL
+              COMMENT 'the instance both played in (instance_history.id) when they shared one; NULL when not, or after the history was pruned',
+  created_at  DATETIME(3)     NOT NULL COMMENT 'when the report came (UTC)',
+  state       ENUM('open','done') NOT NULL DEFAULT 'open' COMMENT 'open: waits for staff; done: a moderator or admin handled it',
+  handled_by  BIGINT UNSIGNED NULL COMMENT 'the moderator or admin who marked it done (accounts.id); NULL while open',
+  handled_at  DATETIME(3)     NULL COMMENT 'when it was marked done (UTC); NULL while open',
+  KEY ix_reports_state (state, created_at),
+  KEY ix_reports_reported (reported_account_id, created_at),
+  KEY ix_reports_reporter (reporter_account_id, created_at),
+  CONSTRAINT ck_reports_self CHECK (reporter_account_id <> reported_account_id),
+  CONSTRAINT ck_reports_handled CHECK ((state = 'open') = (handled_at IS NULL)),
+  CONSTRAINT fk_reports_reporter FOREIGN KEY (reporter_account_id) REFERENCES accounts(id),
+  CONSTRAINT fk_reports_reported FOREIGN KEY (reported_account_id) REFERENCES accounts(id),
+  CONSTRAINT fk_reports_instance FOREIGN KEY (instance_id) REFERENCES instance_history(id) ON DELETE SET NULL,
+  CONSTRAINT fk_reports_staff FOREIGN KEY (handled_by) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Report player (round I1b): what players reported about others; staff handle them on /admin/reports';
+
 ALTER TABLE accounts
   ADD COLUMN last_seen_at DATETIME(3) NULL COMMENT 'when the account was last in the world (UTC; friends see it by the whereabouts preference)' AFTER last_login_at;
 ALTER TABLE achievement_unlocks
@@ -155,6 +184,15 @@ CREATE SQL SECURITY INVOKER VIEW v_instance_history AS
          h.host_account_id
     FROM instance_history h JOIN accounts u ON u.id = h.host_account_id;
 
+-- The players' reports with the names (19.17.1): newest first in HeidiSQL's Data tab when sorted by created_at.
+CREATE SQL SECURITY INVOKER VIEW v_player_reports AS
+  SELECT r.id, r.created_at, r.state, rp.username AS reporter, rd.username AS reported, r.reason, r.source, r.instance_id,
+         hs.username AS handled_by, r.handled_at, r.reporter_account_id, r.reported_account_id
+    FROM player_reports r
+    JOIN accounts rp ON rp.id = r.reporter_account_id
+    JOIN accounts rd ON rd.id = r.reported_account_id
+    LEFT JOIN accounts hs ON hs.id = r.handled_by;
+
 -- The staff rows of the audit log (19.14): what moderators and admins did and looked at, with both names.
 CREATE SQL SECURITY INVOKER VIEW v_staff_audit AS
   SELECT l.id, l.at, l.event, s.username AS staff, p.username AS player, l.detail, l.actor_id, l.account_id
@@ -162,5 +200,5 @@ CREATE SQL SECURITY INVOKER VIEW v_staff_audit AS
     LEFT JOIN accounts s ON s.id = l.actor_id
     LEFT JOIN accounts p ON p.id = l.account_id
    WHERE l.event IN ('staff_join', 'staff_join_override', 'staff_spectate_start', 'staff_spectate_end', 'staff_end_instance',
-                     'staff_remove', 'instance_visibility', 'instance_remove', 'report_handled', 'room_close_admin',
+                     'staff_remove', 'instance_visibility', 'instance_remove', 'report_handled', 'report_reopened', 'room_close_admin',
                      'admin_role', 'admin_status', 'admin_password_reset', 'admin_unlock_revoke', 'character_restore', 'story_restore');
