@@ -413,3 +413,88 @@ needs that curve redone for every form (Dorumon, without Pwr Up, lasts as long),
 kept the buff on (Giga to ∞ last 42-54 s plus INT): seeds 1-8 human / kite 21:39 / 23:22, 6 of 8 clear. Seeds 1-8
 (`runs_gF2`): 120 s from 10:00 20:58 (13:38-23:01) / 22:51 (20:34-24:05), 3 of 8 clear, none before 10:00; 90 s from
 5:00 20:11 / 22:23 with one run ended at 6:35.
+
+### 12.2 The head's measurement (c48738d1), 20 seeds a form and bot
+
+`build/f/final` (`final_set.sh`): the runs whose code path the head shares bit for bit, checked by run hashes
+(Agumon g1 = head: 08a6212c26fd2654 / 52e34d6ed1cbaebd for seed 1 human / kite; Dorumon g3 = head: 1c51ef04f0bb35ce /
+c47b55c29e20d031; Veemon gF = head: e90cfff25d9a2a3f / f8ea436b118dbfdf): Agumon 1-20 from `runs_b1`, Agumon 101-120,
+Guilmon and the rest of Veemon from `runs_gB` (the head's exe), Dorumon from `runs_g3` / `runs_g4`. Headless,
+`--smoke-test 100000`, nice 15, three at a time. Before: section 7's F (an approximation, 2-4 seeds) and the review's
+head runs (section 11).
+
+| Bot, form, seeds | Before | After: median (range) | before 10:00 | reach 22:00 | clear / TIME UP | most deaths in 2 min |
+| --- | --- | --- | --- | --- | --- | --- |
+| human Agumon 1-20 | F 22:13 (4) | 22:34 (6:31-23:33) | 1 | 15 | 8 / 0 | 9 |
+| human Agumon 101-120 | head 101-104 ~21:35 | 22:11 (6:31-24:15) | 1 | 15 | 11 / 0 | 8 |
+| human Veemon 1-20 | F 15:41 (4) | 21:05 (6:20-25:01) | 1 | 5 | 1 / 1 | 9 |
+| human Guilmon 1-20 | F 17:53 (2) | 21:59 (6:16-24:58) | 2 | 11 | 7 / 0 | 5 |
+| human Dorumon 1-20 | F 15:08 (2) | 22:09 (11:34-25:01) | 0 | 11 | 0 / 4 | **11** |
+| kite Agumon 1-20 | F 22:21 (2) | 23:02 (21:35-23:56) | 0 | 20 | **20** / 0 | 0 |
+| kite Veemon 1-20 | - | 23:07 (16:37-25:01) | 0 | 14 | 2 / 3 | 9 |
+| kite Guilmon 1-20 | F 16:27 (2) | 22:58 (20:58-24:05) | 0 | 20 | **20** / 0 | 0 |
+| kite Dorumon 1-20 | - | **25:01** (21:58-25:01) | 0 | 19 | 3 / 14 | 2 |
+| kite Veemon 201-220, Tortomon x 0.085 (shipped) | head 201-204 ~21:20 | 22:19 (15:41-25:01) | 0 | 14 | 2 / 3 | 8 |
+| kite Veemon 201-220, Tortomon x 0.10 | (11.6: 19:52 on O1a's head) | 22:54 (13:05-25:01) | 0 | 13 | 0 / 3 | 8 |
+
+(The F column is the approximation of section 7; its Veemon, Guilmon and Dorumon human numbers came from 2-4 seeds and
+are not borne out by 20.)
+
+**SURVIVAL.md 14.2 on the head:**
+
+| Target | Agumon | Veemon | Guilmon | Dorumon |
+| --- | --- | --- | --- | --- |
+| human median 14:00-18:00 | MISSED 22:34 (101-120: 22:11) | MISSED 21:05 | MISSED 21:59 | MISSED 22:09 |
+| kite median 20:00-24:00, at least 6 of 20 at 22:00 | ok 23:02, 20 | ok 23:07, 14 | ok 22:58, 20 | MISSED 25:01 (14 TIME UP), 19 |
+| not every seed clears (kite) | MISSED 20 of 20 | ok 2 | MISSED 20 of 20 | ok 3 |
+| kite at least 3 minutes over human | MISSED +0.5 | MISSED +2.0 | MISSED +1.0 | MISSED +2.9 |
+| no wall (at most 9 of 20 in two minutes) | ok 9 / 0 | ok 9 / 9 | ok 5 / 0 | MISSED human 11 |
+| forms within 15 % (Agumon / Veemon) | ok human 22:34 / 21:05 (7 %), kite 23:02 / 23:07 | | | |
+| at most 1 of 40 human Agumon before 10:00 | MISSED narrowly: 2 of 40 (seeds 14 and 117, both 6:31, the first minute of phase 2) | | | |
+| no defeat before 3:00, no Lua error | ok | ok | ok | ok |
+| highest non-Guardian hit at most 35 %, no clamp | ok 11.1 % / 10.9 %, 0 | ok 13.3 % / 15.8 %, 0 | ok 12.8 % / 10.7 %, 0 | ok 10.7 % / 14.3 %, 0 |
+| first level-up at most 18 s | ok 15.7 s | ok 18.0 s | ok 17.9 s | MISSED narrowly 18.2 s (human) |
+| frames without control at most 5 % | ok 2.1 / 3.2 % | ok 2.0 / 4.0 % | ok 1.8 / 2.6 % | ok 2.0 / 3.1 % |
+| enemies that close in at least 80 % | ok 98 / 94 % | ok 94 / 87 % | ok 93 / 93 % | ok 98 / 92 % |
+| skill-up panels at most one every 30 frames | ok 30 | ok 30 | ok 30 | ok 30 |
+
+**What it says.** The four Rookies now sit within 7 % of each other (human 21:05-22:34, kite 22:58-25:01): the
+O1b content (gear, the full technique lists with Pwr Up / Resist / Freeze / Bind, the Guardians' halved A(t)) made
+the run long for every form, not for Agumon alone. The newcomer reaches the finale in about half the runs and the
+kite bot clears with Agumon and Guilmon every time. Section 12.1 shows why no Agumon lever fixes it: the late damage
+curve (contact 2.2 / 2.4, the growth after 12:00) is survivable with the buffs on and a wall (hits past 35 %) without
+them. **Next balance round:** the late curve for all four forms with the buffs as they are (for example the contact
+from 10:00, LordKnightmon's HP or damage for Agumon's and Guilmon's clears), then the human target over 20 seeds a form.
+
+**11.6 (Tortomon x 0.085 against 0.10, kite Veemon 201-220): answered.** Both meet the kite targets on the head (22:19
+/ 22:54, 14 / 13 at 22:00, no wall); Tortomon is still the largest single source of those runs (1.19 / 1.23 MaxHP per
+phase it is in, phases 3 and 4). The difference lies within the seeds' spread: x 0.085 stays.
+
+### 12.3 Checks on the head (c48738d1, `build/det/dw4_game_fin.exe`; scripts in the ignored `build/t2`)
+
+| Check | Result |
+| --- | --- |
+| T1 det.sh (`det15.sh`: nice 15) `o1b_content_fin` | 4004f056 / 396cb219 in both runs |
+| T2 r25c (`segments.sh r25c 3`, nice 15) `o1b_content_fin_r25c` | 10 / 10 segments, 1,748,011 frames, every save "same story" (wall 302 s). Lane E has no NPC: the run with the NPC shown is lane D's and the integration's |
+| ctest (full, `build/ctest_all.cmd`) | 59 / 59 (main's 58 + `overflow_finale`, 45 checks) |
+| T3 (`t35.sh`) | the det script with a run at story frame 3000 (A: Agumon, kite bot, a Guardian after 10 s; A2: Guilmon, circle bot) and without (B): all 20 fingerprint lines equal (4004f056 = det's), the Guardian entered (Mammothmon / Blossomon at run step 600), the runs retired after 1,861 steps |
+| T5 (`t35.sh`) | the card folders equal (the det script saves nothing: empty in all three), the achievement profiles equal (9f14f1fc) |
+| T4 (`t4.sh`) | DW4_STATE_TEST at 2990 / 3400 / 4400 with the run at 3000: "identical after loading" (3010 / 2600 / 1600 frames compared) |
+| T11 (`t11.sh`) | hidden pictures of the movie (1400), the title (2600), dng101b1 (4800, 5900) and the new game's lobby (4800, 5900) with main's client d0e005b0 and the head: all six equal |
+| T8 (`t8.sh`, Agumon seed 1, kite, 25:00 with Guardians and the clear; nice 15 beside the full ctest and another workflow's scenarios) | the same run hash headless and drawn (52e34d6ed1cbaebd = the measurement's seed 1); headless step mean 0.90 ms, p95 3.06 ms, max 229.7 ms (budget p95 2 / max 6: MISSED; O1a had 0.57 / 1.96 / 9.7; a single 230 ms step under idle priority); drawn at 2560x1440: step p95 3.24, max 43.5 ms; traverse + draw list p95 0.82 ms (ok), draw items p95 287, max 370 (ok), a pass with its present p95 4.6 ms (ok), max 45 ms |
+| T6 run hash twice | seed 1 kite: 52e34d6ed1cbaebd in `runs_b1`, `runs_gB`, T8 headless and drawn |
+
+Hidden pictures (`build/t2/shots/*.png`, not in git; `run_shot.sh`): `guardian_overflow_1290` (Mammothmon by
+`guardian_first=20`, the boss bar, "Mammothmon appears"), `finale_overflow_2460` (`phase=10 end=60`: LordKnightmon,
+"LordKnightmon: the finale"), `timeup_overflow_3640` (TIME UP), `awaken_overflow_40` (`forge_start=5 art_skill=2500`
+Guilmon: "AWAKENING: Data Destroyer"), `gate_overflow_2800` (`DW4_GOD=1 DW4_ONE_HIT=1 DW4_OVERFLOW_TEST_CHEATS=1`:
+g_dreturngate on the far side of the ring, "The return gate is open"; the kite bot walked in, `gate 1 entered`). The
+quest timer's digits are lane D's HUD.
+
+### 12.4 Left after the finish
+
+- The 14.2 balance above (all four forms' human runs 21-22.5 minutes; Agumon's and Guilmon's kite runs always clear;
+  Dorumon's kite runs mostly TIME UP): a balance round over every form's late curve (12.2).
+- T8's step p95 / max over budget on a loaded machine: measure again on a quiet one; warm the families up (O1a 8).
+- Crescent Draw's wider arc and crit steps, Fang Thrust's numbers per 6.3's table (O2); traits (O3).
+- The quest timer's digits, the clear banner and the gate's walk-in want a look in lane D's picture set after the merge.
