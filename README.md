@@ -596,6 +596,24 @@ back, and they are in neither the state fingerprint nor a save state. Test
 runs: `DW4_ACHIEVEMENTS=1` (with `DW4_PROFILE=<file>` to keep the profile)
 and `DW4_TRACE_EVENTS=1` (every event as it happens).
 
+### Data Overflow (survival mode)
+
+Offline, a Gekomon stands by the Home lobby's Outside World Gate once the
+lobby intro is done and the gate leads somewhere; talking to it alone opens
+the battle simulator (with more players it says it takes one Digimon at a time)
+(docs/SURVIVAL.md). Choose one of the four Rookies with a starting armour and
+chip, then hold out on the Violet Ring while the enemies pour in: the Digimon
+strikes on its own, the stick moves it, level-ups offer Forges, Training,
+gear and Plugs, a Guardian comes every five minutes, LordKnightmon at 20:00
+under the quest timer; beating it clears the run, the timer's 0:00 is TIME
+UP. The run's Sim Bits buy permanent plugs in the Plug Lab, Data Records open
+more gear. Nothing of a run reaches the story: the story engine waits and
+goes on bit for bit. The meta file is `saves/overflow.dat` (a `.bak` beside
+it); F1 > Gameplay "Show the simulator NPC" (settings.ini `[overflow] npc`)
+hides Gekomon, and F1 > Gameplay "Data Overflow (test)" starts a run
+directly. Test runs: `--overflow-run form=p_agumon field=stagbs02 seed=1
+bot=kite summary=<file>` (docs/OVERFLOW_DIRECTOR.md, docs/OVERFLOW_HOST.md).
+
 ### Content mods
 
 A mod is a folder `mods/<id>` (next to the program, else in the working

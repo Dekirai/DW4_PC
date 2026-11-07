@@ -70,6 +70,7 @@ for every device or scene.
 - **Difficulty rebalancing:** EXP rate and damage dealt / taken options done.
 - **Bug fixes:** reproductions and regression checks against recovered behavior.
 - **Online four-player co-op:** lockstep sessions done; seamless co-op through the project's server is the current plan (server side done, game client next).
+- **Data Overflow (survival mode):** the user's explicit exception to gate 4's "no new content" (1 November 2026, docs/SURVIVAL.md): rounds O1a (the run) and O1b (Gekomon in the lobby, the screens, the Guardians and the finale, four Rookies, gear, Awakening, `saves/overflow.dat` with Sim Bits, the Plug Lab and the records) are built, offline and single player; the 14.2 balance of the newcomer's runs and rounds O2-O4 remain.
 
 Keep each increment buildable and publish source progress to this repository.
 Do not distribute the user's ISO, DOL, extracted assets or generated asset packs.
