@@ -138,6 +138,8 @@ public:
         if (const auto muteki = option(request_, "muteki"); !muteki.empty()) config.tuning.muteki = std::atoi(muteki.c_str());
         // (family_damage=FAMILY:F,...: a family's own damage factor.)
         for (const auto& [key, value] : pairs(option(request_, "family_damage"))) config.family_damage[key] = value;
+        // (technique_cooldown=ROW:STEPS,...: a technique's own cooldown by its pcTech base row; 0: never cast.)
+        for (const auto& [key, value] : pairs(option(request_, "technique_cooldown"))) config.technique_cooldown[std::atoi(key.c_str())] = int(value);
         // (family_ring=FAMILY:R,...: a family's own spawn ring, 0-2.)
         for (const auto& [key, value] : pairs(option(request_, "family_ring"))) config.family_ring[key] = int(value);
         // Round O1b lane E: the Guardians and the finale (guardians=0: O1a's

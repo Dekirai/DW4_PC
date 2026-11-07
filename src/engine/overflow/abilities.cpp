@@ -206,9 +206,11 @@ void OverflowDirector::load_art_pattern(Engine& engine) {
         const int base = db->number("shinka", species, "TECH" + std::to_string(n)).value_or(-1);
         for (const auto& def : kTechniques) {
             if (def.family != base) continue;
+            const auto own = config_.technique_cooldown.find(base);
+            if (own != config_.technique_cooldown.end() && own->second <= 0) continue; // (a balance pass: never cast)
             Technique t;
             t.family = base;
-            t.cooldown = def.cooldown;
+            t.cooldown = own != config_.technique_cooldown.end() ? own->second : def.cooldown;
             t.sound = def.sound;
             t.aim = def.aim;
             t.heal = def.heal;
