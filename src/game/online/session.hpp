@@ -320,8 +320,9 @@ public:
     GoState go_state() const { return go_state_; }
     std::uint16_t go_offer_id() const { return go_offer_; }
     // The waiting row and the line where the notice was: "Going along when
-    // Kim's floor is ready...  View: cancel", "Kim is in a boss fight. Going
-    // along when it ends.", "Going along..."; "" without a request.
+    // Kim's floor is ready..." (the screen's line adds "View: cancel"), "Kim
+    // is in a boss fight. Going along when it ends.", "Going along..."; ""
+    // without a request.
     std::string go_line() const;
     // A on a row: INTENT 4 (false when the member cannot go now); A on the
     // own waiting row or Cancel: the withdraw (INTENT 4, 0; false when

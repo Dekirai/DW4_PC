@@ -72,7 +72,7 @@ std::string Session::go_line() const {
     const std::string name = go_first_name(offer);
     switch (go_state_) {
     case GoState::asked:
-    case GoState::waiting: return "Going along when " + name + "'s floor is ready...  View: cancel";
+    case GoState::waiting: return "Going along when " + name + "'s floor is ready...";
     case GoState::boss: return name + " is in a boss fight. Going along when it ends.";
     case GoState::stamped:
     case GoState::going: return "Going along...";
@@ -209,6 +209,13 @@ void Session::on_offer(const w::Offer& m, double now) {
 }
 
 void Session::tick_go(double now) {
+    // A waiting request of a defeated member ends (19.30.7: "Couldn't go
+    // along: you were defeated."); the relay hears the withdraw.
+    if ((go_state_ == GoState::asked || go_state_ == GoState::waiting || go_state_ == GoState::boss) && (mode_ == Mode::solo || mode_ == Mode::sealed) &&
+        !engine_.pending_stage() && !(engine_.alive_mask() & (1u << (slot_ & 3)))) {
+        cancel_go_along();
+        notice("Couldn't go along: you were defeated.");
+    }
     // Closing lines go after their 3 s.
     std::erase_if(go_offers_, [&](const GoOffer& o) { return !o.open && o.closed_at >= 0 && now - o.closed_at > kClosingSeconds; });
     if (wid_ == 0) {

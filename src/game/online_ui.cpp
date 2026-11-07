@@ -457,6 +457,39 @@ void starting(online::OnlineLobby& lobby) {
 // instance's host, visibility (the host cycles it), members and *Leave
 // instance*; at home the own lobby. Then the character and *Go offline*.
 void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live) {
+    // Round I1b (19.30.6): the *Go along* box first: A goes along (on the own
+    // waiting row A cancels), B closes the menu and that offer's notices.
+    if (live && live->active && !live->go_rows.empty()) {
+        ImGui::SeparatorText("Go along");
+        bool first = true;
+        for (const auto& row : live->go_rows) {
+            const bool usable = !row.closing && (row.own || row.grey.empty());
+            const std::string label = (row.own && !live->go_line.empty() ? live->go_line : row.text) + "##go" + std::to_string(row.id);
+            if (first && s.focus_go && !ImGui::IsWindowAppearing()) {
+                ImGui::SetKeyboardFocusHere();
+                s.focus_go = false;
+                s.focus_pending = false;
+            }
+            if (button(label.c_str(), usable)) {
+                if (row.own) s.go_cancel_requested = true;
+                else s.go_requested = row.id;
+            }
+            const bool focused = ImGui::IsItemFocused();
+            ImGui::SameLine();
+            if (row.closing) ImGui::TextDisabled(" ");
+            else if (row.own) ImGui::TextDisabled("A: Cancel");
+            else if (!row.grey.empty()) ImGui::TextDisabled("%s", row.grey.c_str());
+            else ImGui::TextDisabled("A: Go along");
+            if (focused && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+                s.go_closed = row.id;
+                s.close_requested = true;
+            }
+            first = false;
+        }
+        ImGui::TextDisabled("B: Close");
+    } else {
+        s.focus_go = false;
+    }
     ImGui::SeparatorText("Instance");
     if (!live || !live->active) {
         ImGui::TextDisabled("Entering the server...");

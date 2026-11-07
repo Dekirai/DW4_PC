@@ -1491,7 +1491,7 @@ void go_along_session() {
         offer.stage = "dng101b2";
         world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
         world.run(0.3);
-        check(b.session->go_state() == GoState::waiting && b.session->go_line() == "Going along when kim's floor is ready...  View: cancel",
+        check(b.session->go_state() == GoState::waiting && b.session->go_line() == "Going along when kim's floor is ready...",
               "the waiting line: " + b.session->go_line());
         check(b.session->go_row_text(b.session->go_offers()[0]) == "kim is in dng101b2 now.", "the entrants moved deeper");
         check(b.session->go_notices(world.now).empty(), "a change makes no notice");

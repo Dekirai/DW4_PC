@@ -1728,6 +1728,9 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
         if (go_state_ == GoState::going) {
             // The GO's barrier is decided (a JOIN at the entrance, or a new
             // stage group there when nobody of the instance is left).
+            if (ok.decision == w::Decision::new_instance && ok.wid != 0)
+                notice(go_first_name(find_go_offer(go_offer_)) + " left " + (config_.floor_name ? config_.floor_name(ok.stage) : stage_title(ok.stage)) +
+                       " before you arrived.");
             go_state_ = GoState::none;
             go_offer_ = 0;
         }

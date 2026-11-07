@@ -52,6 +52,17 @@ struct RoomLive {
         bool connected = false, lagging = false, owner = false; // owner: the instance's host
     };
     std::vector<Member> members;         // the instance's players (INSTANCE_INFO)
+    // Round I1b (19.30.6): the *Go along* box: one row per offer (newest
+    // first), the own waiting request's row (A cancels it) and its line.
+    struct GoRow {
+        std::uint16_t id = 0;
+        std::string text;                // "Kim is in Ancient Ruins B1." / the closing line
+        std::string grey;                // why A does nothing now ("(defeated)", ...); "" usable
+        bool closing = false;            // its 3 s closing line
+        bool own = false;                // the own request waits on this row (A: Cancel)
+    };
+    std::vector<GoRow> go_rows;
+    std::string go_line;                 // the waiting row's text ("Going along when Kim's floor is ready...")
 };
 
 // The form fields and the selection (kept across frames; the test-run script
@@ -78,6 +89,15 @@ struct OnlineUiState {
     // visibility choice and the confirmed leave, which the host sends.
     bool leave_instance_asked = false;
     bool focus_visibility = false;       // in: the menu opened from the status window's line ("View: change")
+    // Round I1b (19.30.6): in: View opened the menu while a go-along notice
+    // had been up for half a second (the box's first row takes the focus;
+    // earlier the cursor stays below the box, so a reflexive A goes nowhere);
+    // out: A on a row (the offer id), A on the own waiting row (Cancel), B in
+    // the box (that offer's notices off; the menu closes).
+    bool focus_go = false;
+    int go_requested = 0;
+    bool go_cancel_requested = false;
+    int go_closed = 0;
     int visibility_requested = -1;
     bool leave_instance_requested = false;
     online::Screen last_screen = online::Screen::welcome;
