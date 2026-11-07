@@ -11,7 +11,9 @@
 //
 // The file is text (8.5), one fact per line, "end" as its last line. Unknown
 // lines (a later version's) are kept and written back as they were, so an
-// older program never drops a newer one's data. A file that is not complete
+// older program never drops a newer one's data (a known kind of line in a
+// later version's shape as "keep <version> <line>" under this version's
+// header, which would otherwise read it as damage). A file that is not complete
 // (no header, no "end": a damaged or cut file) is never trusted over the
 // backup: load() takes overflow.dat, else overflow.dat.bak, else what the
 // damaged file still holds, else a new profile; a damaged file is kept as
@@ -151,6 +153,10 @@ std::span<const char* const> start_gear();
 // key the records opened (the director skips keys it has no row for).
 std::vector<std::string> opened_gear(const OverflowProfile& profile);
 bool gear_built(std::string_view key);
+// What the record opens is in this build (every gear key of it gear_built;
+// a tier, an offer or a mode: not before O2-O4). The results' NEW! line names
+// only a built unlock; the records page marks the others "coming later".
+bool record_built(const RecordDef& record);
 std::vector<std::string> gear_open(const OverflowProfile& profile);
 // Whether a gear key is a Core / a chip that goes only into the core pocket
 // (8.3: such a chip needs a Core as the armour). Keys of lane E's start set
@@ -260,8 +266,9 @@ enum class LoadSource { none, file, backup, salvaged, fresh };
 class MetaStore {
 public:
     // Reads `path` (empty: a profile in memory only, never written; test runs
-    // without DW4_OVERFLOW_PROFILE).
-    void open(const std::filesystem::path& path);
+    // without DW4_OVERFLOW_PROFILE). A locked file is tried `attempts`
+    // times, 150 ms apart.
+    void open(const std::filesystem::path& path, int attempts = 4);
     const std::filesystem::path& path() const { return path_; }
     const OverflowProfile& profile() const { return profile_; }
     LoadSource source() const { return source_; }
@@ -274,6 +281,11 @@ public:
     // A short line for the screens when the profile is not being saved
     // (read only, or the last write failed); empty when all is well.
     std::string save_problem() const;
+    // A session that opened read only (the file was locked) and has changed
+    // nothing since reads the file again (the lobby's dialog opens: the other
+    // program may have let it go); true when it is no longer read only. A
+    // session with unsaved changes stays read only (a load would drop them).
+    bool retry_locked();
 
     // The writes of 8.5 (each saves at once; false when nothing changed or
     // the step is not allowed; a failed write keeps the change in memory and
@@ -297,6 +309,7 @@ private:
     OverflowProfile profile_;
     LoadSource source_ = LoadSource::none;
     bool read_only_ = false;
+    bool unsaved_ = false; // a change while read only (retry_locked keeps it)
     std::string note_, error_;
     std::optional<RunReport> last_report_;
     RunReward last_reward_;
@@ -348,6 +361,8 @@ void fill_lobby_meta(const OverflowProfile& profile, LobbyMeta& meta, std::uint3
         for (const auto& [model, loadout] : profile.loadouts)
             if (loadout_allowed(profile, loadout)) meta.loadouts[model] = {loadout.armor, loadout.chip};
     }
+    // The select's last form (8.5 `last`: the select starts there).
+    if constexpr (requires { meta.last_form; }) meta.last_form = profile.last_form;
     meta.records.clear();
     for (const auto& record : record_table())
         if (profile.record(record.key)) meta.records.push_back(record.key);
@@ -371,6 +386,8 @@ void remember_start(const RunRequest& request);
 template <typename Lobby>
 void refresh_lobby(Lobby& lobby, std::uint32_t story = 0) {
     fill_lobby_meta(meta().profile(), lobby.meta(), story);
+    // (The lobby's screens say when the profile is not being saved.)
+    if constexpr (requires { lobby.meta().save_problem; }) lobby.meta().save_problem = meta().save_problem();
 }
 template <typename Lobby>
 void connect_lobby(Lobby& lobby, std::uint32_t story = 0) {

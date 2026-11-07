@@ -30,7 +30,7 @@ DW4_OVERFLOW_TEXT(back_time_up, "Welcome back! Time ran out on|LordKnightmon, bu
 
 // How does it work? (3.4: four pages: controls, the weapon ladder,
 // techniques, gear).
-DW4_OVERFLOW_TEXT(help_1, "Move with the stick: your Digimon|strikes on its own. A uses a|disk, L opens the disk panel.")
+DW4_OVERFLOW_TEXT(help_1, "Move with the stick: your Digimon|strikes on its own. A picks up a|disk, L opens the disk panel.")
 DW4_OVERFLOW_TEXT(help_2, "Every hit grows the Art's skill.|Past a weapon's skill points the|next weapon of the ladder comes.")
 DW4_OVERFLOW_TEXT(help_3, "Your Digimon's own six techniques|come with levels and skill, and|fire on their own cooldowns.")
 DW4_OVERFLOW_TEXT(help_4, "Each level-up offers three picks:|a Forge, Training, a Core, a|Board, a chip or a Plug.")
@@ -117,6 +117,7 @@ DW4_OVERFLOW_TEXT(records_help, "B Back   Left, Right Page")
 DW4_OVERFLOW_TEXT(records_page, "Page %d of %d")
 DW4_OVERFLOW_TEXT(records_opens, "opens %s")
 DW4_OVERFLOW_TEXT(records_open_line, "%s   opens %s")
+DW4_OVERFLOW_TEXT(records_later, "%s (coming later)")
 DW4_OVERFLOW_TEXT(records_done, "Done")
 DW4_OVERFLOW_TEXT(records_clears, "Clears   Normal %d   Hard %d   Very Hard %d")
 DW4_OVERFLOW_TEXT(record_gate_keeper, "Gate Keeper: defeat any Guardian")

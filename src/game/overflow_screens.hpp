@@ -69,6 +69,13 @@ float level_progress(int exp, int floor, int next);
 std::vector<std::string> fit_result_lines(const std::vector<std::string>& lines, std::size_t most);
 // The results' columns: one up to 16 lines, else two (up to 16 rows each).
 int result_columns(std::size_t lines);
+// Where the second column starts: before a group (a line that is not
+// indented, with the indented lines after it) so that the taller column is
+// as short as it can be; `heights` the rows each line takes (wrapped lines).
+std::size_t column_break(const std::vector<std::string>& lines, const std::vector<int>& heights);
+// The director steps the results stay before A returns from them: until the
+// last of `lines` appeared (one per 8 steps), at least 60 (1 s).
+std::uint64_t results_wait(std::size_t lines);
 
 // The run's 2D items of one frame (`frame`: the presented step, blinking).
 void draw_run_screens(SimUi& ui, const RunScreenData& data, std::uint64_t frame);

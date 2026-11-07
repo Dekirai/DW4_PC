@@ -144,6 +144,8 @@ void test_font(const dw4::MountedResources& resources) {
     const auto& codes = ui.font_codes();
     std::printf("font: %zu characters\n", codes.size());
     CHECK(codes.size() > 90);
+    // The HUD's build row glyphs (build_row: elements, Pwr Up / Pwr Dwn, gear).
+    for (const char32_t c : ov::code_points("⊂⊃∪∩↑↓∋∨∧∞αβγδε")) CHECK(codes.contains(std::uint32_t(c)));
     int missing = 0;
     for (const auto& entry : ov::all_texts())
         for (const char32_t c : ov::code_points(placeholders_out(entry.text))) {
@@ -569,6 +571,66 @@ void test_menu() {
     CHECK(ov::text(ov::Text::tech_girumon).find("∩Dark") != std::string_view::npos);
     CHECK(ov::text(ov::Text::tech_dorumon).find("∩Dark") != std::string_view::npos);
     CHECK(ov::quest_timer_text(59.0) == "0:59");
+    // (Integration review, player lens.) Pwr Up and Pwr Dwn as the game's
+    // arrows (not "P" twice beside the rank letter P); the chips "A, B" or
+    // "none" (the font has no '/': "- / -" drew as "- - -").
+    ov::build_row({"Art: Fang Thrust with Pike α", "  Fire: Petty (Blast 10 / cap 750)", "  Pwr Dwn: not learned (Buff 1 / cap 300)",
+                   "  Pwr Up: Petty (Buff 20 / cap 300)", "Core: none   Board: none", "Chips: Wisdom Chip γ, Speed Chip α   ¶ Data 0"},
+                  row);
+    CHECK(row.techniques.size() == 3 && row.techniques[0] == "⊂P" && row.techniques[1] == "↓" && row.techniques[2] == "↑P");
+    CHECK(row.gear == "∧γ ∧α");
+    ov::build_row({"Art: Fang Thrust with Pike α", "Core: none   Board: none", "Chips: none   ¶ Data 0"}, row);
+    CHECK(row.gear.empty());
+    // The select starts at the last form chosen (8.5 `last`).
+    {
+        ov::LobbyMeta last;
+        last.seen_intro = true;
+        last.last_form = "p_dorumon";
+        ov::LobbyMenu select;
+        select.open(false, last, std::nullopt);
+        select.input(a, last);
+        CHECK(select.screen() == ov::LobbyScreen::select && select.face() == 3);
+    }
+    // The Plug Lab answers a purchase for about two seconds.
+    {
+        ov::LobbyMeta lab;
+        lab.seen_intro = true;
+        ov::LobbyMenu shop;
+        shop.open(false, lab, std::nullopt);
+        shop.input(down, lab);
+        shop.input(a, lab);
+        CHECK(shop.screen() == ov::LobbyScreen::plug_lab);
+        CHECK(shop.input(a, lab).kind == ov::LobbyAction::Kind::buy_plug);
+        shop.set_answer("Not enough Sim Bits.", false);
+        CHECK(shop.answer() == "Not enough Sim Bits." && !shop.answer_good());
+        for (std::uint64_t i = 0; i < ov::LobbyMenu::kAnswerFrames; ++i) shop.tick();
+        CHECK(shop.answer().empty());
+        shop.set_answer("Bought.", true);
+        shop.input(b, lab);
+        CHECK(shop.screen() == ov::LobbyScreen::choice && shop.answer().empty());
+    }
+}
+
+// The results' layout (integration review): two columns break between
+// groups, never between a heading and its entries; A waits for the lines.
+void test_results_layout() {
+    const std::vector<std::string> lines{"Time 25:00", "Run level 37", "Digimon Agumon", "Guardians Mammothmon, Anomalocarimon",
+                                         "Defeated 4653", "   Goburimon 900", "   Gazimon 800", "   Mushroomon 700", "   Vegiemon 600",
+                                         "   Tortomon 500", "Damage dealt", "   Cleaver 900000", "   Fire 1000", "   Bomb 900",
+                                         "   Cutter 800", "   Heal Lt 0", "   Resist 0", "Highest hit taken 30 % of MaxHP",
+                                         "Weapon Battle Hawk, Forge 5", "Bits 32", "Sim Bits +532   (532)"};
+    const std::vector<int> ones(lines.size(), 1);
+    const std::size_t split = ov::column_break(lines, ones);
+    CHECK(split > 0 && split < lines.size() && !lines[split].starts_with(' '));
+    CHECK(lines[split - 1] != "Damage dealt" && lines[split - 1] != "Defeated 4653");
+    CHECK(lines[split] == "Damage dealt"); // (10 rows left, 11 right)
+    // A wrapped line takes its rows into the count.
+    std::vector<int> tall = ones;
+    tall[3] = 3;
+    CHECK(!lines[ov::column_break(lines, tall)].starts_with(' '));
+    // Without any group start: halves.
+    CHECK(ov::column_break({"   a", "   b", "   c", "   d"}, {}) == 2);
+    CHECK(ov::results_wait(31) == 240 && ov::results_wait(3) == 60 && ov::results_wait(0) == 60);
 }
 
 // Every screen makes 2D items in the 640 x 480 layer (with the font).
@@ -664,6 +726,7 @@ int main(int argc, char** argv) {
     test_lobby_keys();
     test_run_numbers();
     test_records();
+    test_results_layout();
     std::string data = argc > 1 ? argv[1] : "";
     if (data.empty())
         if (const char* env = std::getenv("DW4_GAME_DATA")) data = env;

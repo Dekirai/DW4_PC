@@ -129,6 +129,7 @@ void LobbyMenu::open_screen(LobbyScreen screen, const LobbyMeta& meta) {
 
 void LobbyMenu::to_choice() {
     screen_ = LobbyScreen::choice;
+    answer_.clear();
     pages_ = {std::string(text(Text::ask))};
     page_ = 0;
     cursor_ = 0;
@@ -181,12 +182,16 @@ LobbyAction LobbyMenu::input(const MenuKeys& keys, const LobbyMeta& meta) {
         if (keys.b) cursor_ = 4;
         if (keys.a || keys.b) {
             switch (cursor_) {
-            case 0:
+            case 0: {
                 screen_ = LobbyScreen::select;
                 line_ = 0;
                 confirming_ = false;
+                // (8.5: the select starts at the last form chosen.)
+                const auto last = std::find(kSelectForms.begin(), kSelectForms.end(), std::string_view(meta.last_form));
+                if (last != kSelectForms.end()) face_ = int(last - kSelectForms.begin());
                 load_loadout(meta);
                 break;
+            }
             case 1:
                 screen_ = LobbyScreen::plug_lab;
                 cursor_ = 0;
@@ -390,6 +395,8 @@ void draw_plug_lab(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta) {
     }
     const int steps = found != meta.plugs.end() ? found->second[std::size_t(menu.cursor())] : 0;
     if (steps < 10) ui.text(80, 370, format(Text::plug_next, 100 * (steps + 1)), ui_colors::white, 16.0f);
+    // The answer to the last purchase (lane F's BuyResult), about 2 s.
+    if (const auto answer = menu.answer(); !answer.empty()) ui.text(80, 370, answer, menu.answer_good() ? ui_colors::green : ui_colors::orange, 16.0f, 1, 480);
     ui.text(80, 404, text(Text::plug_help), ui_colors::grey, 14.0f);
 }
 
@@ -410,9 +417,11 @@ void draw_records(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta) {
             const bool done = row.date != 0;
             ui.text(64, y, row.title, done ? ui_colors::white : ui_colors::grey, 17.0f);
             if (done) ui.text(64, y, record_date(row.date), ui_colors::cyan, 15.0f, 1, 512);
-            const std::string line = done ? format(Text::records_opens, row.opens.c_str()) : format(Text::records_open_line, row.condition.c_str(), row.opens.c_str());
+            // (What is not built yet says so: O2-O4 bring it.)
+            const std::string opens = row.later ? format(Text::records_later, row.opens.c_str()) : row.opens;
+            const std::string line = done ? format(Text::records_opens, opens.c_str()) : format(Text::records_open_line, row.condition.c_str(), opens.c_str());
             const float width = ui.text_width(line, 13.0f);
-            ui.text(84, y + 19, line, done ? ui_colors::green : ui_colors::grey, width > 490 ? 13.0f * 490 / width : 13.0f);
+            ui.text(84, y + 19, line, done && !row.later ? ui_colors::green : ui_colors::grey, width > 490 ? 13.0f * 490 / width : 13.0f);
             y += 38;
         }
     } else if (!digimon) {
@@ -493,6 +502,12 @@ void draw_lobby_menu(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta, st
     case LobbyScreen::plug_lab: draw_plug_lab(ui, menu, meta); break;
     case LobbyScreen::records: draw_records(ui, menu, meta); break;
     }
+    // A profile that is not being saved (locked at the start, a failed
+    // write): every screen of the dialog says so, at the top.
+    if (menu.screen() != LobbyScreen::none && !meta.save_problem.empty()) {
+        ui.rect(0, 2, 640, 20, UiColor{0, 0, 0, 0.6f});
+        ui.text(0, 4, meta.save_problem, ui_colors::orange, 15.0f, 2, 640);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +557,7 @@ void OverflowLobby::stepped(bool player_has_control) {
     // "Welcome back" (13.3 step 4): once, when the NPC talks and player 1
     // has the control (never over an original talk, never in "show").
     if (welcome_ && back_ && state_.talk && player_has_control && !menu_.is_open() && pending_ == 0) {
+        if (before_open) before_open();
         menu_.open(false, meta_, back_);
         welcome_ = false;
         back_.reset();
@@ -555,6 +571,7 @@ void OverflowLobby::stepped(bool player_has_control) {
         return;
     }
     if (--pending_ == 0 && state_.talk) {
+        if (before_open) before_open();
         menu_.open(state_.crowd, meta_, back_);
         back_.reset();
         welcome_ = false;

@@ -80,6 +80,7 @@ struct FormRecord {
 struct RecordRow {
     std::string key, title, condition, opens;
     std::int64_t date = 0; // yyyymmdd when done (1: done, date unknown), 0 open
+    bool later = false;    // what it opens is not in this build yet ("coming later", O2-O4)
 };
 struct LobbyMeta {
     bool seen_intro = false;
@@ -93,6 +94,8 @@ struct LobbyMeta {
     std::vector<std::string> records; // done records (keys)
     std::vector<RecordRow> record_rows; // the records page (fill_records); empty: six stand-ins (a build without lane F)
     std::vector<std::string> locked_forms; // forms not open (none of the four Rookies)
+    std::string last_form;    // the select's last form (8.5 `last`; the select starts there)
+    std::string save_problem; // the profile is not being saved (lane F's save_problem; every screen says so)
 };
 // Lane F's records and per-tier clears into the screens' meta (a template,
 // so lane D builds without F): `table` rows have key / title / condition /
@@ -162,6 +165,16 @@ public:
     int confirm_cursor() const { return confirm_; }
     int records_page() const { return records_page_; }
     int plug_form() const { return plug_form_; }
+    // The Plug Lab's answer to the last purchase ("Bought.", "Not enough Sim
+    // Bits.", ...) for about two seconds of the menu's frames; empty after.
+    void set_answer(std::string answer, bool good) {
+        answer_ = std::move(answer);
+        answer_good_ = good;
+        answer_at_ = frames_;
+    }
+    std::string_view answer() const { return screen_ == LobbyScreen::plug_lab && frames_ - answer_at_ < kAnswerFrames ? std::string_view(answer_) : std::string_view(); }
+    bool answer_good() const { return answer_good_; }
+    static constexpr std::uint64_t kAnswerFrames = 120;
     std::uint64_t opened_frames() const { return frames_; }
     void tick() { ++frames_; }
 
@@ -175,6 +188,9 @@ private:
     int face_ = 0, line_ = 0, armor_ = 0, chip_ = 0, confirm_ = 0, records_page_ = 0, plug_form_ = 0;
     bool confirming_ = false;
     std::uint64_t frames_ = 0;
+    std::string answer_;
+    bool answer_good_ = false;
+    std::uint64_t answer_at_ = 0;
 };
 
 // The screens of a LobbyMenu into SimUi.
@@ -217,12 +233,17 @@ public:
     // The run came back: "Welcome back" opens once, as soon as the NPC
     // talks (not in DW4_OVERFLOW=show) and player 1 has the control.
     void returned(const RunSummary& summary);
+    // The Plug Lab's answer to a purchase (the host has lane F's BuyResult).
+    void answer(std::string text, bool good) { menu_.set_answer(std::move(text), good); }
     // Draws the NPC (3D) and the dialog (2D) into a copy of the frame.
     void present(std::vector<engine::DrawItem>& items, engine::ShadowFrame* shadow, const engine::FrameCamera& camera,
                  std::optional<engine::Vec3f> own, double now, std::uint64_t frame);
     bool needs_present() const;
     const PresentationActor& actor() const { return actor_; }
     std::function<void()> on_intro_seen; // the meta file remembers the first meeting (lane F)
+    // Called right before the dialog opens (lane F: a profile that was locked
+    // at the start is read again and the meta filled anew).
+    std::function<void()> before_open;
 
 private:
     PresentationActor actor_;
@@ -253,6 +274,8 @@ void fill_records(const Profile& profile, const Table& table, LobbyMeta& meta) {
         RecordRow row{r.key, r.title, r.condition, r.opens, 0};
         if (const auto found = profile.records.find(std::string_view(r.key)); found != profile.records.end())
             row.date = found->second != 0 ? std::int64_t(found->second) : 1;
+        // (Lane F's record_built, found by its RecordDef: is the unlock built?)
+        if constexpr (requires { record_built(r); }) row.later = !record_built(r);
         meta.record_rows.push_back(std::move(row));
     }
     for (const auto& [model, stats] : profile.forms) {

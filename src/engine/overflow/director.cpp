@@ -833,6 +833,7 @@ void OverflowDirector::player_hit(Engine& engine, const HitTaken& hit) {
                    std::to_string(rules_ ? rules_->damage.taken_factor : 0.0f) +
                    (poison > 0 ? " poison " + std::to_string(hit.poison_tick) + "x" + std::to_string(hit.poison_ticks) : std::string()));
     if (hit.enemy != EnemyClass::guardian) highest_hit_ = std::max(highest_hit_, share);
+    highest_hit_all_ = std::max(highest_hit_all_, share); // (the results' line: every hit, Guardians too)
     auto& by = hits_by_family_[hit.shooter + (hit.enemy == EnemyClass::corrupted ? "*" : "")];
     taken_by_family_[{phase(), hit.shooter + (hit.enemy == EnemyClass::corrupted ? "*" : "")}] += share;
     ++by.first;
@@ -905,8 +906,14 @@ void OverflowDirector::step_ending(Engine& engine) {
         return;
     }
     if (outcome_ == Outcome::defeated && ending_phase_ == 0 && age >= 120) {
-        // The original's Game Over picture (4.8).
-        port_send(engine, "MODELCTRL", "i_fadewn01", 0, "SQ_GAMEOVER");
+        // The original's Game Over picture (4.8): the stage scripts' own
+        // "MODELCTRL i_fadewn01 GENERATE SQ_GAMEOVER" (every stage package
+        // has the fade model with SQ_GAMEOVER; a bare SQ_GAMEOVER command
+        // finds the model gone after the field start's SQ_BLIN60 and shows
+        // nothing).
+        Packet sequence;
+        parse_packet_arguments("SQ_GAMEOVER", sequence);
+        port_send(engine, "MODELCTRL", "i_fadewn01", 0, "GENERATE", sequence);
         detail::play_sound(engine, "QS_DONOT");
         ending_phase_ = 1;
     }
@@ -1220,9 +1227,17 @@ std::vector<std::string> OverflowDirector::build_lines(const Engine& engine) con
             if (device->value > 0) text += " +" + std::to_string(device->value);
             return text;
         };
-        out.push_back("Core: " + name("armor1", player.main_slot[0]) + "   Board: " + name("armor2", player.sub_slot[0]));
-        out.push_back("Chips: " + name("abChip", player.power_pocket[0]) + " / " + name("abChip", player.main_pocket[0]) + "   ¶ Data " +
-                      std::to_string(x_data_));
+        // (The game font has no '/': its stand-in '-' made "- / -" read
+        // "- - -". The pockets' chips with a comma, "none" for an empty part.)
+        auto part = [&](const char* table, int index) {
+            const std::string text = name(table, index);
+            return text == "-" ? std::string("none") : text;
+        };
+        out.push_back("Core: " + part("armor1", player.main_slot[0]) + "   Board: " + part("armor2", player.sub_slot[0]));
+        std::string chips;
+        for (const int pocket : {player.power_pocket[0], player.main_pocket[0]})
+            if (const std::string chip = name("abChip", pocket); chip != "-") chips += (chips.empty() ? "" : ", ") + chip;
+        out.push_back("Chips: " + (chips.empty() ? std::string("none") : chips) + "   ¶ Data " + std::to_string(x_data_));
     }
     std::map<int, int> plugs;
     for (const auto& [stat, points] : plugs_taken_) plugs[stat] += int(points);
@@ -1268,7 +1283,7 @@ std::vector<std::string> OverflowDirector::result_lines(const Engine& engine) co
         for (std::size_t i = 0; i < damage.size() && i < 6; ++i) out.push_back("   " + damage[i].second + " " + std::to_string(damage[i].first));
     }
     char hit[64];
-    std::snprintf(hit, sizeof hit, "Highest hit taken %.0f %% of MaxHP", highest_hit_ * 100.0);
+    std::snprintf(hit, sizeof hit, "Highest hit taken %.0f %% of MaxHP", highest_hit_all_ * 100.0);
     out.push_back(hit);
     if (sys && db) {
         const auto& player = sys->players[0];

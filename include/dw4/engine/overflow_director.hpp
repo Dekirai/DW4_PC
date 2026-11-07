@@ -741,7 +741,8 @@ private:
     std::string end_reason_ = "-";   // what ended the run (RunEnd's reason, retire, clear)
     std::string last_hit_family_;    // the last damaging hit's shooter (defeated_by)
     std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
-    double highest_hit_ = 0;
+    double highest_hit_ = 0;     // non-Guardian hits (14.2's clamp measure, the summary)
+    double highest_hit_all_ = 0; // every hit (the results' "Highest hit taken")
     int panels_min_gap_ = 1 << 30;
     std::int64_t last_panel_frame_ = -1;
     int last_panel_count_ = 0;

@@ -554,6 +554,7 @@ std::uint64_t data_hash(const dw4::MountedResources& resources) {
 }
 
 int run(const Options& options, dw4::game::Settings& settings) {
+    int exit_code = 0; // (a test run's failed check: DW4_STATE_TEST)
     // The engine is replaced in place when a save state loads (same storage,
     // so `engine` keeps naming the running one).
     std::optional<dw4::engine::Engine> engine_storage;
@@ -1245,6 +1246,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int state_test = options.smoke_frames && std::getenv("DW4_STATE_TEST") ? std::atoi(std::getenv("DW4_STATE_TEST")) : 0;
         int state_pass = 1, state_mismatch = -1;
         bool state_test_save = false; // saves after the picture, like F5 or the menu
+        std::string state_test_refused; // why the state test's save was refused (can_save)
         std::vector<std::uint64_t> state_fingerprints;
         auto& settings_changed = view.settings_changed;
         // F1 Saves tab: the boxes of the slots (read again every 2 s while
@@ -1485,6 +1487,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             dw4::game::overflow::refresh_lobby(overflow_lobby);
         }
         bool overflow_resources_set = false;
+        // A run the lobby's select started (Gekomon's "Welcome back" follows
+        // only such a run, not --overflow-run or the F1 dev start).
+        bool overflow_from_select = false;
+        // (A profile that was locked at the start is read again when the
+        // dialog opens; the screens get the meta anew. Lane F.)
+        overflow_lobby.before_open = [&] {
+            if (dw4::game::overflow::meta().retry_locked())
+                dw4::game::overflow::refresh_lobby(overflow_lobby, dw4::game::overflow::story_forms(engine));
+        };
         // The select's Yes (SURVIVAL.md 9.2): the switch fades the story out
         // and the run starts with the chosen form and loadout. Test runs add
         // DW4_OVERFLOW_TEST_RUN's KEY=VALUE tokens (bot=, frames=, shots=,
@@ -1493,8 +1504,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // The meta file learns the lobby's choices (a Plug Lab purchase, the
             // started run's loadout, the first meeting; lane F).
             if (action.kind != dw4::game::overflow::LobbyAction::Kind::none &&
-                (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || !overflow_switch.busy()))
-                dw4::game::overflow::lobby_action(overflow_lobby, action, dw4::game::overflow::story_forms(engine));
+                (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || !overflow_switch.busy())) {
+                const auto bought = dw4::game::overflow::lobby_action(overflow_lobby, action, dw4::game::overflow::story_forms(engine));
+                // (The Plug Lab answers every purchase: lane F's four answers.)
+                if (action.kind == dw4::game::overflow::LobbyAction::Kind::buy_plug)
+                    overflow_lobby.answer(dw4::game::overflow::buy_result_text(bought), bought == dw4::game::overflow::BuyResult::bought);
+            }
             if (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || overflow_switch.busy()) return;
             auto request = action.request;
             request.seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
@@ -1515,7 +1530,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     for (const auto& [key, value] : extra->options) request.options[key] = value;
                 }
             }
-            if (dw4::game::overflow::start_refusal(engine, !offline).empty()) overflow_switch.request(std::move(request));
+            if (dw4::game::overflow::start_refusal(engine, !offline).empty()) {
+                overflow_switch.request(std::move(request));
+                overflow_from_select = true;
+            }
         };
         bool overflow_offline = true;
         bool overflow_quit_after = false;
@@ -2087,8 +2105,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     back.defeated_by = outcome.defeated_by;
                     // The run's Sim Bits and records into the lobby's meta (lane F).
                     dw4::game::overflow::refresh_lobby(overflow_lobby, dw4::game::overflow::story_forms(engine));
-                    if (outcome.end != dw4::game::overflow::RunEnd::failed && outcome.end != dw4::game::overflow::RunEnd::window_closed)
+                    if (overflow_from_select && outcome.end != dw4::game::overflow::RunEnd::failed &&
+                        outcome.end != dw4::game::overflow::RunEnd::window_closed)
                         overflow_lobby.returned(back);
+                    overflow_from_select = false;
                 }
                 state_message = outcome.end == dw4::game::overflow::RunEnd::failed ? "Data Overflow could not run: " + outcome.error
                                                                                     : std::string("Back from Data Overflow (") +
@@ -2326,6 +2346,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // bots. stick_x / stick_y are the main stick in host units
                 // (a live analog stick or movement keys, else a bot's
                 // steering); the bots steer only while it is centred.
+                // (Interactive: the dialog may open after any step of a pass of
+                // several; from then on the pass's steps get neutral pads, as
+                // the next passes do while it is open, SURVIVAL.md 3.3.)
+                if (!overflow_scripted && overflow_lobby.dialog_open()) live = {};
                 std::uint32_t script_buttons = scripted.held(frame);
                 const std::uint32_t script_held = script_buttons; // (the latch below waits for these)
                 if (overflow_scripted && overflow_lobby.dialog_open()) {
@@ -2777,6 +2801,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (const auto* models = engine.get<dw4::engine::ModelCtrlManager>())
                         if (const auto* p = models->player(0)) control = p->control_enabled && p->seq_name.rfind("SQ_DEMO", 0) != 0;
                     overflow_lobby.stepped(control);
+                    // (Interactive: the pad waits for released buttons from the
+                    // step the dialog opened on, not a pass later.)
+                    if (!overflow_scripted && overflow_lobby.take_story_latch()) {
+                        pad_latch = true;
+                        live = {};
+                    }
                 }
                 if (!net.active() && !online) bind_randomizer();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
@@ -3264,6 +3294,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 else if (!input_log.empty()) input_log.back().drawn = true;
             }
             if (state_test_save) {
+                if (auto problem = can_save(); !problem.empty()) state_test_refused = std::move(problem);
                 save_state(0);
                 state_test_save = false;
             }
@@ -4215,9 +4246,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         // (The last load of the run, without player control so far.)
         if (trace_loadtime && load_timing.serial && !load_timing.control) print_load_timing();
-        if (state_test)
+        // (No state saved or loaded, e.g. can_save refused the title's stage:
+        // nothing was compared, so the test fails instead of passing empty.)
+        if (state_test && state_pass == 1) {
+            std::cout << "state test: no state saved ("
+                      << (!state_test_refused.empty() ? state_test_refused
+                                                      : frame < state_test ? "the run ended before frame " + std::to_string(state_test)
+                                                                           : std::string("the state was not loaded"))
+                      << ")\n";
+            exit_code = 1;
+        } else if (state_test) {
             std::cout << "state test: " << (state_mismatch < 0 ? "identical after loading" : "differs from frame " + std::to_string(state_mismatch))
                       << " (" << state_fingerprints.size() << " frames compared)\n";
+            if (state_mismatch >= 0) exit_code = 1;
+        }
         if (settings_changed && !options.smoke_frames) settings.save();
         save_profile();
         if (options.smoke_frames && achievements_on())
@@ -4356,7 +4398,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (context) SDL_GL_DestroyContext(context);
     if (window) SDL_DestroyWindow(window);
     SDL_Quit();
-    return 0;
+    return exit_code;
 }
 
 // --save-info FILE / --import-save FILE[:BOXES]: the preview of a GC save

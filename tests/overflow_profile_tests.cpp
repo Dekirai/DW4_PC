@@ -155,10 +155,27 @@ void format() {
                                                         &complete);
     check(later_shape && complete && later_shape->sim_bits == 7 && !later_shape->record("blossom_data") && later_shape->loadouts.empty(),
           "a later version's other shapes: complete, not read");
-    check(later_shape->serialize().find("\nrecord blossom_data 20261101 hard\n") != std::string::npos &&
-              later_shape->serialize().find("\ntotal defeats 500 since_v2\n") != std::string::npos &&
-              later_shape->serialize().find("\nloadout p_agumon armor brave_core chip - slot2 x\n") != std::string::npos,
-          "... but kept for the write");
+    check(later_shape->serialize().find("\nkeep 2 record blossom_data 20261101 hard\n") != std::string::npos &&
+              later_shape->serialize().find("\nkeep 2 total defeats 500 since_v2\n") != std::string::npos &&
+              later_shape->serialize().find("\nkeep 2 loadout p_agumon armor brave_core chip - slot2 x\n") != std::string::npos,
+          "... but kept for the write, under the marker of their version");
+    // The integration review (player lens): this version writes its own
+    // header, so the bare line would read as damage at the next start and the
+    // .bak (still the later file) would win on every start. Load -> save ->
+    // load: the second load is complete, keeps the line and writes the same.
+    {
+        const std::string first = later_shape->serialize();
+        check(first.starts_with("DW4OVERFLOW 1\n"), "this version's header over a later version's lines");
+        const auto second = ov::OverflowProfile::parse(first, &complete);
+        check(second && complete, "a later version's known line, written back by this version: complete at the next load");
+        check(second->sim_bits == 7 && second->unknown.size() == 3 && second->serialize() == first, "... and the same at every further write");
+        // A line near the length limit keeps its marker on top.
+        const std::string longer = "record blossom_data 20261101 " + std::string(470, 'x');
+        const auto near_limit = ov::OverflowProfile::parse("DW4OVERFLOW 3\n" + longer + "\nend\n", &complete);
+        check(near_limit && complete && near_limit->unknown.size() == 1, "a long later line is kept");
+        const auto near_back = ov::OverflowProfile::parse(near_limit->serialize(), &complete);
+        check(near_back && complete && near_back->unknown == near_limit->unknown, "... with its marker, and reads back complete");
+    }
     // Times.
     check(ov::time_text(0) == "0:00.0" && ov::time_text(1272.44) == "21:12.4" && ov::time_text(3600) == "60:00.0", "time text");
     check(ov::parse_time("21:12.4") && std::abs(*ov::parse_time("21:12.4") - 1272.4) < 1e-9 && ov::parse_time("1:05") == 65.0 &&
@@ -476,6 +493,10 @@ void records_and_bits() {
     check(opened.size() == ov::start_gear().size() + 1 && opened[0] == "brave_core" && opened[ov::start_gear().size()] == "drain_ram",
           "opened_gear: the start set, then the records' gear the run can equip (O1b: the Drain Ram)");
     for (const auto& gear : open) check(ov::gear_built(gear) == (gear == "drain_ram"), "built in O1b: " + gear);
+    // What a record opens is built (the results name it; the records page
+    // marks the rest "coming later"): in O1b only Blossom Data's Drain Ram.
+    for (const auto& record : ov::record_table())
+        check(ov::record_built(record) == (std::string_view(record.key) == "blossom_data"), std::string("record_built: ") + record.key);
     // A record a later version adds is checked against the totals the file has.
     ov::OverflowProfile old;
     old.totals["crates"] = 140;
@@ -741,6 +762,32 @@ void lobby() {
 
 // The file is there but locked (another program, a second instance): the
 // session reads what it can and never writes; the file and its .bak stay.
+// The review's case (scratchpad p6): a later version's file with a known
+// line in its own shape; three sessions of this version, each one run. Every
+// run's Sim Bits stay (no "damaged", no restore from the .bak).
+void later_file_sessions() {
+    Folder folder;
+    const fs::path file = folder.root / "overflow.dat";
+    auto damaged = file;
+    damaged += ".damaged";
+    write(file, "DW4OVERFLOW 2\nseen_intro 1\nsim_bits 5000\nrecord gate_keeper 20261101 hard\nend\n");
+    for (int session = 1; session <= 3; ++session) {
+        ov::MetaStore s;
+        s.open(file);
+        check(s.source() == ov::LoadSource::file && s.load_note().empty(), "session " + std::to_string(session) + ": the file reads as it is");
+        check(s.profile().sim_bits == 5000 + 52 * (session - 1), "session " + std::to_string(session) + ": the earlier runs' Sim Bits are there");
+        ov::RunReport report;
+        report.form = "p_agumon";
+        report.seconds = 30.0;
+        report.bits = 52;
+        report.outcome = "retired";
+        s.record_run(report, 20261107);
+        check(s.last_error().empty() && s.profile().sim_bits == 5000 + 52 * session, "session " + std::to_string(session) + ": the run is written");
+    }
+    check(!fs::exists(damaged), "no session took the file for damaged");
+    check(read(file).find("\nkeep 2 record gate_keeper 20261101 hard\n") != std::string::npos, "the later version's line is still there");
+}
+
 void locked_file() {
 #ifdef _WIN32
     Folder folder;
@@ -767,6 +814,18 @@ void locked_file() {
         check(s.source() == ov::LoadSource::backup && s.profile().sim_bits == 50000, "... the .bak's data meanwhile");
         check(s.buy_plug("p_agumon", 2) == ov::BuyResult::bought && !s.last_error().empty(), "a purchase stays in memory, the error is told");
         check(s.save_problem().find("in use") != std::string::npos, "the screens' line");
+        check(!s.retry_locked() && s.read_only(), "a session with an unsaved change stays read only (a load would drop it)");
+    }
+    {
+        // Locked at the start, let go before the dialog opens: read again.
+        ov::MetaStore s;
+        s.open(file);
+        check(s.read_only() && !s.retry_locked(), "still locked: still read only");
+        CloseHandle(lock);
+        check(s.retry_locked() && !s.read_only() && s.source() == ov::LoadSource::file && s.profile().sim_bits == 60000 && s.save_problem().empty(),
+              "unlocked: the file is read again, the session saves");
+        lock = CreateFileW(file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(lock != INVALID_HANDLE_VALUE, "locked again");
     }
     CloseHandle(lock);
     check(read(file) == before && read(bak) == backup_before, "the locked file and its .bak are untouched");
@@ -813,6 +872,7 @@ int main() {
         format();
         damaged_text();
         store();
+        later_file_sessions();
         locked_file();
         plug_lab();
         defeat_bits();

@@ -291,6 +291,11 @@ public:
 
     void before_step(engine::Engine& run, std::array<engine::PadSample, 4>& pads) override {
         if (timing_) step_started_ = std::chrono::steady_clock::now();
+        if (director_->screen() == ov::Screen::results) {
+            if (!results_step_) results_step_ = director_->steps();
+        } else {
+            results_step_.reset();
+        }
         const engine::PadSample live = pads[0];
         const std::uint32_t trigger = live.buttons & ~last_buttons_;
         last_buttons_ = live.buttons;
@@ -308,7 +313,9 @@ public:
                 if ((trigger & pad_button::down) || moved > 0) director_->command_move(1);
                 if (screen == ov::Screen::retire_ask && ((trigger & (pad_button::left | pad_button::right)) || moved_x != 0))
                     director_->command_move(1);
-                if (trigger & pad_button::a) director_->command_accept();
+                // (The results take A only once every line is there, at least
+                // after 1 s: an A of the fight must not skip them.)
+                if ((trigger & pad_button::a) && (screen != ov::Screen::results || results_ready(run))) director_->command_accept();
                 if (trigger & pad_button::b) director_->command_back();
                 if ((trigger & pad_button::start) && screen != ov::Screen::level_up && screen != ov::Screen::results) director_->command_pause();
             } else if (trigger & pad_button::start) {
@@ -441,6 +448,14 @@ public:
     }
 
 private:
+    // The results are open since this director step (the A of the results waits, results_wait).
+    std::optional<std::uint64_t> results_step_;
+    bool results_ready(engine::Engine& run) const {
+        if (!results_step_) return true;
+        auto lines = director_->result_lines(run);
+        for (auto& line : meta_lines()) lines.push_back(std::move(line));
+        return director_->steps() - *results_step_ >= results_wait(fit_result_lines(lines, 32).size());
+    }
     // The screens' data from the director (lane D's screens; lane E's finale,
     // lane F's meta last; o1b contract D4, F 17:40).
     std::uint64_t screen_step_ = 0; // the director step the open screen opened at (the results' pacing)
@@ -586,8 +601,11 @@ private:
         // (The run's bits as recorded: the pickups and the credited defeats, 4.7.)
         lines.push_back("Bits " + std::to_string(recorded_bits_));
         lines.push_back("Sim Bits +" + std::to_string(reward_.sim_bits) + "   (" + std::to_string(meta().profile().sim_bits) + ")");
+        // (Only an unlock this build has is named: the records page marks the
+        // others "coming later", O2-O4.)
         for (const auto& key : reward_.new_records)
-            if (const auto* record = find_record(key)) lines.push_back(std::string("NEW! ") + record->title + "   opens " + record->opens);
+            if (const auto* record = find_record(key))
+                lines.push_back(std::string("NEW! ") + record->title + (record_built(*record) ? std::string("   opens ") + record->opens : std::string()));
         // The player learns when the profile is not saved (locked at the
         // start, a failed write): the progress lives only until the game ends.
         if (const auto problem = meta().save_problem(); !problem.empty()) lines.push_back(problem);

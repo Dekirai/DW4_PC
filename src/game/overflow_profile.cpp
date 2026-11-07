@@ -383,7 +383,8 @@ std::optional<OverflowProfile> OverflowProfile::parse(std::string_view text, boo
             ended = true;
             continue;
         }
-        if (line.size() > kMaxLine || !plain_text(line)) { // damaged bytes: skipped
+        // (A kept line of a later version carries its "keep <n> " marker on top.)
+        if (line.size() > (line.starts_with("keep ") ? kMaxLine + 24 : kMaxLine) || !plain_text(line)) { // damaged bytes: skipped
             damaged = true;
             continue;
         }
@@ -461,10 +462,16 @@ std::optional<OverflowProfile> OverflowProfile::parse(std::string_view text, boo
         }
         if (known && !good) {
             // A later version's file: a known line in a shape this version
-            // cannot read is that version's, kept as it was (not damage).
-            // This version's own file: damaged.
+            // cannot read is that version's, kept (not damage) under the
+            // marker "keep <its version> ": this version writes its own
+            // header, under which the bare line would read as damage at the
+            // next start (and the .bak, still the later file, would win on
+            // every start). A later version reads "keep <n> <line>" of a
+            // file with a lower header as its own line when n is its own
+            // version or lower. This version's own file: damaged.
             if (profile.version > kProfileVersion) {
-                if (profile.unknown.size() < kMaxUnknownLines) profile.unknown.push_back(std::string(line));
+                if (profile.unknown.size() < kMaxUnknownLines)
+                    profile.unknown.push_back("keep " + std::to_string(profile.version) + ' ' + std::string(line));
             } else {
                 damaged = true;
             }
@@ -521,6 +528,13 @@ bool gear_built(std::string_view key) {
     for (const char* built : kBuiltRecordGear)
         if (key == built) return true;
     return false;
+}
+
+bool record_built(const RecordDef& record) {
+    // (The records that open a tier, an offer or a mode open nothing this
+    // build has: Hard / Very Hard, Extensions, Endless, the ?????? offer.)
+    const auto gear = record_gear(record.key);
+    return !gear.empty() && std::all_of(gear.begin(), gear.end(), [](const std::string& key) { return gear_built(key); });
 }
 
 std::vector<std::string> opened_gear(const OverflowProfile& profile) {
@@ -715,7 +729,7 @@ void apply_meta(const OverflowProfile& profile, RunRequest& request) {
 // ---------------------------------------------------------------------------
 // The store
 // ---------------------------------------------------------------------------
-void MetaStore::open(const std::filesystem::path& path) {
+void MetaStore::open(const std::filesystem::path& path, int attempts) {
     path_ = path;
     profile_ = {};
     source_ = LoadSource::none;
@@ -724,16 +738,17 @@ void MetaStore::open(const std::filesystem::path& path) {
     last_report_.reset();
     last_reward_ = {};
     read_only_ = false;
+    unsaved_ = false;
     if (path_.empty()) return;
     // A file that is there but cannot be read now (another program or a
     // second instance has it open, no permission) is not damaged: a few
     // tries, then this session reads what it can and never writes, so the
     // real file and its .bak are never replaced by a new profile.
     bool locked = false;
-    auto read_file = [&locked](const std::filesystem::path& file) -> std::optional<std::vector<std::uint8_t>> {
+    auto read_file = [&locked, attempts](const std::filesystem::path& file) -> std::optional<std::vector<std::uint8_t>> {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(file, ec)) return std::nullopt;
-        for (int attempt = 0; attempt < 4; ++attempt) {
+        for (int attempt = 0; attempt < std::max(1, attempts); ++attempt) {
             if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(150));
             if (auto bytes = save::read_whole_file(file)) return bytes;
         }
@@ -796,6 +811,13 @@ void MetaStore::open(const std::filesystem::path& path) {
     if (main) note_ += "; a new profile starts";
 }
 
+bool MetaStore::retry_locked() {
+    if (!read_only_ || unsaved_ || path_.empty()) return false;
+    const auto path = path_;
+    open(path, 1); // (one try: the lobby must not wait)
+    return !read_only_;
+}
+
 std::string MetaStore::save_problem() const {
     if (read_only_) return "Not saved: " + path_.filename().string() + " was in use when the game started.";
     if (!error_.empty()) return "Not saved: the profile file cannot be written.";
@@ -806,6 +828,7 @@ bool MetaStore::save() {
     if (path_.empty()) return true; // a test run's profile: memory only
     if (read_only_) {
         error_ = note_;
+        unsaved_ = true;
         return false;
     }
     const auto text = profile_.serialize();
