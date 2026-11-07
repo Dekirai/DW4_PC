@@ -1724,14 +1724,22 @@ Lane E as built, its spike notes, measurements and what is left:
 docs/ROUND_O1B_E_NOTES.md.
 
 **Integrated** on branch `int-o1b` (docs/ROUND_O1B_INT_NOTES.md; lanes D and
-F: docs/ROUND_O1B_D_NOTES.md, docs/ROUND_O1B_F_NOTES.md): ctest 61 / 61,
-det.sh 4004f056 / 396cb219, r25c 10 / 10 with 1,748,011 frames with the NPC
-hidden and shown, T3 / T4 / T5 with a real talk to Gekomon, a run and the
-walk after it, T9 over every screen string, T10, T11 and the save state
-suite pass; T6 runs every Rookie to its clear or TIME UP with lane E's run
-hashes; every screen is in the hidden picture set. Not met: 14.2's newcomer
-target for all four Rookies and T8's step time under load (the notes' 5 and
-6); the user's own run is the last part of "done".
+F: docs/ROUND_O1B_D_NOTES.md, docs/ROUND_O1B_F_NOTES.md), with the review
+round's fixes (the notes' 7): ctest 61 / 61, det.sh 4004f056 / 396cb219,
+r25c 10 / 10 with 1,748,011 frames with the NPC hidden and shown (shown
+also drawn), T3 with the fingerprint, the generator, the net fingerprint
+and the canonical snapshot equal, T4 with the det script (replays across
+a run inside dng101b1) and with a real talk, T5 with a real save on the
+card, T9 over every screen string, T10, T11 and the save state suite's 14
+real cases pass (its other three save nothing; DW4_STATE_TEST now fails
+such a case instead of passing it empty); T6 runs every Rookie to its
+clear or TIME UP with lane E's run hashes; every screen is in the hidden
+picture set. Not met: seven of 14.2's thirteen targets (the human median
+for all four Rookies, Dorumon's kite median, every seed clearing with
+Agumon and Guilmon, the kite's 3-minute margin, Dorumon's wall, 2 of 40
+early Agumon defeats, Dorumon's first level-up at 18.2 s; the notes' 5)
+and T8's step time under load. Open: T5 with a story save written after a
+run. The user's own run is the last part of "done".
 
 Merge order E, D, F. **Done:** offline and alone, talking to Gekomon opens
 the menu; a run with any Rookie plays four phases with Guardians and the
