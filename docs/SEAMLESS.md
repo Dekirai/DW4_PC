@@ -12542,6 +12542,54 @@ together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
 
+*Built, lane moderation (2026-11-07, branch `feat-i1b-mod` from `int-i1a` bfc3b0a5; progress note
+`docs/ROUND_I1B_MOD_NOTES.md`; the wire and REST decisions shared with the lanes prompt and go are in the round's contract
+file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
+
+- **What I1a had.** The relay lane of I1a built most of 19.6.6's server side: INSTANCE_OP *remove* from the host or seated
+  staff, the bar (`World:RemovedBarMinutes`, 10) in Visible(), WORLD_NOTICE 5 to the removed member, its HOME (owed until
+  its DISSOLVE), the seat and the story owner switched at once (a STORY with the host's key: refused *owner*), the
+  detachment of a solo-led stage group after `Instances:JoinRequestTries` unanswered JOIN_REQ home, and the admin REST's
+  Remove. This lane kept it and added the rest.
+- **Removal.** The audit rows name accounts by id only (web 18:15): `instance_remove` {wid, historyId, hostId, block},
+  `staff_remove` {wid, historyId, hostId, role}; the world log's `remove {wid, account, member, by, reason:
+  host|staff|block}`. A guest, or anyone about the host or about himself, removes nobody (counted). **The host's block
+  removes** (19.11): the relay's re-check after BlocksChanged removes a guest the host newly blocks (a block the host had
+  before, which a moderator passed by an audited override, removes nobody; a guest's block of the host removes nobody).
+  **The bar in the lists:** `WorldInstanceRow.Barred` (the accounts under a live bar) and `WorldVisibility.Visible` hide the
+  instance from a barred player on `/instances` and `GET /instances` (staff still see every row); the relay's prompt rows,
+  co-arrival and automatic join already refused it through Visible(). Expired bars go in the housekeeping.
+- **Report player.** REPORT 0x1E (member u32, reason u8 1 griefing / 2 cheating / 3 name / 4 other, wid u32) and its
+  answer WORLD_NOTICE 14 (argument 0 sent, 1 limit, 2 not available, 3 failed). The relay maps the member id to its account
+  (also a member that left the world in the last 30 minutes), takes the shared instance's history id (the reporter's own
+  instance when the reported is or was seated in it, else the named wid's), throttles 3 at once then one a second, and hands
+  the report to `ReportService` off the lock. One service for the game and `POST /api/v1/reports {username, reason}`:
+  never oneself or a deleted account, `Reports:PerDay` (10 in 24 hours, counted in the table; 429 `report_limit`),
+  `Reports:RepeatHours` (24: a second report about the same player adds no row and answers "sent"), the shared instance
+  from `instance_history` within `Reports:SharedInstanceHours` (24) when the relay named none;
+  `RateLimits:ReportsPerMinute` (10) on the REST call. **`player_reports`** went into the still unreleased `0013_world`
+  (19.17.1's columns plus `source` game / web; CHECKs: never oneself, *done* only with a time; `instance_id` ON DELETE SET
+  NULL, so the history's prune keeps the report; a COMMENT on every column) with the view `v_player_reports`;
+  `ScrubAsync` deletes an account's own reports, reports about it keep the anonymous id.
+- **Staff.** `GET /admin/reports?state=open|done|all`, `POST /admin/reports/{id}/done` (audited `report_handled`) and
+  `/reopen` (`report_reopened`, also in `v_staff_audit` and the audit list); the website's *Admin > Reports* (open first,
+  newest first, the reported player's open count and his live instance, links to both accounts' pages, *Done* /
+  *Reopen*), the admin index's open count and the account page's "Reports about this player". What staff do about a
+  player stays on his account page (lock, ban) and *Admin > Instances* (End, Remove).
+- **Client.** The F1 Online tab's *Instance* page: A on another member's row opens its player card below the table with
+  *Report* (the four reasons, then the toast of the relay's answer) and, for the host and staff playing in the instance,
+  *Remove* with the question "Remove <name> from your instance? They can't rejoin it for 10 minutes."; the removed
+  member's toast names the host from the notice itself. Texts beyond 19.5.6: "You can't send more reports today.",
+  "Couldn't send the report. Try again later." Test drivers: the online script's `remove NAME`, `report NAME REASON`
+  and `setflag N` (development builds: a story value outside the pads, W10c), the UI script's `card`, `remove`,
+  `report`, and `DW4_ONLINE_TEST_IGNORE_HOME=1` (development builds; on the engine's allowed list): a JOIN_REQ home goes
+  unanswered (W10c).
+- **Scenarios** W10 (the removal, the home departure on the own story, the bar: b's next arrival hosts its own instance,
+  b's `GET /instances` does not list a's while staff's does; run.py's `api_checks` learned `expect_not`), W10b (removed
+  while defeated: HOME's fork takes exactly b's slot, a's stage group plays on), W10c (the client that never answers: its
+  STORY with the host's key refused, the group detached, its gate disc a DISSOLVE home on its own story). Their results
+  are in the progress note.
+
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
 "sent" until they expire), blocks, the migration `friends` with its
