@@ -12467,10 +12467,24 @@ command, result and log path).*
     the pacer runs such a backlog.
   - *The lone host's game over* (harness, W27): a defeated member alone in
     its stage group gets the original game over (the bit capsule's
-    `end_g_000bcaps.lua`); holding START keeps it from running, offline as
-    online (`dw4_world_probe homeover` cases 14-19), and the relay ignores
-    a give-up INTENT outside a sealed group. W27's host waits instead of
-    holding START; its expectations are unchanged.
+    `end_g_000bcaps.lua`), whose message waits for A, offline as online
+    (`dw4_world_probe homeover` cases 14-21: with A presses stagML11 at
+    +546, without them no stage change in 6,000 frames, START or not); the
+    relay ignores a give-up INTENT outside a sealed group. W27's host held
+    START (`giveup`) and pressed nothing else; it now answers the message
+    (`talk`); its expectations are unchanged.
+  - *The Fortress's scope* (relay, W32): stag0205's plateau belongs to
+    Death Valley's scope (19.30.2, as `AreaTableTests` pins it), so a host
+    walking there from the Fortress counts no `area_escape`
+    (`AreaTable.InScope`).
+  - *W9, W30b, W32 without the explore bot*: its characters fell in the
+    Fortress and in Dry Land. Development builds' online scripts take
+    `depart STAGE [POINT]` (once, only alone in the stage group): the
+    departure records an exit's script ends with, to that exit's own target
+    (W9: stagML02 point 1 from stag0101; W30b: dng205b1 point 1, dng205b2
+    point 0; W32: the Fortress edges of `kExits` to stag0205's plateau and
+    back). The disk action walks the panel by its cursor (a k10's 8-row
+    panel never reached the Gate Disk).
   - *Fake guests in a real instance* (harness, W29): the relay matches an
     arrival only with instances of its session context (19.7.2); the
     `instance_start` line of the world log names the instance's context and
