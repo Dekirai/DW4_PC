@@ -262,6 +262,20 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void The_census_no_static_edge_leads_from_a_hub_stage_into_a_field()
+    {
+        // 19.7.4's census: every departure from home into a joinable stage is a computed NEXTSTAGE of stagML11's mate00 (the lobby
+        // gate, quests included) or mate02 (the return mat), which Engine::pending_departure_choice names (dw4_world_probe census);
+        // the graph of all stage scripts has no other edge out of the hub stages.
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "data", "stage_graph.json")));
+        var out_of_home = doc.RootElement.GetProperty("edges").EnumerateArray()
+            .Select(e => (From: e.GetProperty("from").GetString()!, To: e.GetProperty("to").GetString()!, Script: e.GetProperty("script").GetString()!))
+            .Where(e => StageNames.IsHub(e.From) && !StageNames.IsHub(e.To)).ToList();
+        Assert.Empty(out_of_home);
+        Assert.Contains(doc.RootElement.GetProperty("edges").EnumerateArray(), e => e.GetProperty("from").GetString() == "stagml11");
+    }
+
+    [Fact]
     public void Prompt_messages_have_the_agreed_bytes()
     {
         // (online_wire_tests.cpp holds the same bytes: the client's encoder and decoder.)
