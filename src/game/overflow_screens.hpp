@@ -49,6 +49,8 @@ struct RunScreenData {
     std::vector<std::string> build_lines, result_lines;
     bool cleared = false;
     std::uint64_t clear_frames = 0;  // director steps since the clear (the banner, 4.4)
+    bool defeated = false;
+    std::uint64_t defeat_frames = 0; // director steps since the defeat (the Game Over fade, 4.8)
     std::uint64_t screen_frames = 0; // director steps the screen is open (the results' lines appear one by one)
 };
 
@@ -79,6 +81,10 @@ std::uint64_t results_wait(std::size_t lines);
 
 // The run's 2D items of one frame (`frame`: the presented step, blinking).
 void draw_run_screens(SimUi& ui, const RunScreenData& data, std::uint64_t frame);
+// The items' alpha: the HUD fades out with the original's Game Over fade
+// (i_fadewn01 SQ_GAMEOVER, 120 steps after the defeat; dark about 45 steps
+// later), so it does not stand on the black; the results draw in full.
+float run_screens_alpha(const RunScreenData& data);
 // The countdown in the quest timer's look: "m:ss" (finale_left).
 std::string quest_timer_text(double seconds_left);
 // The value colour of a weapon by its grade glyph (α white .. ε magenta).

@@ -318,6 +318,11 @@ UiColor grade_color(std::string_view name) {
     return ui_colors::white;
 }
 
+float run_screens_alpha(const RunScreenData& d) {
+    if (d.screen == RunScreen::results || !d.defeated || d.defeat_frames <= 120) return 1.0f;
+    return std::clamp(1.0f - float(d.defeat_frames - 120) / 45.0f, 0.0f, 1.0f);
+}
+
 void draw_run_screens(SimUi& ui, const RunScreenData& d, std::uint64_t frame) {
     if (d.screen != RunScreen::results) draw_hud(ui, d, frame);
     switch (d.screen) {

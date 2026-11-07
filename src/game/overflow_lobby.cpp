@@ -115,10 +115,24 @@ void LobbyMenu::open(bool crowd, const LobbyMeta& meta, const std::optional<RunS
     if (pages_.empty()) to_choice();
 }
 
+void LobbyMenu::enter_select(const LobbyMeta& meta) {
+    screen_ = LobbyScreen::select;
+    line_ = 0;
+    confirming_ = false;
+    // (8.5: the select starts at the last form chosen.)
+    const auto last = std::find(kSelectForms.begin(), kSelectForms.end(), std::string_view(meta.last_form));
+    if (last != kSelectForms.end()) face_ = int(last - kSelectForms.begin());
+    load_loadout(meta);
+}
+
 void LobbyMenu::open_screen(LobbyScreen screen, const LobbyMeta& meta) {
     open(false, meta, std::nullopt);
     if (screen == LobbyScreen::talk) return;
     to_choice();
+    if (screen == LobbyScreen::select) {
+        enter_select(meta);
+        return;
+    }
     if (screen == LobbyScreen::help) {
         pages_.clear();
         for (const Text t : {Text::help_1, Text::help_2, Text::help_3, Text::help_4}) pages_.push_back(std::string(text(t)));
@@ -182,16 +196,7 @@ LobbyAction LobbyMenu::input(const MenuKeys& keys, const LobbyMeta& meta) {
         if (keys.b) cursor_ = 4;
         if (keys.a || keys.b) {
             switch (cursor_) {
-            case 0: {
-                screen_ = LobbyScreen::select;
-                line_ = 0;
-                confirming_ = false;
-                // (8.5: the select starts at the last form chosen.)
-                const auto last = std::find(kSelectForms.begin(), kSelectForms.end(), std::string_view(meta.last_form));
-                if (last != kSelectForms.end()) face_ = int(last - kSelectForms.begin());
-                load_loadout(meta);
-                break;
-            }
+            case 0: enter_select(meta); break;
             case 1:
                 screen_ = LobbyScreen::plug_lab;
                 cursor_ = 0;

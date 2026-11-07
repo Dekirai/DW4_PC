@@ -631,6 +631,22 @@ void test_results_layout() {
     // Without any group start: halves.
     CHECK(ov::column_break({"   a", "   b", "   c", "   d"}, {}) == 2);
     CHECK(ov::results_wait(31) == 240 && ov::results_wait(3) == 60 && ov::results_wait(0) == 60);
+    // The HUD fades out with the Game Over fade (4.8); the results draw in full.
+    ov::RunScreenData d;
+    CHECK(ov::run_screens_alpha(d) == 1.0f);
+    d.defeated = true;
+    d.defeat_frames = 100;
+    CHECK(ov::run_screens_alpha(d) == 1.0f);
+    d.defeat_frames = 200;
+    CHECK(ov::run_screens_alpha(d) == 0.0f);
+    d.screen = ov::RunScreen::results;
+    CHECK(ov::run_screens_alpha(d) == 1.0f);
+    // DW4_OVERFLOW_SCREEN=select opens at the last form too.
+    ov::LobbyMeta meta;
+    meta.last_form = "p_vmon";
+    ov::LobbyMenu menu;
+    menu.open_screen(ov::LobbyScreen::select, meta);
+    CHECK(menu.screen() == ov::LobbyScreen::select && menu.face() == 1);
 }
 
 // Every screen makes 2D items in the 640 x 480 layer (with the font).

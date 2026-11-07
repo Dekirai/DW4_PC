@@ -180,6 +180,7 @@ public:
 
 private:
     void to_choice();
+    void enter_select(const LobbyMeta& meta); // the select at the last form with its loadout
     void load_loadout(const LobbyMeta& meta); // the form's last loadout (meta.loadouts) into the cursors
     LobbyScreen screen_ = LobbyScreen::none;
     std::vector<std::string> pages_;

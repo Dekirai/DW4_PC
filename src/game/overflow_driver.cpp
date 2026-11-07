@@ -404,7 +404,7 @@ public:
         fill_screen_data(run);
         ui_.begin();
         draw_run_screens(ui_, data_, director_->steps());
-        ui_.finish(items);
+        ui_.finish(items, run_screens_alpha(data_));
     }
 
     void draw_overlay(engine::Engine& run, const OverlayFrame& frame) override {
@@ -460,6 +460,7 @@ private:
     // lane F's meta last; o1b contract D4, F 17:40).
     std::uint64_t screen_step_ = 0; // the director step the open screen opened at (the results' pacing)
     std::optional<std::uint64_t> cleared_step_; // the director step the clear was first drawn at (the banner)
+    std::optional<std::uint64_t> defeat_step_;  // the director step the defeat was first drawn at (the Game Over fade)
     void fill_screen_data(engine::Engine& run) {
         auto& d = data_;
         d.seconds = director_->run_seconds();
@@ -511,6 +512,10 @@ private:
         // sends none): the steps since LordKnightmon's fall was first drawn.
         if (d.cleared && !cleared_step_) cleared_step_ = director_->steps();
         d.clear_frames = cleared_step_ ? director_->steps() - *cleared_step_ : 0;
+        // (The Game Over fade's steps: the HUD fades with it, 4.8.)
+        d.defeated = director_->outcome() == ov::Outcome::defeated;
+        if (d.defeated && !defeat_step_) defeat_step_ = director_->steps();
+        d.defeat_frames = defeat_step_ ? director_->steps() - *defeat_step_ : 0;
         // The meta's part (lane F), last: the HUD's Bits; on the results the
         // run's Bits, the Sim Bits, the NEW! records and a save problem.
         fill_meta_screen(d, run);
