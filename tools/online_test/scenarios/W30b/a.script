@@ -1,6 +1,7 @@
 # W30b, host a (k10): hosts Dry Land, first only stag0201 and dng205b1; after b's first arrival at dng205b2 it goes on to
 # dng205b2. The ways on are the depart action with the exits' own targets (stag0202's matz01: dng205b1 point 0;
-# dng205b1's matz02: dng205b2 point 0), a alone in its stage group.
+# dng205b1's matz02: dng205b2 point 0), a alone in its stage group. (A short stay in dng205b1: round r2b's a, k10,
+# died there after four minutes of fighting and never reached dng205b2.)
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 until onme:mate00
@@ -8,8 +9,8 @@ gate mate00 1 until stage=stag0201,control
 log a hosts Dry Land
 depart dng205b1 0 until stage=dng205b1,control
 log a in dng205b1
-fight until epoch>=@420
+fight until epoch>=@200
 depart dng205b2 0 until stage=dng205b2,control
 log a in dng205b2
-fight until present=2,sealed>=600 or epoch>=@800
+fight until present=2,sealed>=600 or epoch>=@600
 log b joined a in B2
