@@ -514,6 +514,7 @@ public sealed partial class RoomHub
                     // ahead, then the lost or leaving host's LEAVE at an earlier tick): it goes to the remaining member through
                     // JOIN_REQ home instead (W7b).
                     RefileHomesAfterLead(i, i.NextSeal, now);
+                    RefileGosAfterLead(i, i.NextSeal);
                     if (i.StreamEnd >= i.NextSeal)
                     {
                         i.Mode = InstanceMode.SoloLed;

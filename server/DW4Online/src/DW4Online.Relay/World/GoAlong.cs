@@ -449,7 +449,7 @@ namespace DW4Online.Relay.Hub
                                   target.Snapshot.Complete && target.World == w;
                 var s = place.Group;
                 var senderReady = m.Connected && place.Settled && s is { Ended: false, Barrier: null, MembershipSafe: true } &&
-                                  ((s.Mode == InstanceMode.Sealed && s.Sealing && s.Streams[m.Slot] is not null) ||
+                                  ((s.Mode == InstanceMode.Sealed && s.Sealing && s.LeadFrom is null && s.Streams[m.Slot] is not null) ||
                                    (s.Mode == InstanceMode.SoloLed && s.Leader == m && s.SoloJoin is null && s.AskedJoin is null && s.AskedHome is null &&
                                     s.AskedGo is null && s.PendingHome is null));
                 if (targetReady && senderReady)
@@ -518,6 +518,27 @@ namespace DW4Online.Relay.Hub
             Count("go_backstop");
             Note("go_end", s, ("wid", r.Offer.World.Wid), ("offer", r.Offer.Id), ("member", m.Id), ("reason", why));
             if (r.Offer.Open && r.Offer.Receivers.Contains(m)) SendOffer(r.Offer, m, OfferOp.Changed, 0);
+        }
+
+        /// <summary>A stage group whose last member but one left leads alone from <paramref name="lead"/> and seals no tick from there: a
+        /// GO stamped at or after it would never reach the remaining member; it is dropped and its request stamped again (JOIN_REQ kind go
+        /// to the solo leader at the next ready pass), as HOME (RefileHomesAfterLead).</summary>
+        private void RefileGosAfterLead(HubInstance g, uint lead)
+        {
+            foreach (var (t, list) in g.PendingEvents.Where(kv => kv.Key >= lead).ToList())
+            {
+                list.RemoveAll(e => e.Type == Ev.Go);
+                if (list.Count == 0) g.PendingEvents.Remove(t);
+            }
+            foreach (var m in g.Members)
+                if (m.Go is { Stamped: true } r && r.StampedIn == g && r.StampTick >= lead)
+                {
+                    r.Stamped = false;
+                    r.StampedIn = null;
+                    r.StampTick = 0;
+                    Count("go_refiled");
+                    Note("go_refiled", g, ("member", m.Id), ("tick", lead));
+                }
         }
 
         /// <summary>JOIN_AT after JOIN_REQ kind go: from J the stage group is sealed with its leader alone; SEALED(J) carries GO and
