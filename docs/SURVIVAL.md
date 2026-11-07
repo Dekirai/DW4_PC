@@ -1086,23 +1086,49 @@ DW4OVERFLOW 1
 seen_intro 1
 sim_bits 3420
 earned_total 18950
+last p_agumon normal
 plug p_agumon str 4 def 2 mhp 3
-loadout p_agumon armor1 0 chip 105
+loadout p_agumon armor brave_core chip drain_ram
 form p_agumon runs 14 clears_normal 1 best_time 21:12.4 best_level 41 best_defeats 3511
 form p_vmon runs 3 best_time 11:42.3 best_level 27 best_defeats 1290
-record gate_keeper 1
-record blossom_data 1
-recorded_tech p_agumon
-total defeats 21877
-total runs 17
+record blossom_data 20261106
+record gate_keeper 20261106
 total casts 6120
 total crates 133
+total defeat_e_blosso 2
+total defeats 21877
+total guardians 2
+total runs 17
 end
 ```
 
 What a record opens is derived from the records, not stored twice. A record
 that a later version adds is checked against the totals the file already
 has.
+
+As built in round O1b (lane F, `src/game/overflow_profile.*`,
+docs/ROUND_O1B_F_NOTES.md): a loadout names lane E's gear keys (`-` for
+none); a record keeps its date (yyyymmdd); `last` is the select's last form
+and tier; the totals are `runs, defeats, casts, crates, seconds, clears,
+awakenings, guardians, defeat_<Guardian family>, tech_fire / ice / bolt /
+dark`. What an older program keeps of a later version's file: whole lines
+of a kind it does not know, a later key on a `form` line, and (when the
+header's version is higher than its own) a known line in a shape it cannot
+read, each written back as it was; it drops a later key on a `plug` line,
+at most 512 unknown lines are kept, and it writes its own version in the
+header. Every line ends with a line end and `end` closes the file; a file
+that does not (cut, empty, garbage) or that has a line its own version
+cannot read (a bad value, a wrong shape: a bit flip, an editor) is damaged
+and never trusted over the `.bak`, and never becomes the `.bak`: the load
+takes the file, else the `.bak`, else what the damaged file still holds,
+else a new profile, and keeps a damaged file as `overflow.dat.damaged`. A
+file (or the `.bak` of a damaged file) that is there but cannot be read
+(another program or a second instance has it open) is tried again; then
+the session is read only: it never writes (the results and the state
+message say "Not saved"), so the file and its `.bak` are never replaced by
+a new profile. Until the run drops g_000bit (4.7, O2) the run
+driver credits each defeat's bits itself (5 %, the original's band x
+BITRITSU, its own seeded generator), so the run's engine is not touched.
 
 ## 9. Screens
 

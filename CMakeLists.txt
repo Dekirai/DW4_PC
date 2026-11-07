@@ -182,6 +182,11 @@ if(BUILD_TESTING)
   add_executable(dw4_overflow_host_tests tests/overflow_host_tests.cpp src/game/overflow_run.cpp src/game/presence_data.cpp)
   target_link_libraries(dw4_overflow_host_tests PRIVATE dw4_engine)
   add_test(NAME overflow_host COMMAND dw4_overflow_host_tests)
+  # Data Overflow's meta file (round O1b lane F, docs/SURVIVAL.md 8; T7 overflow_profile): the
+  # format, the .bak and the corruption cases, the Plug Lab, the loadout, Sim Bits and the Data Records.
+  add_executable(dw4_overflow_profile_tests tests/overflow_profile_tests.cpp src/game/overflow_profile.cpp)
+  target_link_libraries(dw4_overflow_profile_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_profile COMMAND dw4_overflow_profile_tests)
   add_executable(dw4_interpolation_tests tests/interpolation_tests.cpp src/game/interpolation.cpp)
   target_link_libraries(dw4_interpolation_tests PRIVATE dw4_engine)
   add_test(NAME interpolation COMMAND dw4_interpolation_tests)
@@ -351,6 +356,8 @@ if(DW4_BUILD_APP)
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
+  # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
+  target_sources(dw4_game PRIVATE src/game/overflow_profile.cpp)
   if(WIN32)
     target_link_libraries(dw4_game PRIVATE ws2_32)
   endif()

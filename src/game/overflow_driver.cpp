@@ -11,6 +11,14 @@
 // models come with O1b). Test runs (a bot) take the offers by a policy
 // (offers=priority / random) and close the results by themselves; summary=
 // and log= write the run's summary (T6) and its run log (13.5).
+//
+// The meta (round O1b lane F, overflow_profile.hpp): the store's profile
+// adds the form's loadout, Plug Lab points and opened gear to the request
+// (apply_meta: a test run's own options win), the driver hands them to the
+// director's RunConfig (lane E's fields) and records the run in the meta
+// file when its results open (Sim Bits, records, bests; a window that
+// closes counts as Retire).
+#include "overflow_profile.hpp"
 #include "overflow_run.hpp"
 #include "overflow_screens.hpp"
 #include "sim_ui.hpp"
@@ -30,6 +38,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <type_traits>
 
 namespace dw4::game::overflow {
 
@@ -49,6 +58,47 @@ std::string option(const RunRequest& request, std::string_view key, std::string 
     return found == request.options.end() ? fallback : found->second;
 }
 
+// The meta's options in the director's RunConfig (lane E's fields of round
+// O1b: the loadout and the gear the records opened). A build without a
+// field copies nothing for it; an absent option keeps what the config has
+// (lane E's test key loadout=). The Plug Lab's points are the host's
+// (give_plug_lab): RunConfig::plug_lab stays at zeros, so they are given
+// once whatever the director does with that field.
+template <typename Config>
+void copy_meta(Config& config, const RunRequest& request) {
+    if constexpr (requires { config.loadout_armor; })
+        if (const auto armor = option(request, "armor"); !armor.empty()) config.loadout_armor = armor;
+    if constexpr (requires { config.loadout_chip; })
+        if (const auto chip = option(request, "chip"); !chip.empty()) config.loadout_chip = chip;
+    if constexpr (requires { config.gear_open; }) {
+        const std::string text = option(request, "gear_open");
+        for (std::size_t begin = 0; begin < text.size();) {
+            const std::size_t end = std::min(text.find(',', begin), text.size());
+            if (end > begin) config.gear_open.push_back(text.substr(begin, end - begin));
+            begin = end + 1;
+        }
+    }
+}
+// The run's end for the meta file, from the director's getters (those lane
+// E adds are read when this build has them).
+template <typename Director>
+void fill_report(const Director& director, RunReport& report) {
+    using O = std::remove_cvref_t<decltype(director.outcome())>;
+    const O outcome = director.outcome();
+    report.outcome = outcome == O::cleared ? "cleared" : outcome == O::defeated ? "defeated" : "retired";
+    if constexpr (requires { O::time_up; })
+        if (outcome == O::time_up) report.outcome = "time_up";
+    if constexpr (requires { director.guardians_defeated(); })
+        for (const auto& family : director.guardians_defeated()) report.guardians.push_back(std::string(family));
+    if constexpr (requires { director.awakened(); }) report.awakened = director.awakened();
+    if constexpr (requires { director.casts(); }) report.casts = int(director.casts());
+    if constexpr (requires { director.tech_defeats(); }) {
+        const auto tech = director.tech_defeats();
+        for (std::size_t e = 0; e < 4 && e < std::size(tech); ++e) report.tech_defeats[e] = int(tech[e]);
+    }
+    if constexpr (requires { director.crates(); }) report.crates = int(director.crates());
+}
+
 // "NAME:F,NAME:F" (the balance passes' factor lists).
 std::vector<std::pair<std::string, float>> pairs(const std::string& text) {
     std::vector<std::pair<std::string, float>> out;
@@ -64,6 +114,8 @@ std::vector<std::pair<std::string, float>> pairs(const std::string& text) {
 class DirectorDriver final : public RunDriver {
 public:
     explicit DirectorDriver(RunRequest request) : request_(std::move(request)) {
+        // The meta file's part of the run (8.2-8.4): the request's own values win.
+        apply_meta(meta().profile(), request_);
         ov::RunConfig config;
         config.form = request_.form;
         config.field = request_.field;
@@ -76,7 +128,9 @@ public:
         // otherwise; the human bot as a newcomer: the first line or a random one).
         config.offers = option(request_, "offers", test_ ? (request_.bot == "human" ? "newcomer" : "priority") : "");
         if (config.offers == "player") config.offers.clear();
-        config.results_hold = test_ ? 60 : 0;
+        // (results_hold=STEPS, test runs with pictures: the results stay that long;
+        // their lines appear one per 8 steps.)
+        config.results_hold = test_ ? std::max(1, std::atoi(option(request_, "results_hold", "60").c_str())) : 0;
         // Development switches of the balance passes (initial values of SURVIVAL.md otherwise).
         auto real = [&](std::string_view key, float& value) {
             if (const auto text = option(request_, key); !text.empty()) value = std::strtof(text.c_str(), nullptr);
@@ -206,6 +260,9 @@ public:
                 script_.push_back({std::stoull(token.substr(0, digits)), token[digits], digits + 1 < token.size() ? std::atoi(token.c_str() + digits + 1) : 0});
             begin = end + 1;
         }
+        copy_meta(config, request_);
+        tier_ = config.tier;
+        bits_random_ = bits_seed(request_.seed);
         director_ = std::make_unique<ov::OverflowDirector>(std::move(config));
     }
 
@@ -300,6 +357,10 @@ public:
             std::sort(slowest_.begin(), slowest_.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
             if (slowest_.size() > 5) slowest_.pop_back();
         }
+        give_plug_lab(run);
+        count_bits(run);
+        // The results open: the meta file learns the run (8.5).
+        if (director_->screen() == ov::Screen::results) record_meta(run);
         if (end_) return end_;
         if (director_->over()) {
             switch (director_->outcome()) {
@@ -350,10 +411,13 @@ public:
         case ov::Screen::pause: draw_list(frame, "PAUSE", {"Resume", "Build", "Retire"}, director_->cursor(), "A Choose    B Resume"); break;
         case ov::Screen::build: draw_lines(frame, "BUILD", director_->build_lines(run), "A / B Back"); break;
         case ov::Screen::retire_ask: draw_list(frame, "End the simulation?", {"Yes", "No"}, director_->cursor(), "A Choose    B Back"); break;
-        case ov::Screen::results:
-            draw_lines(frame, director_->outcome() == ov::Outcome::cleared ? "SIMULATION COMPLETE" : "SIMULATION ENDED", director_->result_lines(run),
+        case ov::Screen::results: {
+            auto lines = director_->result_lines(run);
+            for (auto& line : meta_lines()) lines.push_back(std::move(line));
+            draw_lines(frame, director_->outcome() == ov::Outcome::cleared ? "SIMULATION COMPLETE" : "SIMULATION ENDED", lines,
                        "A: Return to the story.");
             break;
+        }
         case ov::Screen::none: break;
         }
         if (frame.font) ImGui::PopFont();
@@ -450,20 +514,129 @@ private:
     void finish(engine::Engine& run) {
         if (finished_) return;
         finished_ = true;
+        record_meta(run);
         const std::string summary = director_->summary_text(run);
         if (const auto path = option(request_, "summary"); !path.empty()) {
             std::ofstream out(path, std::ios::binary);
             out << summary;
             if (timing_) out << timing_text();
+            // The meta state the run used (13.5) and what it earned.
+            out << "meta_used" << (meta_used().empty() ? std::string(" none") : meta_used()) << '\n';
+            out << "meta_bits " << reward_.sim_bits << " sim_bits " << meta().profile().sim_bits << " new_records " << reward_.new_records.size() << '\n';
         }
         if (const auto path = option(request_, "log"); !path.empty()) {
             std::ofstream out(path, std::ios::binary);
             out << director_->log_text();
+            // The meta state the run used (13.5: loadout, Plug Lab points by
+            // UPCNT index, opened gear) as request options: the run again is
+            // `--overflow-run <the run's keys> <these>` without a profile.
+            out << "meta_used" << (meta_used().empty() ? std::string(" none") : meta_used()) << '\n';
         }
         if (test_ || timing_) {
             std::printf("overflow: %s", summary.substr(0, summary.find("\nnote ")).c_str());
             std::printf("\n%s", timing_text().c_str());
         }
+    }
+
+    // The run into the meta file, once (the results open, or the run ends
+    // without them: the window closed).
+    void record_meta(engine::Engine& run) {
+        if (recorded_) return;
+        recorded_ = true;
+        RunReport report;
+        report.form = request_.form;
+        report.tier = tier_;
+        report.seconds = director_->run_seconds();
+        report.level = director_->level(run);
+        report.defeats = director_->defeats();
+        fill_report(*director_, report);
+        if (end_ == RunEnd::window_closed) report.outcome = "retired";
+        report.bits = run_bits(run);
+        reward_ = meta().record_run(report);
+        if (test_ || timing_)
+            std::printf("overflow: meta %s bits %lld -> Sim Bits +%lld (balance %lld), %zu new records%s%s; used%s\n", report.outcome.c_str(),
+                        (long long)report.bits, (long long)reward_.sim_bits, (long long)meta().profile().sim_bits, reward_.new_records.size(),
+                        meta().path().empty() ? "" : meta().last_error().empty() ? ", written to " : ", NOT written to ", meta().path().empty() ? "" : meta().path().string().c_str(),
+                        meta_used().empty() ? " none" : meta_used().c_str());
+        if (!meta().last_error().empty()) std::fprintf(stderr, "overflow: the meta file was not written: %s\n", meta().last_error().c_str());
+    }
+
+public:
+    // The meta's part of lane D's run screens (RunScreenData of
+    // overflow_screens.hpp; a template, so this lane builds without D):
+    // the HUD's Bits (9.3) and, on the results, the Sim Bits, the NEW!
+    // records and a save problem (9.6). D's fill_screen_data calls it last
+    // (lane F's merge adds that call).
+    template <typename ScreenData>
+    void fill_meta_screen(ScreenData& d, const engine::Engine& run) const {
+        if constexpr (requires { d.bits; })
+            d.bits = int(std::clamp<std::int64_t>(run_bits(run), 0, 2'147'483'647));
+        if constexpr (requires { d.result_lines.push_back(std::string()); })
+            if (director_->screen() == ov::Screen::results)
+                for (auto& line : meta_lines()) d.result_lines.push_back(std::move(line));
+    }
+
+private:
+
+    // " armor=K chip=K plug_lab=... gear_open=..." (the request's meta options).
+    std::string meta_used() const {
+        std::string text;
+        for (const char* key : {"armor", "chip", "plug_lab", "gear_open"})
+            if (const auto value = option(request_, key); !value.empty()) text += std::string(" ") + key + "=" + value;
+        return text;
+    }
+
+    // The meta's lines under the results (9.6: the Sim Bits and the new Data
+    // Records with "NEW!").
+    std::vector<std::string> meta_lines() const {
+        std::vector<std::string> lines;
+        if (!recorded_) return lines;
+        lines.push_back("Sim Bits +" + std::to_string(reward_.sim_bits) + "   (" + std::to_string(meta().profile().sim_bits) + ")");
+        for (const auto& key : reward_.new_records)
+            if (const auto* record = find_record(key)) lines.push_back(std::string("NEW! ") + record->title + "   opens " + record->opens);
+        // The player learns when the profile is not saved (locked at the
+        // start, a failed write): the progress lives only until the game ends.
+        if (const auto problem = meta().save_problem(); !problem.empty()) lines.push_back(problem);
+        return lines;
+    }
+
+    // The bits of the run's defeats (4.7, defeat_bits): credited at the
+    // defeat, the run's engine untouched.
+    void count_bits(engine::Engine& run) {
+        const auto* sys = run.get<engine::GameSystem>();
+        if (!sys) return;
+        const auto& stats = sys->players[0].stats;
+        while (counted_defeats_ < director_->defeats()) {
+            ++counted_defeats_;
+            credited_bits_ += defeat_bits(stats.level, stats.bit_rate, bits_random_);
+        }
+    }
+
+public:
+    // The run's bits so far: the run player's BIT (pickups) and the
+    // credited defeats' (the HUD's Bits, 9.3).
+    std::int64_t run_bits(const engine::Engine& run) const {
+        const auto* sys = run.get<engine::GameSystem>();
+        return credited_bits_ + (sys ? sys->players[0].bits : 0);
+    }
+
+private:
+    // The Plug Lab's points (8.2) on the run player once the run has started
+    // (the host owns them; RunConfig::plug_lab stays at zeros): UPCNT,
+    // RECALCPLAYER, full HP and MP, the species' store.
+    void give_plug_lab(engine::Engine& run) {
+        if (plug_given_ || director_->run_steps() == 0) return;
+        plug_given_ = true;
+        const auto points = parse_plug_lab(option(request_, "plug_lab"));
+        if (std::all_of(points.begin(), points.end(), [](int p) { return p == 0; })) return;
+        auto* sys = run.get<engine::GameSystem>();
+        if (!sys) return;
+        auto& player = sys->players[0];
+        for (std::size_t i = 0; i < points.size(); ++i) player.upcnt[i] += points[i];
+        sys->recalc_player(run, 0);
+        player.hp = player.max_hp;
+        player.mp = player.max_mp;
+        sys->store_species(0);
     }
 
     std::string timing_text() const {
@@ -492,7 +665,8 @@ private:
         ImGui::Begin("##overflow_hud", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-        ImGui::Text("%s   Lv %d   Defeated %d", clock_text(director_->run_seconds()).c_str(), director_->level(run), director_->defeats());
+        ImGui::Text("%s   Lv %d   Defeated %d   Bits %lld", clock_text(director_->run_seconds()).c_str(), director_->level(run), director_->defeats(),
+                    (long long)run_bits(run));
         if (!director_->notice().empty() && director_->notice_step() + 180 > director_->steps())
             ImGui::TextColored(ImVec4(1.0f, 0.92f, 0.47f, 1.0f), "%s", director_->notice().c_str());
         ImGui::End();
@@ -563,6 +737,12 @@ private:
     std::shared_ptr<ov::OverflowRules> rules_;
     std::optional<RunEnd> end_, asked_;
     bool test_ = false, finished_ = false, timing_ = false;
+    bool recorded_ = false, plug_given_ = false;
+    int tier_ = 0;
+    RunReward reward_;
+    std::uint64_t bits_random_ = 0;
+    int counted_defeats_ = 0;
+    std::int64_t credited_bits_ = 0;
     std::uint32_t last_buttons_ = 0;
     int last_stick_ = 0, last_stick_x_ = 0;
     std::uint64_t circle_ = 0;

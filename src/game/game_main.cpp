@@ -5,6 +5,7 @@
 #include "host_view.hpp"
 #include "overflow_host.hpp"
 #include "overflow_lobby.hpp"
+#include "overflow_profile.hpp"
 #include "interpolation.hpp"
 #include "mods.hpp"
 #include "netplay.hpp"
@@ -1445,6 +1446,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // to a run and back, the F1 dev start's choices, --overflow-run's
         // request (offline only; without at=F it runs before the story's
         // first step, and a test run ends with it).
+        // The mode's meta file (docs/SURVIVAL.md 8.5, overflow_profile.hpp):
+        // saves/overflow.dat beside the program; test runs only the file of
+        // DW4_OVERFLOW_PROFILE (none: kept in memory, never written).
+        dw4::game::overflow::meta().open(dw4::game::overflow::profile_path(program_dir(), options.smoke_frames != 0));
+        if (!dw4::game::overflow::meta().load_note().empty()) std::cerr << "overflow: " << dw4::game::overflow::meta().load_note() << '\n';
         dw4::game::overflow::StorySwitch overflow_switch;
         dw4::game::overflow::DevStartState overflow_dev;
         std::optional<dw4::game::overflow::RunRequest> overflow_cli;
