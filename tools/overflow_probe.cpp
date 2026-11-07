@@ -645,6 +645,97 @@ void dump_section(const ModelCtrlManager::ModelRam& self, const std::string& seq
     }
 }
 
+// effects NAME [FORM]: every sequence command of the arena's models (the
+// player of FORM included) with a string that contains NAME, under its
+// sequence and label section, and the sequences of the models named NAME*
+// (round O1b lane E: which original action plays x_100charge01).
+int effects(const std::string& needle, const std::string& form) {
+    auto run = make_run({}, form);
+    auto& engine = *run->engine;
+    std::set<std::string> seen;
+    for (const auto& ram : engine.get<ModelCtrlManager>()->rams()) {
+        if (!ram->sequences || !seen.insert(ram->info_name).second) continue;
+        if (ram->info_name.starts_with(needle)) {
+            std::printf("model %s (%s):", ram->info_name.c_str(), ram->category.c_str());
+            for (const auto& seq : *ram->sequences) std::printf(" %s", seq.name.c_str());
+            std::printf("\n");
+            if (std::getenv("PROBE_SEQUENCES"))
+                for (const auto& seq : *ram->sequences) {
+                    std::printf("  sequence %s\n", seq.name.c_str());
+                    for (const auto& command : seq.commands) {
+                        std::printf("    %s:", command.type().c_str());
+                        for (std::uint16_t slot = 2; slot < 10; ++slot) {
+                            if (!command.has(slot)) continue;
+                            if (!command.str(slot).empty()) std::printf(" %u=%s", slot, std::string(command.str(slot)).c_str());
+                            else std::printf(" %u=%g/%d", slot, command.f32(slot), command.i32(slot));
+                        }
+                        std::printf("\n");
+                    }
+                }
+        }
+        for (const auto& seq : *ram->sequences) {
+            std::string label;
+            for (const auto& command : seq.commands) {
+                if (command.type() == "beModelCtrlLABEL") label = std::string(command.str(2));
+                bool hit = false;
+                for (std::uint16_t slot = 2; slot < 10 && !hit; ++slot)
+                    if (command.has(slot) && std::string(command.str(slot)).find(needle) != std::string::npos) hit = true;
+                if (!hit) continue;
+                std::printf("  %s %s [%s] %s:", ram->info_name.c_str(), seq.name.c_str(), label.c_str(), command.type().c_str());
+                for (std::uint16_t slot = 2; slot < 10; ++slot)
+                    if (command.has(slot) && !command.str(slot).empty()) std::printf(" %u=%s", slot, std::string(command.str(slot)).c_str());
+                std::printf("\n");
+            }
+        }
+    }
+    // The action starters (ACTION_BROADCAST): an effect named NAME* and, per
+    // source model, the actions that start one of its sequences.
+    if (const auto* starters = engine.get<ActionStarterManager>())
+        for (const auto& ram : starters->rams()) {
+            if (!ram->info_name.starts_with(needle)) continue;
+            for (const auto& target : ram->info.list(7)) {
+                if (!target) continue;
+                for (const auto& data : target.list(3)) {
+                    if (!data) continue;
+                    const auto at = data.vec3(5).value_or(Vec3f{});
+                    std::printf("  starter %s: %s action %s -> %s delay %d at (%.1f,%.1f,%.1f) %s\n", ram->info_name.c_str(),
+                                std::string(target.str(2)).c_str(), std::string(data.str(2)).c_str(), std::string(data.str(3)).c_str(),
+                                data.i32(4), at.x, at.y, at.z, data.type().c_str());
+                }
+            }
+        }
+    return 0;
+}
+
+// mats: the arena's mats (name and box) and where a model's RAM 0 stands
+// (round O1b lane E: the Violet Ring's matz01 and its return gate).
+int mats() {
+    auto run = make_run({}, "p_agumon");
+    auto& engine = *run->engine;
+    if (const auto* mats = engine.get<MatCtrlManager>())
+        for (const auto& box : mats->mat_boxes())
+            std::printf("mat %s (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)\n", box.name.c_str(), box.min.x, box.min.y, box.min.z, box.max.x, box.max.y,
+                        box.max.z);
+    return 0;
+}
+
+// names TABLE COLUMN...: every row of a database table with its NAME and the
+// given columns (round O1b: the gear rows of armor1, armor2 and abChip).
+int names(const std::string& table, const std::vector<std::string>& columns) {
+    auto run = make_run({}, "p_agumon");
+    auto& engine = *run->engine;
+    auto* db = engine.get<DatabaseManager>();
+    for (int r = 0; r < db->rows(table); ++r) {
+        std::printf("%s %d %s", table.c_str(), r, dw4::engine::game_text_utf8(db->text(table, r, "NAME")).c_str());
+        for (const auto& column : columns) {
+            if (const auto number = db->number(table, r, column)) std::printf(" %s=%d", column.c_str(), *number);
+            else std::printf(" %s='%s'", column.c_str(), dw4::engine::game_text_utf8(db->text(table, r, column)).c_str());
+        }
+        std::printf("\n");
+    }
+    return 0;
+}
+
 int patterns(const std::string& form) {
     auto run = make_run({}, form);
     auto& engine = *run->engine;
@@ -798,6 +889,9 @@ int main(int argc, char** argv) {
         if (mode == "weapon") return weapon();
         if (mode == "memory") return memory(argc > 3 ? argv[3] : "all");
         if (mode == "patterns") return patterns(argc > 3 ? argv[3] : "p_agumon");
+        if (mode == "mats") return mats();
+        if (mode == "names" && argc > 3) return names(argv[3], std::vector<std::string>(argv + 4, argv + argc));
+        if (mode == "effects" && argc > 3) return effects(argv[3], argc > 4 ? argv[4] : "p_agumon");
         if (mode == "aim") return aim(argc > 3 ? argv[3] : "HFIRE1", argc > 4 ? float(std::atof(argv[4])) : 180.0f);
         if (mode == "fight" && argc > 7)
             return fight_mode(argv[3], argv[4], std::atoi(argv[5]), float(std::atof(argv[6])), std::atoi(argv[7]));

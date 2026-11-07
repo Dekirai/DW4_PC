@@ -443,6 +443,26 @@ simulation:
   simulation goes on with phase 4's pool, `A(t)` +10 a minute up to the
   pool's RAMs and enemy HP x 1.3 a minute, until the Digimon falls. It has
   its own best time and no clear.
+- **As built in round O1b** (lane E, docs/ROUND_O1B_E_NOTES.md): the phases
+  stay on the run clock (the balance of docs/OVERFLOW_DIRECTOR.md 10-11 is
+  built on it); a Guardian enters when its phase's five minutes end and the
+  next phase's families come in over their ramp beside it; the next
+  Guardian waits for the one before, and one still alive at 20:00 leaves
+  for LordKnightmon. A Guardian's HP is its HPMAX x 6 (the finale x 14)
+  times the time's linear part (1 + 0.10 a minute) only; its hits carry a
+  damage factor of its own and take at most 30 % of MaxHP (no one-hit
+  Guardian). The spike found two Guardians of separate packages without
+  their scripts (TonosamaGekomon could not be damaged): their stage's main
+  member gives them now. No Guardian needs the elite fallback on the Violet
+  Ring. A Guardian's entry shakes the camera with the original's stomp
+  shake (CAMERA SHAKE 37/F<0.3>/F<3.0>/F<60.0>, Mammothmon's in dng102b3).
+  The return gate (the finish of lane E): 2 s after LordKnightmon's fall the
+  Violet Ring's own g_dreturngate comes where Belphemon's hit script puts
+  it (V<0,10,-60>, SQ_ENTR, SQ_POWERON 30 frames later); the arena's mats
+  pause (its matz01 would open the stage change prompt), and walking into
+  matz01's box ends the run with the results. A player standing there
+  when it comes steps out and in again, as with the original's mat; a test
+  bot walks in (and gets the results after 60 s without it).
 
 ### 4.5 EXP and run levels
 
@@ -880,6 +900,19 @@ The force buffs are the original status effects with their icons
 Bind). Cooldowns are initial values; Speed Chips and the Speed buff shorten
 them.
 
+As built in round O1b (lane E's finish): the buffs keep DW4's own times
+(pcTech TIME 1800-3240 frames, 30-54 s by rank, plus the caster's INT for
+Speed and Pwr Up), not the 6-10 s above: with 6-10 s the kite bot's Agumon
+fell at 16-22 minutes as early as the newcomer's (docs/ROUND_O1B_E_NOTES.md
+12.1; the cap stays as the balance key `buff=360,60`). With the 15 s
+cooldown Pwr Up never ends (Agumon's TECH2 from run level 8, Guilmon's TECH5:
++80 to +1920 STR, DEF and MaxHP), and the late game's damage is built on
+that DEF: every shorter uptime measured (a cooldown of 60 s from the start
+or 120 s from 10:00, the 6-10 s cap) let late hits pass 35 % of MaxHP or
+ended newcomers' runs at the phase 2 start. It stays at 15 s until the late
+damage curve is redone (an open point of 14.2 for Agumon and Dorumon's human
+runs).
+
 ### 6.5 Awakening
 
 When the class skill reaches 2500 with the fifth family forged, the form's
@@ -895,6 +928,21 @@ signatures carry). The weapon model in hand becomes the signature's (w_*06 /
 w_*07), the SQ_TECUP panel, plLVUP01 and an "AWAKENING" line show it. With
 the gain of 6.2 a Rookie reaches it around 14-17 minutes (estimate), a Mega
 start (skill 810) a few minutes earlier.
+
+As built in round O1b (lane E): x_100charge01 is the original's charge
+effect, started only by the player's charge actions of SQ_ATCK1 (KATC?1:
+the charge glow, SQ_<class>01 / 02; KATC?2: the release, SQ_KIRIKAE and
+SQ_OWARI on the player). The awakened Art broadcasts its class's release
+(KATCX2 for the axe, KATCS2 for sword and katana, KATCE2 for the dagger)
+once for every strike that hits: a picture only, no damage of its own.
+
+As built for Guilmon and Dorumon (round O1b lane E, 6.3): Fang Thrust's
+Forge 3 lays two more boxes beyond the tip (the thrust goes on through its
+target: "pierces 2"), Forge 4 is one more thrust, Forge 5 reaches 30
+standing; Crescent Draw's first arc goes to the target with the most living
+enemies within 10 units. Its wider arc and its crit steps, and the 22-24
+unit ranges of 6.3's table, wait for O2 (every Art reaches 14 standing and
+34 walking since the balance round of 05.11).
 
 ## 7. Gear
 
@@ -1468,7 +1516,7 @@ H10 handlers), `tables.inc` (the design tables of sections 4-8 as code),
 | T3 isolation | hidden smoke run: new game into the lobby, a scripted talk (O1a: the dev start), a 60 s run with the kite bot, Retire, back, 2,000 more lobby frames. Reference: the same script with the dialog's frames as neutral pads and no run | `net_fingerprint()` (with the generator state) and the canonical snapshot bytes equal at the return and at the end |
 | T4 save states | F5 before the talk, talk, run, return, walk, F9 | no "the replay differs"; the replay reaches the same fingerprint |
 | T5 story files | the test card folder and `DW4_PROFILE` file hashed before and after T3 | unchanged; only the `DW4_OVERFLOW_PROFILE` file is new |
-| T6 scripted run | `--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 90000` (headless), twice, and the 20-seed batch of 14.2 | the same run hash twice; no Lua error; no budget overrun in the log; the targets of 14.2; a summary file |
+| T6 scripted run | `--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 100000` (headless; the run clock alone needs 90000 steps to 25:00, plus the start frames), twice, and the 20-seed batch of 14.2 | the same run hash twice; no Lua error; no budget overrun in the log; the targets of 14.2; a summary file |
 | T7 unit tests (ctest) | `overflow_profile_tests` (read, write, unknown lines, `.bak`), `overflow_offers_tests` (eligibility, weights, no empty window), `overflow_spawn_tests` (ring points on walkable cells, encirclement reuses RAMs), `overflow_rng_tests` (generator saved and restored across an Engine's construction), `overflow_balance_tests` (14.3) | pass; ctest 40 + 5 |
 | T8 performance | T6 with per-step timing (as DW4_TRACE_TRAVERSAL_TIME) and a hidden render pass | inside the budget of section 12 |
 | T9 texts | every string of overflow_text.inc against the font's character list | no missing glyph |
@@ -1558,6 +1606,9 @@ pass.
 | D screens | the presentation actor core, the NPC (place, fade, talk via H0 with the port event rule of 3.3), the dialog, the character select for the four Rookies with loadout, the level-up window, pause with the build page, results, the HUD overlay, the finale timer, texts; hidden screenshots of each screen for review | T9 passes; T2 with the NPC shown; every screen in the screenshot set |
 | E content | the four Guardians of phases 1-3 and LordKnightmon (the spike in the Violet Ring: enters, fights, dies without its ded_; else the elite fallback), the finale with the quest timer and TIME UP, Guardian reactions, Guardian music, Guardians' drops; Guilmon and Dorumon; the four Rookies' full technique lists; gear: Brave Core, Armor and element Boards, Wisdom / Spirit / Speed Chips, the form's PWR Medal, Drain Ram, the pockets, ¶ Data power-ups; Awakening for the four Rookies | T6 per Rookie reaches the finale in some seeds; a spike note per Guardian |
 | F meta | `overflow.dat` (8.5), Sim Bits, the Plug Lab, the loadout, the records needed by O1b | T7 (profile) passes |
+
+Lane E as built, its spike notes, measurements and what is left:
+docs/ROUND_O1B_E_NOTES.md.
 
 Merge order E, D, F. **Done:** offline and alone, talking to Gekomon opens
 the menu; a run with any Rookie plays four phases with Guardians and the

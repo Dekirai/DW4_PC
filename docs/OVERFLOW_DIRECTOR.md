@@ -936,3 +936,22 @@ before 10:00: 4 of 60 (seeds 1-20, 101-120, 201-220; before the round
   into main a475b98 without conflicts.
 - **Fixed in the check**: the pause screen said "Forge N of 5"; it says the
   form's Forge families now (the weapon table's, as the offers).
+
+## 12. Round O1b lane E (content)
+
+Branch `feat-o1b-content`; everything as built, the spike per Guardian, the
+measurements before and after and what is left: docs/ROUND_O1B_E_NOTES.md.
+In short: the Guardians of phases 1-3 and LordKnightmon's finale under the
+quest timer (`guardians.cpp`; the timer's 0:00 is `Outcome::time_up`),
+Guilmon and Dorumon, every TECH1-6 of the four Rookies, Awakening, the gear
+of 7 (`gear.cpp`), Tortomon x 0.085, Bomb x 0.5, Mammothmon x 0.15, LordKnightmon x 14 HP;
+O1a's damage numbers stand (a stronger late contact was measured and reverted). The open points of 10.7, 11.5 and 11.6
+are answered in the notes' sections 5 and 6.
+
+The lane's finish (notes 12): the return gate, the Guardians' camera shake, the awakened Art's burst, Fang Thrust's
+pierce and reach, Crescent Draw's aim, ctest `overflow_finale`; the head measured over 20 seeds a form and bot. 11.6 is
+answered (kite Veemon 201-220: Tortomon x 0.085 22:19, x 0.10 22:54; x 0.085 stays). The Agumon levers (its Art's
+class factor, Bomb, Cutter) do not shorten the newcomer's runs; its Pwr Up does (DW4's 30-54 s outlast the 15 s
+cooldown), but every shorter uptime lets the late hits pass 35 % of MaxHP: nothing shipped. On the head all four
+Rookies' human runs last 21-22.5 minutes (14.2: 14-18) and Agumon's and Guilmon's kite runs always clear: the next
+balance round redoes the late curve for every form.

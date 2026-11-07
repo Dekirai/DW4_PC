@@ -41,6 +41,7 @@ constexpr std::size_t kSeen = 24; // steps of positions kept (more than the slow
 PadSample OverflowDirector::human_pad(Engine& engine) {
     HostPadInput input;
     auto& h = human_;
+    if (gate_walk() && started_) return gate_pad(engine);
     if (screen_ != Screen::none || outcome_ != Outcome::none || !started_) return host_pad_sample(input);
     auto* models = engine.get<ModelCtrlManager>();
     auto* sys = engine.get<GameSystem>();

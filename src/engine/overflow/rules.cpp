@@ -161,6 +161,7 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
     int out = std::clamp(int(double(value) * factor), 1, 99999);
     last_taken.raw = out;
     last_taken.clamped = false;
+    last_taken.guardian_clamped = false;
     if (kind != EnemyClass::guardian && max_hp > 0) {
         const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.hit_clamp))));
         if (out > cap) {
@@ -170,6 +171,16 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
             ++tally.clamps;
         }
         tally.highest_hit_share = std::max(tally.highest_hit_share, double(out) / double(max_hp));
+    } else if (kind == EnemyClass::guardian && max_hp > 0 && damage.guardian_clamp > 0.0f) {
+        // A Guardian may throw the Digimon (its full reaction) but never takes
+        // more than guardian_clamp of MaxHP with one hit (round O1b: LordKnightmon's
+        // specials took 4.3 MaxHPs, Mammothmon's swings 36-42 % at 5:00).
+        const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.guardian_clamp))));
+        if (out > cap) {
+            out = cap;
+            last_taken.guardian_clamped = true; // (not 14.2's clamp: the summary's guardian_clamps)
+            ++tally.guardian_clamps;
+        }
     }
     return out;
 }
@@ -249,16 +260,46 @@ bool OverflowRules::skill_up(Engine& engine, int slot, int kind, int critical) {
     const bool visible = player.wazalist != techniques_before || stats.weapon_record != record_before ||
                          (!player.power_socket.empty() && player.power_socket[0] != weapon_before);
     if (!visible) return true;
+    show_panel(engine, slot, player.digimon);
+    return true;
+}
+
+bool OverflowRules::show_panel(Engine& engine, int slot, const std::string& digimon) {
     const auto frame = std::int64_t(engine.frame());
     if (last_panel_frame >= 0 && frame - last_panel_frame < skills.panel_gap) {
         ++tally.panels_skipped;
-        return true;
+        return false;
     }
     last_panel_frame = frame;
     ++tally.panels;
     // The skill up panel over the player (i_getitempnl01 SQ_TECUP), posted as the original's (80373B40).
-    post_effect(engine, "MODELCTRL", player.digimon, slot, "i_getitempnl01", "SQ_TECUP");
+    post_effect(engine, "MODELCTRL", digimon, slot, "i_getitempnl01", "SQ_TECUP");
     return true;
+}
+
+int OverflowRules::drain(Engine& engine, int slot, int heal) {
+    if (heal <= 0 || damage.drain_cap <= 0.0f || slot < 0 || slot > 3) return heal;
+    auto* sys = engine.get<GameSystem>();
+    if (!sys) return heal;
+    const int max_hp = sys->players[std::size_t(slot)].max_hp;
+    if (max_hp <= 0) return heal;
+    const auto s = std::size_t(slot);
+    const auto second = std::int64_t(engine.frame()) / 60;
+    if (drain_second[s] != second) {
+        drain_second[s] = second;
+        drain_second_hp[s] = 0;
+    }
+    const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.drain_cap))));
+    const int out = std::clamp(cap - drain_second_hp[s], 0, heal);
+    drain_second_hp[s] += out;
+    tally.drain_given += out;
+    tally.drain_capped += heal - out;
+    return out;
+}
+
+int OverflowRules::buff_time(int family, int rank, int time) const {
+    if (buff_steps <= 0 || buff_kept.contains(family)) return time;
+    return std::min(time, buff_steps + std::clamp(rank, 0, 4) * buff_rank_steps);
 }
 
 int OverflowRules::technique_level(int lock) const { return run_technique_level(lock, levels.tech_lock_num, levels.tech_lock_den); }

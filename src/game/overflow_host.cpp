@@ -374,8 +374,9 @@ std::optional<RunRequest> draw_dev_start(DevStartState& state, const std::string
                         "the run ends. The story waits meanwhile and goes on exactly where it was; nothing of the run reaches "
                         "your saves. Offline only.");
     ImGui::PopTextWrapPos();
-    static const char* forms[] = {"Agumon", "Veemon"};
-    ImGui::Combo("Digimon", &state.form, forms, 2);
+    // (The four Rookies of round O1b, SURVIVAL.md 5.3.)
+    static const char* forms[] = {"Agumon", "Veemon", "Guilmon", "Dorumon"};
+    ImGui::Combo("Digimon", &state.form, forms, 4);
     ImGui::InputInt("Seed (0: a new one)", &state.seed);
     state.seed = std::max(state.seed, 0);
     ImGui::BeginDisabled(!refusal.empty());
@@ -384,7 +385,8 @@ std::optional<RunRequest> draw_dev_start(DevStartState& state, const std::string
     if (!refusal.empty()) ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "%s", refusal.c_str());
     if (!start) return std::nullopt;
     RunRequest request;
-    request.form = state.form == 1 ? "p_vmon" : "p_agumon";
+    static const char* models[] = {"p_agumon", "p_vmon", "p_girumon", "p_dorumon"};
+    request.form = models[std::clamp(state.form, 0, 3)];
     request.seed = state.seed > 0 ? std::uint32_t(state.seed)
                                    : std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
     return request;

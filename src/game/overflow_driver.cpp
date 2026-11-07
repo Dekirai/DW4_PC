@@ -138,8 +138,59 @@ public:
         if (const auto muteki = option(request_, "muteki"); !muteki.empty()) config.tuning.muteki = std::atoi(muteki.c_str());
         // (family_damage=FAMILY:F,...: a family's own damage factor.)
         for (const auto& [key, value] : pairs(option(request_, "family_damage"))) config.family_damage[key] = value;
+        // (technique_cooldown=ROW:STEPS,...: a technique's own cooldown by its pcTech base row; 0: never cast.)
+        for (const auto& [key, value] : pairs(option(request_, "technique_cooldown"))) config.technique_cooldown[std::atoi(key.c_str())] = int(value);
         // (family_ring=FAMILY:R,...: a family's own spawn ring, 0-2.)
         for (const auto& [key, value] : pairs(option(request_, "family_ring"))) config.family_ring[key] = int(value);
+        // Round O1b lane E: the Guardians and the finale (guardians=0: O1a's
+        // run), the spike's keys (guardian_set=F1,F2,F3 forces the phases'
+        // Guardians, guardian_first=SECONDS brings the first one sooner,
+        // elite=F,... makes those Guardians the elite fallback) and the
+        // Guardians' HP factors.
+        if (const auto on = option(request_, "guardians"); !on.empty()) config.tuning.guardians = on != "0";
+        seconds("guardian_first", config.tuning.guardian_first);
+        seconds("guardian_half", config.tuning.guardian_half_steps);
+        // (return_gate=0: the results 4 s after the clear on the Violet Ring too;
+        // forge_start=N: Forge families open at the start, tests and pictures.)
+        if (const auto gate = option(request_, "return_gate"); !gate.empty()) config.tuning.return_gate = gate != "0";
+        if (const auto forge = option(request_, "forge_start"); !forge.empty()) config.forge_start = std::atoi(forge.c_str());
+        // (art_skill=N: the Art's class skill at the start; phase=SECONDS: a phase's
+        // length, the finale at four of them: pictures of the finale and the gate.)
+        if (const auto skill = option(request_, "art_skill"); !skill.empty()) config.art_skill_start = std::atoi(skill.c_str());
+        seconds("phase", config.tuning.phase_steps);
+        // (pwr_up_late=SECONDS,FROM_SECONDS: Pwr Up's cooldown from that run time on.)
+        if (const auto late = option(request_, "pwr_up_late"); !late.empty()) {
+            double cooldown = 0, from = 0;
+            if (std::sscanf(late.c_str(), "%lf,%lf", &cooldown, &from) == 2) {
+                config.tuning.pwr_up_late_cooldown = int(std::lround(cooldown * 60.0));
+                config.tuning.pwr_up_late_from = int(std::lround(from * 60.0));
+            }
+        }
+        real("guardian_hp", config.tuning.guardian_hp);
+        real("finale_hp", config.tuning.finale_hp);
+        auto list = [](const std::string& text) {
+            std::vector<std::string> out;
+            for (std::size_t begin = 0; begin < text.size();) {
+                const std::size_t end = std::min(text.find(',', begin), text.size());
+                if (end > begin) out.push_back(text.substr(begin, end - begin));
+                begin = end + 1;
+            }
+            return out;
+        };
+        {
+            const auto set = list(option(request_, "guardian_set"));
+            for (std::size_t i = 0; i < set.size() && i < 3; ++i) config.guardians[i] = set[i];
+        }
+        config.elite = list(option(request_, "elite"));
+        // The loadout and the opened gear (lanes D and F set them; tests: loadout=ARMOR,CHIP).
+        // (positional: "loadout=,wisdom_chip" keeps the empty armor field; "-" means empty too)
+        if (const std::string text = option(request_, "loadout"); !text.empty()) {
+            const std::size_t comma = text.find(',');
+            const std::string armor = text.substr(0, comma);
+            const std::string chip = comma == std::string::npos ? std::string() : text.substr(comma + 1);
+            config.loadout_armor = armor == "-" ? std::string() : armor;
+            config.loadout_chip = chip == "-" ? std::string() : chip;
+        }
         timing_ = option(request_, "timing") == "1";
         // commands=STEP KIND[VALUE],... (test runs with pictures): the menu keys
         // at given director steps (frozen ones count), e.g. 600p,640m1,660a: pause, the cursor down, A.
@@ -162,6 +213,17 @@ public:
         // (curve=B,L,S: the balance passes' NEXTEXP terms.)
         if (const auto curve = option(request_, "curve"); !curve.empty())
             std::sscanf(curve.c_str(), "%d,%d,%d", &rules_->levels.curve_base, &rules_->levels.curve_linear, &rules_->levels.curve_square);
+        // (buff=STEPS,RANK_STEPS: the force buffs' time in a run; buff_kept=ROW,...: those keeping DW4's time.)
+        if (const auto buff = option(request_, "buff"); !buff.empty())
+            std::sscanf(buff.c_str(), "%d,%d", &rules_->buff_steps, &rules_->buff_rank_steps);
+        {
+            const std::string rows = option(request_, "buff_kept");
+            for (std::size_t begin = 0; begin < rows.size();) {
+                const std::size_t end = std::min(rows.find(',', begin), rows.size());
+                if (end > begin) rules_->buff_kept.insert(std::atoi(rows.substr(begin, end - begin).c_str()));
+                begin = end + 1;
+            }
+        }
         // (technique_damage=FAMILY:F,...: a pcTech family's damage factor.)
         for (const auto& [key, value] : pairs(option(request_, "technique_damage"))) rules_->damage.technique_factor[std::atoi(key.c_str())] = value;
         run.set_overflow_rules(rules_);
@@ -241,6 +303,7 @@ public:
             switch (director_->outcome()) {
             case ov::Outcome::defeated: end_ = RunEnd::defeated; break;
             case ov::Outcome::cleared: end_ = RunEnd::cleared; break;
+            case ov::Outcome::time_up: end_ = RunEnd::time_up; break;
             default: end_ = asked_.value_or(RunEnd::retired); break;
             }
             finish(run);

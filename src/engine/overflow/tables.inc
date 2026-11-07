@@ -61,7 +61,7 @@ const FamilyRow kFamilies[] = {
     {"e_geko", "Gekomon", 225, 3, false, 0, 0.15f, 1.0f},
     {"e_mecha3", "MRγ03", 252, 3, false, 0, 0.11f, 1.0f},
     {"e_maridevi", "MarineDevimon", 243, 3, true, 0, 0.05f, 0.5f},
-    {"e_torta", "Tortomon", 234, 3, false, 1, 0.10f, 1.0f},     // (0.215 before the balance round of 05.11, 0.13 before the forge round)
+    {"e_torta", "Tortomon", 234, 3, false, 1, 0.085f, 1.0f},    // (0.215 before the balance round of 05.11, 0.13 before the forge round, 0.10 before round O1b: OVERFLOW_DIRECTOR.md 11.6)
     // Phase 4, Machine Pit (34)
     {"e_infermo", "Infermon", 306, 4, false, 1, 0.035f, 1.0f},
     {"e_megadra", "Megadramon", 315, 4, false, 2, 0.045f, 1.0f},

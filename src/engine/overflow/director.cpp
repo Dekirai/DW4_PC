@@ -46,6 +46,8 @@ OverflowDirector::OverflowDirector(RunConfig config) : config_(std::move(config)
     offer_state_.forge_sure = config_.forge_sure;
     // (The human bot's own stream: its draws leave the spawner's alone.)
     human_.random = 0x4855AA5500000000ull ^ std::uint64_t(config_.seed) * 0xD1B54A32D192ED03ull;
+    // The run's Guardians (4.4): drawn from their own stream, so the spawner's draws stay as they were.
+    if (config_.tuning.guardians) guardian_plan_ = draw_guardians(config_.seed, config_.guardians);
 }
 
 void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
@@ -60,16 +62,32 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     rules.donors.streams.clear();
     for (const auto& music : phase_music()) rules.donors.streams.push_back({music.stage, {music.name}});
     rules.donors.streams.push_back({"dngq1b1e", {"QS_START", "QS_DONOT"}});
+    // The Guardians of this run from their stages (never their ded_*.lua),
+    // BT_SBOSS from Blossomon's stage, the quest timer's sounds (4.4, 11;
+    // BT_BOSS2 is the Violet Ring's own).
+    rules.donors.guardians.clear();
+    if (config_.tuning.guardians) {
+        for (const auto& family : guardian_plan_)
+            if (const auto* row = guardian_row(family)) rules.donors.guardians.push_back({row->family, row->donor});
+        rules.donors.streams.push_back({"dng101b2", {"BT_SBOSS"}});
+        rules.donors.streams.push_back({"dngq3b1e", {"QS_HURRY", "z3COUNT1", "z3COUNT2", "z3COUNT3"}});
+    }
     // The form's element: +15 % for its techniques (5.1): Agumon fire, Veemon thunder.
     rules.damage.element_factor = {1, 1, 1, 1};
     if (config_.form == "p_agumon") rules.damage.element_factor[0] = 1.15f;
     if (config_.form == "p_vmon") rules.damage.element_factor[2] = 1.15f;
+    if (config_.form == "p_girumon") rules.damage.element_factor[3] = 1.15f; // (Dark)
+    if (config_.form == "p_dorumon") rules.damage.element_factor[1] = 1.15f; // (Ice)
     // The run's skill caps start at the first Train step (6.2); the class
     // cap follows the Forge at the field start.
     rules.skills.cap.fill(train_cap(0));
     rules.damage.tag_factor[kTagArt] = art_factor();
-    for (const int family : {0, 10, 25, 30, 40})
+    for (const int family : {0, 5, 10, 15, 20, 25, 30, 35, 40})
         if (technique_damage(family) != 1.0f) rules.damage.technique_factor[family] = technique_damage(family);
+    // Bomb's ranks too (round O1b lane E: its burning area strikes a whole group,
+    // as Impact's rings do; at x 1 Agumon's human bot outlasted the other forms'
+    // by ten minutes, docs/ROUND_O1B_E_NOTES.md 5).
+    for (int row = 36; row < 40; ++row) rules.damage.technique_factor[row] = technique_damage(35);
     // A normal enemy's stun, sleep or bind is a hitch, not a stop (4.8; 14.2
     // allows 5 % of the frames without control).
     rules.player_hit.status_cap = config_.tuning.status_cap;
@@ -79,6 +97,10 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     rules.levels.curve_base = config_.tuning.curve[0];
     rules.levels.curve_linear = config_.tuning.curve[1];
     rules.levels.curve_square = config_.tuning.curve[2];
+    // The Guardians' own damage factors (round O1b, guardians.cpp) and their clamp.
+    rules.damage.guardian_clamp = config_.tuning.guardian_clamp;
+    for (const auto& row : guardian_table())
+        if (row.damage != 1.0f) rules.damage.family_factor[row.family] = row.damage;
     // The families' own damage factors (14.3).
     for (const auto& row : family_table())
         if (family_damage(row) != 1.0f) rules.damage.family_factor[row.family] = family_damage(row);
@@ -136,8 +158,21 @@ void OverflowDirector::start_running(Engine& engine) {
                 if (!model.empty() && !weapons->labels(model)) engine.load_common_now("_common/" + model + ".igb");
             }
         equip_ladder(engine, true);
+        // (Tests, pictures: Forge families opened at the start, as their offers would.)
+        if (config_.art_skill_start > 0) {
+            auto& skill = player.stats.skill[std::size_t(art_skill_)];
+            skill = std::max(skill, config_.art_skill_start);
+            auto& cap = rules_->skills.cap[std::size_t(art_skill_)];
+            cap = std::max(cap, skill);
+        }
+        for (int f = 2; f <= std::min({config_.forge_start, 5, offer_state_.forge_families}); ++f) take_offer(engine, Offer{OfferKind::forge, f});
+        // The Plug Lab's points of the form (8.2, lane F's meta file).
+        for (std::size_t i = 0; i < config_.plug_lab.size(); ++i) player.upcnt[i] += std::max(0, config_.plug_lab[i]);
         sys->recalc_player(engine, 0);
         sys->store_species(0);
+        // The form's element (5.1): its PWR Medal (round O1b, gear.cpp).
+        element_ = config_.form == "p_vmon" ? 2 : config_.form == "p_girumon" ? 3 : config_.form == "p_dorumon" ? 1 : 0;
+        apply_loadout(engine);
     }
     // QS_START, then the phase's music (11).
     detail::play_sound(engine, "QS_START");
@@ -229,17 +264,19 @@ void OverflowDirector::step_running(Engine& engine) {
     trail_.push_back(me);
     if (trail_.size() > 30) trail_.erase(trail_.begin());
     if (clock_ % 60 == 1) update_factors(engine);
-    // The phase music (4.2).
+    // The phase (4.2), the Guardians and the finale (4.4), the music (11).
     const int now_phase = phase();
     if (steps_ >= music_at_ && music_phase_ != now_phase) {
         music_phase_ = now_phase;
-        detail::play_sound(engine, phase_music()[std::size_t(now_phase - 1)].name);
         if (now_phase > 1) event_log_.push_back({clock_, "phase " + std::to_string(now_phase)});
     }
+    step_guardians(engine);
+    if (outcome_ != Outcome::none) return; // (LordKnightmon fell)
+    step_music(engine);
     // Phase 4 goes on past its five minutes until the run's end (the forge
     // round of 05.11: the finale's five minutes, 4.4, without LordKnightmon
     // in O1a): the HUD says how long.
-    if (const auto& t = config_.tuning; t.end_steps > 4 * t.phase_steps && clock_ == std::uint64_t(4 * t.phase_steps)) {
+    if (const auto& t = config_.tuning; !t.guardians && t.end_steps > 4 * t.phase_steps && clock_ == std::uint64_t(4 * t.phase_steps)) {
         const int end = t.end_steps / 60;
         notice("Hold out until " + std::to_string(end / 60) + ":" + (end % 60 < 10 ? "0" : "") + std::to_string(end % 60));
     }
@@ -256,6 +293,7 @@ void OverflowDirector::step_running(Engine& engine) {
         }
     }
     drop_items(engine);
+    if (clock_ % 30 == 0) power_up_chips(engine);
     track_enemies(engine);
     {
         // The crowd round the player (the run log's minute lines): the living
@@ -293,7 +331,9 @@ void OverflowDirector::step_running(Engine& engine) {
     }
     if (clock_ % 3600 == 0) log_minute(engine);
     if (clock_ >= std::uint64_t(config_.tuning.end_steps)) {
-        begin_end(engine, Outcome::cleared);
+        // The quest timer's 0:00 with LordKnightmon alive: TIME UP (4.4);
+        // without Guardians O1a's clear.
+        begin_end(engine, config_.tuning.guardians ? Outcome::time_up : Outcome::cleared);
         return;
     }
     // (Two steps after the level-up: its HUD values, posted a frame ahead,
@@ -504,6 +544,7 @@ void OverflowDirector::level_up(Engine& engine, int slot, int level) {
 void OverflowDirector::open_level_up(Engine& engine) {
     window_steps_.push_back(clock_);
     offer_state_.level = level(engine);
+    gear_offers(engine);
     offers_ = draw_offers(offer_state_, random_);
     ++offer_state_.drawn;
     screen_ = Screen::level_up;
@@ -543,9 +584,12 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
         skill = std::min(cap, skill + 100);
         sys->recalc_player(engine, 0);
         sys->store_species(0);
-        if (player.wazalist != before) post_effect(engine, "MODELCTRL", player.digimon, 0, "i_getitempnl01", "SQ_TECUP");
+        if (player.wazalist != before) rules_->show_panel(engine, 0, player.digimon);
         break;
     }
+    case OfferKind::core:
+    case OfferKind::board:
+    case OfferKind::chip: take_gear(engine, offer); break;
     case OfferKind::plug: {
         const int index = std::clamp(offer.value, 0, 10);
         const int points = plug_points(player.stats.level);
@@ -565,6 +609,7 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
     pending_levels_ = std::max(0, pending_levels_ - 1);
     if (pending_levels_ > 0) {
         offer_state_.level = level(engine);
+        gear_offers(engine);
         offers_ = draw_offers(offer_state_, random_);
         ++offer_state_.drawn;
         cursor_ = 0;
@@ -582,6 +627,9 @@ std::string OverflowDirector::offer_text(const Engine& engine, const Offer& offe
         return "Forge: " + (offer.value >= 1 && offer.value <= int(family_names_.size()) ? family_names_[std::size_t(offer.value - 1)] : std::string("?"));
     case OfferKind::train: return std::string("Train ") + kGroupNames[std::clamp(offer.value - kBlastSkill, 0, 2)];
     case OfferKind::plug: return std::string("Plug: ") + plug_name(offer.value);
+    case OfferKind::core:
+    case OfferKind::board:
+    case OfferKind::chip: return gear_text(engine, offer);
     }
     return {};
 }
@@ -618,6 +666,9 @@ std::string OverflowDirector::offer_detail(const Engine& engine, const Offer& of
         return std::string(kGroupNames[group]) + " +100, cap " + std::to_string(train_cap(steps)) + " > " + std::to_string(train_cap(steps + 1));
     }
     case OfferKind::plug: return std::string(plug_name(offer.value)) + " +" + std::to_string(plug_points(level(engine)));
+    case OfferKind::core:
+    case OfferKind::board:
+    case OfferKind::chip: return gear_detail(engine, offer);
     }
     return {};
 }
@@ -659,6 +710,8 @@ std::string OverflowDirector::offer_about(const Engine& engine, const Offer& off
         return plug + ".";
     }
     }
+    if (offer.kind == OfferKind::core || offer.kind == OfferKind::board || offer.kind == OfferKind::chip)
+        return "Gear for the equipment window: " + gear_detail(engine, offer) + ".";
     return {};
 }
 
@@ -668,6 +721,12 @@ std::string OverflowDirector::offer_about(const Engine& engine, const Offer& off
 void OverflowDirector::enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index) {
     (void)killer;
     (void)record;
+    if (guardian_ && guardian_->family == family && guardian_->ram == index) {
+        ++defeats_;
+        ++defeats_by_family_[std::string(family) + "!"];
+        guardian_down(engine, true);
+        return;
+    }
     const auto* row = family_row(family);
     if (!row) return;
     ++defeats_;
@@ -675,6 +734,8 @@ void OverflowDirector::enemy_defeated(Engine& engine, int killer, int record, st
     for (auto& e : enemies_) {
         if (e.ram != index || e.family != family) continue;
         ++(e.last_art ? minute_art_kills_ : minute_tech_kills_);
+        if (e.last_source < 0)
+            if (const int row = (-e.last_source) % 1000; row >= 0 && row < 20) ++tech_defeats_[std::size_t(row / 5)];
         if (phase() == 1 && !e.corrupted && !e.other_damage && e.art_hits > 0) art_hits_per_kill_.push_back(e.art_hits);
         if (e.corrupted) {
             ++corrupted_defeats_;
@@ -685,6 +746,7 @@ void OverflowDirector::enemy_defeated(Engine& engine, int killer, int record, st
                 if (const auto* ram = models->find(family, index)) at = ram_position(*ram);
             static constexpr int kPlugRecords[7] = {4, 6, 8, 10, 12, 14, 16}; // Strgth, Def., MaxHP, MaxMP, Wisdom, Spirit, Speed (UP 1)
             drops_.push_back({"g_000xdata2", kPlugRecords[next_random(random_) % 7], 1, {at.x + 3.0f, at.y, at.z}});
+            drops_.push_back({"g_000xdata1", 2, 1, {at.x, at.y, at.z + 3.0f}}); // ¶ Data UP 20 (4.4; round O1b: the chips use it)
             if (int(next_random(random_) % 100) < config_.tuning.disk_percent) drops_.push_back({"g_000item", 0, 0, {at.x - 3.0f, at.y, at.z}});
         }
         break;
@@ -698,7 +760,10 @@ void OverflowDirector::damage_dealt(Engine& engine, std::string_view family, int
         if (e.ram != index || e.family != family) continue;
         if (source == kTagArt) ++e.art_hits;
         else e.other_damage = true;
+        // The awakened Art bursts once for each strike that hits (6.5; cast_art fires it).
+        if (source == kTagArt && awakened_ && burst_done_ != art_ready_) burst_pending_ = true;
         e.last_art = source == kTagArt;
+        e.last_source = source;
         break;
     }
 }
@@ -719,6 +784,12 @@ void OverflowDirector::item_taken(Engine& engine, int slot, int table, int recor
         sys->store_species(0);
         ++plugs_picked_;
         notice(std::string(plug_name(stat)) + " Plug +" + std::to_string(points + up));
+    } else if (table == 1 && record >= 1 && record <= 3) {
+        // ¶ Data (4.7, 7.5): the run's own count, spent on the chips' power-ups.
+        static constexpr int kUp[4] = {0, 5, 20, 100};
+        x_data_ += kUp[record];
+        x_data_total_ += kUp[record];
+        notice("¶ Data +" + std::to_string(kUp[record]));
     } else if (table == 0) {
         ++disks_taken_;
         notice("HP Disk");
@@ -783,18 +854,42 @@ void OverflowDirector::begin_end(Engine& engine, Outcome outcome) {
     outcome_ = outcome;
     ending_since_ = steps_;
     ending_phase_ = 0;
-    static const char* names[] = {"none", "retired", "defeated", "cleared"};
+    static const char* names[] = {"none", "retired", "defeated", "cleared", "time_up"};
     if (end_reason_ == "-") end_reason_ = names[int(outcome)];
     event_log_.push_back({clock_, std::string("end ") + names[int(outcome)] + " (" + end_reason_ + ")"});
     log_minute(engine);
     if (outcome == Outcome::retired) {
         ending_phase_ = 99;
-    } else if (outcome == Outcome::cleared) {
-        // The simulation is complete: the enemies leave, the arena's victory music.
+    } else if (outcome == Outcome::cleared || outcome == Outcome::time_up) {
+        // The simulation is complete (or its time is up, 4.4): the enemies
+        // leave; the arena's victory music, or the timer's end and QS_DONOT.
+        if (guardian_) guardian_down(engine, false);
         if (auto* models = engine.get<ModelCtrlManager>())
             for (const auto& ram : models->rams())
                 if (living_enemy(*ram)) port_send(engine, "MODELCTRL", ram->info_name, ram->index, "SQ_ERAS");
-        detail::play_sound(engine, "BT_WIN02");
+        if (outcome == Outcome::cleared) {
+            detail::play_sound(engine, "BT_WIN02");
+            // On the Violet Ring the return gate comes (4.4): Belphemon's
+            // hit_f_belvam.lua generates g_dreturngate at V<0,10,-60> and its
+            // mat matz01 changes the stage once every player stands in it. Here
+            // the run pauses the arena's mats (the stage change prompt would
+            // follow) and walking into that mat's box ends the run.
+            if (config_.tuning.return_gate && engine.stage_name() == "stagbs02") {
+                gate_ = 1;
+                gate_since_ = steps_;
+                if (const auto* mats = engine.get<MatCtrlManager>())
+                    for (const auto& box : mats->mat_boxes())
+                        if (box.name == "matz01") {
+                            gate_min_ = box.min;
+                            gate_max_ = box.max;
+                        }
+                port_send(engine, "MATCTRL", std::nullopt, -1, "PAUSE");
+            }
+        } else {
+            detail::play_sound(engine, "z3COUNT3");
+            detail::play_sound(engine, "QS_DONOT");
+            notice("TIME UP");
+        }
     }
 }
 
@@ -804,13 +899,17 @@ void OverflowDirector::step_ending(Engine& engine) {
         if (config_.results_hold > 0 && steps_ - results_since_ >= std::uint64_t(config_.results_hold)) over_ = true;
         return;
     }
+    if (gate_ > 0 && outcome_ == Outcome::cleared && ending_phase_ != 99) { // (a Retire: the results at once)
+        step_gate(engine);
+        return;
+    }
     if (outcome_ == Outcome::defeated && ending_phase_ == 0 && age >= 120) {
         // The original's Game Over picture (4.8).
         port_send(engine, "MODELCTRL", "i_fadewn01", 0, "SQ_GAMEOVER");
         detail::play_sound(engine, "QS_DONOT");
         ending_phase_ = 1;
     }
-    const std::uint64_t wait = outcome_ == Outcome::defeated ? 330 : outcome_ == Outcome::cleared ? 240 : 0;
+    const std::uint64_t wait = outcome_ == Outcome::defeated ? 330 : outcome_ == Outcome::cleared || outcome_ == Outcome::time_up ? 240 : 0;
     if (ending_phase_ == 99 || age >= wait) {
         screen_ = Screen::results;
         cursor_ = 0;
@@ -819,12 +918,72 @@ void OverflowDirector::step_ending(Engine& engine) {
     }
 }
 
+// The return gate after the clear (4.4): it comes gate_wait steps after the
+// clear (the enemies leave first), powers on 30 steps later (the original's
+// SQ_POWERON at 480 after the GENERATE at 450), and the results open when the
+// player walks into its mat's box (as the original's mat: a player already
+// standing there when it comes has to step out and in again). A test bot that
+// has not reached it after gate_bot_steps gets them anyway (a run must end).
+void OverflowDirector::step_gate(Engine& engine) {
+    const auto& t = config_.tuning;
+    if (gate_ == 1 && steps_ - gate_since_ >= std::uint64_t(std::max(0, t.gate_wait))) {
+        Packet generate;
+        parse_packet_arguments("V<0,10,-60>/V<0,0,0>/SQ_ENTR", generate);
+        port_send(engine, "MODELCTRL", "g_dreturngate", 0, "GENERATE", generate);
+        gate_ = 2;
+        gate_open_at_ = steps_;
+        notice("The return gate is open");
+        event_log_.push_back({clock_, "gate open"});
+    }
+    if (gate_ != 2) return;
+    const std::uint64_t open = steps_ - gate_open_at_;
+    if (open == 30) port_send(engine, "MODELCTRL", "g_dreturngate", 0, "SQ_POWERON");
+    const Vec3f me = player_position(engine);
+    const bool inside = gate_inside(me);
+    if (!inside) gate_out_ = true;
+    const bool entered = inside && gate_out_;
+    const bool late = !config_.bot.empty() && open >= std::uint64_t(std::max(0, t.gate_bot_steps));
+    if (!entered && !late) return;
+    gate_entered_ = entered;
+    event_log_.push_back({clock_, entered ? "gate entered" : "gate not reached"});
+    detail::play_sound(engine, "CURSOR_DECIDE");
+    gate_ = 3;
+    screen_ = Screen::results;
+    cursor_ = 0;
+    results_since_ = steps_;
+    freeze(engine, true);
+}
+
+bool OverflowDirector::gate_inside(const Vec3f& at) const {
+    return at.x >= gate_min_.x && at.x <= gate_max_.x && at.z >= gate_min_.z && at.z <= gate_max_.z;
+}
+
+// The test bots walk into the open gate (to its mat's middle; one that stands
+// in it when it comes steps out towards the arena's centre first).
+PadSample OverflowDirector::gate_pad(Engine& engine) {
+    HostPadInput input;
+    if (gate_ != 2) return host_pad_sample(input);
+    const Vec3f me = player_position(engine);
+    float gx = 0.5f * (gate_min_.x + gate_max_.x), gz = 0.5f * (gate_min_.z + gate_max_.z);
+    if (!gate_out_) gz = gate_max_.z + 8.0f;
+    const float dx = gx - me.x, dz = gz - me.z;
+    const float d = std::hypot(dx, dz);
+    if (d > 0.5f) input.stick = stick_for(engine, me, dx / d, dz / d, d > 8.0f ? 1.0f : 0.6f);
+    return host_pad_sample(input);
+}
+
 // ---------------------------------------------------------------------------
 // Pads: move only (10) and the kite bot (14.1)
 // ---------------------------------------------------------------------------
 PadSample OverflowDirector::filter_pad(Engine& engine, const PadSample& live) {
     PadSample out;
     out.connected = live.connected;
+    // (After the clear the player walks to the return gate: the stick only.)
+    if (gate_walk() && started_) {
+        out.left = live.left;
+        out.buttons = live.buttons & (pad_button::up | pad_button::down | pad_button::left | pad_button::right);
+        return out;
+    }
     if (screen_ != Screen::none || outcome_ != Outcome::none || !started_) return out;
     out.left = live.left;
     std::uint32_t keep = pad_button::up | pad_button::down | pad_button::left | pad_button::right | pad_button::l;
@@ -846,6 +1005,7 @@ PadSample OverflowDirector::filter_pad(Engine& engine, const PadSample& live) {
 
 PadSample OverflowDirector::bot_pad(Engine& engine) {
     HostPadInput input;
+    if (gate_walk() && started_) return gate_pad(engine);
     if (screen_ != Screen::none || outcome_ != Outcome::none || !started_) return host_pad_sample(input);
     auto* models = engine.get<ModelCtrlManager>();
     auto* sys = engine.get<GameSystem>();
@@ -1050,6 +1210,19 @@ std::vector<std::string> OverflowDirector::build_lines(const Engine& engine) con
                 " / cap " + std::to_string(rules_ ? rules_->skills.cap[std::size_t(group)] : 0) + ")";
         out.push_back(line);
     }
+    // The equipment window's other parts (7): the core, the board, the pockets.
+    {
+        auto name = [&](const char* table, int index) {
+            const auto* device = player.device(index);
+            if (!device) return std::string("-");
+            std::string text = detail::plain_name(db->text(table, device->record, "NAME"));
+            if (device->value > 0) text += " +" + std::to_string(device->value);
+            return text;
+        };
+        out.push_back("Core: " + name("armor1", player.main_slot[0]) + "   Board: " + name("armor2", player.sub_slot[0]));
+        out.push_back("Chips: " + name("abChip", player.power_pocket[0]) + " / " + name("abChip", player.main_pocket[0]) + "   ¶ Data " +
+                      std::to_string(x_data_));
+    }
     std::map<int, int> plugs;
     for (const auto& [stat, points] : plugs_taken_) plugs[stat] += int(points);
     if (!plugs.empty()) {
@@ -1067,7 +1240,17 @@ std::vector<std::string> OverflowDirector::result_lines(const Engine& engine) co
     auto* db = const_cast<Engine&>(engine).get<DatabaseManager>();
     out.push_back("Time " + clock_text(run_seconds()));
     out.push_back("Run level " + std::to_string(level(engine)));
-    out.push_back("Digimon " + std::string(config_.form == "p_vmon" ? "Veemon" : config_.form == "p_agumon" ? "Agumon" : config_.form));
+    out.push_back("Digimon " + std::string(config_.form == "p_vmon"      ? "Veemon"
+                                           : config_.form == "p_agumon"  ? "Agumon"
+                                           : config_.form == "p_girumon" ? "Guilmon"
+                                           : config_.form == "p_dorumon" ? "Dorumon"
+                                                                         : config_.form.c_str()));
+    if (!guardians_defeated_.empty()) {
+        std::string names;
+        for (const auto& family : guardians_defeated_)
+            if (const auto* row = guardian_row(family)) names += (names.empty() ? "" : ", ") + std::string(row->name);
+        out.push_back("Guardians " + names);
+    }
     out.push_back("Defeated " + std::to_string(defeats_));
     std::vector<std::pair<int, std::string>> families;
     for (const auto& [family, count] : defeats_by_family_) {
@@ -1099,7 +1282,21 @@ std::string OverflowDirector::log_text() const {
     out << "DW4OVERFLOWLOG 1\n";
     out << "form " << config_.form << "\nfield " << config_.field << "\nseed " << config_.seed << "\ntier " << config_.tier << "\nbot "
         << (config_.bot.empty() ? "-" : config_.bot) << "\noffers " << (config_.offers.empty() ? "player" : config_.offers) << "\n";
-    out << "loadout none\nmeta none\n"; // (O1b: the loadout and the Plug Lab)
+    // SURVIVAL.md 13: the loadout, the meta state and the Guardian keys, so a run replays exactly.
+    const auto dash = [](const std::string& s) { return s.empty() ? std::string("-") : s; };
+    out << "loadout " << dash(config_.loadout_armor) << ' ' << dash(config_.loadout_chip) << '\n';
+    out << "meta plug_lab";
+    for (int v : config_.plug_lab) out << ' ' << v;
+    out << " gear_open";
+    if (config_.gear_open.empty()) out << " -";
+    for (const auto& g : config_.gear_open) out << ' ' << g;
+    out << '\n';
+    out << "guardians " << (config_.tuning.guardians ? 1 : 0) << " guardian_set";
+    for (const auto& g : config_.guardians) out << ' ' << dash(g);
+    out << " elite";
+    if (config_.elite.empty()) out << " -";
+    for (const auto& e : config_.elite) out << ' ' << e;
+    out << " guardian_hp " << config_.tuning.guardian_hp << " finale_hp " << config_.tuning.finale_hp << '\n';
     for (const auto& [step, text] : command_log_) out << "command " << step << ' ' << text << '\n';
     for (const auto& [step, text] : event_log_) out << "event " << step << ' ' << text << '\n';
     for (const auto& m : minutes_)
@@ -1118,9 +1315,15 @@ std::string OverflowDirector::log_text() const {
     return out.str();
 }
 
+int OverflowDirector::casts() const {
+    int total = 0;
+    for (const auto& t : techniques_) total += t.casts;
+    return total;
+}
+
 std::string OverflowDirector::summary_text(const Engine& engine) const {
     std::ostringstream out;
-    static const char* names[] = {"none", "retired", "defeated", "cleared"};
+    static const char* names[] = {"none", "retired", "defeated", "cleared", "time_up"};
     out << "form " << config_.form << "\nseed " << config_.seed << "\nbot " << (config_.bot.empty() ? "-" : config_.bot) << "\nend "
         << names[int(outcome_)] << "\nend_reason " << end_reason_ << "\n";
     out << "run_steps " << clock_ << "\nrun_seconds " << run_seconds() << "\nlevel " << level(engine) << "\ndefeats " << defeats_
@@ -1164,6 +1367,7 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
         out << "no_control_share " << (clock_ ? double(no_control_) / double(clock_) : 0.0) << "\n";
         out << "rules_no_control_share " << (tally.steps ? double(tally.no_control_steps) / double(tally.steps) : 0.0) << "\n";
         out << "rules_clamps " << tally.clamps << "\npanels " << tally.panels << "\npanels_skipped " << tally.panels_skipped << "\n";
+        out << "guardian_clamps " << tally.guardian_clamps << "\n"; // (a Guardian's guardian_clamp; 14.2's clamp is clamps / rules_clamps)
         for (const auto& [source, amount] : tally.dealt_by) out << "dealt " << technique_name(source) << ' ' << amount << '\n';
     }
     for (const auto& [family, by] : hits_by_family_) out << "hits_by " << family << ' ' << by.first << ' ' << by.second << '\n';
@@ -1187,6 +1391,15 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     out << "forge " << offer_state_.forge << "\ntrain " << offer_state_.train[0] << ' ' << offer_state_.train[1] << ' ' << offer_state_.train[2]
         << "\n";
     for (const auto& t : techniques_) out << "casts " << t.name << ' ' << t.casts << '\n';
+    // The Guardians (4.4, round O1b): the plan, the defeated, the finale.
+    out << "guardians";
+    for (const auto& family : guardian_plan_) out << ' ' << (family.empty() ? "-" : family);
+    out << "\nguardians_defeated " << guardians_defeated_.size();
+    for (const auto& family : guardians_defeated_) out << ' ' << family;
+    out << "\nfinale " << (finale_ ? 1 : 0) << "\nawakened " << (awakened_ ? 1 : 0) << '\n';
+    out << "awakening_bursts " << bursts_ << "\ngate " << (gate_ >= 2 ? 1 : 0) << ' ' << (gate_entered_ ? "entered" : "-") << '\n';
+    for (const auto& [step, text] : event_log_)
+        if (text.starts_with("guardian ")) out << "guardian_event " << step << ' ' << text.substr(9) << '\n';
     int lua_errors = 0;
     for (const auto& note : engine.notes()) {
         if (note.text.find("script call failed") != std::string::npos || note.text.find("script not found") != std::string::npos)
