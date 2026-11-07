@@ -959,8 +959,13 @@ void finale(const std::filesystem::path& data) {
         until_started(run);
         auto& engine = *run.engine;
         auto& rules = *run.rules;
+        check(rules.buff_steps == 0 && rules.buff_time(80, 0, 1920) == 1920, "the run's force buffs keep DW4's time by default");
+        rules.buff_steps = 360; // (the 6-10 s of SURVIVAL.md 6.4, a balance pass's key buff=360,60)
         check(rules.buff_time(80, 0, 1800 + 120) == 360 && rules.buff_time(80, 4, 3240) == 600 && rules.buff_time(75, 2, 300) == 300,
-              "the run's buff time: 6 s at Petty, 10 s at ∞, never longer than DW4's");
+              "buff=360,60: 6 s at Petty, 10 s at ∞, never longer than DW4's");
+        rules.buff_kept = {75};
+        check(rules.buff_time(75, 0, 1800) == 1800, "buff_kept keeps a technique's DW4 time");
+        rules.buff_kept.clear();
         set_level(engine, 10);
         spawn_around(engine, *family_row("e_goburi"), 3, 18.0f);
         const auto* self = engine.get<ModelCtrlManager>()->player(0);
@@ -970,7 +975,7 @@ void finale(const std::filesystem::path& data) {
             if (self && self->status) longest = std::max(longest, self->status->timer[6]);
         }
         std::cout << "  finale: Pwr Up's POWERUP timer at most " << longest << " frames\n";
-        check(longest > 0 && longest <= 360, "Agumon's Petty Pwr Up lasts at most 6 s in a run (" + std::to_string(longest) + " frames)");
+        check(longest > 0 && longest <= 360, "buff=360,60: Agumon's Petty Pwr Up lasts at most 6 s in a run (" + std::to_string(longest) + " frames)");
     }
 }
 

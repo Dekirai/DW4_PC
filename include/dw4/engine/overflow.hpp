@@ -299,13 +299,14 @@ public:
     // the slot's MaxHP a second, 60 steps; SURVIVAL.md 4.8): the HP to give.
     int drain(Engine& engine, int slot, int heal);
     // The force buffs on the players (Speed, Resist, Pwr Up: support_magic's
-    // SETSPEEDUP / SETREFRACT / SETPOWERUP) last buff_steps + rank x
-    // buff_rank_steps frames at most in a run (SURVIVAL.md 6.4: 6-10 s by
-    // rank, cast every 15 s). The original's TIME (30-54 s, plus the caster's
-    // INT for Speed and Pwr Up) outlasted the run's cooldown: Agumon's Pwr Up
-    // from run level 8 was on for good (round O1b lane E, the finish's
-    // balance). buff_steps 0: DW4's times.
-    int buff_steps = 360, buff_rank_steps = 60;
+    // SETSPEEDUP / SETREFRACT / SETPOWERUP) may last at most buff_steps +
+    // rank x buff_rank_steps frames in a run (SURVIVAL.md 6.4's 6-10 s by
+    // rank: buff_steps 360, buff_rank_steps 60). Off (0: DW4's TIME of 30-54 s,
+    // plus the caster's INT for Speed and Pwr Up): round O1b lane E measured
+    // 6-10 s and 10-14 s and the kite bot's Agumon fell at 16-22 minutes
+    // (docs/ROUND_O1B_E_NOTES.md 12); the director's Pwr Up cooldown (60 s)
+    // is the lever instead. Request key buff=STEPS,RANK_STEPS.
+    int buff_steps = 0, buff_rank_steps = 60;
     std::set<int> buff_kept; // pcTech base rows that keep DW4's time (a balance pass)
     int buff_time(int family, int rank, int time) const;
 
