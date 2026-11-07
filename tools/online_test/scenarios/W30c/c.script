@@ -1,0 +1,11 @@
+# W30c, host c (k10): hosts Dry Land at stag0201 (New instance) and stays at the gate's arrival until b's first prompt is
+# over, then goes home by the gate disc (its instance ends).
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log c hosts at stag0201
+idle until epoch>=@270 fail stagechange
+log c goes home
+disk 8 until stage=stagml11,control
+log c home

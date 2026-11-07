@@ -1,0 +1,17 @@
+# W2b, b (k2): at the lobby gate while a's instance runs in stag0101; the relay drops b's PLAN, so the held press goes out
+# after World:PlanWaitMs (1 s) and the departure runs; b's barrier is held for the loading-screen prompt (a's row), which
+# b answers with the first row: b joins a and plays a's story; home by its gate disc on its own story.
+campaign until stage=stagml11,control
+idle until frames>=120 fail key:4=1
+log own story at home
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+idle until frames>=120 fail key:4=0
+log b plays a's story
+follow 40 until sealed>=3000
+log together
+disk 8 until stage=stagml11,control
+log b home by the gate disc
+idle until frames>=120 fail key:4=1
+log own story again at home

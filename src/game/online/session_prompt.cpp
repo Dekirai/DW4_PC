@@ -217,7 +217,12 @@ void Session::open_prompt(PromptForm form, const w::Options& o, double now) {
     if (!refresh) {
         log("arrival prompt (%s form) for %s: %zu instance(s)", form == PromptForm::gate ? "gate" : "loading-screen", prompt_->stage.c_str(),
             prompt_->rows.size());
-        if (config_.auto_choice != AutoChoice::none) auto_answer_at_ = now + config_.auto_choice_delay;
+        auto_now_ = config_.auto_choice;
+        if (!config_.auto_sequence.empty()) {
+            auto_now_ = config_.auto_sequence.front();
+            if (config_.auto_sequence.size() > 1) config_.auto_sequence.erase(config_.auto_sequence.begin());
+        }
+        if (auto_now_ != AutoChoice::none) auto_answer_at_ = now + config_.auto_choice_delay;
     }
 }
 
@@ -300,7 +305,7 @@ void Session::auto_answer(double now) {
     auto_answer_at_ = -1;
     if (!prompt_) return;
     auto& v = *prompt_;
-    switch (config_.auto_choice) {
+    switch (auto_now_) {
     case AutoChoice::none: return;
     case AutoChoice::back: answer_prompt(true, now); return;
     case AutoChoice::new_instance: v.cursor = v.rows.size(); break;

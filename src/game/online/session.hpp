@@ -95,6 +95,9 @@ struct SessionConfig {
     bool gate_form = true;
     double plan_wait = 1.0;
     AutoChoice auto_choice = AutoChoice::none;
+    // A sequence instead (DW4_ONLINE_AUTOCHOICE=back,first): each prompt
+    // takes the next answer, the last one stays (W30c: B, then the first row).
+    std::vector<AutoChoice> auto_sequence;
     double auto_choice_delay = 0;
     // A stage folder as the player reads it ("Dry Land: Mummy Desert"; the
     // game's area table). Unset: the folder.
@@ -352,6 +355,7 @@ private:
     bool prompt_hold_ = false;          // BARRIER_WAIT choice: the relay holds the barrier for the prompt (no 5 s fallback)
     std::uint32_t prompt_buttons_ = 0;  // prompt_input's last buttons (its presses are the new ones)
     double auto_answer_at_ = -1;        // the automatic answer is due (test runs)
+    AutoChoice auto_now_ = AutoChoice::none; // and which one
     bool chosen_join_ = false;          // the arrival came from a row the player chose (the toasts)
     std::string chosen_host_;
 

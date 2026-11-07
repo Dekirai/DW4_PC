@@ -1635,6 +1635,7 @@ void Session::park(double now) {
     if (!from_home) chosen_join_ = false;
     prompt_hold_ = false;
     send(w::Type::barrier, w::encode(b));
+    trace("barrier to=%s point=%u plan=%u inst=%u visit=%u tick=%u", b.stage.c_str(), unsigned(b.point), unsigned(b.plan), b.inst, b.visit, b.tick);
     ticks_.clear(); // ticks sealed after B are discarded
     events_.clear();
     join_at_.reset();

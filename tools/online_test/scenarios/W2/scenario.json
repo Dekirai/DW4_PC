@@ -1,0 +1,35 @@
+{
+  "desc": "the prompt's B (19.7.4): b at the lobby gate while a's instance runs in stag0101: the gate form opens; B (autochoice back) goes to the game as its own cancel: b stands at the gate with control, no BARRIER, nothing loaded",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 40000,
+  "timeout": 800,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "db_checks": [
+    {
+      "name": "one instance, one member (b never left home)",
+      "sql": "SELECT COUNT(DISTINCT instance_id), COUNT(DISTINCT account_id) FROM instance_history_members",
+      "expect": "^1\t1$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "autochoice": "back"
+    }
+  ]
+}

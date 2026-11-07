@@ -1,9 +1,12 @@
-# W30 (19.24, 19.30.4): the area join (a guest's NEW at the gate stage of a running instance of the area). The toast names
+# W30 (19.24, 19.30.4): the area join (a guest's NEW at the gate stage of a running instance of the area). Round I1b: the
+# gate form lists a's row (nobody of it at stag0201: the cursor on New instance, decision 40); autochoice first takes it. The toast names
 # a's stage by its place (stag0202: Grief Wasteland, 19.5.6 "<host> is in <stage>."; the client's review fix 79aaf163
 # dropped the region the first form had: "Dry Land: ...").
 a: online-script: step .* log: a in stag0202
 b: online-script: step .* log: own story at home
-b: online: You joined .*'s instance\. .* is in Grief Wasteland\. Leave: Online menu
+b: online-trace: prompt open form=gate stage=stag0201 rows=1 cursor=new preselected=new rows=\[[0-9]+:[^:]+:joinable:0:stag0202\]
+b: online-trace: prompt answer choice=join
+b: online: .* is in Grief Wasteland\.$
 b: online-script: step .* log: b plays a's story
 b: online-script: step .* log: own story again
 relay: instance_start .*stage=stag0201

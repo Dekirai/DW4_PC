@@ -1,14 +1,25 @@
-# W1 (19.24): the automatic join of I1a, a's story in b's engine in stag0101, b's own story at home again; b's
+# W1 (19.24): round I1b's prompt in the gate form (19.7.4): b's confirming press at the gate is held, PLAN goes, OPTIONS lists
+# a's instance with b's arrival stage and a's player there ("Here (1)"), preselected (decision 40); b takes the preselection
+# (DW4_ONLINE_AUTOCHOICE=cursor: A on the cursor's row), CHOICE goes before the press and the departure's BARRIER names the
+# plan; b joins at the entrance with a's story, and its gate disc takes it home on its own story (19.30.4, 19.8.3). b's
 # online card and server story stay its own (own_story). W1x is the counter-proof with the replace switched off.
 a: online-script: step .* log: a hosts in stag0101
 b: online-script: step .* log: own story at home
+b: online-trace: prompt hold stage=stag0101 point=0 menu=i_zzstchgcur
+b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:joinable:1:stag0101\]
+b: online-trace: prompt answer choice=join wid=[1-9]
+b: online-trace: barrier to=stag0101 point=0 plan=[1-9]
 b: online-script: step .* log: b plays a's story
 b: online-script: step .* log: b home by the gate disc
 b: online-script: step .* log: own story again at home
 a: online-script: step .* log: b joined a
 relay: instance_start .*stage=stag0101
+relay: plan .*purpose=gate.*stage=stag0101.*preselected=[1-9]
+relay: choice .*choice=join
 relay: instance_join .*how=join
 relay: instance_leave .*reason=home
 shared: a b >= 5000
+!b: online-trace: prompt plan-timeout
+!b: online-trace: prompt open form=loading
 !a: online-script: FAIL
 !b: online-script: FAIL

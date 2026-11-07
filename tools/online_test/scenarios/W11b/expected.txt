@@ -1,0 +1,19 @@
+# W11b (19.24, 19.7.5): the loading-screen form: no PLAN, the BARRIER without a plan, the relay's prompt hold (BARRIER_WAIT
+# choice + OPTIONS), B = Back to the lobby: the DISSOLVE redirected to stagML11 point 3 on a's own story.
+c: online-script: step .* log: c hosts in stag0101
+a: online-script: step .* log: own story at home
+a: online-trace: barrier to=stag0101 point=0 plan=0
+a: online-trace: prompt open form=loading stage=stag0101 rows=1
+a: online-trace: prompt answer choice=back .*form=loading
+a: online-script: step .* log: a back in the lobby
+a: online-script: step .* log: own story still
+relay: instance_start .*stage=stag0101
+relay: prompt_hold .*stage=stag0101
+relay: choice .*choice=back
+relay: prompt_back .*stage=stagml11.*point=3
+relay: redirect .*stage=stagml11
+!a: online-trace: prompt hold
+!relay: plan .*plan=[1-9]
+!relay: instance_join
+!a: online-script: FAIL
+!c: online-script: FAIL

@@ -69,6 +69,7 @@ namespace DW4Online.Relay.Hub
             if (_world.TestDropPlans)
             {
                 Count("plan_dropped");
+                Note("plan_dropped", m.Instance, ("member", m.Id), ("plan", msg.Plan), ("stage", msg.Stage.ToLowerInvariant()));
                 return;
             }
             // Only from home: a member in an instance moves inside it and is never prompted (decision 41).

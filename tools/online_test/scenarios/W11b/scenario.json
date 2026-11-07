@@ -1,0 +1,39 @@
+{
+  "desc": "the loading-screen form (19.7.5) and its B: a's departure the gate form cannot hold (DW4_ONLINE_TEST_GATE_FORM=0: the census names every hub departure, the lobby gate with the quest starts and the return mat, so a departure it cannot name is made by the hook), while c's instance runs at the target: the relay holds a's barrier with the prompt; B (autochoice back) is Back to the lobby: the DISSOLVE redirect to stagML11 point 3, a on its own story",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 40000,
+  "timeout": 900,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "a"
+  ],
+  "db_checks": [
+    {
+      "name": "one instance, one member (a never entered it)",
+      "sql": "SELECT COUNT(DISTINCT instance_id), COUNT(DISTINCT account_id) FROM instance_history_members",
+      "expect": "^1\t1$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "upload_card": true,
+      "autochoice": "back",
+      "env": {
+        "DW4_ONLINE_TEST_GATE_FORM": "0"
+      }
+    }
+  ]
+}

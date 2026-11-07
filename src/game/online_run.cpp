@@ -135,13 +135,25 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     // answer (a picture of the prompt); DW4_ONLINE_TEST_GATE_FORM=0 turns the
     // gate form off (every arrival gets the loading-screen form, W11b).
     if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE")) {
-        const std::string c(choice);
-        if (c == "new") config.plan_new_instance = true;
-        config.auto_choice = c == "first"    ? online::AutoChoice::first
-                             : c == "new"    ? online::AutoChoice::new_instance
-                             : c == "cursor" ? online::AutoChoice::cursor
-                             : c == "back"   ? online::AutoChoice::back
-                                             : online::AutoChoice::none;
+        // (A list "back,first": one answer per prompt, the last one stays.)
+        const auto parse = [](std::string_view c) {
+            return c == "first"    ? online::AutoChoice::first
+                   : c == "new"    ? online::AutoChoice::new_instance
+                   : c == "cursor" ? online::AutoChoice::cursor
+                   : c == "back"   ? online::AutoChoice::back
+                                   : online::AutoChoice::none;
+        };
+        std::string_view list(choice);
+        while (!list.empty()) {
+            const auto comma = list.find(',');
+            config.auto_sequence.push_back(parse(list.substr(0, comma)));
+            list = comma == std::string_view::npos ? std::string_view() : list.substr(comma + 1);
+        }
+        if (config.auto_sequence.size() == 1) {
+            config.auto_choice = config.auto_sequence.front();
+            config.auto_sequence.clear();
+        }
+        if (std::string_view(choice) == "new") config.plan_new_instance = true;
     }
     if (const char* delay = std::getenv("DW4_ONLINE_AUTOCHOICE_DELAY_MS"); delay && std::atoi(delay) > 0)
         config.auto_choice_delay = std::atoi(delay) / 1000.0;

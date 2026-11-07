@@ -1,16 +1,21 @@
 # W30b (19.24, 19.30.3): b's arrivals from home at dng205b2 (the return mat's departure): a NEW of its own while a's
-# instance never was there (its row greyed: Story not here yet), a join once a is there. Both players were in dng205b1
+# instance never was there (round I1b: the loading-screen prompt shows its row greyed, Story not here yet, the cursor on New
+# instance; the first choosable row is none), a join once a is there (its row with Here (1), preselected). Both players were in dng205b1
 # first (COUNTER 2 = 205, a session context value: in round r2d b's lobby context lacked it while a's stage group in
 # dng205b2 had it from dng205b1's start.lua, and b's second arrival was refused as another context).
 a: online-script: step .* log: a was in dng205
 b: online-script: step .* log: b was in dng205
 a: online-script: step .* log: a hosts Dry Land
+b: online-trace: prompt open form=loading stage=dng205b2 rows=1 cursor=new preselected=new rows=\[[0-9]+:[^:]+:story_not_here:0:
+b: online-trace: prompt answer choice=new
 b: online-script: step .* log: b alone on dng205b2
 b: online-script: step .* log: b home again
 a: online-script: step .* log: a in dng205b2
+b: online-trace: prompt open form=loading stage=dng205b2 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:joinable:1:dng205b2\]
+b: online-trace: prompt answer choice=join
 b: online-script: step .* log: b joined a on dng205b2
 relay: instance_start .*stage=stag0201
-relay: candidates .*stage=dng205b2.*story_not_here
+relay: prompt_hold .*stage=dng205b2.*StoryNotHere
 relay: instance_start .*stage=dng205b2
 relay: instance_join .*how=join
 !a: online-script: FAIL
