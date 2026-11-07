@@ -12,9 +12,11 @@ public sealed class ReportRepository(Database db) : IReportRepository
     private const string Select =
         "SELECT r.id, r.reporter_account_id, rp.username AS reporter, r.reported_account_id, rd.username AS reported, r.reason, r.source, " +
         "r.instance_id, r.created_at, r.state, r.handled_by, hs.username AS handled_by_name, r.handled_at, " +
-        "(SELECT COUNT(*) FROM player_reports o WHERE o.reported_account_id = r.reported_account_id AND o.state = 'open') AS open_about_reported " +
+        "(SELECT COUNT(*) FROM player_reports o WHERE o.reported_account_id = r.reported_account_id AND o.state = 'open') AS open_about_reported, " +
+        "ih.username AS instance_host, h.first_stage AS instance_stage, h.started_at AS instance_started " +
         "FROM player_reports r JOIN accounts rp ON rp.id = r.reporter_account_id JOIN accounts rd ON rd.id = r.reported_account_id " +
-        "LEFT JOIN accounts hs ON hs.id = r.handled_by";
+        "LEFT JOIN accounts hs ON hs.id = r.handled_by " +
+        "LEFT JOIN instance_history h ON h.id = r.instance_id LEFT JOIN accounts ih ON ih.id = h.host_account_id";
 
     public async Task<long?> InsertAsync(ReportInsert report, CancellationToken ct = default)
     {

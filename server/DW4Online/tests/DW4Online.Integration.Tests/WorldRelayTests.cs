@@ -181,7 +181,8 @@ public class WorldRelayTests
 
     /// <summary>
     /// Round I1b (19.11, 19.6.6): the host blocks his guest on the website / API (POST /blocks): the relay's live re-check removes
-    /// the guest (WORLD_NOTICE removed, the seat gone, the bar), audited instance_remove with block.
+    /// the guest (WORLD_NOTICE removed, the seat gone, the bar), audited instance_remove with block. Before, the guest's report about the
+    /// host names their instance (the staff list: its host and first stage).
     /// </summary>
     [DbFact]
     public async Task A_hosts_block_through_the_api_removes_his_guest_from_the_instance()
@@ -203,6 +204,15 @@ public class WorldRelayTests
         await b.SendAsync(new BarrierMsg(b.Inst, b.Visit, 0, "stag0101", 0, 1, 1, 5, [2]).Frame());
         var okB = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
         Assert.Equal((BarrierDecision.Join, okA.World.Wid), (okB.Decision, okB.World.Wid));
+        // (b reports a from inside the instance: the report names the instance both share, the staff list its host and stage.)
+        await Task.Delay(500);
+        await b.SendAsync(new ReportMsg(a.Welcome.Member, 4, okA.World.Wid).Frame());
+        Assert.Equal((uint)ReportResult.Sent, WorldNoticeMsg.Parse(await b.NextAsync(Msg.WorldNotice,
+            p => WorldNoticeMsg.Parse(p).Kind == WorldNoticeKind.Report)).Argument);
+        var listed = Assert.Single(await host.App.Services.GetRequiredService<Domain.Abstractions.IReportRepository>().ListAsync(null, 0, 10));
+        Assert.Equal(("BlockGuest", "BlockHost", "other", "BlockHost", "stag0101"),
+            (listed.Reporter, listed.Reported, listed.Reason, listed.InstanceHost, listed.InstanceStage));
+        Assert.NotNull(listed.InstanceStarted);
 
         Assert.Equal(System.Net.HttpStatusCode.NoContent,
             (await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(host.Client(hostToken), "/api/v1/blocks", new { username = "BlockGuest" })).StatusCode);

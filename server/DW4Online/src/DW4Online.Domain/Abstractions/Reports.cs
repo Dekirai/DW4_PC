@@ -57,6 +57,11 @@ public sealed class ReportRow
     public DateTime? HandledAt { get; init; }
     /// <summary>The open reports about the reported account (the admin list shows how many there are).</summary>
     public int OpenAboutReported { get; init; }
+    /// <summary>The instance both shared (instance_history): its host's name, the stage the host entered first, its start; null
+    /// without an instance (or after the history was pruned).</summary>
+    public string? InstanceHost { get; init; }
+    public string? InstanceStage { get; init; }
+    public DateTime? InstanceStarted { get; init; }
 }
 
 public sealed record ReportInsert(long Reporter, long Reported, string Reason, string Source, long? InstanceId, DateTime At);

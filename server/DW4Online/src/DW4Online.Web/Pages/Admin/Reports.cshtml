@@ -51,7 +51,21 @@ else
                     </td>
                     <td>@DW4Online.Domain.Abstractions.ReportReasons.Title(r.Reason)</td>
                     <td><a href="~/admin/account/@r.Reporter">@r.Reporter</a> <span class="muted small">(@r.Source)</span></td>
-                    <td>@(r.InstanceId is { } h ? $"history #{h}" : "-")</td>
+                    <td>
+                        @if (r.InstanceId is { } h)
+                        {
+                            <span>#@h</span>
+                            @if (r.InstanceHost is { } ih)
+                            {
+                                <span><a href="~/admin/account/@ih">@ih</a>'s, @StageNames.Of(r.InstanceStage ?? "")</span>
+                                <span class="muted small" title="@Format.Date(r.InstanceStarted)">started @Format.Ago(r.InstanceStarted ?? r.CreatedAt, Model.Now)</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="muted">-</span>
+                        }
+                    </td>
                     <td>
                         @if (r.State == "open")
                         {
