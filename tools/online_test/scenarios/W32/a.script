@@ -1,14 +1,19 @@
 # W32, host a (k10, flag 20: the Fortress open): hosts Death Valley and walks stag0101 -> staggf01 -> staggf02 -> staggf04
-# along kExits' Fortress edges (stag0101 matz01, staggf01 matz01, staggf02 matz02): the Fortress is fields of Death
-# Valley (decision 39), so the instance goes on, no area_escape. (The trial merge's explore bot fell in staggf04 on the way
-# on to stag0205's plateau, so the scenario stops at staggf04.)
+# -> stag0205's plateau (point 1) and back to staggf04 along kExits' Fortress edges (campaign.cpp: stag0101 matz01 to point
+# 1, staggf01 matz01 to 1, staggf02 matz02 to 2, staggf04 matz00 to stag0205 point 1, stag0205 matz00 to staggf04 point 1),
+# each by the depart action with the exit's own target (the trial merge's explore bot fell in staggf02-04). The Fortress
+# and the plateau are Death Valley's scope (decision 39, 19.30.2): the instance goes on, no area_escape.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control
 log a hosts
-explore matz01 yes until stage=staggf01,control
-explore matz01 yes until stage=staggf02,control
-explore matz02 yes until stage=staggf04,control
+depart staggf01 1 until stage=staggf01,control
+depart staggf02 1 until stage=staggf02,control
+depart staggf04 2 until stage=staggf04,control
 log a deep in the Fortress
+depart stag0205 1 until stage=stag0205,control
+log a on the plateau
+depart staggf04 1 until stage=staggf04,control
+log a back in the Fortress
 idle until frames>=300
 log a done

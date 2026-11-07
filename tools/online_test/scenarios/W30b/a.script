@@ -1,14 +1,15 @@
-# W30b, host a (k10): after b's first trip (b sets its return mat to dng205b2) a hosts Dry Land, first only stag0201-0202
-# and dng205b1; after b's first arrival by the return mat it walks on to dng205b2.
+# W30b, host a (k10): after b's first trip (b sets its return mat to dng205b2) a hosts Dry Land, first only stag0201 and
+# dng205b1; after b's first arrival by the return mat it goes on to dng205b2. The ways on are the depart action with the
+# exits' own targets (stag0202's matz01: dng205b1 point 1; dng205b1's matz02: dng205b2 point 0), a alone in its stage group.
 campaign until stage=stagml11,control
 idle until epoch>=@360
 explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log a hosts Dry Land
-explore matz00 yes until stage=stag0202,control
-explore matz01 yes until stage=dng205b1,control
-wander 0 0 30 until epoch>=@600
-explore matz01 yes until stage=dng205b2,control
+depart dng205b1 1 until stage=dng205b1,control
+log a in dng205b1
+fight until epoch>=@600
+depart dng205b2 0 until stage=dng205b2,control
 log a in dng205b2
-wander 0 0 30 until present=2,sealed>=600 or epoch>=@900
+fight until present=2,sealed>=600 or epoch>=@900
 log b joined a in B2

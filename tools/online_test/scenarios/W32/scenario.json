@@ -1,5 +1,5 @@
 {
-  "desc": "the Fortress: a walks stag0101 -> the Fortress -> stag0205 and back without ending its instance; b at the gate to Dry Land gets a NEW",
+  "desc": "the Fortress: a walks stag0101 -> the Fortress -> stag0205's plateau and back without ending its instance or an area_escape; b at the gate to Dry Land gets a NEW (a's ways are the development build's depart action with the exits' own targets: the explore bot's characters fell in staggf02-04)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
