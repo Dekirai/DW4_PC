@@ -1,11 +1,12 @@
 # RGJ1 (integration of rounds G-core and J): the guest's Game Start holds until the room story counts (G7), then the
 # guest enters the owner's field and joins from a checkpoint (J1): the room story at the Game Start, the rebuild from
-# the checkpoint, READY from it, both play sealed with equal fingerprints.
+# the checkpoint, READY from it, both play sealed with equal fingerprints. (In the world the guest's line is 19.5.6's
+# "You're a guest in <host>'s story."; the rooms' "Playing on <owner>'s story (Normal)." is gone.)
 a: online: the game starts with the (?:room|own) story .revision 1.
 b: online: the Game Start waits for the room story
 b: online: the room story came [0-9]+ ms after the Game Start
 b: online: the game starts with the (?:room|own) story .revision 1.
-b: online: Playing on .*'s story .Normal..
+b: online: You're a guest in .*'s story\.
 a: (?i)decision 1 .*stage=stag0101
 a: online-trace: statehash .*k=
 b: (?i)decision 2 .*stage=stag0101
