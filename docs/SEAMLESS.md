@@ -9790,6 +9790,32 @@ cursor on the same instance (or on *New instance*).
   start (for mate00: the SELECTCTRL cursor and its DMcase's NEXTSTAGE). The
   departures it can name get the gate form, the rest the loading-screen
   form.
+
+  *Measured (round I1b, prompt lane, 2026-11-07).* The census of the
+  decompiled scripts finds two such departures, and the accessor names
+  both: stagML11 `mate00` (the lobby gate, SELECTCTRL `i_zzstchgcur`, one
+  DMcase per area with SETGENERATEPOS and NEXTSTAGE) and stagML11 `mate02`
+  (the return mat, `i_zzstchgwn`, *Yes* = DMcase 0 to SYSgetGateStage's
+  stage and point). The quest boards (`quest01..04`) only set flags (409,
+  376-381 ...); the same gate menu then offers one line, stag0401 point 3,
+  so a quest's start is the gate's departure. The briefing room (stagML02:
+  its mat and gate disc lead to stagML11), the event console (stagML12 to
+  stagML02), the shops and the stagIS* stages lead only into hub or UI
+  stages: no arrival, no prompt. `data/online/stage_graph.json` has no
+  static edge from a hub stage into a field (`PromptTests`). `dw4_world_probe
+  DATA census` (headless, online rules, the player put onto the mat, the
+  menu opened by the stage's own script) read the accessor at every line of
+  the gate's menu (training, after the training, phases 5 and 6, a quest's
+  start) and of the return mat's (two Security Gate stages), then pressed
+  A: 12 of 12 named destinations equal the stage and point the press
+  started (224 frames from the press to NEXTSTAGE at the gate, 211 at the
+  mat), and the mat's *No* line names nothing and starts nothing; B on the
+  gate's menu starts nothing and the accessor names nothing afterwards.
+  So every hub departure into a field gets the gate form; the
+  loading-screen form serves a lost PLAN (no OPTIONS within
+  `World:PlanWaitMs`), a departure posted outside a menu (the development
+  build's `depart` action) and the test hook `DW4_ONLINE_TEST_GATE_FORM=0`
+  (W11b). Log: `build/i1bp/meas/census_r3.log` (worktree `i1b-prompt`).
 - **The hold.** When the own player's press would confirm such a choice,
   the client keeps that press out of the pad stream (the engine sees neutral
   pads), sends PLAN and waits for OPTIONS (one round trip, well under 100 ms
@@ -13816,6 +13842,99 @@ over sockets had one stall of the relay process of 1.34 s whose cause is
 not found (it came before M4 (e); the eleven later *storm* and
 *storm-wait* runs over sockets had a sealing lateness max of 12.0-35.9 ms,
 `build/i1arelay/gate/`).
+
+### 19.32 Round I1b, the prompt lane: what was built and decided
+
+Branch `feat-i1b-prompt` from int-i1a bfc3b0a5 (the lane *prompt* of 19.25's
+round I1b; the lanes *moderation* and *go along* ran beside it and agreed
+the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
+`docs/ROUND_I1B_PROMPT_NOTES.md`. The census is measured in 19.7.4.
+
+**Wire** (protocol 49; golden vectors equal in `PromptTests` and
+`online_wire_tests.cpp`):
+
+- PLAN 0x18 (client): plan u16 (1..0xFFFE) | purpose u8 (1 gate, 2 return
+  mat, 3 other) | stage str | point u8 | context u64 | group u8.
+- OPTIONS 0x91 (server): plan u16 (0: a held barrier's) | inst u32 | visit
+  u32 | stage str | flags u8 (1 refresh, 2 starting: an automatic
+  co-arrival takes the arrival, 4 nothing to choose) | visibility u8 (the
+  remembered default) | preselected u8 (row, 0xFF *New instance*) | rtt u16
+  (the header's "Your ping") | notice u8 (1 full now, 2 ended, 3 no longer
+  open) | notice name str | up to eight rows: wid | host member and name |
+  relation (party, the host a friend, friends inside) | friends inside |
+  the host's stage | players | here | seats taken, held, reserved | story
+  label ("Chapter 4, Hard": the host keeper's phase and the instance's
+  difficulty) | same story point (0 until I2) | difficulty | settings
+  (randomizer, other settings) | state (0 joinable, 1 boss fight, 2
+  loading, 3 host reconnecting, 4 full, 5 arriving now, 6 other quest, 7
+  story not here yet, 8 too long to catch up; 0-2 and 5 choosable) |
+  visibility (staff only, else 0xFF) | the highest round-trip median of its
+  members | its members (name, level, form) for *X: Details*.
+- CHOICE 0x19 (client): plan u16 | inst u32 | visit u32 | choice u8 (1 join,
+  2 new, 3 back, 4 travel row, 5 return; 4 and 5 are refused until I3 /
+  I4) | wid u32 | visibility u8 | flags u8 | back point u8 (0xFF: stagML11
+  point 3).
+- BARRIER_WAIT reason 5 *choice*; BARRIER's plan field names the gate
+  form's plan (0: no answer came, 0xFFFF *New instance* as in I1a).
+
+**Decisions the design left open:**
+
+- **The CHOICE goes before the held press**, not with HEADING: the relay
+  keeps the member's plan and its answer until the BARRIER that names the
+  plan id (a new PLAN, the member's disconnect or that BARRIER ends it).
+  So at HEADING the relay knows the choice: a member that chose a row or
+  *New instance* is no automatic co-arrival base for others and joins no
+  foreign base (19.7.6: "did not choose otherwise in a prompt"); *New
+  instance* sets the member's default visibility at once (remembered off
+  the lock, Q9).
+- **The choice is checked again at the decision** (19.7.7): a row that is
+  still a choosable candidate is a JOIN (with 3.4's holds; a boss lock asks
+  *Wait* / *Go alone* as before, *Go alone* an own instance) or a guest's
+  NEW; a row gone full, ended or no longer open holds the barrier with a
+  refreshed prompt that names it ("Kim's instance is full now.", "Couldn't
+  join Kim: the instance has ended.", "Couldn't join Kim: it is not open to
+  you any more.": the last two are this lane's, in 19.5.6's form
+  "Couldn't join <host>: <reason>.").
+- **The prompt hold** (the loading-screen form) is for fresh arrivals from
+  a hub stage with candidates and no answer; a group from a field without
+  an instance (a straggler that lost its instance) keeps I1a's automatic
+  join. A starting instance at the stage still takes the arrival without a
+  prompt (OPTIONS flag 2 for a PLAN).
+- **Full instances are listed** (greyed *Full*), so a row that filled is
+  seen; `World:ArrivalPrompt` false keeps I1a's automatic join of the first
+  row (the in-process load gate and the older hub tests use it; the
+  FakeClient answers a held barrier's OPTIONS as `first` does).
+- **Refresh**: an open prompt (a gate form's plan or a held barrier) is
+  looked at once a second (`World:OptionsRefreshMs`) and OPTIONS goes again
+  only when its bytes differ (the refresh flag set, the notice line
+  dropped); the client keeps its cursor on the same wid or on *New
+  instance*.
+- **The gate form in the client** holds the press in `Session::before_step`
+  (the engine gets neutral pads while it waits and while the overlay is
+  open); the press goes out as a rising A after the CHOICE (or at once when
+  OPTIONS says nothing / starting, or after `World:PlanWaitMs` 1 s without
+  OPTIONS, a client constant); B goes out as the gate's own cancel. A lost
+  connection drops the press, closes the menu by B and shows "Connection
+  lost. Try the gate again in a moment.". The game draws the overlay from
+  `Session::prompt()` and feeds it the own pad's and the keyboard's presses
+  (arrows, Enter, Backspace) every pass, so the press that opened it is no
+  answer.
+- **Toasts**: a row chosen in the prompt shows 19.5.3's texts ("Joining
+  Kim..." on the loading screen; "Kim is in <place>." when the host is
+  elsewhere; the guest's toast); I1a's "You joined Kim's instance. ... Leave:
+  Online menu" stays only for an arrival nobody asked (a straggler's).
+- **Test runs**: `DW4_ONLINE_AUTOCHOICE` takes `first`, `new`, `cursor` (the
+  preselection) and `back`, or a list (`back,first`: one answer per prompt,
+  the last one stays); `DW4_ONLINE_AUTOCHOICE_DELAY_MS`;
+  `DW4_ONLINE_TEST_GATE_FORM=0`; `World:TestDropPlans` (W2b). Trace lines
+  `online-trace: prompt ...` and `online-trace: barrier to=S point=P
+  plan=N`; the world log adds `plan`, `plan_dropped`, `options`, `choice`,
+  `choice_refused`, `prompt_hold`, `prompt_new`, `prompt_back`.
+- **W11b** uses the gate with `DW4_ONLINE_TEST_GATE_FORM=0` instead of a
+  quest board: the census names the quest starts (they are the gate), so a
+  departure the census cannot name exists only by the hook. **W30c** puts
+  a's instance in stag0202 (a field, as W30) instead of dng205b1, where a
+  k10 character died within a minute in round I1a's runs.
 
 ## 20. Risks
 

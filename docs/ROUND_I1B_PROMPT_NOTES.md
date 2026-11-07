@@ -49,14 +49,41 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - Client ctest: `online_wire` (golden bytes = the relay's, malformed input), `online_session` (`prompt_gate_form`,
   `prompt_loading_form` against the fake hub's PLAN / OPTIONS / CHOICE and the fake engine's gate menu).
 
+- Server integration: `WorldPromptTests.cs` (the gate form's PLAN round trip with the CHOICE carried by the BARRIER's plan
+  id; World:TestDropPlans: the barrier decided as a loading-screen arrival, held past the client's five seconds, Back to the
+  lobby; the held prompt forgotten at a disconnect); the I1a automatic-join test of WorldRelayTests runs with
+  World:ArrivalPrompt false; LoadGate hubs too; FakeClient answers a held barrier's OPTIONS (as autochoice first).
+- The census measured: `dw4_world_probe DATA census` (tools/world_probe.cpp), log `build/i1bp/meas/census_r3.log`: 12 of 12
+  named lines equal to the departure the press started, the return mat's No and the gate's B start nothing (SEAMLESS.md
+  19.7.4 "Measured"). The census test on the stage graph: `PromptTests.The_census_no_static_edge_leads_from_a_hub_stage_into_a_field`.
+- Scenarios (tools/online_test/scenarios): W1 (the prompt: autochoice cursor takes the preselection), W2 (B), W2b (a lost
+  PLAN), W11b (the loading-screen form and Back), W30c (decision 40's order and cursor, three processes, autochoice
+  back,first); W30b, W30, W4bx expect the prompt's traces and toasts.
+- Docs: SEAMLESS.md 19.7.4 "Measured (round I1b)", 19.32 (what the lane built and decided); the contract entries "prompt
+  16:30" and "prompt 17:00".
+
 ## Left
 
-(see the end of this file; kept current while the lane runs)
+- The scenario runs (status below, "Runs"); the I1a W set again with autochoice first (the harness's default).
+- The integration suite again after the LoadGate fix on mysqld 3651 (the harness uses the same port: never both at once).
+- det.sh with a DEV=OFF copy (online off must stay 4004f056 / 396cb219; the engine change is a read-only accessor and two
+  read-only fields).
+
+## Runs
+
+- r1 (exe a = d154e706, `build/i1bp/scen_r1.log`): W1 W2 W2b W11b (running).
 
 ## How to run the tests
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\i1bp\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; FETCHCONTENT from the
   main repo's build/Release/_deps), `cmd //c "build\i1bp\ctest.cmd rel"`; the DEV=ON game for scenarios:
   `... bld.cmd dev OFF dev --target dw4_game`.
-- Server: `"$DOTNET" test --disable-build-servers server/DW4Online/tests/DW4Online.Tests` (unit), the integration tests need the
-  own mysqld on 3651 (below).
+- Server: `source build/i1bp/env.sh` (DOTNET, DW4ONLINE_TEST_MYSQL on 3651, DW4ONLINE_TEST_PORTS 58000-58199), then
+  `"$DOTNET" test --disable-build-servers server/DW4Online/tests/DW4Online.Tests` (unit) and `.../DW4Online.Integration.Tests`
+  (needs the own mysqld: `bash server/DW4Online/.local/mysqld.sh` in the background, data in `server/DW4Online/.local`
+  (gitignored, made with XAMPP's mysql_install_db, root password in `.local/mysql-root.txt`), stopped with SQL `SHUTDOWN`).
+- Scenarios: stop the own mysqld first (run.py starts its own on the same port), copy `build/i1bp/dev/dw4_game.exe` to
+  `build/i1bp/scen/dw4_i1bp_dev_<TAG>.exe`, then `bash build/i1bp/scen.sh LOG TAG W1 W2 ...` (run.py with --parallel 1 --keep,
+  the r25c cards of the main repo, mysqld 3651, ports 58000-58199; add `--no-build` after the first run). Run folders:
+  `tools/online_test/.work/run_*`.
+- The census: `build/i1bp/rel/dw4_world_probe.exe DATA census` (DW4_PROBE_DEBUG=1 prints the menus and demo works).
