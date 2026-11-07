@@ -188,7 +188,7 @@ public static class LoadGate
                     hub.FinishState(job);
                     lock (stateStats) stateStats.Add("finish_state", Stopwatch.GetTimestamp() - t1, t1 - t0);
                 }
-            }));
+            }), new WorldHubOptions { ArrivalPrompt = false }); // (the fake members answer no prompt: round I1a's automatic join, 19.17.4)
         using var wakeTimer = new HighResolutionTimer();
         hub.OnSealingStarted(wakeTimer.Wake);
         // The presence selection off the lock, as the relay runs it (M4 (c)).
@@ -852,7 +852,7 @@ public static class LoadGate
             StateJob? job = null;
             var options = new InstanceOptions { CheckpointJoins = checkpoints, CheckpointWaitMs = 60000 };
             var hub = new RoomHub(new RoomInfo("WORLD1", Protocol, 1, 2, 4), new RelayOptions(), new SealingOptions(),
-                options, NullLogger.Instance, null, j => job = j);
+                options, NullLogger.Instance, null, j => job = j, new WorldHubOptions { ArrivalPrompt = false });
             var now = Stopwatch.GetTimestamp();
             var peers = new[] { new Peer(), new Peer() };
             var a = hub.Connect(0, 1000, "a", true, peers[0], now);

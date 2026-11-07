@@ -32,7 +32,7 @@ public class LoadGateTests
     public void A_lobby_members_presence_stays_plausible_for_a_long_run_and_reaches_the_others()
     {
         var hub = new RoomHub(new RoomInfo("WORLD1", LoadGate.Protocol, 1, 2, 4), new RelayOptions(), new SealingOptions(), new InstanceOptions(),
-            NullLogger.Instance, null);
+            NullLogger.Instance, null, null, new DW4Online.Relay.World.WorldHubOptions { ArrivalPrompt = false });
         var now = Stopwatch.Frequency * 1000L;
         var peers = new[] { new Peer(), new Peer() };
         var a = hub.Connect(0, 1000, "a", true, peers[0], now);
