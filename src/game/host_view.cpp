@@ -258,6 +258,16 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
             *remote->cost_max =
                 std::max(*remote->cost_max, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_draw_start).count());
     }
+    if (remote && remote->overlay && engine.presenting()) {
+        if (frame_items != &ghost_items) {
+            ghost_items = items;
+            ghost_shadow = shadow;
+        }
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        remote->overlay(ghost_items, &ghost_shadow, camera, now);
+        frame_items = &ghost_items;
+        frame_shadow = &ghost_shadow;
+    }
     renderer->set_shadow(frame_shadow);
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(view.window, &width, &height);

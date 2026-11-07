@@ -4,6 +4,7 @@
 #include "gl_renderer.hpp"
 #include "host_view.hpp"
 #include "overflow_host.hpp"
+#include "overflow_lobby.hpp"
 #include "interpolation.hpp"
 #include "mods.hpp"
 #include "netplay.hpp"
@@ -45,6 +46,12 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
+// (Data Overflow's meta file of lane F, round O1b, once merged: the records
+// page reads its Data Records, SURVIVAL.md 9.2.)
+#if __has_include("overflow_profile.hpp")
+#include "overflow_profile.hpp"
+#define DW4_O1B_HAS_META 1
+#endif
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
@@ -1441,6 +1448,59 @@ int run(const Options& options, dw4::game::Settings& settings) {
         dw4::game::overflow::StorySwitch overflow_switch;
         dw4::game::overflow::DevStartState overflow_dev;
         std::optional<dw4::game::overflow::RunRequest> overflow_cli;
+        // Data Overflow in the lobby (round O1b lane D, SURVIVAL.md 3): the
+        // Simulator Keeper Gekomon, its talk and the lobby screens (host
+        // only; the story engine is read, never written). Test runs show it
+        // only with DW4_OVERFLOW=1 (talk) or =show (drawn, no talk);
+        // DW4_OVERFLOW_SCREEN=talk|choice|select|plug_lab|records|help opens
+        // a screen as soon as it is there (the screenshot set).
+        dw4::game::overflow::OverflowLobby overflow_lobby;
+        // (3.2: test runs and input scripts hide it; their script drives the
+        // dialog when DW4_OVERFLOW shows it.)
+        const bool overflow_scripted = options.smoke_frames != 0 || !options.input_script.empty();
+        // (3.3: after the dialog closed, a test script's keys reach the story
+        // only after they were released.)
+        bool overflow_script_latch = false;
+        const auto overflow_npc_test = dw4::game::overflow::npc_test_mode(std::getenv("DW4_OVERFLOW"));
+        if (const char* screen = std::getenv("DW4_OVERFLOW_SCREEN"); screen && options.smoke_frames != 0) {
+            using LS = dw4::game::overflow::LobbyScreen;
+            const std::string name = screen;
+            const LS chosen = name == "choice" ? LS::choice : name == "select" ? LS::select : name == "plug_lab" ? LS::plug_lab
+                              : name == "records" ? LS::records : name == "help" ? LS::help : LS::talk;
+            overflow_lobby.open_test_screen(chosen);
+        }
+        // (DW4_OVERFLOW_SEEN=1, test runs: the first meeting counts as done; the
+        // meta file of lane F remembers it in play.)
+        if (std::getenv("DW4_OVERFLOW_SEEN") && options.smoke_frames != 0) overflow_lobby.meta().seen_intro = true;
+        bool overflow_resources_set = false;
+        // The select's Yes (SURVIVAL.md 9.2): the switch fades the story out
+        // and the run starts with the chosen form and loadout. Test runs add
+        // DW4_OVERFLOW_TEST_RUN's KEY=VALUE tokens (bot=, frames=, shots=,
+        // ...: a hidden run started from the lobby's screens).
+        auto overflow_lobby_action = [&](const dw4::game::overflow::LobbyAction& action, bool offline) {
+            if (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || overflow_switch.busy()) return;
+            auto request = action.request;
+            request.seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+            if (const char* keys = std::getenv("DW4_OVERFLOW_TEST_RUN"); keys && options.smoke_frames != 0) {
+                std::vector<std::string> tokens;
+                std::istringstream in(keys);
+                for (std::string token; in >> token;) tokens.push_back(token);
+                for (const auto& token : tokens) {
+                    const auto eq = token.find('=');
+                    if (eq != std::string::npos && token.substr(0, eq) == "form") tokens.clear(); // (the select chose the form)
+                }
+                std::string error;
+                if (auto extra = dw4::game::overflow::parse_run_request(tokens, error)) {
+                    request.bot = extra->bot;
+                    request.frames = extra->frames;
+                    request.shots = extra->shots;
+                    if (extra->seed != 1) request.seed = extra->seed;
+                    for (const auto& [key, value] : extra->options) request.options[key] = value;
+                }
+            }
+            if (dw4::game::overflow::start_refusal(engine, !offline).empty()) overflow_switch.request(std::move(request));
+        };
+        bool overflow_offline = true;
         bool overflow_quit_after = false;
         if (options.overflow_given) {
             std::string error;
@@ -1566,6 +1626,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // After every step: the step's events into the tracker.
         auto observe_step = [&] {
             auto events = engine.take_port_events();
+            // Data Overflow's talk (SURVIVAL.md 3.3): the talk_box events
+            // leave the list before anything else sees them.
+            overflow_lobby.take_events(events);
             if (trace_events)
                 for (const auto& e : events)
                     std::printf("[%d] event %s slot=%d value=%d extra=%d %s\n", frame, dw4::engine::port_event_name(e.kind), e.slot, e.value,
@@ -2000,6 +2063,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 next_present = view.last_present = last;
                 pad_latch = true;
                 overflow_switch.returned();
+                {
+                    dw4::game::overflow::RunSummary back;
+                    back.end = outcome.end;
+                    back.seconds = outcome.seconds;
+                    if (outcome.end != dw4::game::overflow::RunEnd::failed && outcome.end != dw4::game::overflow::RunEnd::window_closed)
+                        overflow_lobby.returned(back);
+                }
                 state_message = outcome.end == dw4::game::overflow::RunEnd::failed ? "Data Overflow could not run: " + outcome.error
                                                                                     : std::string("Back from Data Overflow (") +
                                                                                           dw4::game::overflow::run_end_name(outcome.end) + ")";
@@ -2014,6 +2084,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // A binding being edited, ImGui, quit, the window size,
                 // controllers, the View button, F1 and F11 (host_view.hpp).
                 if (dw4::game::host_event(view, event)) continue;
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.key == SDLK_F5 || event.key.key == SDLK_F9))
+                    overflow_lobby.close(); // (Data Overflow's dialog closes first, SURVIVAL.md 3.3)
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F5) save_state(0);
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F9) load_state(0);
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F2) {
@@ -2052,6 +2124,58 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // (Data Overflow: the story steps with neutral live pads while it
             // fades out, as with the F1 menu open; its sound fades along.)
             if (overflow_switch.fading_out()) live = {};
+            // Data Overflow's NPC (SURVIVAL.md 3.2): there or not, from the
+            // story's state (read only); while its dialog is open the pads go
+            // to the dialog and the story steps with neutral ones (as with
+            // the F1 menu open).
+            {
+                if (!overflow_resources_set) {
+                    overflow_lobby.set_resources(engine.resources());
+                    overflow_resources_set = true;
+                }
+                dw4::game::overflow::NpcConditions npc;
+                npc.lobby = dw4::game::same_stage(engine.stage_name(), "stagML11") && engine.presenting() && !engine.loading() &&
+                            engine.stage_snapshot() != nullptr;
+                npc.offline = !(net.active() || net.in_lobby() || online || title_online.active || engine.online().enabled);
+                npc.test_run = overflow_scripted;
+                npc.test = overflow_npc_test;
+                npc.setting = settings.overflow_npc;
+                const auto& story_flags = engine.flags();
+                const auto intro = story_flags.find(501);
+                npc.intro_seen = intro != story_flags.end() && intro->second != 0;
+                npc.gate_open = dw4::game::overflow::gate_open(story_flags);
+                if (const auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                    npc.players = 0;
+                    for (const auto& player : sys->players) npc.players += player.joined ? 1 : 0;
+                }
+                overflow_lobby.update(npc, own_position(),
+                                      std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+#ifdef DW4_O1B_HAS_META
+                // (The records page: lane F's Data Records with their dates and
+                // the per-tier clears, while it is open; 8.4, 9.2.)
+                if (overflow_lobby.menu().screen() == dw4::game::overflow::LobbyScreen::records)
+                    dw4::game::overflow::fill_records(dw4::game::overflow::meta().profile(), dw4::game::overflow::record_table(), overflow_lobby.meta());
+#endif
+                overflow_offline = npc.offline;
+                // (Test runs: the input script drives the dialog, per step below.)
+                // (The lobby sees the live keys also while the dialog is closed,
+                // so the A of the talk is not a new press when it opens; 3.3:
+                // opening and closing latch the story's pad until every
+                // button is up.)
+                if (!overflow_scripted) {
+                    const auto sample = dw4::game::live_pad_sample(live[0]);
+                    const bool was_open = overflow_lobby.dialog_open();
+                    const auto action = overflow_lobby.input(sample.buttons, sample.left.x, sample.left.y);
+                    if (was_open) {
+                        overflow_lobby_action(action, npc.offline);
+                        live = {};
+                    }
+                    if (overflow_lobby.take_story_latch()) {
+                        pad_latch = true;
+                        live = {};
+                    }
+                }
+            }
             view.gain = overflow_switch.gain();
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
@@ -2180,7 +2304,24 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // bots. stick_x / stick_y are the main stick in host units
                 // (a live analog stick or movement keys, else a bot's
                 // steering); the bots steer only while it is centred.
-                std::uint32_t input = live[0].buttons | scripted.held(frame) | (engine.frame() < ui_pad_until ? ui_pad : 0u);
+                std::uint32_t script_buttons = scripted.held(frame);
+                const std::uint32_t script_held = script_buttons; // (the latch below waits for these)
+                if (overflow_scripted && overflow_lobby.dialog_open()) {
+                    // (A test run's script drives Data Overflow's dialog; the
+                    // story gets neutral pads meanwhile, SURVIVAL.md 3.3.)
+                    overflow_lobby_action(overflow_lobby.input(script_buttons, 0, 0), overflow_offline);
+                    script_buttons = 0;
+                } else if (overflow_scripted) {
+                    overflow_lobby.input(script_buttons, 0, 0);
+                }
+                if (overflow_scripted) {
+                    if (overflow_lobby.take_story_latch()) overflow_script_latch = true;
+                    if (overflow_script_latch) {
+                        if (script_held != 0) script_buttons = 0;
+                        else overflow_script_latch = false;
+                    }
+                }
+                std::uint32_t input = live[0].buttons | script_buttons | (engine.frame() < ui_pad_until ? ui_pad : 0u);
                 float stick_x = live[0].stick.x, stick_y = live[0].stick.y;
                 if (stick_x == 0 && stick_y == 0) {
                     const auto keys = live[0].stick_directions;
@@ -2473,7 +2614,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // Port events only while achievements, the event trace, the
                 // randomizer's bond (new games) or the online character
                 // (card_written) want them.
-                if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active()) || online;
+                if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active()) || online ||
+                                             overflow_lobby.wants_port_events();
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
                 // Seamless co-op, a defeated local member (SEAMLESS.md 4.1,
@@ -2606,6 +2748,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
                 if (engine.port_events_enabled()) observe_step();
+                {
+                    // (A talk_box reaching the NPC opens the dialog when no
+                    // original talk took the press: player 1 still controls.)
+                    bool control = false;
+                    if (const auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                        if (const auto* p = models->player(0)) control = p->control_enabled && p->seq_name.rfind("SQ_DEMO", 0) != 0;
+                    overflow_lobby.stepped(control);
+                }
                 if (!net.active() && !online) bind_randomizer();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
                 // The input since the running stage's load, for save states.
@@ -3112,6 +3262,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 remote_view.samples = &present_remote;
                 if (ghosts.active() && engine.presenting()) remote_view.own_position = own_position();
                 remote_view.cost_max = &ghost_cost_max;
+                if (overflow_lobby.needs_present() && engine.presenting()) {
+                    const auto overflow_own = own_position();
+                    const auto overflow_frame = std::uint64_t(frame);
+                    remote_view.overlay = [&overflow_lobby, overflow_own, overflow_frame](std::vector<dw4::engine::DrawItem>& items,
+                                                                                          dw4::engine::ShadowFrame* shadow,
+                                                                                          const dw4::engine::FrameCamera& camera, double now) {
+                        overflow_lobby.present(items, shadow, camera, overflow_own, now, overflow_frame);
+                    };
+                }
 #ifdef DW4_GHOST_PROBE
                 if (probe_report) ghost_cost_max = 0; // (this pass's figure draw alone, read after present_scene)
 #endif
@@ -3302,6 +3461,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Gameplay", nullptr, tab_flags("Gameplay"))) {
+                        // Data Overflow's Simulator Keeper in the lobby (SURVIVAL.md 3.2).
+                        if (ImGui::Checkbox("Show the simulator NPC", &settings.overflow_npc)) view.settings_changed = true;
                         // Data Overflow's dev start (SURVIVAL.md 15.1, round O1a).
                         const std::string refusal = overflow_switch.busy() ? std::string("A run is starting.")
                                                                            : dw4::game::overflow::start_refusal(engine, net.active() || net.in_lobby() || online || title_online.active);

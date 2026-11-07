@@ -216,6 +216,7 @@ Settings Settings::parse(IniFile document) {
     settings.height = std::clamp(ini.get_int("window", "height", settings.height), 240, 4320);
     settings.fullscreen = ini.get_bool("window", "fullscreen", ini.get_bool("window", "borderless", settings.fullscreen));
     settings.vsync = ini.get_bool("window", "vsync", settings.vsync);
+    settings.overflow_npc = ini.get_bool("overflow", "npc", true);
     settings.widescreen = ini.get_bool("window", "widescreen", ini.get_or("preferences", "aspect", "") == "16:9");
     settings.fps_limit = std::clamp(ini.get_int("window", "fps_limit", settings.fps_limit), 0, 1000);
     settings.smooth_motion = ini.get_bool("window", "smooth_motion", settings.smooth_motion);
@@ -323,6 +324,7 @@ void Settings::store() {
     ini_.set_bool("window", "fullscreen", fullscreen);
     ini_.set_bool("window", "vsync", vsync);
     ini_.set_bool("window", "widescreen", widescreen);
+    ini_.set_bool("overflow", "npc", overflow_npc);
     ini_.set_int("window", "fps_limit", fps_limit);
     ini_.set_bool("window", "smooth_motion", smooth_motion);
     ini_.set_int("window", "msaa", msaa);
