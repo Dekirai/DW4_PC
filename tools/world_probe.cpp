@@ -752,7 +752,8 @@ struct HomeCase {
     int onto_mat = -1;        // this slot is put onto dng101b1's matz01 (the way back) 60 frames before the defeats and stands there
     const char* stage = "dng101b1";
     bool home_first = false;  // HOME takes its slots 300 frames before the defeats (a guest that left: the host falls alone, W27)
-    bool hold_start = false;  // the kept slot holds START (and nothing else) from its defeat on (W27's give-up attempt)
+    std::uint32_t after = ~0u; // the kept slot's buttons from its defeat on (~0: the probe's usual pads, A every 37 frames);
+                               // the game over's message waits for A (W27)
 };
 
 void homeover_probe(int only) {
@@ -775,8 +776,11 @@ void homeover_probe(int only) {
         {"stag0101: offline, 1 player defeated", 1, 0b0001, 0b0000, 300, 1200, false, -1, "stag0101"},
         {"stag0101: HOME takes living 1, then 0 defeated (online rules)", 2, 0b0001, 0b0010, 300, 1500, true, -1, "stag0101", true},
         {"dng101b1: HOME takes living 1, then 0 defeated (online rules)", 2, 0b0001, 0b0010, 300, 1500, true, -1, "dng101b1", true},
-        {"stag0101: 1 player defeated, START held (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, -1, "stag0101", false, true},
-        {"stag0101: offline, 1 player defeated, START held", 1, 0b0001, 0b0000, 300, 1200, false, -1, "stag0101", false, true},
+        {"stag0101: 1 player defeated, START held (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, -1, "stag0101", false, dw4::pad_button::start},
+        {"stag0101: offline, 1 player defeated, START held", 1, 0b0001, 0b0000, 300, 1200, false, -1, "stag0101", false, dw4::pad_button::start},
+        {"stag0101: 1 player defeated, nothing pressed (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, -1, "stag0101", false, 0},
+        {"stag0101: 1 player defeated, START held and A now and then (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, -1, "stag0101", false,
+         dw4::pad_button::start | 0x80000000u},
     };
     const char* species[4] = {"p_agumon", "p_dorumon", "p_agumon", "p_dorumon"}; // (three or four players load the q_ packages: these two exist)
     std::printf("homeover probe: dng101b1 direct start; HOME emulated in the copy that keeps the other slots\n"
@@ -859,10 +863,12 @@ void homeover_probe(int only) {
                 pads[std::size_t(c.onto_mat)] = PadSample{};
                 pads[std::size_t(c.onto_mat)].connected = true;
             }
-            if (c.hold_start && kills_done_at) {
+            if (c.after != ~0u && kills_done_at) {
+                // (Bit 31: A every 40 frames beside the held buttons, as the online script's talk action presses it.)
+                const bool a_now = (c.after & 0x80000000u) && frame % 40 < 3;
                 pads[std::size_t(keep)] = PadSample{};
                 pads[std::size_t(keep)].connected = true;
-                pads[std::size_t(keep)].buttons = dw4::pad_button::start;
+                pads[std::size_t(keep)].buttons = (c.after & 0x7FFFFFFFu) | (a_now ? dw4::pad_button::a : 0u);
             }
             step(engine, pads);
             if (!before && engine.pending_stage()) {

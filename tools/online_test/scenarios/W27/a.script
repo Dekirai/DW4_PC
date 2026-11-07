@@ -1,8 +1,9 @@
 # W27, host a (k2): hosts in stag0101 with b; once b went into dng101b1 (another stage group), a walks into the enemies
 # alone and falls (it waits near the entrance: a k2 character dies among the enemies, and a dead member goes along
 # with the leaver by the side rule): its stage group's game over is the host's (before round I3 the instance ends, host_defeated); a
-# waits for the original game over and goes home. (Not `giveup`: alone in its stage group the give-up INTENT is ignored by the relay
-# and the held START keeps the game over from running, offline as online: dw4_world_probe homeover cases 18 / 19 against 14 / 15.)
+# takes the original game over and goes home. (Not `giveup`: alone in its stage group the relay ignores the give-up INTENT, and the
+# game over's message waits for A, offline as online: `talk` presses A now and then; dw4_world_probe homeover cases 14 / 15 / 21
+# with A presses reach stagML11, 18 / 19 / 20 without them do not.)
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control
@@ -13,5 +14,5 @@ wander 460 170 15 until present=1,frames>=60
 log b left for the cave
 die until dead
 log a defeated
-idle until stage=stagml11,control
+talk until stage=stagml11,control
 log a home after the game over
