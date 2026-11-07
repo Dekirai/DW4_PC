@@ -297,8 +297,8 @@ int OverflowRules::drain(Engine& engine, int slot, int heal) {
     return out;
 }
 
-int OverflowRules::buff_time(int rank, int time) const {
-    if (buff_steps <= 0) return time;
+int OverflowRules::buff_time(int family, int rank, int time) const {
+    if (buff_steps <= 0 || buff_kept.contains(family)) return time;
     return std::min(time, buff_steps + std::clamp(rank, 0, 4) * buff_rank_steps);
 }
 

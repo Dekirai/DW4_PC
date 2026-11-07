@@ -306,7 +306,8 @@ public:
     // from run level 8 was on for good (round O1b lane E, the finish's
     // balance). buff_steps 0: DW4's times.
     int buff_steps = 360, buff_rank_steps = 60;
-    int buff_time(int rank, int time) const;
+    std::set<int> buff_kept; // pcTech base rows that keep DW4's time (a balance pass)
+    int buff_time(int family, int rank, int time) const;
 
     // ---- H5 (forwarded to the director).
     void enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index);

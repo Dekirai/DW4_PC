@@ -959,7 +959,7 @@ void finale(const std::filesystem::path& data) {
         until_started(run);
         auto& engine = *run.engine;
         auto& rules = *run.rules;
-        check(rules.buff_time(0, 1800 + 120) == 360 && rules.buff_time(4, 3240) == 600 && rules.buff_time(2, 300) == 300,
+        check(rules.buff_time(80, 0, 1800 + 120) == 360 && rules.buff_time(80, 4, 3240) == 600 && rules.buff_time(75, 2, 300) == 300,
               "the run's buff time: 6 s at Petty, 10 s at ∞, never longer than DW4's");
         set_level(engine, 10);
         spawn_around(engine, *family_row("e_goburi"), 3, 18.0f);

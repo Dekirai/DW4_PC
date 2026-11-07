@@ -205,6 +205,17 @@ public:
         // (curve=B,L,S: the balance passes' NEXTEXP terms.)
         if (const auto curve = option(request_, "curve"); !curve.empty())
             std::sscanf(curve.c_str(), "%d,%d,%d", &rules_->levels.curve_base, &rules_->levels.curve_linear, &rules_->levels.curve_square);
+        // (buff=STEPS,RANK_STEPS: the force buffs' time in a run; buff_kept=ROW,...: those keeping DW4's time.)
+        if (const auto buff = option(request_, "buff"); !buff.empty())
+            std::sscanf(buff.c_str(), "%d,%d", &rules_->buff_steps, &rules_->buff_rank_steps);
+        {
+            const std::string rows = option(request_, "buff_kept");
+            for (std::size_t begin = 0; begin < rows.size();) {
+                const std::size_t end = std::min(rows.find(',', begin), rows.size());
+                if (end > begin) rules_->buff_kept.insert(std::atoi(rows.substr(begin, end - begin).c_str()));
+                begin = end + 1;
+            }
+        }
         // (technique_damage=FAMILY:F,...: a pcTech family's damage factor.)
         for (const auto& [key, value] : pairs(option(request_, "technique_damage"))) rules_->damage.technique_factor[std::atoi(key.c_str())] = value;
         run.set_overflow_rules(rules_);

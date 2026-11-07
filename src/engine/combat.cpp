@@ -613,7 +613,7 @@ int support_magic(Engine& engine, int target, int shooter, int kind) {
     const auto use = technique_use(engine, caster, kind);
     auto column = [&](const char* name) { return database(engine, "pcTech", use.row, name); };
     // Data Overflow (SURVIVAL.md 6.4): a run's force buffs last 6-10 s by rank.
-    auto lasting = [&](int time) { return engine.overflow_run() ? engine.overflow()->buff_time(use.row - family, time) : time; };
+    auto lasting = [&](int time) { return engine.overflow_run() ? engine.overflow()->buff_time(family, use.row - family, time) : time; };
     auto send = [&](int player, const char* command, Packet& packet) {
         engine.messenger().send(engine, "PLAYER", sys->players[std::size_t(std::clamp(player, 0, 3))].digimon, player, command,
                                 packet);
