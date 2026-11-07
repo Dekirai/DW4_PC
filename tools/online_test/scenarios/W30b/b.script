@@ -10,7 +10,7 @@ log b alone on dng205b2
 idle until frames>=300 fail present>=2
 disk 8 until stage=stagml11,control
 log b home again
-idle until epoch>=@240
+idle until epoch>=@220
 depart dng205b2 2 until stage=dng205b2,control
-wander 0 0 30 until present=2,sealed>=600 fail epoch>=@600
+idle until present=2,sealed>=600 fail epoch>=@500
 log b joined a on dng205b2
