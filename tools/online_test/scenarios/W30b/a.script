@@ -3,7 +3,9 @@
 # of a player who was in dng205, as b's. Then a hosts Dry Land and waits at stag0201's gate arrival until b's first
 # arrival at dng205b2 is over, and goes on to dng205b2 through dng205b1. The ways on are the depart action with the
 # exits' own targets (stag0202's matz01: dng205b1 point 0; dng205b1's matz02: dng205b2 point 0), a alone in its stage
-# group. (No stay in the Dry Land dungeons: a k10 character fighting in dng205b1 died within 60 s in rounds r2b and r2c.)
+# group. (No stay in the Dry Land dungeons: a k10 character fighting in dng205b1 died within 60 s in rounds r2b and r2c.
+# The second way to Dry Land is the lobby gate's departure (stag0201 point 0) by depart: the gate action's menu, opened
+# a second time, stood still in round r2f.)
 campaign until stage=stagml11,control
 idle until epoch>=@110
 explore mate00 until onme:mate00
@@ -12,8 +14,7 @@ depart dng205b1 0 until stage=dng205b1,control
 log a was in dng205
 disk 8 until stage=stagml11,control fail epoch>=@230
 idle until frames>=120
-explore mate00 until onme:mate00
-gate mate00 1 until stage=stag0201,control
+depart stag0201 0 until stage=stag0201,control
 log a hosts Dry Land
 idle until epoch>=@280
 depart dng205b1 0 until stage=dng205b1,control
