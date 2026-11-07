@@ -1,7 +1,9 @@
-# W30 (19.24, 19.30.4): the area join (a guest's NEW at the gate stage of a running instance of the area).
+# W30 (19.24, 19.30.4): the area join (a guest's NEW at the gate stage of a running instance of the area). The toast names
+# a's stage by its place (stag0202: Grief Wasteland, 19.5.6 "<host> is in <stage>."; the client's review fix 79aaf163
+# dropped the region the first form had: "Dry Land: ...").
 a: online-script: step .* log: a in stag0202
 b: online-script: step .* log: own story at home
-b: online: You joined .*'s instance\. .* is in Dry Land
+b: online: You joined .*'s instance\. .* is in Grief Wasteland\. Leave: Online menu
 b: online-script: step .* log: b plays a's story
 b: online-script: step .* log: own story again
 relay: instance_start .*stage=stag0201
