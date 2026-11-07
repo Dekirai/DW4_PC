@@ -1680,6 +1680,16 @@ pass.
 Lane E as built, its spike notes, measurements and what is left:
 docs/ROUND_O1B_E_NOTES.md.
 
+**Integrated** on branch `int-o1b` (docs/ROUND_O1B_INT_NOTES.md; lanes D and
+F: docs/ROUND_O1B_D_NOTES.md, docs/ROUND_O1B_F_NOTES.md): ctest 61 / 61,
+det.sh 4004f056 / 396cb219, r25c 10 / 10 with 1,748,011 frames with the NPC
+hidden and shown, T3 / T4 / T5 with a real talk to Gekomon, a run and the
+walk after it, T9 over every screen string, T10, T11 and the save state
+suite pass; T6 runs every Rookie to its clear or TIME UP with lane E's run
+hashes; every screen is in the hidden picture set. Not met: 14.2's newcomer
+target for all four Rookies and T8's step time under load (the notes' 5 and
+6); the user's own run is the last part of "done".
+
 Merge order E, D, F. **Done:** offline and alone, talking to Gekomon opens
 the menu; a run with any Rookie plays four phases with Guardians and the
 finale, with gear and Awakening; the Sim Bits reach `overflow.dat`; back in

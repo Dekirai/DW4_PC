@@ -45,7 +45,7 @@ timing-sensitive online scenarios); no process of another workflow was touched.
 | Check | Result | Log (worktree `build/` unless noted) |
 | --- | --- | --- |
 | build | ok, no new warnings | `bld_rel0.log` (the merges), `bld_rel1.log`, `bld_rel2.log` |
-| ctest (full) | 61 of 61 on i1 (main's 58 + `overflow_finale`, `overflow_profile`, `overflow_screens`) | `ctest_rel1.log` |
+| ctest (full) | 61 of 61 on i1 and again on i2 (main's 58 + `overflow_finale`, `overflow_profile`, `overflow_screens`) | `ctest_rel1.log`, `ctest_rel2.log` |
 | T9 (`overflow_screens` with the data) | 133 table strings 0 missing; lane F's texts and E's notices 129 strings 0 missing; ASCII the font lacks drawn with stand-ins, 0 gaps; 10,870 checks | `screens_t9b.log` |
 | T7 (`overflow_profile`, `overflow_offers`, `overflow_spawn`, `overflow_rng`, `overflow_balance`, ...) | pass (in the 61) | `ctest_rel1.log` |
 | T10 (`overflow_scripts`) | pass (in the 61) | `ctest_rel1.log` |
