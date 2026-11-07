@@ -61,8 +61,16 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
   LEAD_FROM 10561 all came, but b, k2, had died on the rock slope during the cut; ce573b30), W7e (the cut hook never saw
   the park: loopback's BARRIER_OK came before the next pass; dcbececb; the rest of W7e held without a cut). Stuck clients
   of W30b, W32 and W7b were ended by PID to move on.
-- r2b (exe f = dcbececb): W6 W7b W7e W30b W32 and W1x W3 W4 W4b W5 W7 W7c W8 W11 W12 W18 W19 W22 W25 W26 W28 W30 W30x,
-  `build/int/scen_r2b.log` (running).
+- r2b (exe f = dcbececb, `build/int/scen_r2b.log`, run folder `run_20261107_105925`): 17 of 23 passed: **W12** (133 s),
+  **W18** (153 s), **W1x** (the counter-proof fails as it must, 229 s), **W22** (3 s), **W25** (242 s), **W26** (322 s),
+  **W28** (319 s), **W3** (135 s), **W30x** (counter-proof, 402 s), **W32** (303 s: the whole Fortress walk to stag0205's
+  plateau and back, no area_escape), **W4** (179 s), **W4b** (204 s), **W5** (185 s), **W6** (284 s), **W7** (237 s),
+  **W7c** (237 s), **W8** (345 s). Failed: W11 (both k5 hosts died on the rock slope; 95dd0979), W19 (`ghosts` reached 35
+  with figures fading out; 4814b42b), W30 (only the toast's regex: the place, not the region; a4514875), W30b (b's first
+  arrival a NEW of its own, its way home held; a died in dng205b1 after four minutes; 58ee8395), W7b (b home on its own
+  story through JOIN_REQ home, 1 s after the script's epoch bound @275: a timing failure, repeated in r2c), W7e (the cut at
+  the park, a's return and join held; a's script end ended the instance before b's 900 sealed ticks; dc8da0da).
+- r2c (exe g = dc8da0da): W11 W19 W30 W30b W7b W7e, `build/int/scen_r2c.log` (running).
 
 ### Findings for later (not changed here)
 
