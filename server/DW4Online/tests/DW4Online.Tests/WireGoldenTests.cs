@@ -151,6 +151,13 @@ public class WireGoldenTests
         var w = new WireWriter(0);
         rec.Write(w);
         Assert.Equal("00" + "01" + "07" + "0b00" + "01" + "02" + "08" + "646e673230346231", Convert.ToHexString(w.Payload()).ToLowerInvariant());
+        // Round I1b's scenario hooks: the TEST event and INTENT kind test (tests/online_wire_tests.cpp holds the same bytes).
+        var testRec = new TickRecord();
+        testRec.Events.Add(TickEvent.Test(2, TestHook.Busy, 600));
+        var tw = new WireWriter(0);
+        testRec.Write(tw);
+        Assert.Equal("00" + "01" + "f0" + "0600" + "02" + "02" + "58020000", Convert.ToHexString(tw.Payload()).ToLowerInvariant());
+        Assert.Equal("07000000" + "02000000" + "7f" + "02580200", PayloadHex(new IntentMsg(7, 2, IntentKind.Test, 2 | (600 << 8)).Frame()));
         Assert.Equal("0300" + "01" + "03" + "02" + "05000000" + "09000000" + "08" + "646e673230346231" + "14" + "00",
             PayloadHex(new OfferMsg(3, OfferOp.Open, OfferMsg.Notice | OfferMsg.Late, [5, 9], "dng204b1", 20, OfferClose.None).Frame()));
         Assert.Equal("0300" + "03" + "00" + "01" + "05000000" + "08" + "646e673230346232" + "14" + "01",

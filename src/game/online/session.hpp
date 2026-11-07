@@ -342,6 +342,14 @@ public:
     // Development builds' scenario hook (DW4_ONLINE_TEST_CUT_AT_PARK, W7e): the
     // link is lost here and now, as a cut cable would lose it.
     void test_cut(double now) { lose_connection(now); }
+    // Development builds' scenario hooks of round I1b (the online script's
+    // testhook, goalong closed): INTENT kind test asks a relay with
+    // World:TestHooks for a TEST event in the own sealed stage group (false
+    // when not sealed or not connected); go_along_raw sends INTENT 4 for an
+    // offer whatever the client thinks of it (a request that crossed the
+    // offer's close: the relay answers *go refused*).
+    bool test_hook_request(wire::TestHook hook, int value);
+    bool go_along_raw(std::uint16_t offer);
 
 private:
     struct PendingEvent {

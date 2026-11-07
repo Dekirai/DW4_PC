@@ -15,10 +15,10 @@ idle until notices=0 fail frames>=1500
 log c's notice ran out
 idle until offers>=1 fail frames>=30
 log the offer stays on c's page
-idle until offerstage=dng204b2 fail notices>=1
+idle until offerstage=dng204b2 fail notices>=1,epoch>=@1700
 log c's row reads B2
 goalong until go=waiting or go=stamped or go=going
 log c asked to go along
-idle until stage=dng204b2,present=2,sealed>=120 fail epoch>=@1700
+idle until stage=dng204b2,present=2,sealed>=120 fail epoch>=@1900
 log c joined a in B2
 idle until frames>=120

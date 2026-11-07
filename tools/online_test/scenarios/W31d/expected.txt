@@ -1,2 +1,31 @@
-# W31d: needs the go_test_hooks capability (scenario.json).
+# W31d (19.24, 19.30.8): no notice while defeated; a GO whose slot falls before it does nothing on every engine ("Couldn't
+# go along: you were defeated.", the withdraw); the last living member's GO takes the defeated along (the side rule), no
+# game over. The fingerprints of b's, c's and d's stage group are compared by the harness (0 differ).
+b: online-trace: test hook applied .*hook=1
+b: online-script: step .* log: b fell
+d: online-script: step .* log: d sees the notice
+d: online-trace: go along asked
+d: online-trace: test hook applied .*hook=1
+d: online-trace: go applied .*departs=0
+d: online: Couldn't go along: you were defeated\.
+d: online-script: step .* log: d fell at its GO, the GO did nothing
+c: online-script: step .* log: c goes along
+c: online-trace: go applied .*departs=1
+b: online-trace: go applied .*departs=1
+d: online-trace: go applied .*departs=1
+b: online-trace: offer closed id=\d+ reason=4
+b: online-script: step .* log: b taken along into dng204b1 without a notice
+c: online-script: step .* log: c, b and d joined a in B1
+a: online-script: step .* log: b, c and d joined a in B1
+relay: test_hook .*hook=defeat
+relay: offer_open .*stage=dng204b1
+relay: test_go_hook .*hook=defeat
+relay: go_stamped .*stage=dng204b1
+relay: go_stamped .*stage=dng204b1
+relay: go_barrier
+!b: online-trace: offer notice
+!relay: instance_end
 !a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL
+!d: online-script: FAIL

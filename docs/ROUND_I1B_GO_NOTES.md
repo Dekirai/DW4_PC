@@ -34,12 +34,26 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
   stage group first, waits for it without JoinHoldSeconds (no Go alone, no rescue join), a new stage group only when
   nobody is left there; Leave from that held barrier goes home; the expiry backstop; HEADING's asked mask resolved
   against the port's stage group (the fork's parent); the world log names of the contract.
-- **Online script** (dev): `goalong [STAGE]`, `cancelgo`, `closeoffer`; conditions `offers`, `notices`, `go=`,
-  `offerstage=`.
-- **Scenarios**: W31 (run, see below), W31b, W31c (its part without a hook), W31d2, W31e, W31g written ready to run;
-  W31d, W31f, W31h, W31i written as descriptions with `requires: go_test_hooks` (run.py skips them): they need
-  deterministic test hooks (a defeat / a shared scene / a prompt at a sealed tick, a boss kill) that this lane did not
-  build.
+- **Online script** (dev): `goalong [STAGE]` (presses once the row is not greyed), `goalong closed`, `cancelgo`,
+  `closeoffer`, `goback`, `testhook defeat|busy N`; conditions `offers`, `notices`, `go=`, `offerstage=`, `goback=`.
+- **Scenario hooks** (restart 2026-11-07 17:30; contract entry "go 2026-11-07 17:50"): the tick event TEST 0xF0 (slot |
+  hook | argument; 1 defeat: the slot's player falls as on poison's last tick, `Engine::online_test_hook`; 2 busy: the
+  engine is neither membership-safe nor joinable for N steps, `Engine::online_test_busy`, cleared at a barrier). Only
+  development clients apply it (`Session::apply_events`, `EngineLink::test_hook`); release clients skip the unknown type.
+  Relay (`GoAlong.cs`, test options in `WorldHubOptions`, all off by default): `World:TestHooks` (INTENT kind 0x7F test
+  stamps TEST in the sender's sealed stage group), `World:TestGoHook` (defeat / busy_sender:N at a GO's tick before it;
+  busy_target:N in the sealed target stage group), `World:TestGoHookCount` (1), `World:TestGoBarrierHoldMs` (a GO's
+  barrier waits once, HoldKind.TestGo). The client's test intent: `Session::test_hook_request`; the crossed request:
+  `Session::go_along_raw`.
+- **UI focus** (restart): View while the own request waits focuses its row (A: Cancel, "View then A"); View within a
+  notice's first half second puts the cursor on the page's first item below the box (`OnlineUiState::focus_below_go`),
+  after it on the noticed offer's row (`focus_go_id`).
+- **Scenarios**: W31 (B1 crossed by the campaign bot's errand: the script's explore fell twice), W31b, W31c (with the
+  crossed request), W31c2 (new: the hooked race, TestGoBarrierHoldMs), W31d (four members: b falls by `testhook defeat`,
+  d's GO with TestGoHook defeat, c takes both along), W31d2, W31e, W31f (the host's way home by the Gate Disk instead of
+  dng204b2's matz02 after a boss kill), W31g, W31h and W31h2 (new: TestGoHook busy_target:2400; B: Back to the lobby /
+  the join after the scene), W31i (TestGoHook busy_sender:600; the expiry, then a request right after an arrival).
+  No `requires` any more.
 
 ## Tests and results
 

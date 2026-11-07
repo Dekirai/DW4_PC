@@ -76,7 +76,8 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 bool OnlineScript::known_action(std::string_view name) {
     static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
                                                  "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log",
-                                                 "menu",     "browse", "talkto", "shot", "depart", "goalong", "cancelgo", "closeoffer"};
+                                                 "menu",     "browse", "talkto", "shot", "depart", "goalong", "cancelgo", "closeoffer",
+                                                 "testhook", "goback"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
@@ -85,7 +86,7 @@ bool OnlineScript::known_condition(std::string_view key) {
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
                                                  "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts",
-                                                 "figures", "offers", "notices", "go", "offerstage"};
+                                                 "figures", "offers", "notices", "go", "offerstage", "goback"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
@@ -211,6 +212,7 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key == "notices") return compare(facts.notices);
     if (c.key == "go") return facts.go == c.text;
     if (c.key == "offerstage") return lower(facts.offer_stage) == lower(c.text);
+    if (c.key == "goback") return compare(facts.go_back ? 1 : 0);
     if (c.key == "stagechange") return lower(engine.stage_name()) != step_stage_;
     if (c.key.rfind("flag:", 0) == 0) {
         const auto found = engine.flags().find(std::atoi(c.key.c_str() + 5));
@@ -401,9 +403,39 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         out.reach = c.reach;
         return out;
     }
+    if (step.action == "goback") {
+        // Round I1b (19.30.7 step 4): B on the held GO barrier, once its line offers it.
+        if (!departed_ && facts.go_back) {
+            out.go_back = true;
+            departed_ = true;
+            std::printf("online-script: goback (frame %d)\n", facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "testhook") {
+        // Round I1b's scenario hooks (development builds): once per step.
+        if (!departed_ && !step.args.empty() && (step.args[0] == "defeat" || step.args[0] == "busy")) {
+            out.test_hook = step.args[0] == "defeat" ? 1 : 2;
+            out.test_value = step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 0;
+            departed_ = true;
+            std::printf("online-script: testhook %s %d (frame %d)\n", step.args[0].c_str(), out.test_value, facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "goalong" && !step.args.empty() && step.args[0] == "closed") {
+        if (!departed_ && facts.closing_offer != 0 && facts.go == "none") {
+            out.go_along_raw = facts.closing_offer;
+            departed_ = true;
+            std::printf("online-script: goalong closed offer %u (frame %d)\n", unsigned(facts.closing_offer), facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
     if (step.action == "goalong" || step.action == "cancelgo" || step.action == "closeoffer") {
         // Round I1b (19.30.6): the box's A / Cancel / B, once per step.
-        if (!departed_ && step.action == "goalong" && facts.newest_offer != 0 && facts.go == "none") {
+        if (!departed_ && step.action == "goalong" && facts.newest_offer != 0 && facts.go == "none" && facts.go_ready) {
             out.go_along = facts.newest_offer;
             if (!step.args.empty()) {
                 out.go_along = 0;

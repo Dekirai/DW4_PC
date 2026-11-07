@@ -1,2 +1,20 @@
-# W31h: needs the go_test_hooks capability (scenario.json).
+# W31h (19.24, 19.30.7 step 4, 19.30.8): a target that became busy after the stamp: the GO barrier waits without
+# Instances:JoinHoldSeconds, no new stage group of the instance next to the busy one; B: Back to the lobby takes the
+# member home (the DISSOLVE with the redirect).
+a: online-script: step .* log: a and c in dng204b1
+a: online-trace: test hook applied .*hook=2 argument=2400
+c: online-trace: test hook applied .*hook=2 argument=2400
+b: online-script: step .* log: b goes along
+b: online-trace: go applied .*departs=1
+b: online-script: step .* log: b's barrier waits for the busy floor
+b: online-script: step .* log: b waited past the join hold
+b: online-script: goback
+b: online: back to the lobby from a held go along
+b: online-script: step .* log: b back in the lobby
+relay: go_stamped .*stage=dng204b1
+relay: test_go_hook .*hook=busy_target
+relay: hold_join
+relay: go_back
 !a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL

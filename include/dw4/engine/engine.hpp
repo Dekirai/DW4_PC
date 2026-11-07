@@ -580,6 +580,16 @@ public:
     // NEXTSTAGE) with a HEADING. Returns whether this copy departs (false when
     // the mask drops to nothing: the GO does nothing on every engine alike).
     bool online_go(std::uint8_t mask, const std::string& stage, int point);
+    // Round I1b's scenario hooks (the client's development builds only, the
+    // TEST event of docs/ROUND_I1B_GO_NOTES.md), before a step at a tick
+    // every member applies: hook 1 defeats the slot's player (0 HP and
+    // SQ_DEAD, as poison's last tick does); hook 2 keeps the engine neither
+    // membership-safe nor joinable for `argument` steps (a shared scene's
+    // stand-in). Online only; nothing of it is in the snapshot or the
+    // fingerprint (it is never set offline, and no join or resync happens
+    // while it holds: joins wait for joinable()).
+    void online_test_hook(int slot, int hook, int argument);
+    int online_test_busy() const { return online_test_busy_; }
     // 19.8.3 (M2): a parked DISSOLVE redirected: the pending stage and the
     // generate point (PlayerPointManager's point) replaced, as a NEXTSTAGE to
     // that stage and point would have set them. Only between set_barrier
@@ -1272,6 +1282,7 @@ private:
 
     // ---- Online co-op (online.cpp).
     OnlineRules online_;
+    int online_test_busy_ = 0; // (round I1b's busy test hook: steps left)
     std::array<std::optional<PersonalSession>, 4> personal_;
     // The pads of the barrier tick, which every transition step takes (6.7).
     std::optional<std::array<PadSample, 4>> barrier_pads_;

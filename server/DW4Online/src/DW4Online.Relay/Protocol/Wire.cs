@@ -137,6 +137,17 @@ public static class Ev
     /// <summary>Round I1b's GO (slot u8, point u8, stage str, 19.30.7): applied like INTENT at the first membership-safe step, every GO
     /// of a step together (ForkKind::go); expires 300 ticks after its tick on every engine. At a fork it follows its slot.</summary>
     public const byte Go = 7;
+    /// <summary>Round I1b's scenario hooks (slot u8, hook u8, argument i32; <see cref="TestHook"/>): stamped only with
+    /// World:TestHooks or World:TestGoHook on (test runs); development clients apply them, every other build skips the type.</summary>
+    public const byte Test = 0xF0;
+}
+
+/// <summary>The TEST event's hooks (round I1b's scenarios): Defeat = the slot's player falls (0 HP, SQ_DEAD); Busy = the stage group
+/// is neither membership-safe nor joinable for the argument's ticks (a shared scene's stand-in).</summary>
+public enum TestHook : byte
+{
+    Defeat = 1,
+    Busy = 2,
 }
 
 /// <summary>Instance modes (WELCOME, BARRIER_OK).</summary>
@@ -174,6 +185,9 @@ public enum IntentKind : byte
     Leave = 3,
     /// <summary>Protocol 49, round I1b: *Go along* (argument: the offer id, 0 withdraws). The I1a relay ignores it.</summary>
     GoAlong = 4,
+    /// <summary>Development clients' scenario hook (argument: hook | value &lt;&lt; 8): a TEST event in the sender's sealed stage group,
+    /// stamped only with World:TestHooks on (else counted and ignored).</summary>
+    Test = 0x7F,
 }
 
 /// <summary>An instance's visibility (19.6.2): wire u8 and the text of online_prefs / instance_history.</summary>

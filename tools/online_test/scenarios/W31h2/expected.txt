@@ -1,0 +1,16 @@
+# W31h2 (19.24 W31h's second run): the busy floor's scene ends after 40 s and the held GO barrier joins it.
+a: online-script: step .* log: a and c in dng204b1
+a: online-trace: test hook applied .*hook=2 argument=2400
+b: online-script: step .* log: b goes along
+b: online-trace: go applied .*departs=1
+b: online-script: step .* log: b's barrier waits for the busy floor
+b: online-script: step .* log: b waited past the join hold
+b: online-script: step .* log: b joined a and c in dng204b1
+relay: go_stamped .*stage=dng204b1
+relay: test_go_hook .*hook=busy_target
+relay: hold_join
+relay: go_join
+!relay: go_back
+!a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL

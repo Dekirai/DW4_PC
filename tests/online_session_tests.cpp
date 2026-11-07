@@ -1494,6 +1494,40 @@ void go_along_session() {
         check(!other.hub.go_intents.empty() && other.hub.go_intents.back().second.argument == 0, "and withdraws");
     }
     {
+        // Round I1b's scenario hooks (W31d, W31i): a TEST defeat right before a GO at its tick makes the GO do nothing on
+        // both machines; a TEST busy at the GO's tick holds it past its expiry. Development builds apply TEST events,
+        // the others skip them (the GO then runs).
+        for (const auto hook : {w::TestHook::defeat, w::TestHook::busy}) {
+            World world;
+            world.hub.co_arrival_hold = 3.0;
+            world.hub.suggested_delay = 6;
+            auto& a = world.add("kim", 1);
+            auto& b = world.add("lee", 2);
+            co_arrive(world, a, b);
+            world.run(3);
+            b.session->take_notices();
+            const auto test_at = world.hub.stamp_test(2, hook, hook == w::TestHook::busy ? 600 : 0);
+            const auto go_at = world.hub.stamp_go(2, "dng101b1", 0);
+            check(test_at == go_at, "the TEST event and the GO share their tick");
+            world.run(8);
+#ifdef DW4_ONLINE_DEV
+            check(a.engine.test_calls.size() == 1 && b.engine.test_calls.size() == 1 && a.engine.test_calls[0].frame == b.engine.test_calls[0].frame &&
+                      a.engine.test_calls[0].slot == b.session->own_slot(),
+                  "the TEST event applied once on both machines at the same frame");
+            check(a.engine.gos == 0 && b.engine.gos == 0, "the GO did nothing / never applied on either machine");
+            if (hook == w::TestHook::defeat)
+                check(has_notice(b.session->take_notices(), "Couldn't go along: you were defeated."), "the fallen member is told");
+            else
+                check(a.engine.go_calls.empty() && b.engine.go_calls.empty() &&
+                          has_notice(b.session->take_notices(), "Couldn't go along: a scene here took too long."),
+                      "the busy group let the GO expire on both machines");
+#else
+            check(a.engine.test_calls.empty() && b.engine.test_calls.empty(), "a release build skips the TEST event");
+            check(b.engine.gos == 1, "and the GO runs");
+#endif
+        }
+    }
+    {
         // The offers, the notice, INTENT 4, the withdraw and the refusals.
         World world;
         world.hub.co_arrival_hold = 0.3;

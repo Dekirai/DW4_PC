@@ -10,6 +10,6 @@ log b sees the notice
 idle until epoch>=@900
 goalong until go=waiting or go=asked
 log b asked to go along
-idle until offers=0 fail go=stamped or stage=dng204b1
+idle until offers=0 fail go=stamped,stage=dng204b1
 log the offer closed without a stamp
 idle until frames>=300 fail stage=dng204b1

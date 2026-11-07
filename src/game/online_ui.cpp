@@ -465,7 +465,7 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         for (const auto& row : live->go_rows) {
             const bool usable = !row.closing && (row.own || row.grey.empty());
             const std::string label = (row.own && !live->go_line.empty() ? live->go_line : row.text) + "##go" + std::to_string(row.id);
-            if (first && s.focus_go && !ImGui::IsWindowAppearing()) {
+            if (s.focus_go && (s.focus_go_id == 0 ? first : row.id == s.focus_go_id) && !ImGui::IsWindowAppearing()) {
                 ImGui::SetKeyboardFocusHere();
                 s.focus_go = false;
                 s.focus_pending = false;
@@ -487,8 +487,19 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             first = false;
         }
         ImGui::TextDisabled("B: Close");
+        // (The row to focus is gone: the first row then.)
+        if (s.focus_go && !ImGui::IsWindowAppearing()) s.focus_go_id = 0;
+        // (A View press within a notice's first half second: the cursor goes
+        // to the page's first item below the box, so a reflexive A goes
+        // nowhere.)
+        if (s.focus_below_go && !ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+            s.focus_below_go = false;
+            s.focus_pending = false;
+        }
     } else {
         s.focus_go = false;
+        s.focus_below_go = false;
     }
     ImGui::SeparatorText("Instance");
     if (!live || !live->active) {

@@ -1,0 +1,18 @@
+# W31c2 (19.24 W31c's second part, 19.30.8): a GO stamped while the entrants were there; they leave before its barrier is
+# decided (the test hook holds it): the barrier becomes a new stage group of the instance at dng204b1, never home, never a
+# new instance; the offer closed (left) meanwhile.
+a: online-script: step .* log: a in dng204b1
+a: online-script: step .* log: a back in stag0201
+b: online-script: step .* log: b sees the notice
+b: online-script: step .* log: b goes along
+b: online-trace: go applied .*departs=1
+b: online: .* left Sand Labyrinth B1 before you arrived\.
+b: online-script: step .* log: b alone in dng204b1 in a's instance
+relay: offer_open .*stage=dng204b1
+relay: go_stamped .*stage=dng204b1
+relay: test_hold_go
+relay: offer_close .*reason=left
+relay: new .*stage=dng204b1
+!relay: instance_start .*stage=dng204b1
+!a: online-script: FAIL
+!b: online-script: FAIL

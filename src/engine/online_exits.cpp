@@ -229,6 +229,31 @@ bool Engine::online_go(std::uint8_t mask, const std::string& stage, int point) {
     return true;
 }
 
+void Engine::online_test_hook(int slot, int hook, int argument) {
+    if (!online_.enabled) return;
+    const detail::MxcsrGuard mxcsr;
+    if (hook == 1) {
+        // Defeat: the slot's player falls as on poison's last tick
+        // (ModelCtrlManager::update_status): 0 HP in the model and the
+        // player's record, the HP meter and number, SQ_DEAD.
+        auto* models = get<ModelCtrlManager>();
+        auto* sys = get<GameSystem>();
+        if (!models || !sys || slot < 0 || slot > 3 || !(online_.present & std::uint8_t(1u << slot))) return;
+        auto* ram = const_cast<ModelCtrlManager::ModelRam*>(models->player(slot));
+        if (!ram || !ram->generated || ram->hp <= 0) return;
+        ram->hp = 0;
+        sys->players[std::size_t(slot)].hp = 0;
+        Packet percent, value, none;
+        percent.floats.push_back(0.0f);
+        value.ints.push_back(0);
+        messenger().send(*this, "METERCTRL", "hpmt", ram->index, "SETPERCENT", percent);
+        messenger().send(*this, "NUMBERCTRL", "hpnm", ram->index, "SETVALUE", value);
+        models->command(*this, *ram, "SQ_DEAD", none);
+    } else if (hook == 2) {
+        online_test_busy_ = std::max(0, argument);
+    }
+}
+
 bool Engine::online_depart_home() {
     if (!online_.enabled || std::popcount(unsigned(online_.present)) != 1 || !membership_safe()) return false;
     return online_home(online_.present);

@@ -14,9 +14,9 @@ namespace DW4Online.Tests;
 public partial class HubLogicTests
 {
     /// <summary>a and b co-arrive in stag0201 (a hosts); a forks off and walks into dng204b1 alone: the offer opens.</summary>
-    private static Harness GoPair(out GoOffer offer, byte asked = 0)
+    private static Harness GoPair(out GoOffer offer, byte asked = 0, WorldHubOptions? world = null)
     {
-        var h = SealedPair(out _, stage: "stag0201");
+        var h = SealedPair(out _, stage: "stag0201", world: world);
         h.Joinable("a");
         h.Seal(500);
         var i = h.I("a");
@@ -195,6 +195,92 @@ public partial class HubLogicTests
         var before = refusals().Count;
         h.Send("b", new IntentMsg(bi.Id, bi.Visit, IntentKind.GoAlong, o.Id).Frame());
         Assert.Equal((before + 1, (uint)GoRefusal.Closed), (refusals().Count, refusals().Last().Argument));
+    }
+
+    /// <summary>b's stamped GO, sealed or through JOIN_REQ kind go and its JOIN_AT: the sealed tick records b's stage group got.</summary>
+    private static List<TickEvent> StampedGoEvents(Harness h, GoOffer o)
+    {
+        h.Snapshot("a");
+        h.Joinable("a");
+        var bi = h.I("b");
+        h.Joinable("b");
+        h.Send("b", new IntentMsg(bi.Id, bi.Visit, IntentKind.GoAlong, o.Id).Frame());
+        Assert.True(h.Mem("b").Go!.Stamped);
+        bi = h.I("b");
+        if (bi.Mode != InstanceMode.Sealed)
+        {
+            var req = h.P("b").Last(Msg.JoinReq, JoinReqMsg.Parse);
+            h.Log("b", 0, 300);
+            h.Send("b", new JoinAtMsg(req.Inst, req.Visit, 300).Frame());
+        }
+        h.Seal(300);
+        return h.P("b").Ticks().SelectMany(t => t.Rec.Events).ToList();
+    }
+
+    [Fact]
+    public void The_test_go_hook_stamps_a_defeat_before_the_go_at_its_tick_for_the_first_stamps_only_and_is_off_by_default()
+    {
+        // Off by default: no TEST event anywhere.
+        var plain = GoPair(out var o0);
+        Assert.DoesNotContain(StampedGoEvents(plain, o0), e => e.Type == Ev.Test);
+        // "defeat": TEST(defeat, the going slot) right before the GO in the same tick record.
+        var h = GoPair(out var o, world: new WorldHubOptions { TestGoHook = "defeat" });
+        var events = StampedGoEvents(h, o);
+        var go = events.FindIndex(e => e.Type == Ev.Go);
+        Assert.True(go > 0);
+        var test = events[go - 1];
+        Assert.Equal((Ev.Test, h.Mem("b").Slot, (byte)TestHook.Defeat), (test.Type, test.Slot, test.Payload[1]));
+        // "busy_sender:600" with a count of 1: the first stamp only.
+        var b = GoPair(out var ob, world: new WorldHubOptions { TestGoHook = "busy_sender:600", TestGoHookCount = 1 });
+        var busy = StampedGoEvents(b, ob).Single(e => e.Type == Ev.Test);
+        Assert.Equal(((byte)TestHook.Busy, 600), (busy.Payload[1], System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(busy.Payload.AsSpan(2))));
+    }
+
+    [Fact]
+    public void A_test_intent_stamps_a_test_event_in_a_sealed_stage_group_only_with_test_hooks_on()
+    {
+        foreach (var on in new[] { false, true })
+        {
+            var h = SealedPair(out _, world: new WorldHubOptions { TestHooks = on });
+            h.Joinable("a");
+            h.Seal(100);
+            var i = h.I("b");
+            h.Send("b", new IntentMsg(i.Id, i.Visit, IntentKind.Test, (int)TestHook.Busy | (600 << 8)).Frame());
+            h.Send("a", new IntentMsg(i.Id, i.Visit, IntentKind.Test, (int)TestHook.Defeat).Frame());
+            h.Seal(200);
+            var tests = h.P("a").Ticks().SelectMany(t => t.Rec.Events).Where(e => e.Type == Ev.Test).ToList();
+            if (!on)
+            {
+                Assert.Empty(tests);
+                continue;
+            }
+            Assert.Equal(2, tests.Count);
+            Assert.Contains(tests, e => e.Slot == h.Mem("b").Slot && e.Payload[1] == (byte)TestHook.Busy &&
+                                        System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(e.Payload.AsSpan(2)) == 600);
+            Assert.Contains(tests, e => e.Slot == h.Mem("a").Slot && e.Payload[1] == (byte)TestHook.Defeat);
+        }
+        // The wire: an INTENT of kind test parses (a kind beyond it does not).
+        var frame = new IntentMsg(1, 1, IntentKind.Test, 2).Frame()[Wire.HeaderBytes..];
+        Assert.Equal(IntentKind.Test, IntentMsg.Parse(frame).Kind);
+        frame[8] = 0x7E;
+        Assert.Throws<ProtocolException>(() => IntentMsg.Parse(frame));
+    }
+
+    [Fact]
+    public void The_test_barrier_hold_keeps_a_gos_barrier_undecided_for_its_time_then_it_is_decided()
+    {
+        var h = GoPair(out var o, world: new WorldHubOptions { TestGoBarrierHoldMs = 5000 });
+        _ = StampedGoEvents(h, o);
+        var oks = h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count;
+        h.Barrier("b", "dng204b1");
+        Assert.Equal(oks, h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count); // held
+        h.Advance(3000);
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(oks, h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count);
+        h.Advance(2500);
+        h.Hub.Housekeep(h.Now);
+        var ok = h.Decision("b");
+        Assert.Equal((BarrierDecision.Join, h.I("a").Id), (ok.Decision, ok.NewInst));
     }
 
     [Fact]

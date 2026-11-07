@@ -277,6 +277,8 @@ bool Engine::membership_safe() const {
     if (demo_.running_unscoped() != 0) return false;
     if (const auto* windows = get<SubWindowManager>(); windows && windows->shared_window_open()) return false;
     if (pending_fork_) return false;
+    // (Round I1b's busy test hook, development scenarios only: 0 otherwise.)
+    if (online_test_busy_ > 0) return false;
     return true;
 }
 
@@ -393,6 +395,7 @@ void Engine::finish_online_step(const std::array<PadSample, 4>& samples) {
     }
     // (The leash ring that loads with the stage goes in every step's
     // apply_leash_rule.)
+    if (online_test_busy_ > 0) --online_test_busy_;
 }
 
 std::optional<SplitResult> Engine::take_split() {

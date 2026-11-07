@@ -284,6 +284,24 @@ void go_messages() {
         const auto back = w::decode_join_req(w::encode(req));
         check(back.kind == w::JoinKind::go && back.stage == "dng204b1" && back.point == 0 && back.slot == 1, "JOIN_REQ go round trip");
     }
+    // Round I1b's scenario hooks: the TEST event (slot | hook | argument) and
+    // INTENT kind test (WireGoldenTests.cs holds the same bytes).
+    {
+        w::TickBody t;
+        w::Event test;
+        test.kind = w::EventKind::test;
+        test.slot = 2;
+        test.hook = std::uint8_t(w::TestHook::busy);
+        test.argument = 600;
+        t.events.push_back(test);
+        w::Writer tw;
+        w::write_tick(tw, t);
+        check(hex(tw.out) == "00" "01" "f0" "0600" "02" "02" "58020000", "golden tick record with TEST " + hex(tw.out));
+        w::Reader tr{tw.out};
+        check(w::read_tick(tr) == t, "TEST round trip");
+        check(hex(w::encode(w::Intent{7, 2, w::IntentKind::test, 2 | (600 << 8)})) == "07000000" "02000000" "7f" "02580200", "golden INTENT test");
+        check(w::decode_intent(w::encode(w::Intent{7, 2, w::IntentKind::test, 1})).kind == w::IntentKind::test, "INTENT test decodes");
+    }
     // The GO tick event: slot | point | stage.
     {
         w::TickBody t;

@@ -674,6 +674,12 @@ public sealed partial class RoomHub
             OnGoIntent(m, msg, now);
             return;
         }
+        if (msg.Kind == IntentKind.Test)
+        {
+            // Round I1b's scenario hooks (World:TestHooks, test runs only).
+            OnTestIntent(m, msg);
+            return;
+        }
         // *B: Back to the lobby* on a GO's held loading screen: the member's leave from its barrier.
         if (msg.Kind == IntentKind.Leave && GoBackToLobby(m, now)) return;
         if (Mine(m, msg.Inst, msg.Visit) is not { } i) return;
@@ -1165,6 +1171,7 @@ public sealed partial class RoomHub
         g.World = w;
         // Round I1b (19.30.5-19.30.7): the offers (an entry into a dungeon, a way out) and a stamped GO's barrier.
         if (w is not null && _worlds.ContainsKey(w.Wid)) GoAtBarrier(w, g, now);
+        if (TestHoldGoBarrier(g, now)) return;
         // (A stage group of an instance whose members hold no seat in it any more, removed ones: their engines hold the host's
         // story, so they go home like a detached group, 19.6.6.)
         var seatless = w is null && g.From.World is not null;
@@ -1435,6 +1442,14 @@ public sealed partial class RoomHub
                     else if (Ms(now - g.LastWaitSent) >= 1000)
                         SendWait(g, g.Target.Snapshot.Complete ? WaitReason.NotJoinable : WaitReason.Snapshot, g.Target.Members.Select(x => x.Name),
                             g.Go is not null ? 0 : Ms(g.HoldUntil - now) / 1000.0, 0, now);
+                    break;
+                case HoldKind.TestGo:
+                    if (now >= g.HoldUntil)
+                    {
+                        _holds.Remove(g);
+                        g.Hold = HoldKind.None;
+                        Decide(g, now);
+                    }
                     break;
                 case HoldKind.Boss:
                     if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||

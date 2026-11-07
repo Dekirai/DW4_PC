@@ -1,2 +1,16 @@
-# This scenario needs the go_test_hooks capability (see scenario.json's desc); run.py skips it until the hook exists.
-idle until frames>=60
+# W31d, host a (k10): hosts Dry Land; once b, c and d joined and b fell (the test hook, @470) a goes into dng204b1 alone
+# (matz01) and waits there for the others (c's GO takes b and d along).
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until present=4,sealed>=300 or epoch>=@460 fail stagechange
+log b, c and d joined
+idle until epoch>=@480 fail stagechange
+explore matz01 yes until stage=dng204b1,control fail epoch>=@820
+log a in dng204b1
+disk 1 until hp>=700 or frames>=600
+idle until present=4,sealed>=300 fail epoch>=@1200
+log b, c and d joined a in B1
+idle until frames>=300

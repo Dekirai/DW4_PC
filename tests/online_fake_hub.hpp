@@ -96,7 +96,7 @@ public:
         return bytes;
     }
     std::uint64_t net_fingerprint() override { return mix(mix(mix(state_, frame_), present_), std::hash<std::string>{}(stage_)); }
-    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0; }
+    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0 && test_busy <= 0; }
     bool joinable(w::NotJoinable& reason) const override {
         if (is_hub_stage(stage_)) {
             reason = w::NotJoinable::hub;
@@ -188,6 +188,7 @@ public:
 
     void step(const std::array<dw4::PadSample, 4>& pads) {
         ++frame_;
+        if (test_busy > 0) --test_busy;
         if (home_at_ && frame_ >= home_at_ && !pending_) {
             home_at_ = 0;
             pending_ = "stagml11";
@@ -377,6 +378,22 @@ public:
     std::uint64_t go_at_ = 0;
     std::string go_stage_;
     int gos = 0;
+    // Round I1b's scenario hooks (the TEST event; the session applies them in
+    // development builds only): defeat marks the slot fallen, busy keeps the
+    // engine not membership-safe for that many steps.
+    struct TestCall {
+        int slot{};
+        w::TestHook hook{};
+        int argument{};
+        std::uint64_t frame{};
+    };
+    std::vector<TestCall> test_calls;
+    int test_busy = 0;
+    void test_hook(int slot, w::TestHook hook, int argument) override {
+        test_calls.push_back({slot, hook, argument, frame_});
+        if (hook == w::TestHook::defeat) dead = std::uint8_t(dead | (1u << (slot & 3)));
+        if (hook == w::TestHook::busy) test_busy = argument;
+    }
     std::optional<int> redirected_point;
     bool own_settings_set_back = false;
     std::optional<w::Settings> host_settings;
@@ -994,6 +1011,19 @@ public:
     // Round I1b (19.30.7): GO for a member: sealed, stamped at the next seal +
     // `ahead` (the relay's stamp tick); solo-led: JOIN_REQ kind go to its
     // leader, whose JOIN_AT(J) seals J alone with GO and LEAD_FROM(J + 1).
+    // Round I1b's scenario hook (World:TestGoHook / TestHooks): a TEST event in
+    // the member's stage group at `ahead` ticks (before a GO stamped there).
+    std::uint32_t stamp_test(std::uint32_t member, w::TestHook hook, int argument, std::uint32_t ahead = 8) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        w::Event test{w::EventKind::test};
+        test.slot = std::uint8_t(m.slot);
+        test.hook = std::uint8_t(hook);
+        test.argument = argument;
+        const std::uint32_t j = inst.next_seal + ahead;
+        inst.events[j].push_back(test);
+        return j;
+    }
     std::uint32_t stamp_go(std::uint32_t member, const std::string& stage, std::uint8_t point, std::uint32_t ahead = 8) {
         auto& m = members[member];
         auto& inst = instances[m.inst];

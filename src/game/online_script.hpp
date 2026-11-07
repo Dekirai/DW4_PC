@@ -55,9 +55,20 @@
 //   log TEXT            one trace line
 //   goalong [STAGE]     round I1b (19.30.6): A on the newest open go-along
 //                       offer's row (with STAGE: the newest whose entrants
-//                       are in STAGE), as the *Instance* page's box does
+//                       are in STAGE), as the *Instance* page's box does,
+//                       once the row is not greyed (right after a barrier
+//                       the client may not go yet: the press waits)
 //   cancelgo            A on the own waiting row (the withdraw)
 //   closeoffer          B in the box on the newest offer (no further notice)
+//   goalong closed      (development builds) INTENT 4 for the newest closed
+//                       offer whose line still shows, as a request that
+//                       crossed the close (the relay answers *go refused*)
+//   goback              B on a held GO barrier's loading screen once its line
+//                       offers it (*B: Back to the lobby*, round I1b)
+//   testhook defeat     (development builds, a relay with World:TestHooks) a
+//   testhook busy N     TEST event in the own sealed stage group: this
+//                       member's player falls / the group is neither
+//                       membership-safe nor joinable for N ticks (once)
 //   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
 //                       --screenshot's file (the ghost figures' look,
 //                       docs/SEAMLESS.md 12; a run without --screenshot
@@ -93,6 +104,7 @@
 //         notices>=N (go-along notices on screen now)
 //         go=NAME (the own go-along request: none, asked, waiting, boss,
 //         stamped, going)  offerstage=NAME (the newest open offer's stage)
+//         goback=0|1 (a held GO barrier offers B: Back to the lobby)
 //
 // Without "until", hold / press / log / shot end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
@@ -130,6 +142,9 @@ struct OnlineScriptFacts {
     std::string offer_stage;
     std::vector<std::pair<std::uint16_t, std::string>> open_offers; // newest first: id, stage
     std::string go = "none";
+    std::uint16_t closing_offer = 0; // the newest closed offer whose line still shows (its 3 s)
+    bool go_back = false;            // a held GO barrier offers B: Back to the lobby (its line after 10 s)
+    bool go_ready = false;           // A on the newest open offer's row would go now (the row is not greyed)
 };
 
 class OnlineScript {
@@ -145,6 +160,13 @@ public:
         std::uint16_t go_along{};
         bool go_cancel{};
         std::uint16_t go_close{};
+        // Development builds' hooks (the host sends them): INTENT 4 for a
+        // closed offer ("goalong closed"), a TEST event asked of the relay
+        // ("testhook": hook 1 defeat, 2 busy, value).
+        std::uint16_t go_along_raw{};
+        std::uint8_t test_hook{};
+        int test_value{};
+        bool go_back{}; // B on the held GO barrier's loading screen (goback)
     };
     struct Condition {
         std::string key, op, text;

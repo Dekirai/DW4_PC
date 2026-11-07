@@ -1,4 +1,7 @@
-# W31c, b (k10): joins a in stag0201, sees the notice of a's entry and does not answer; the offer closes when a leaves.
+# W31c, b (k10): joins a in stag0201, sees the notice of a's entry and does not answer; the offer closes when a leaves:
+# A on its closing row goes nowhere (the box greys it); a request that crossed the close (sent for the closed offer
+# while its line still shows: the development hook "goalong closed") is refused by the relay ("Couldn't go along: Kim
+# left Sand Labyrinth.").
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 until onme:mate00
@@ -8,5 +11,8 @@ idle until notices>=1 fail epoch>=@800
 log b sees the notice
 idle until offers=0 fail frames>=3000
 log the offer closed
-goalong until frames>=120 fail go=asked
-log b's late A went nowhere
+goalong until frames>=30 fail go=asked
+log b's A on the closing row went nowhere
+goalong closed until go=none,frames>=120 fail frames>=900,stagechange
+log b's crossed request was refused
+idle until frames>=60

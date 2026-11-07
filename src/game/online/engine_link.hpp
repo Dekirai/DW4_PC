@@ -132,6 +132,10 @@ public:
         (void)mask, (void)stage, (void)point;
         return false;
     }
+    // Round I1b's scenario hooks (development builds only, the TEST event,
+    // wire.hpp TestHook): before a step, at a tick every member applies. The
+    // default: an engine without them (test fakes) does nothing.
+    virtual void test_hook(int slot, wire::TestHook hook, int argument) { (void)slot, (void)hook, (void)argument; }
     // Presentation (the go-along notice waits for it, 19.30.6): the slot's own
     // scene (a talk, a map recorder) runs.
     virtual bool own_scene(int slot) const {

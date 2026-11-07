@@ -1,2 +1,24 @@
-# W31i: needs the go_test_hooks capability (scenario.json).
+# W31i (19.24, 19.30.7 step 3, 19.30.8): a GO that waits 300 ticks for a membership-safe step expires on every engine
+# alike (the fingerprints of b's and c's stage group are compared by the harness), the member is told and withdraws, the
+# relay clears its request; a request sent right after an arrival in a field waits for the new stage group and is
+# stamped.
+b: online-script: step .* log: b's GO is stamped
+b: online-trace: test hook applied .*hook=2 argument=600
+c: online-trace: test hook applied .*hook=2 argument=600
+b: online-trace: go expired .*stamped=
+c: online-trace: go expired .*stamped=
+b: online: Couldn't go along: a scene here took too long\.
+b: online-script: step .* log: b's GO expired
+b: online-script: step .* log: b asked again right after the arrival
+b: online-trace: go applied .*departs=1
+b: online-script: step .* log: b joined a in B1
+a: online-script: step .* log: b joined a in B1
+relay: test_go_hook .*hook=busy_sender
+relay: go_end .*reason=expired
+relay: go_request
+relay: go_stamped .*stage=dng204b1
+relay: go_barrier
+!b: online-trace: go applied .*departs=0
 !a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL

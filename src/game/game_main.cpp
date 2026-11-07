@@ -2267,9 +2267,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                     facts.offer_stage = offer.stage;
                                 }
                             }
+                        for (const auto& offer : session.go_offers())
+                            if (!offer.open && !facts.closing_offer) facts.closing_offer = offer.id;
                         facts.notices = int(session.go_notices(steady_seconds()).size());
                         static const char* kGo[] = {"none", "asked", "waiting", "boss", "stamped", "going"};
                         facts.go = kGo[std::min<std::size_t>(std::size_t(session.go_state()), 5)];
+                        facts.go_back = session.overlay(steady_seconds()).go_back;
+                        for (const auto& offer : session.go_offers())
+                            if (offer.open) {
+                                facts.go_ready = session.go_grey(offer).empty();
+                                break;
+                            }
                     }
                     facts.ghosts = ghosts.shown();
                     facts.figures = ghosts.staying();
@@ -2281,6 +2289,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (out.go_cancel && session.cancel_go_along()) std::cout << "online: go along cancelled at frame " << frame << '\n';
                         if (out.go_close) session.close_go_notices(out.go_close);
                     }
+                    if (online && out.go_along_raw && online->session().go_along_raw(out.go_along_raw))
+                        std::cout << "online: go along (closed offer " << out.go_along_raw << ") at frame " << frame << '\n';
+                    if (online && out.test_hook &&
+                        !online->session().test_hook_request(dw4::game::online::wire::TestHook(out.test_hook), out.test_value))
+                        std::cout << "online: the test hook could not be asked at frame " << frame << " (not sealed)\n";
+                    if (online && out.go_back && online->session().go_back_to_lobby())
+                        std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
                     input |= out.buttons;
@@ -3316,8 +3331,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     // (Round I1b, 19.30.6: View while a go-along notice has been
                     // up for half a second focuses its row; earlier the cursor
                     // stays below the box, so a reflexive A starts nothing.)
-                    const auto notices = online->session().go_notices(steady_seconds());
-                    online_ui.focus_go = !notices.empty() && steady_seconds() - notices.front()->notice_at >= 0.5;
+                    // While the own request waits ("... View: cancel") View
+                    // focuses its row, where A cancels.
+                    const auto& go_session = online->session();
+                    const auto notices = go_session.go_notices(steady_seconds());
+                    const auto go_state = go_session.go_state();
+                    const bool go_waiting = go_state == dw4::game::online::GoState::asked || go_state == dw4::game::online::GoState::waiting ||
+                                            go_state == dw4::game::online::GoState::boss;
+                    online_ui.focus_go_id = 0;
+                    online_ui.focus_go = false;
+                    if (go_waiting) {
+                        online_ui.focus_go = true;
+                        online_ui.focus_go_id = go_session.go_offer_id();
+                    } else if (!notices.empty() && steady_seconds() - notices.front()->notice_at >= 0.5) {
+                        online_ui.focus_go = true;
+                        online_ui.focus_go_id = notices.front()->id;
+                    }
+                    online_ui.focus_below_go = !online_ui.focus_go && !online_ui.focus_visibility && !go_session.go_offers().empty();
                 }
                 menu_shown_before = show_menu;
                 // Overhead name tags over the picture, under the menus.

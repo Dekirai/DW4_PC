@@ -141,6 +141,11 @@ bool GameEngineLink::joinable(wire::NotJoinable& reason) const {
         reason = wire::NotJoinable::boss;
         return false;
     }
+    // (Round I1b's busy test hook stands in for a shared scene.)
+    if (e().online_test_busy() > 0) {
+        reason = wire::NotJoinable::scene;
+        return false;
+    }
     if (!e().joinable()) {
         reason = wire::NotJoinable::menu;
         return false;
@@ -475,6 +480,14 @@ void GameEngineLink::home(std::uint8_t mask) { e().online_home(mask); }
 bool GameEngineLink::depart_home() { return e().online_depart_home(); }
 
 bool GameEngineLink::go(std::uint8_t mask, const std::string& stage, int point) { return e().online_go(mask, stage, point); }
+
+void GameEngineLink::test_hook(int slot, wire::TestHook hook, int argument) {
+#ifdef DW4_ONLINE_DEV
+    e().online_test_hook(slot, int(hook), argument);
+#else
+    (void)slot, (void)hook, (void)argument;
+#endif
+}
 
 bool GameEngineLink::own_scene(int slot) const { return e().own_scene_running(slot); }
 

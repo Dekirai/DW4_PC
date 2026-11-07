@@ -216,8 +216,20 @@ private:
 
 // ---- enumerations
 enum class Mode : std::uint8_t { hub = 0, solo = 1, sealed = 2 }; // WELCOME, BARRIER_OK, REASSIGN
-enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from = 4, delay = 5, home = 6, go = 7 };
-enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, go_along = 4 };
+// test (0xF0): round I1b's scenario hooks (slot u8 | hook u8 | argument i32),
+// stamped only by a relay with World:TestHooks / World:TestGoHook on; only
+// development builds apply it (TestHook), every other build skips it like an
+// unknown event (the scenarios run development builds only).
+enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from = 4, delay = 5, home = 6, go = 7, test = 0xF0 };
+// test (0x7F, development builds): ask the relay for a TEST event in the own
+// stage group (argument = hook | value << 8; a relay without World:TestHooks
+// ignores it).
+enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, go_along = 4, test = 0x7F };
+// The TEST event's hooks (development builds; docs/ROUND_I1B_GO_NOTES.md):
+// defeat: the slot's player falls (0 HP, SQ_DEAD, as poison's last tick);
+// busy: the stage group is neither membership-safe nor joinable for
+// `argument` ticks (a shared scene's stand-in).
+enum class TestHook : std::uint8_t { defeat = 1, busy = 2 };
 // HOME's reason (19.6.5).
 enum class HomeReason : std::uint8_t { leave = 1, ended = 2, removed = 3, staff = 4 };
 // JOIN_REQ's kind (protocol 49): a JOIN, a HOME (`slot` holds the mask) or a GO (I1b).
@@ -273,12 +285,13 @@ struct Event {
     std::uint8_t point{};               // JOIN: the entrance point; GO: the point
     std::vector<std::uint8_t> carry;    // JOIN: the joiner's carry (engine bytes)
     std::uint8_t intent_kind{};         // INTENT
-    std::int32_t argument{};            // INTENT
+    std::int32_t argument{};            // INTENT, TEST
     std::uint32_t tick{};               // LEAD_FROM
     std::uint8_t delay{};               // DELAY
     std::uint8_t mask{};                // HOME: the slots that go home
     std::uint8_t reason{};              // HOME: HomeReason
     std::string stage;                  // GO: the target stage
+    std::uint8_t hook{};                // TEST: TestHook (argument: its value)
     bool operator==(const Event&) const = default;
 };
 struct TickBody {

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.Tests;
@@ -48,10 +49,10 @@ public partial class HubLogicTests
         public Dictionary<string, (HubMember Member, Peer Peer)> M { get; } = [];
 
         public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null,
-            int protocol = Wire.CheckpointProtocol)
+            int protocol = Wire.CheckpointProtocol, WorldHubOptions? world = null)
         {
             Hub = new RoomHub(new RoomInfo("ROOM01", protocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
-                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner);
+                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner, world);
         }
 
         public void Advance(double ms) => Now += (long)(ms * Stopwatch.Frequency / 1000.0);
@@ -179,9 +180,9 @@ public partial class HubLogicTests
     }
 
     private static Harness SealedPair(out uint inst, RelayOptions? relay = null, InstanceOptions? instances = null,
-        int protocol = Wire.CheckpointProtocol, string stage = "stag0201")
+        int protocol = Wire.CheckpointProtocol, string stage = "stag0201", WorldHubOptions? world = null)
     {
-        var h = new Harness(instances, relay, protocol: protocol);
+        var h = new Harness(instances, relay, protocol: protocol, world: world);
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Send("a", new HeadingMsg(h.Inst("a"), stage, 0, 5).Frame());

@@ -280,6 +280,8 @@ public enum HoldKind
     CoArrival,
     Join,
     Boss,
+    /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs: a GO's barrier waits before its decision.</summary>
+    TestGo,
 }
 
 /// <summary>
@@ -317,6 +319,8 @@ public sealed class ArrivalGroup
     /// <summary>Round I1b (19.30.7): the barrier of a stamped GO: its offer's stage group first, a JOIN hold without
     /// Instances:JoinHoldSeconds while that stage group exists, no *Go alone* at a boss lock, no rescue join.</summary>
     public DW4Online.Relay.World.GoOffer? Go { get; set; }
+    /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs held this GO barrier once already.</summary>
+    public bool TestHeld { get; set; }
 }
 
 public sealed record Arrival(HubMember Member, int Slot, byte[] Carry);

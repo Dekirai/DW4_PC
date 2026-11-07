@@ -1,0 +1,17 @@
+# W31c2, host a (k10): hosts Dry Land, b joins in stag0201; a goes into dng204b1 alone (matz01) and, 45 s after it had
+# control there, back to stag0201 (depart: alone in its stage group, the way matz01 of dng204b1 takes) while b's GO
+# barrier is held by the relay's test hook (World:TestGoBarrierHoldMs 40 s).
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until present=2,sealed>=300 or epoch>=@400 fail stagechange
+explore matz01 yes until stage=dng204b1,control fail epoch>=@700
+log a in dng204b1
+disk 1 until hp>=700 or frames>=600
+idle until frames>=2100 fail present>=2
+depart stag0201 1 until stage=stag0201,control fail epoch>=@900
+log a back in stag0201
+idle until frames>=3600 fail stagechange
+log a done

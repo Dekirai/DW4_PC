@@ -1,2 +1,21 @@
-# This scenario needs the go_test_hooks capability (see scenario.json's desc); run.py skips it until the hook exists.
-idle until frames>=60
+# W31h, b (k10): stays in stag0201 when a and c go into dng204b1; goes along 30 s after the notice (their floor is ready:
+# stamped at once); the test hook makes their floor busy 40 s right after the stamp: b's GO barrier waits past
+# Instances:JoinHoldSeconds (30 s) without a new stage group at dng204b1; after the 10 s line ("Waiting for ...'s
+# floor...") and 25 s more, B: Back to the lobby takes b home.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until notices>=1 fail epoch>=@900
+log b sees the notice
+idle until frames>=1800 fail stagechange
+goalong until go=stamped or go=going
+log b goes along
+idle until goback=1 fail stage=dng204b1,epoch>=@1100
+log b's barrier waits for the busy floor
+idle until frames>=1500 fail stage=dng204b1
+log b waited past the join hold
+goback until stage=stagml11,control fail stage=dng204b1,frames>=1800
+log b back in the lobby
+idle until frames>=120

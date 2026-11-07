@@ -86,6 +86,7 @@ public:
     void home(std::uint8_t mask) override;
     bool depart_home() override;
     bool go(std::uint8_t mask, const std::string& stage, int point) override;
+    void test_hook(int slot, wire::TestHook hook, int argument) override;
     bool own_scene(int slot) const override;
     void set_view_slot(int slot) override;
 

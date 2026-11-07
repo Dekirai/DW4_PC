@@ -1207,6 +1207,17 @@ bool Session::apply_events(bool replaying) {
             break;
         }
         case w::EventKind::go: gos.push_back(e); break;
+        case w::EventKind::test:
+            // Round I1b's scenario hooks: only development builds apply them
+            // (a relay stamps them only with its test options on), in their
+            // order with the GOs of the step.
+#ifdef DW4_ONLINE_DEV
+            if (!gos.empty()) apply_gos(gos, replaying);
+            trace("test hook applied inst=%u visit=%u tick=%u slot=%d hook=%u argument=%d%s", inst_, visit_, tick_, slot, unsigned(e.hook),
+                  int(e.argument), replaying ? " (replay)" : "");
+            engine_.test_hook(slot, w::TestHook(e.hook), e.argument);
+#endif
+            break;
         // LEAD_FROM and DELAY are for the member that plays now: never from a
         // replayed history or while observing (a joiner before its JOIN). A
         // resync replays the member's own instance: a LEAD_FROM there that

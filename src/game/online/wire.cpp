@@ -328,6 +328,11 @@ void write_tick(Writer& w, const TickBody& tick) {
             p.u8(e.point);
             put_stage(p, e.stage, false);
             break;
+        case EventKind::test:
+            p.u8(e.slot);
+            p.u8(e.hook);
+            p.i32(e.argument);
+            break;
         default: throw WireError("unknown event kind");
         }
         if (p.out.size() > 0xFFFF) throw WireError("event too long");
@@ -378,6 +383,11 @@ TickBody read_tick(Reader& r) {
             e.slot = p.u8();
             e.point = p.u8();
             e.stage = stage_of(p, false);
+            break;
+        case EventKind::test:
+            e.slot = p.u8();
+            e.hook = p.u8();
+            e.argument = p.i32();
             break;
         default: continue; // an event type of a newer server: skipped
         }
@@ -878,7 +888,7 @@ Intent decode_intent(std::span<const std::uint8_t> b) {
     m.inst = r.u32();
     m.visit = r.u32();
     const auto kind = r.u8();
-    if (kind < 1 || kind > 4) throw WireError("unknown intent");
+    if ((kind < 1 || kind > 4) && kind != std::uint8_t(IntentKind::test)) throw WireError("unknown intent");
     m.kind = IntentKind(kind);
     m.argument = r.i32();
     r.end();

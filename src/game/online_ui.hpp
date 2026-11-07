@@ -95,6 +95,8 @@ struct OnlineUiState {
     // out: A on a row (the offer id), A on the own waiting row (Cancel), B in
     // the box (that offer's notices off; the menu closes).
     bool focus_go = false;
+    std::uint16_t focus_go_id = 0;       // in: the row focus_go focuses (0: the first; the own waiting row's offer while it waits)
+    bool focus_below_go = false;         // in: the menu opened within a notice's first half second: the cursor below the box
     int go_requested = 0;
     bool go_cancel_requested = false;
     int go_closed = 0;

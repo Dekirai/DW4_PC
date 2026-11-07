@@ -46,6 +46,16 @@ public sealed record TickEvent(byte Type, byte[] Payload)
 
     /// <summary>Protocol 49, round I1b (19.30.7): the slot goes along to <paramref name="stage"/> at <paramref name="point"/> (taken as named).
     /// Applied like INTENT at the first membership-safe step; every GO of a step together; expires 300 ticks after its tick.</summary>
+    /// <summary>Round I1b's scenario hooks (test runs only, <see cref="Ev.Test"/>).</summary>
+    public static TickEvent Test(int slot, TestHook hook, int argument)
+    {
+        var p = new byte[6];
+        p[0] = (byte)slot;
+        p[1] = (byte)hook;
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(p.AsSpan(2), argument);
+        return new TickEvent(Ev.Test, p);
+    }
+
     public static TickEvent Go(int slot, int point, string stage)
     {
         var w = new WireWriter(0);
@@ -76,7 +86,7 @@ public sealed record TickEvent(byte Type, byte[] Payload)
     public const int MaxPayload = ushort.MaxValue;
 
     /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY, GO), or -1.</summary>
-    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay or Ev.Go && Payload.Length > 0 ? Payload[0] : -1;
+    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay or Ev.Go or Ev.Test && Payload.Length > 0 ? Payload[0] : -1;
 }
 
 /// <summary>
@@ -476,7 +486,7 @@ public sealed record IntentMsg(uint Inst, uint Visit, IntentKind Kind, int Argum
         var r = new WireReader(p);
         var m = new IntentMsg(r.U32(), r.U32(), (IntentKind)r.U8(), r.I32());
         r.End();
-        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp or IntentKind.Leave or IntentKind.GoAlong)) throw new ProtocolException("unknown intent");
+        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp or IntentKind.Leave or IntentKind.GoAlong or IntentKind.Test)) throw new ProtocolException("unknown intent");
         return m;
     }
 

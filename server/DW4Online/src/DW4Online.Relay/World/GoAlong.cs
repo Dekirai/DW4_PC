@@ -468,9 +468,11 @@ namespace DW4Online.Relay.Hub
             r.Point = target.EntryPoint;
             r.StampedIn = s;
             string how;
+            TestAtGoStampTarget(m, target);
             if (s.Mode == InstanceMode.Sealed)
             {
                 if (!ticks.TryGetValue(s, out var t)) ticks[s] = t = StampTick(s);
+                TestAtGoStamp(m, s, t);
                 s.AddEvent(t, TickEvent.Go(m.Slot, r.Point, r.Stage));
                 r.StampTick = t;
                 how = "sealed";
@@ -557,6 +559,7 @@ namespace DW4Online.Relay.Hub
             i.Mode = InstanceMode.Sealed;
             i.Streams[m.Slot] = NewStream(m, m.Slot, j, DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks));
             m.Cursor = j;
+            TestAtGoStamp(m, i, j);
             i.AddEvent(j, TickEvent.Go(go.Slot, go.Point, go.Stage));
             ScheduleLeadFrom(i, j + 1);
             if (m.Go is { } r) r.StampTick = j;
@@ -590,6 +593,76 @@ namespace DW4Online.Relay.Hub
                 o.Asked.Remove(m);
             }
             if (_worlds.ContainsKey(w.Wid) && w.Offers.Count > 0) UpdateOffers(w, now);
+        }
+
+        // Round I1b's scenario hooks (test runs only; WorldHubOptions.TestHooks / TestGoHook / TestGoBarrierHoldMs) --------------
+
+        /// <summary>GO stamps that got World:TestGoHook so far (the first World:TestGoHookCount ones get it).</summary>
+        private int _testGoHooks;
+
+        private (string Kind, int Value)? TestGoHookDue()
+        {
+            var spec = _world.TestGoHook;
+            if (string.IsNullOrWhiteSpace(spec) || _testGoHooks >= _world.TestGoHookCount) return null;
+            var parts = spec.Split(':', 2);
+            return (parts[0].Trim().ToLowerInvariant(), parts.Length > 1 && int.TryParse(parts[1], out var v) ? v : 0);
+        }
+
+        /// <summary>World:TestGoHook "defeat" / "busy_sender:N" at a GO's stamp tick in the sender's stage group, before the GO (sealed:
+        /// StampGo; solo-led: the JOIN_AT of JOIN_REQ kind go).</summary>
+        private void TestAtGoStamp(HubMember m, HubInstance s, uint tick)
+        {
+            if (TestGoHookDue() is not { } due || due.Kind is not ("defeat" or "busy_sender")) return;
+            _testGoHooks++;
+            s.AddEvent(tick, due.Kind == "defeat" ? TickEvent.Test(m.Slot, TestHook.Defeat, 0) : TickEvent.Test(m.Slot, TestHook.Busy, due.Value));
+            Count("test_go_hook");
+            Note("test_go_hook", s, ("member", m.Id), ("hook", due.Kind), ("value", due.Value), ("tick", tick));
+        }
+
+        /// <summary>World:TestGoHook "busy_target:N" at a GO's stamp: the target stage group (sealed) busy from its next stamp tick.</summary>
+        private void TestAtGoStampTarget(HubMember m, HubInstance target)
+        {
+            if (TestGoHookDue() is not { Kind: "busy_target" } due) return;
+            if (target is not { Mode: InstanceMode.Sealed, Ended: false } || target.Leader is not { } lead)
+            {
+                Count("test_go_hook_skipped");
+                return;
+            }
+            _testGoHooks++;
+            var tick = StampTick(target);
+            target.AddEvent(tick, TickEvent.Test(lead.Slot, TestHook.Busy, due.Value));
+            Count("test_go_hook");
+            Note("test_go_hook", target, ("member", m.Id), ("hook", due.Kind), ("value", due.Value), ("tick", tick));
+        }
+
+        /// <summary>INTENT kind test (World:TestHooks): a TEST event in the sender's sealed stage group at the next stamp tick.</summary>
+        private void OnTestIntent(HubMember m, IntentMsg msg)
+        {
+            var hook = (TestHook)(msg.Argument & 0xFF);
+            if (!_world.TestHooks || hook is not (TestHook.Defeat or TestHook.Busy) ||
+                Mine(m, msg.Inst, msg.Visit) is not { Mode: InstanceMode.Sealed, Sealing: true, Ended: false } i)
+            {
+                Count("test_hook_ignored");
+                return;
+            }
+            var tick = StampTick(i);
+            i.AddEvent(tick, TickEvent.Test(m.Slot, hook, msg.Argument >> 8));
+            Count("test_hook");
+            Note("test_hook", i, ("slot", m.Slot), ("hook", hook.ToString().ToLowerInvariant()), ("value", msg.Argument >> 8), ("tick", tick));
+        }
+
+        /// <summary>World:TestGoBarrierHoldMs: a GO's barrier waits that long once before its decision (W31c's race).</summary>
+        private bool TestHoldGoBarrier(ArrivalGroup g, long now)
+        {
+            if (g.Go is null || g.TestHeld || _world.TestGoBarrierHoldMs <= 0) return false;
+            g.TestHeld = true;
+            g.Hold = HoldKind.TestGo;
+            g.HoldUntil = now + FromMs(_world.TestGoBarrierHoldMs);
+            if (!_holds.Contains(g)) _holds.Add(g);
+            Count("test_hold_go");
+            Note("test_hold_go", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("ms", _world.TestGoBarrierHoldMs));
+            SendWait(g, WaitReason.NotJoinable, [], 0, 0, now);
+            return true;
         }
 
         /// <summary>*B: Back to the lobby* on a GO's held loading screen (19.30.7 step 4): the member's *Leave instance* from its barrier, a

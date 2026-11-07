@@ -306,4 +306,35 @@ void Session::go_expired(bool replaying) {
     if (connected()) send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, 0}));
 }
 
+bool Session::test_hook_request(w::TestHook hook, int value) {
+#ifdef DW4_ONLINE_DEV
+    if (mode_ != Mode::sealed || !connected()) return false;
+    const std::int32_t argument = std::int32_t(std::uint8_t(hook)) | (std::max(0, std::min(value, 0x7FFFFF)) << 8);
+    send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::test, argument}));
+    trace("test hook asked inst=%u visit=%u hook=%u value=%d", inst_, visit_, unsigned(hook), value);
+    return true;
+#else
+    (void)hook, (void)value;
+    return false;
+#endif
+}
+
+bool Session::go_along_raw(std::uint16_t offer) {
+#ifdef DW4_ONLINE_DEV
+    if (offer == 0 || go_state_ != GoState::none || wid_ == 0 || !connected()) return false;
+    send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, std::int32_t(offer)}));
+    go_state_ = GoState::asked;
+    go_offer_ = offer;
+    if (const auto* o = find_go_offer(offer)) {
+        go_target_ = o->entrants.empty() ? 0 : o->entrants.front();
+        go_target_stage_ = o->stage;
+    }
+    trace("go along asked inst=%u visit=%u offer=%u (raw)", inst_, visit_, unsigned(offer));
+    return true;
+#else
+    (void)offer;
+    return false;
+#endif
+}
+
 } // namespace dw4::game::online

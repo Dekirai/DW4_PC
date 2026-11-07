@@ -1,2 +1,15 @@
-# This scenario needs the go_test_hooks capability (see scenario.json's desc); run.py skips it until the hook exists.
-idle until frames>=60
+# W31d, b (k10): joins a in stag0201 and falls there (the development test hook: TEST defeat in its sealed stage group)
+# before a goes in: no notice while it is defeated; c's GO takes it along (the side rule), it comes back in dng204b1.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until present=4,sealed>=300 or epoch>=@460 fail stagechange
+idle until epoch>=@470 fail stagechange
+testhook defeat until dead fail frames>=600
+log b fell
+idle until stage=dng204b1 fail notices>=1,epoch>=@1200
+log b taken along into dng204b1 without a notice
+idle until present=4,sealed>=300,alive fail epoch>=@1200
+log b alive in B1 with a, c and d

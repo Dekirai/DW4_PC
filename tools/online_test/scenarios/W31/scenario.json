@@ -3,8 +3,8 @@
   "world": true,
   "autochoice": "first",
   "seed_story": true,
-  "frames": 120000,
-  "timeout": 2000,
+  "frames": 130000,
+  "timeout": 2100,
   "min_shared_ticks": 0,
   "clients": [
     {
