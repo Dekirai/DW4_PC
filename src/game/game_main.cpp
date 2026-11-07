@@ -2257,6 +2257,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
                     }
                     facts.ghosts = ghosts.shown();
+                    facts.figures = ghosts.staying();
                     const auto out = online_script.update(engine, facts);
                     if (!out.shot.empty() && !options.screenshot.empty()) ui_shot = out.shot;
                     // The run ends once the script is done.

@@ -70,7 +70,9 @@
 //         answers given in this step)  hp<=N (this member's HP)
 //         level>=N (this member's own character's level)
 //         ghosts>=N (ghost figures this machine shows: other room members
-//         in this hub stage, docs/SEAMLESS.md 12)
+//         in this hub stage, docs/SEAMLESS.md 12; a figure fading out
+//         counts)  figures>=N (those of them that stay, without the ones
+//         fading out: the relay's choice, 19.13's cap)
 //         roomflag:N=V (flag N of the room story this machine holds as
 //         confirmed, docs/SEAMLESS.md 8.3: the server's newest it was sent,
 //         ahead of the engine until the next barrier; 0 without one)
@@ -111,6 +113,7 @@ struct OnlineScriptFacts {
     std::uint32_t tick = 0;      // the next tick of the visit
     const engine::RoomStory* room_story = nullptr; // the session's confirmed room story (none yet: nullptr)
     int ghosts = 0;              // ghost figures shown (GhostFigures::shown, presentation)
+    int figures = 0;             // of them staying, not fading out (GhostFigures::staying)
 };
 
 class OnlineScript {

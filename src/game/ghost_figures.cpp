@@ -313,6 +313,13 @@ int GhostFigures::shown() const {
     return int(keys.size());
 }
 
+int GhostFigures::staying() const {
+    std::vector<std::uint64_t> keys;
+    for (const auto& f : figures_)
+        if (!f->leaving && std::find(keys.begin(), keys.end(), f->key) == keys.end()) keys.push_back(f->key);
+    return int(keys.size());
+}
+
 std::size_t GhostFigures::loaded_forms() const {
     std::size_t n = 0;
     for (const auto& [species, model] : models_) n += model && model->root ? 1 : 0;

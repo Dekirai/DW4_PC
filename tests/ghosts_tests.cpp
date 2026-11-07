@@ -189,6 +189,8 @@ void figures(const std::string& data) {
     // Leaving: fades out, then gone.
     ghosts.update({}, std::nullopt, clock.now += 0.1);
     check(ghosts.active() && ghosts.describe()[0].find("leaving") != std::string::npos, "a member that left fades out");
+    // (Round I1a's integration, W19: a fading figure counts as shown, not as staying.)
+    check(ghosts.shown() == 1 && ghosts.staying() == 0, "the fading figure is shown, not staying");
     for (int k = 0; k < 5; ++k) ghosts.update({}, std::nullopt, clock.now += 0.1);
     check(!ghosts.active(), "and is gone");
     // The cap: the nearest thirty of thirty-five (round I1a, 19.13).

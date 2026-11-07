@@ -117,6 +117,10 @@ public:
     // Members shown: those with a figure on the screen or a staying one whose
     // form is loaded (a form change's crossfade counts once).
     int shown() const;
+    // Members whose figure stays (not fading out): the relay's choice as
+    // this machine draws it (the figures that fade out after a GONE count
+    // in shown() for a moment, the new ones beside them).
+    int staying() const;
     // Figures drawn by the last draw (alpha above 0) and loaded forms.
     std::size_t drawn() const { return drawn_; }
     std::size_t loaded_forms() const;
