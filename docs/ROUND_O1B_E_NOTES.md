@@ -401,4 +401,7 @@ minutes: the kite bot loses the buff as much as the newcomer, and the kite Agumo
 shots and poison in phase 2, phase 4's families): no lever for 14.2. A longer cooldown keeps DW4's times: every 60 s
 the buff is off for a while at Petty / Mega (30-36 s plus INT), on for good at Terra / ∞ later.
 
-**Shipped:** Pwr Up's run cooldown 60 s (`kTechniques`, Guilmon's TECH5 too), the buff cap off (`buff_steps` 0).
+**Shipped:** Pwr Up's run cooldown 15 s until 10:00 and 60 s after (`Tuning::pwr_up_late_from` /
+`pwr_up_late_cooldown`, key `pwr_up_late=60,600`; Guilmon's TECH5 too), the buff cap off (`buff_steps` 0). 60 s from
+the start (d401cc11, `runs_gF`) gave human Agumon 20:52 (seeds 1-20) and 20:49 (101-117) but 6 of 37 runs ended at
+5:41-6:37, the first minute of phase 2 (before: 1 of 20): the early game keeps its buff (1f6bb526).
