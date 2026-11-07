@@ -152,6 +152,10 @@ public:
         // forge_start=N: Forge families open at the start, tests and pictures.)
         if (const auto gate = option(request_, "return_gate"); !gate.empty()) config.tuning.return_gate = gate != "0";
         if (const auto forge = option(request_, "forge_start"); !forge.empty()) config.forge_start = std::atoi(forge.c_str());
+        // (art_skill=N: the Art's class skill at the start; phase=SECONDS: a phase's
+        // length, the finale at four of them: pictures of the finale and the gate.)
+        if (const auto skill = option(request_, "art_skill"); !skill.empty()) config.art_skill_start = std::atoi(skill.c_str());
+        seconds("phase", config.tuning.phase_steps);
         real("guardian_hp", config.tuning.guardian_hp);
         real("finale_hp", config.tuning.finale_hp);
         auto list = [](const std::string& text) {

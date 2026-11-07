@@ -159,6 +159,12 @@ void OverflowDirector::start_running(Engine& engine) {
             }
         equip_ladder(engine, true);
         // (Tests, pictures: Forge families opened at the start, as their offers would.)
+        if (config_.art_skill_start > 0) {
+            auto& skill = player.stats.skill[std::size_t(art_skill_)];
+            skill = std::max(skill, config_.art_skill_start);
+            auto& cap = rules_->skills.cap[std::size_t(art_skill_)];
+            cap = std::max(cap, skill);
+        }
         for (int f = 2; f <= std::min({config_.forge_start, 5, offer_state_.forge_families}); ++f) take_offer(engine, Offer{OfferKind::forge, f});
         // The Plug Lab's points of the form (8.2, lane F's meta file).
         for (std::size_t i = 0; i < config_.plug_lab.size(); ++i) player.upcnt[i] += std::max(0, config_.plug_lab[i]);

@@ -329,6 +329,7 @@ struct RunConfig {
     std::vector<std::string> elite;
     // (Tests, pictures: the Forge families open at the start, 1-5; the Awakening's test.)
     int forge_start = 1;
+    int art_skill_start = 0; // (... and the Art's class skill at the start: forge_start=5 art_skill=2500 awakens)
 };
 
 // The four Rookies a run starts with in O1b (5.3).
