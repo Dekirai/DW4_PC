@@ -862,7 +862,7 @@ def is_seeded(sc, c):
     return bool(sc.get("seed_story")) and bool(c.get("card", sc.get("card")))
 
 
-def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH):
+def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH, context=None):
     """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
     protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
     fake's engine is the stand-in (FakeEngine), never a real game: it must never share a stage group with a game client
@@ -878,6 +878,8 @@ def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script,
             "--token", body["token"], "--pin", pin, "--protocol", str(WORLD_PROTOCOL), "--data-hash", str(data_hash), "--name", name,
             "--seed", str(seed), "--script", path,
             "--duration", str(duration), "--log", os.path.join(out, name + ".jsonl"), "--stats", os.path.join(out, name + ".stats.json")]
+    if context:
+        argv += ["--context", context]
     return stack.spawn(argv, os.path.join(out, name + ".out")), body["account"]["id"]
 
 
@@ -1193,13 +1195,21 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 data_hash = int(m.group(1))
             else:
                 fake_problems.append("fake_guests: no instance of %s to take the data hash from" % source.strip())
+            # ... and only instances of the arrival's session context (19.7.2: the real game's quest values, not the fakes'
+            # stand-in hash): the host's instance_start in the relay's world log names it.
+            context = None
+            for e in load_world_log(diag):
+                if e.get("ev") == "instance_start" and str(e.get("host")) == str(accounts[source.strip()]) and e.get("context"):
+                    context = e["context"]
+            if not context:
+                fake_problems.append("fake_guests: no instance_start of %s with its context in the world log" % source.strip())
             # (The fakes take the gate 20 s apart: two strangers within the co-arrival window would arrive together as an
             # instance of their own, which decision 40's order puts before a running instance.)
             for k in range(int(spec.get("count", 1))):
                 name = "fg%d" % (k + 1)
                 script = [{"at": 1.0, "do": "exit", "stage": "stagML11"}, {"at": 4.0 + 20.0 * k, "do": "exit", "stage": spec.get("stage", "stag0101")}]
                 p, accounts[name] = start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, max(10, limit - (time.time() - t0)),
-                                                            200 + k, lock, data_hash)
+                                                            200 + k, lock, data_hash, context)
                 fakes.append(p)
                 fake_names.append(name)
         threading.Thread(target=guests, daemon=True).start()

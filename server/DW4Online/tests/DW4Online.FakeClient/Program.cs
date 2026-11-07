@@ -10,7 +10,7 @@ using DW4Online.Relay.Protocol;
 // DW4Online.FakeClient: fake DW4R2 clients, the impairment proxy and the loss matrix (SEAMLESS.md 6.4, 16).
 //
 //   client  --port N [--host 127.0.0.1] (--ticket T | --api URL --token BEARER --room CODE [--pin BASE64])
-//           [--protocol 43] [--data-hash 1] [--settings-hash HEX] [--name NAME] [--quest N] [--seed N] [--script FILE]
+//           [--protocol 43] [--data-hash 1] [--settings-hash HEX] [--name NAME] [--quest N] [--context HEX] [--seed N] [--script FILE]
 //           [--duration SECONDS] [--replay-rate N] [--entry-ticks 120] [--depart-ticks 120] [--log FILE] [--stats FILE]
 //   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P] [--up MS,JITTER,LOSS] [--down MS,JITTER,LOSS]
 //           [--cut EPOCH,SECONDS[,half|close]] (a scheduled cut of the link, the world's host grace scenarios)
@@ -81,6 +81,7 @@ switch (args.FirstOrDefault())
             SettingsHash = ulong.Parse(Opt("--settings-hash", "0"), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture),
             Name = Opt("--name", "fake"),
             Quest = byte.Parse(Opt("--quest", "0"), CultureInfo.InvariantCulture),
+            Context = Opt("--context") is { Length: > 0 } context ? ulong.Parse(context, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture) : null,
             Seed = int.Parse(Opt("--seed", "1"), CultureInfo.InvariantCulture),
             Script = script,
             Duration = TimeSpan.FromSeconds(double.Parse(Opt("--duration", "30"), CultureInfo.InvariantCulture)),

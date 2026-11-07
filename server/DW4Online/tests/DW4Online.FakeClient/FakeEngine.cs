@@ -53,7 +53,10 @@ public sealed class FakeEngine
 
     public bool Joinable => Tick >= EntryTicks && Departure is null;
     public bool MembershipSafe => Tick >= EntryTicks;
-    public ulong ContextHash => FnvMix(0xC0FFEE, Quest);
+    /// <summary>The session context hash this stand-in reports (HEADING, BARRIER, STATE): its quest's, or a real game's when
+    /// set (W29's fake guests arrive in a real host's instance, whose candidates need its context, 19.7.2).</summary>
+    public ulong? ContextOverride { get; set; }
+    public ulong ContextHash => ContextOverride ?? FnvMix(0xC0FFEE, Quest);
     public ulong NetFingerprint => FnvMix(FnvMix(Hash, Tick), (ulong)Present | ((ulong)Leaving << 8));
 
     public static ulong FnvMix(ulong h, ulong v)

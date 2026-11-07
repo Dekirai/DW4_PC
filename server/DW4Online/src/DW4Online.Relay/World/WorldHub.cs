@@ -316,7 +316,7 @@ public sealed partial class RoomHub
         }
         Count("instances");
         Note("instance_start", null, ("wid", w.Wid), ("host", host.AccountId), ("member", host.Id), ("area", w.Area ?? ""), ("stage", w.FirstStage),
-            ("visibility", Visibilities.Text(w.Visibility)), ("unlisted", w.Unlisted));
+            ("visibility", Visibilities.Text(w.Visibility)), ("unlisted", w.Unlisted), ("context", w.Context.ToString("x16")));
         History?.Invoke(new HistoryStart(w, new InstanceHistoryStart(host.AccountId, host.Box, w.FirstStage, Visibilities.Text(w.Visibility),
             w.Settings.Difficulty, StoryMerge.Phase(keeper.Story), w.Settings.Canonical(Wire.WorldProtocol, w.DataHash), w.StartedUtc)));
         TakeSeat(w, host, now, "new_group");

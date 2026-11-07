@@ -25,6 +25,8 @@ public sealed class FakeClientOptions
     public ulong SettingsHash { get; set; }
     public string Name { get; set; } = "fake";
     public byte Quest { get; set; }
+    /// <summary>A real game's session context hash to report instead of the stand-in's (W29: a real host's instance).</summary>
+    public ulong? Context { get; set; }
     public int Seed { get; set; } = 1;
     public List<ScriptAction> Script { get; set; } = [];
     /// <summary>Pads that encode their tick (fills are then exact to detect; the loss matrix).</summary>
@@ -128,6 +130,7 @@ public sealed class FakeClient
     {
         _o = options;
         _engine.Quest = options.Quest;
+        _engine.ContextOverride = options.Context;
         _engine.EntryTicks = options.EntryTicks;
         _engine.DepartTicks = options.DepartTicks;
         _script = options.Script.OrderBy(a => a.At).ToList();
