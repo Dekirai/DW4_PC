@@ -1,0 +1,12 @@
+# W31c, b (k10): joins a in stag0201, sees the notice of a's entry and does not answer; the offer closes when a leaves.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until notices>=1 fail epoch>=@800
+log b sees the notice
+idle until offers=0 fail frames>=3000
+log the offer closed
+goalong until frames>=120 fail go=asked
+log b's late A went nowhere

@@ -1,0 +1,12 @@
+# W31e, host a (k10): hosts Dry Land; once c went on to stag0202 a walks into dng204b1 (matz01).
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until present=3,sealed>=300 or epoch>=@420 fail stagechange
+idle until present=2 or epoch>=@600 fail stagechange
+idle until epoch>=@640
+explore matz01 yes until stage=dng204b1,control fail epoch>=@900
+log a in dng204b1
+idle until epoch>=@1300

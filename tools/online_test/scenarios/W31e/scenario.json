@@ -1,0 +1,31 @@
+{
+  "desc": "go along, two dungeons (19.30.8, W31e): a goes into dng204b1 (stag0201's matz01) and c into dng205b1 (stag0202's matz01) close together: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

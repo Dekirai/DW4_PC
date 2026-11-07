@@ -1,0 +1,2 @@
+# W31d: needs the go_test_hooks capability (scenario.json).
+!a: online-script: FAIL

@@ -1,0 +1,12 @@
+# W31c (19.24): the entrants leave before the answer: the offer closes (left), a later A goes nowhere.
+a: online-script: step .* log: a in dng204b1
+a: online-script: step .* log: a out again
+b: online-script: step .* log: b sees the notice
+b: online-trace: offer closed id=\d+ reason=1
+b: online-script: step .* log: the offer closed
+b: online-script: step .* log: b's late A went nowhere
+relay: offer_open .*stage=dng204b1
+relay: offer_close .*reason=left
+!relay: go_request
+!a: online-script: FAIL
+!b: online-script: FAIL

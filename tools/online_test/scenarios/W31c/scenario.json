@@ -1,0 +1,13 @@
+{
+  "desc": "go along, races (19.30.8), the part without a test hook: a goes into dng204b1 and back out before b answers: the offer closes (\"Kim left Sand Labyrinth.\" in b's box, no closing line as a notice), b's A on the closing row goes nowhere. (The second part, b's GO stamped while a's way back is held so that b lands alone in dng204b1 in a stage group of a's instance, needs the go_test_hooks capability: a relay hook that holds a's barrier until b's GO is stamped; not built in round I1b's go lane.)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 80000,
+  "timeout": 1300,
+  "min_shared_ticks": 0,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "seed_story": true}
+  ]
+}

@@ -1,0 +1,12 @@
+# W31b, host a (k10): hosts Dry Land; with b and c in its stage group a steps onto stag0201's matz01 first (the prompt's
+# owner) and answers Yes once b stands on the mat too; b says No: a goes into dng204b1 alone.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until present=3,sealed>=300 or epoch>=@420 fail stagechange
+log b and c joined
+mat matz01 yes 2 until stage=dng204b1,control fail epoch>=@800
+log a in dng204b1
+idle until epoch>=@900

@@ -1,0 +1,16 @@
+# W31g, b (k10): joins a in stag0201, goes on to stag0202 (matz00); sees one notice for a's entries and closes the
+# offer with B.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until frames>=300
+explore matz00 yes until stage=stag0202,control fail epoch>=@500
+log b in stag0202
+idle until notices>=1 fail epoch>=@900
+log b sees the notice
+closeoffer until frames>=60
+log b closed the offer
+idle until frames>=3600 fail notices>=1
+log b saw no further notice

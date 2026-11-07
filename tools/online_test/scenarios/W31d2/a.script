@@ -1,0 +1,7 @@
+# W31d2, host a (k10): hosts Dry Land in stag0201 and stays there with b.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until epoch>=@1100 fail stagechange

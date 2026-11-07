@@ -2261,6 +2261,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         for (const auto& offer : session.go_offers())
                             if (offer.open) {
                                 ++facts.offers;
+                                facts.open_offers.emplace_back(offer.id, offer.stage);
                                 if (!facts.newest_offer) {
                                     facts.newest_offer = offer.id;
                                     facts.offer_stage = offer.stage;

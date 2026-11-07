@@ -1,0 +1,14 @@
+{
+  "desc": "go along, the mat (19.30.5): a and b on stag0201's matz01; a confirms, b says No in its own prompt: b gets no notice (HEADING's asked mask) but the offer on its page; c, elsewhere in stag0201, gets the notice",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "seed_story": true},
+    {"name": "c", "script": "c.script", "card": "k10", "start": 6, "seed_story": true}
+  ]
+}

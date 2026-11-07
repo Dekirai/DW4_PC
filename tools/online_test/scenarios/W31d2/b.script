@@ -1,0 +1,15 @@
+# W31d2, b (k10): in stag0201 with a; asks to go along with c only after c fell (epoch @900): its request waits without a
+# stamp while nobody lives in c's stage group, and ends when c's game over closes the offer.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until notices>=1 fail epoch>=@800
+log b sees the notice
+idle until epoch>=@900
+goalong until go=waiting or go=asked
+log b asked to go along
+idle until offers=0 fail go=stamped or stage=dng204b1
+log the offer closed without a stamp
+idle until frames>=300 fail stage=dng204b1

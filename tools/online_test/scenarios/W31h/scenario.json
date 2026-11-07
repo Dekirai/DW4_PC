@@ -1,0 +1,34 @@
+{
+  "desc": "go along, a busy target after the stamp (19.30.8, W31h): a test hook starts a scene in a's stage group right after b's GO is stamped and holds it 40 s: b's barrier waits past JoinHoldSeconds without a new stage group of the instance at dng204b1; B: Back to the lobby takes b home; a second run lets the scene end after 40 s: b joins a. NEEDS go_test_hooks: a shared scene at a sealed tick. The relay's part is held by GoAlongTests.A_gos_barrier_waits_for_a_busy_floor_without_the_join_hold_and_back_to_the_lobby_takes_the_member_home",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "requires": [
+    "go_test_hooks"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

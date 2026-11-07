@@ -1,0 +1,31 @@
+{
+  "desc": "go along, nobody alive at the target (19.30.8, W31d2): guest c goes into dng204b1 alone and is defeated there (die) while b's request waits: no stamp while nobody lives there (STATE no living member); c's game over (A on its message) takes c home, closes the offer (defeated) and ends b's request, no rescue join",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

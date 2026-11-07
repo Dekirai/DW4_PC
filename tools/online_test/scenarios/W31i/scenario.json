@@ -1,0 +1,34 @@
+{
+  "desc": "go along, expiry (19.30.8, W31i): b's GO is stamped and a test hook opens c's exit prompt in b's stage group at the same tick and leaves it open: b's GO expires after 300 ticks on every engine (equal fingerprints), \"Couldn't go along: a scene here took too long.\", the relay clears GoAlong; an INTENT 4 sent right after b's arrival in a field, before its stage group seals, waits and is stamped (no intent_ignored). NEEDS go_test_hooks: the prompt opened at the stamp's tick. The client's part is held by dw4_online_session_tests (go_along_session: the expiry on both machines, the withdraw), the relay's wait by GoAlongTests",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "requires": [
+    "go_test_hooks"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

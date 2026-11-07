@@ -1,0 +1,12 @@
+# W31b (19.24, 19.30.5): the members the exit port asked on the mat get no notice (HEADING's asked mask), only the row.
+a: online-script: step .* log: a in dng204b1
+b: online-script: step .* log: b said no
+b: online-script: step .* log: b has the offer without a notice
+b: online-script: step .* log: b saw no notice
+c: online-script: step .* log: c sees the notice
+relay: heading .*asked=[1-9]
+relay: offer_open .*stage=dng204b1
+relay: offer_notice
+!a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL

@@ -405,7 +405,15 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         // Round I1b (19.30.6): the box's A / Cancel / B, once per step.
         if (!departed_ && step.action == "goalong" && facts.newest_offer != 0 && facts.go == "none") {
             out.go_along = facts.newest_offer;
-            departed_ = true;
+            if (!step.args.empty()) {
+                out.go_along = 0;
+                for (const auto& [id, stage] : facts.open_offers)
+                    if (lower(stage) == lower(step.args[0])) {
+                        out.go_along = id;
+                        break;
+                    }
+            }
+            departed_ = out.go_along != 0;
         } else if (!departed_ && step.action == "cancelgo" && facts.go != "none") {
             out.go_cancel = true;
             departed_ = true;

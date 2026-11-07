@@ -1,0 +1,2 @@
+# This scenario needs the go_test_hooks capability (see scenario.json's desc); run.py skips it until the hook exists.
+idle until frames>=60

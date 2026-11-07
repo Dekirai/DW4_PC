@@ -1,0 +1,34 @@
+{
+  "desc": "go along, defeated (19.30.8, W31d): b defeated in stag0201 when a goes in: no notice while b is defeated (it shows when b lives again); c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between the stamp and the GO's step: the GO does nothing on every engine, \"Couldn't go along: you were defeated.\" NEEDS go_test_hooks: a deterministic defeat at a sealed tick (an event every engine of the stage group applies), not built in round I1b's go lane; the side rule and the GO doing nothing for a defeated slot are held by dw4_online_session_tests (go_along_session) and the engine's exit_leavers",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "requires": [
+    "go_test_hooks"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

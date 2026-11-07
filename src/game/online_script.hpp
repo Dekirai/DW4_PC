@@ -53,9 +53,9 @@
 //                       enemies that come within 15 units on the way), strike
 //                       it (A) and page through the talk this starts with A
 //   log TEXT            one trace line
-//   goalong             round I1b (19.30.6): A on the newest open go-along
-//                       offer's row, once a notice of it is on screen or
-//                       its row is there (as the *Instance* page's box does)
+//   goalong [STAGE]     round I1b (19.30.6): A on the newest open go-along
+//                       offer's row (with STAGE: the newest whose entrants
+//                       are in STAGE), as the *Instance* page's box does
 //   cancelgo            A on the own waiting row (the withdraw)
 //   closeoffer          B in the box on the newest offer (no further notice)
 //   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
@@ -128,6 +128,7 @@ struct OnlineScriptFacts {
     int offers = 0, notices = 0;
     std::uint16_t newest_offer = 0;
     std::string offer_stage;
+    std::vector<std::pair<std::uint16_t, std::string>> open_offers; // newest first: id, stage
     std::string go = "none";
 };
 

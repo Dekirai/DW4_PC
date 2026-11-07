@@ -1,0 +1,15 @@
+# W31e, c (k10): joins a in stag0201, goes on to stag0202 (matz00) and into dng205b1 (stag0202's matz01) at about the time
+# a goes into dng204b1.
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log c in stag0201
+idle until frames>=600
+explore matz00 yes until stage=stag0202,control fail epoch>=@600
+log c in stag0202
+idle until epoch>=@640
+explore matz01 yes until stage=dng205b1,control fail epoch>=@900
+log c in dng205b1
+idle until present=2,sealed>=600 fail epoch>=@1400
+log b joined c
