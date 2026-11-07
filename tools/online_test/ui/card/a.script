@@ -1,0 +1,6 @@
+# The player card's host a (k5): into stag0101, then wanders near the entrance while its UI script works the card.
+campaign until stage=stagml11,control
+idle until frames>=600
+explore mate00 yes until stage=stag0101,control
+log a hosts in stag0101
+wander -150 -60 20 until frames>=200000 fail stagechange

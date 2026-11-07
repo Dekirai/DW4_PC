@@ -1021,6 +1021,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         # of several clients that must happen at set times, such as two departures two seconds apart).
         text = open(os.path.join(src, c["script"]), encoding="utf-8").read()
         text = re.sub(r"@(\d+(?:\.\d+)?)", lambda m: "%.1f" % (t0 + float(m.group(1))), text)
+        # {user:NAME} is that client's account name (round I1b's remove / report steps name the member by it).
+        text = re.sub(r"\{user:(\w+)\}", lambda m: tag + m.group(1), text)
 
         # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z,
         # {route:NAME>X,Z} the same from the waypoint X,Z on (S14: on along the route after a detour).

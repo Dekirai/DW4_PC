@@ -1,7 +1,7 @@
 # W10c (19.24, 19.6.6): a removed guest whose client never answers its JOIN_REQ home: its STORY with the host's key is
 # refused at once (owner), its stage group is detached (nobody's instance), and its next barrier goes home on its own story.
 a: online-script: step .* log: a in dng101b1
-a: online-script: remove b member \d+ sent
+a: online-script: remove \S+b member \d+ sent
 b: online-script: step .* log: b in stag0101 apart from a
 b: online: .*You were removed from .*'s instance\.
 b: online-script: setflag 595

@@ -1091,7 +1091,10 @@ bool Session::may_remove() const {
 }
 
 bool Session::remove_member(std::uint32_t member) {
-    if (!connected() || !may_remove() || member == member_id_ || member == host_) return false;
+    if (!connected() || !may_remove() || member == member_id_ || member == host_ || member == kNoMember) return false;
+    // (Only a member the instance lists: an unknown id would reach the relay for nothing.)
+    if (std::none_of(instance_->members.begin(), instance_->members.end(), [&](const w::InstanceMember& m) { return m.member == member; }))
+        return false;
     send(w::Type::instance_op, w::encode(w::InstanceOp{w::InstanceOpKind::remove, member}));
     trace("remove member=%u wid=%u", member, wid_);
     log("remove %s (%u) from instance %u", member_name(member).c_str(), member, wid_);

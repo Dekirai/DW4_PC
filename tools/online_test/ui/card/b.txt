@@ -1,0 +1,13 @@
+# Round I1b: the removed guest. b joins a's instance in stag0101 (its pad script) and is removed: its toast, then home.
+open
+login $UI_B_NAME $UI_B_PASSWORD
+play
+wait-session
+wait-instance 420
+wait-instance home 420
+sleep 2
+wait 10
+shot home_after_removal
+leave
+wait-left 60
+end

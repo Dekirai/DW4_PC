@@ -1290,8 +1290,9 @@ void moderation_session() {
     info.role = w::Role::staff;
     world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
     world.run(0.3);
-    check(b.session->may_remove() && b.session->remove_member(4) && !b.session->remove_member(9) && !b.session->remove_member(2),
-          "staff remove a guest, never the host or themselves");
+    check(b.session->may_remove() && b.session->remove_member(4) && !b.session->remove_member(9) && !b.session->remove_member(2) &&
+              !b.session->remove_member(77) && !b.session->remove_member(0xFFFFFFFFu),
+          "staff remove a guest, never the host, themselves or a member the instance does not list");
     world.run(0.3);
     check(world.hub.instance_ops.size() == 1 && world.hub.instance_ops[0].second.op == w::InstanceOpKind::remove &&
               world.hub.instance_ops[0].second.argument == 4,

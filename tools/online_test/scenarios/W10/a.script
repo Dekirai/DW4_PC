@@ -6,7 +6,7 @@ explore mate00 yes until stage=stag0101,control
 log a hosts in stag0101
 wander -150 -60 20 until present=2,sealed>=1200 fail stagechange
 log b joined a
-remove b
+remove {user:b}
 log a removed b
 wander -150 -60 20 until present=1 fail stagechange
 log b is gone

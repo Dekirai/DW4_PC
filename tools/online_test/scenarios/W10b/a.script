@@ -8,7 +8,7 @@ wander -150 -60 20 until present=2,sealed>=600 fail stagechange
 log b joined a
 wander -150 -60 20 until partnerdead fail stagechange
 log b is defeated
-remove b
+remove {user:b}
 log a removed b
 wander -150 -60 20 until present=1 fail stagechange
 log b is gone

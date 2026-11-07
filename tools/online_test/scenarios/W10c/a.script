@@ -7,7 +7,7 @@ log a hosts
 depart dng101b1 0 until stage=dng101b1,control
 log a in dng101b1
 idle until epoch>=@260
-remove b
+remove {user:b}
 log a removed b
 idle until epoch>=@380
 log a still in the cave
