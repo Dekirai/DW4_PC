@@ -1,13 +1,13 @@
-# W31b, b (k10): joins a in stag0201; once a stands on matz01 b walks onto it too and says No in its own prompt: the port
-# asked b for a's departure, so b gets the offer's row without a notice.
+# W31b, b (k10): joins a in stag0201; once a stands on matz01 b plays through to the mat too (explore) and says No in its
+# own prompt: the port asked b for a's departure, so b gets the offer's row without a notice.
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log b in stag0201
 idle until present=3,sealed>=300 or epoch>=@420 fail stagechange
-idle until onmat:matz01>=1 fail epoch>=@700
-mat matz01 no until answered>=1 fail stagechange
+idle until onmat:matz01>=1 fail epoch>=@800
+explore matz01 no until answered>=1 fail stagechange,epoch>=@900
 log b said no
 idle until offers>=1 fail notices>=1
 log b has the offer without a notice
