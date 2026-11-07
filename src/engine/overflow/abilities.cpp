@@ -92,7 +92,7 @@ constexpr TechDef kTechniques[] = {
     {20, 180, "plVENOM", true, false, 1.0f},   // Venom, 3.0 s (at the densest group)
     {35, 120, "plMAGIC1", true, false, 0.5f},  // Bomb, 2.0 s (at the densest group; x 0.5 as Impact: round O1b lane E)
     {75, 900, "plMIND01", false, false, 1.0f}, // Resist, 15 s (a buff on the player)
-    // Pwr Up, 15 s, from 10:00 Tuning::pwr_up_late_cooldown (60 s) (a buff on
+    // Pwr Up, 15 s, from 10:00 Tuning::pwr_up_late_cooldown (120 s) (a buff on
     // the player; round O1b lane E's finish: DW4's own 30-54 s plus the
     // caster's INT outlast 15 s, so it was on for good and the human bot's
     // Agumon (TECH2, run level 8) reached the finale in 15 of 20 seeds; 60 s

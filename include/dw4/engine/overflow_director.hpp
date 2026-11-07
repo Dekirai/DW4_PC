@@ -195,8 +195,9 @@ struct Tuning {
     float guardian_clamp = 0.30f;                // a Guardian's hit takes at most this share of MaxHP (round O1b)
     // Pwr Up's cooldown from pwr_up_late_from on (round O1b lane E's finish:
     // DW4's buff of 30-54 s plus INT never ended with 15 s; 60 s from the
-    // start ended newcomers' runs at the phase 2 start, docs/ROUND_O1B_E_NOTES.md 12).
-    int pwr_up_late_from = 600 * 60, pwr_up_late_cooldown = 60 * 60;
+    // start ended newcomers' runs at the phase 2 start, 60 s from 10:00 kept
+    // it on (Giga to infinity last 42-54 s plus INT); docs/ROUND_O1B_E_NOTES.md 12.1).
+    int pwr_up_late_from = 600 * 60, pwr_up_late_cooldown = 120 * 60;
     // The Violet Ring's return gate after the clear (4.4): g_dreturngate comes
     // gate_wait steps after LordKnightmon's fall (the enemies leave first) and
     // walking into its mat (matz01) ends the run; elsewhere, or with
