@@ -1,10 +1,12 @@
 # W7b, guest b (k2): while a is cut it plays on near (442,-10), where it stood unhurt (its wander towards (-150,-60)
-# crossed stag0101's rock slope: a k2 character died there during the grace in round r2a, tick 9751).
+# crossed stag0101's rock slope: a k2 character died there during the grace in round r2a, tick 9751). Home by @290: in
+# rounds r2b and r2c the END came at about @268 (the cut's 60 s grace from the proxy's own start), HOME 3 s later
+# (World:EndNoticeTicks), the home departure 3 s, the lobby's entry 1 s: control at about @276, after the old bound @275.
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control
 log b joined a
 follow 40 until epoch>=@200
-wander 442 -10 8 until stage=stagml11,control fail epoch>=@275
+wander 442 -10 8 until stage=stagml11,control fail epoch>=@290
 log b home after the grace
 idle until frames>=120 fail key:4=1
