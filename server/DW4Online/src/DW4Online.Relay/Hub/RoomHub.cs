@@ -142,6 +142,7 @@ public sealed partial class RoomHub
         if (m.Peer != peer) return;
         m.Peer = null;
         m.DisconnectedAt = now;
+        m.Prompt.Clear(); // (round I1b: an open plan answers nobody now; the held prompt goes with the arrival below)
         Note("disconnect", m.Instance, ("member", m.Id), ("account", m.AccountId), ("graceful", graceful), ("wid", m.World?.Wid ?? 0));
         if (graceful)
         {
@@ -292,6 +293,8 @@ public sealed partial class RoomHub
             case Msg.Checkpoint: OnCheckpoint(m, CheckpointMsg.Parse(p), now); break;
             case Msg.CheckpointBad: OnCheckpointBad(m, CheckpointBadMsg.Parse(p), now); break;
             case Msg.InstanceOp: OnInstanceOp(m, InstanceOpMsg.Parse(p), now); break;
+            case Msg.Plan: OnPlan(m, PlanMsg.Parse(p), now); break;
+            case Msg.Choice: OnPromptChoice(m, ChoiceMsg.Parse(p), now); break;
             case Msg.Bye: ByeMsg.Parse(p); break; // the connection layer closes it gracefully
             default: throw new ProtocolException("unknown frame type " + Msg.Name(type));
         }
@@ -1011,7 +1014,7 @@ public sealed partial class RoomHub
             DetachLocked(m, now, leaveNow: true);
             var lone = new HubInstance(0) { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = i?.Detached == true };
             var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now, Alive = msg.AliveMask,
-                PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance };
+                PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance, PlanId = msg.PlanId == BarrierMsg.PlanNewInstance ? (ushort)0 : msg.PlanId };
             g.Members.Add(new Arrival(m, slot, msg.Carry));
             m.Arrival = g;
             Note("barrier_alone", null, ("member", m.Index), ("to", msg.Stage));
@@ -1056,7 +1059,8 @@ public sealed partial class RoomHub
         if (i.Log.Count > b.Tick + 1 && b.Tick + 1 >= i.Log.PrefixCount) i.Log.TruncateTo(b.Tick + 1);
         foreach (var k in i.Ahead.Keys.Where(k => k > b.Tick).ToList()) i.Ahead.Remove(k);
         var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive,
-            PlanNew = b.Messages.Values.Any(x => x.PlanId == BarrierMsg.PlanNewInstance) };
+            PlanNew = b.Messages.Values.Any(x => x.PlanId == BarrierMsg.PlanNewInstance),
+            PlanId = b.Messages.Values.Select(x => x.PlanId).FirstOrDefault(x => x is not 0 and not BarrierMsg.PlanNewInstance) };
         foreach (var (slot, (member, carry)) in reporters)
         {
             g.Members.Add(new Arrival(member, slot, carry));
@@ -1177,11 +1181,12 @@ public sealed partial class RoomHub
             return;
         }
         if (w is not null) ArrivedInside(w, g);
+        else TakePlanChoice(g); // (round I1b: the gate form's answer of the plan the BARRIER named)
         // A base that holds for announced groups takes this one as a co-arrival (one it does not wait for only where the
         // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
         // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead).
         var holder = _holds.FirstOrDefault(h => h.Hold == HoldKind.CoArrival && h != g && SameStage(h.Stage, g.Stage) && h.Context == g.Context &&
-                                                h.World == w && (w is not null || (!g.PlanNew && MaySeeBase(h, g))) &&
+                                                h.World == w && (w is not null || (!g.PlanNew && g.PromptChoice is null && MaySeeBase(h, g))) &&
                                                 h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity);
         if (holder is not null)
         {
@@ -1198,7 +1203,7 @@ public sealed partial class RoomHub
         var announced = _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
                                                    Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
                                                    h.Context == g.Context && x.Instance is not null && x.Connected &&
-                                                   (w is not null ? x.World == w : x.World is null && MaySeeHost(g.Members[0].Member, g, x)) &&
+                                                   (w is not null ? x.World == w : x.World is null && !x.Prompt.Chose && MaySeeHost(g.Members[0].Member, g, x)) &&
                                                    !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
         var awaited = new List<HubMember>();
         var room = Capacity - g.Members.Count;
@@ -1400,6 +1405,9 @@ public sealed partial class RoomHub
                         SendWait(g, g.Target.Snapshot.Complete ? WaitReason.NotJoinable : WaitReason.Snapshot, g.Target.Members.Select(x => x.Name),
                             Ms(g.HoldUntil - now) / 1000.0, 0, now);
                     break;
+                case HoldKind.Prompt:
+                    RefreshPrompt(g, now);
+                    break;
                 case HoldKind.Boss:
                     if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||
                         g.Target.World is null || g.Target.World.Ending)
@@ -1432,7 +1440,7 @@ public sealed partial class RoomHub
     /// ended get a redirect to stagML11 point 3. The host's DISSOLVE ends his instance: on purpose (host_left), or defeated
     /// (host_defeated, M3: his slot not alive in the barrier, outside a give-up copy), at once before round I3.
     /// </summary>
-    private void Dissolve(ArrivalGroup g, long now, bool redirectHome)
+    private void Dissolve(ArrivalGroup g, long now, bool redirectHome, byte? backPoint = null)
     {
         var fromField = g.From.Stage.Length > 0 && !StageNames.IsHub(g.From.Stage);
         foreach (var a in g.Members)
@@ -1447,7 +1455,7 @@ public sealed partial class RoomHub
             if (redirectHome && !SameStage(g.Stage, HomeStage) || (w is not null && !isHost && SameStage(g.Stage, "stagML02")))
             {
                 redirect = HomeStage;
-                redirectPoint = HomePoint;
+                redirectPoint = backPoint ?? HomePoint;
             }
             if (isHost)
             {

@@ -127,10 +127,25 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     };
 #ifdef DW4_ONLINE_DEV
     if (room_.difficulty) link_.force_difficulty(room_.difficulty);
-    // DW4_ONLINE_AUTOCHOICE=first|new (development builds, 19.24): I1a has no
-    // prompt, so "first" is the relay's automatic join; "new" asks for a new
-    // instance at every departure from home.
-    if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE"); choice && std::string(choice) == "new") config.plan_new_instance = true;
+    // DW4_ONLINE_AUTOCHOICE=first|new|cursor|back (development builds, 19.24):
+    // the arrival prompt answered without a person (round I1b): first = the
+    // first choosable row by 19.7.3's order, new = New instance (also a
+    // departure without a plan asks for one, plan id 0xFFFF), cursor = the
+    // preselection, back = B. DW4_ONLINE_AUTOCHOICE_DELAY_MS waits before the
+    // answer (a picture of the prompt); DW4_ONLINE_TEST_GATE_FORM=0 turns the
+    // gate form off (every arrival gets the loading-screen form, W11b).
+    if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE")) {
+        const std::string c(choice);
+        if (c == "new") config.plan_new_instance = true;
+        config.auto_choice = c == "first"    ? online::AutoChoice::first
+                             : c == "new"    ? online::AutoChoice::new_instance
+                             : c == "cursor" ? online::AutoChoice::cursor
+                             : c == "back"   ? online::AutoChoice::back
+                                             : online::AutoChoice::none;
+    }
+    if (const char* delay = std::getenv("DW4_ONLINE_AUTOCHOICE_DELAY_MS"); delay && std::atoi(delay) > 0)
+        config.auto_choice_delay = std::atoi(delay) / 1000.0;
+    if (const char* gate = std::getenv("DW4_ONLINE_TEST_GATE_FORM"); gate && std::string(gate) == "0") config.gate_form = false;
     if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_PARK"); cut && std::atof(cut) > 0) test_cut_park_ = std::atof(cut);
 #endif
     // Round I1a: the own settings go with every BARRIER (19.8.7).

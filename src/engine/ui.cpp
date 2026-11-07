@@ -541,7 +541,8 @@ std::vector<SelectCtrlManager::OpenSelect> SelectCtrlManager::open_selects() con
     std::vector<OpenSelect> open;
     for (const auto& ram : rams_)
         if (ram->running)
-            open.push_back({ram->info_name, ram->index, ram->cursor, ram->items, ram->vertical, ram->cancel, ram->state == 1 && ram->sub == 0});
+            open.push_back({ram->info_name, ram->index, ram->cursor, ram->items, ram->vertical, ram->cancel, ram->state == 1 && ram->sub == 0,
+                            ram->trigger, ram->enabled});
     return open;
 }
 

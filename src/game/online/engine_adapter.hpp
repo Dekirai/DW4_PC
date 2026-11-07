@@ -71,6 +71,7 @@ public:
     std::optional<HeadingInfo> take_heading() override;
     PresenceFacts presence(int slot) const override;
     engine::StoryValues story_values() const override;
+    std::optional<engine::DepartureChoice> pending_departure_choice() const override;
 
     void replay_step(const std::array<PadSample, 4>& pads) override;
     bool restore(std::span<const std::uint8_t> snapshot) override;

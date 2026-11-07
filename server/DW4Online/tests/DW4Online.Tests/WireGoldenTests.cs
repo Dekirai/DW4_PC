@@ -107,8 +107,10 @@ public class WireGoldenTests
         {
             ["Input"] = 0x01, ["Log"] = 0x02, ["Heading"] = 0x03, ["Barrier"] = 0x04, ["BarrierChoice"] = 0x05, ["Split"] = 0x06,
             ["Snapshot"] = 0x07, ["SnapHash"] = 0x08, ["Ready"] = 0x09, ["JoinAt"] = 0x0A, ["NetFp"] = 0x0B, ["State"] = 0x0C,
-            // Round I1 (protocol 49, SEAMLESS.md 19.18): 0x18-0x1A, 0x1C-0x1E are I1b's / I3's / I4's (PLAN, CHOICE, GOTO, BROWSE, PARTY_OP, REPORT).
+            // Round I1 (protocol 49, SEAMLESS.md 19.18): 0x1A, 0x1C-0x1E are I1b's / I3's / I4's (GOTO, BROWSE, PARTY_OP, REPORT).
             ["InstanceOp"] = 0x1B,
+            // Round I1b: the arrival prompt (PLAN, CHOICE; OPTIONS below).
+            ["Plan"] = 0x18, ["Choice"] = 0x19,
             ["Intent"] = 0x0D, ["Story"] = 0x0E, ["Presence"] = 0x0F, ["Resume"] = 0x10, ["Rate"] = 0x11, ["Pong"] = 0x12, ["Bye"] = 0x13,
             // Round 60: PRESENCE2 to the relay.
             ["Presence2"] = 0x14,
@@ -123,8 +125,10 @@ public class WireGoldenTests
             ["Presence2Out"] = 0x90,
             // Round J (0x91 stays free; 0x93 is round R's EVENT_AHEAD).
             ["CheckpointAsk"] = 0x92,
-            // Round I1 (protocol 49): 0x91 OPTIONS, 0x94 INSTANCE_LIST and 0x98-0x9B are I1b's / I2's / I3's / I4's.
+            // Round I1 (protocol 49): 0x94 INSTANCE_LIST and 0x98-0x9B are I1b's / I2's / I3's / I4's.
             ["InstanceInfo"] = 0x95, ["WorldNotice"] = 0x96, ["MemberInfo"] = 0x97,
+            // Round I1b: the arrival prompt's rows.
+            ["Options"] = 0x91,
         };
         Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
         foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));

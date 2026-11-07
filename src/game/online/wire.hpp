@@ -108,6 +108,9 @@ enum class Type : std::uint8_t {
     statehash = 0x15,
     checkpoint = 0x16,
     checkpoint_bad = 0x17,
+    // protocol 49 (round I1b, 19.7.4): the gate form's plan and the prompt's answer (prompt_wire.hpp)
+    plan = 0x18,
+    choice = 0x19,
     // protocol 49 (round I1a, 19.18): the host's or staff's instance change
     instance_op = 0x1B,
     // server -> client (0x80-0xBF)
@@ -128,6 +131,8 @@ enum class Type : std::uint8_t {
     reassign = 0x8E,
     netstat = 0x8F, // round 62: the member's link (older clients skip it)
     presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
+    // protocol 49 (round I1b, 19.7.3): the arrival prompt's rows (prompt_wire.hpp)
+    options = 0x91,
     checkpoint_ask = 0x92, // round J: upload the tick state at the next state-safe tick
     // protocol 49 (round I1a, 19.18)
     instance_info = 0x95,
@@ -228,7 +233,8 @@ enum class Choice : std::uint8_t { wait = 0, alone = 1 };
 // STATE reasons (why an instance is not joinable).
 enum class NotJoinable : std::uint8_t { none = 0, entry_scene = 1, scene = 2, menu = 3, loading = 4, boss = 5, fork = 6, hub = 7 };
 enum class Decision : std::uint8_t { new_instance = 1, join = 2, dissolve = 3, co_arrive = 4 };
-enum class WaitReason : std::uint8_t { co_arrival = 1, not_joinable = 2, boss_lock = 3, snapshot = 4 };
+// 5 choice (round I1b, 19.7.5): the relay holds a fresh arrival's barrier for the prompt; OPTIONS follows.
+enum class WaitReason : std::uint8_t { co_arrival = 1, not_joinable = 2, boss_lock = 3, snapshot = 4, choice = 5 };
 // Why a barrier ended in NEW next to an instance of the same stage.
 enum class Notice : std::uint8_t { none = 0, other_context = 1, full = 2, too_long = 3, hold_expired = 4, went_alone = 5, join_failed = 6 };
 enum class StatePurpose : std::uint8_t { join = 1, co_arrival = 2, resync = 3, resume = 4 };

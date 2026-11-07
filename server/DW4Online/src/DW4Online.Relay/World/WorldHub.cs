@@ -565,6 +565,7 @@ public sealed partial class RoomHub
     /// due HOMEs of solo-led groups, idle keepers, the instance info, the presence selection, the browser snapshot.</summary>
     private void HousekeepWorld(long now)
     {
+        RefreshPlans(now); // (round I1b: the gate form's open prompts, 19.7.3)
         foreach (var w in _worlds.Values.ToList())
         {
             if (!_worlds.ContainsKey(w.Wid)) continue;
@@ -878,9 +879,15 @@ public sealed partial class RoomHub
             if (w.Ending || w.Unlisted || w.DataHash != data) continue;
             if (!members.All(x => Matching.Visible(w, x, now))) continue;
             var atStage = w.Groups.Where(x => !x.Ended && x.Logged && !x.Departing && !x.LogFull && x.Barrier is null && SameStage(x.Stage, g.Stage)).ToList();
+            var here = w.Members.Count(x => SameStage(StageOf(x), g.Stage));
+            var hostFriend = members.Any(x => x.Friends.Contains(w.HostAccount));
+            var friendsInside = w.Members.Count(x => members.Any(y => y.Friends.Contains(x.AccountId)));
+            var ping = w.Members.Select(x => x.Rtt.Median).DefaultIfEmpty(0).Max();
             if (w.FreeSeats < size)
             {
                 if (atStage.Count > 0) full.Add(w);
+                // (Round I1b: the prompt lists it greyed, *Full*, 19.7.2.)
+                if (_world.ArrivalPrompt) rows.Add(new CandidateRow(w, null, RowState.Greyed, here, hostFriend, friendsInside, ping, "full"));
                 continue;
             }
             var group = atStage.Where(x => x.FreeSlots >= size).OrderByDescending(x => x.Count).FirstOrDefault();
@@ -889,10 +896,6 @@ public sealed partial class RoomHub
                 if (atStage.Count > 0) otherContext.Add(w);
                 continue;
             }
-            var here = w.Members.Count(x => SameStage(StageOf(x), g.Stage));
-            var hostFriend = members.Any(x => x.Friends.Contains(w.HostAccount));
-            var friendsInside = w.Members.Count(x => members.Any(y => y.Friends.Contains(x.AccountId)));
-            var ping = w.Members.Select(x => x.Rtt.Median).DefaultIfEmpty(0).Max();
             RowState state;
             var why = "";
             if (w.HostAway)
@@ -940,8 +943,17 @@ public sealed partial class RoomHub
             New(g, now, BarrierNotice.None, []);
             return;
         }
+        // Round I1b (19.7.4, 19.7.7): the prompt's answer decides, checked again (or the prompt is held again, refreshed).
+        if (_world.ArrivalPrompt && g.PromptChoice is not null && DecideChoice(g, now)) return;
         var rows = Candidates(g, now, out var notice, out var names);
         var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable);
+        if (_world.ArrivalPrompt && starting is null && rows.Count > 0 && StageNames.IsHub(g.From.Stage))
+        {
+            // Round I1b (19.7.5): candidates and no answer: the loading-screen form (a PLAN's answer that came too late, a departure
+            // the census cannot name, an arrival whose OPTIONS showed nothing then).
+            HoldPrompt(g, rows, 0, "", now);
+            return;
+        }
         var row = starting ?? Matching.AutoJoinRow(rows);
         Note("candidates", null, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("stage", g.Stage),
             ("rows", rows.Select(r => $"{r.World.Wid}:{r.State}:{r.Here}{(r.Why.Length > 0 ? ":" + r.Why : "")}").ToArray()),

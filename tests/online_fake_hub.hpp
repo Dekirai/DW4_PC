@@ -84,6 +84,26 @@ public:
     }
     void take_load_snapshot() { load_snapshot_ = serialize(); }
 
+    // Round I1b: the lobby gate's destination menu (in stagml11 while set): A
+    // on it departs to gate_target (the press is a rising edge of the menu's
+    // reader, the own slot), B closes it. pending_departure_choice names it.
+    bool gate_menu = false;
+    std::string gate_target = "stag0101";
+    int gate_point = 0;
+    int gate_confirms = 0, gate_cancels = 0;
+    std::uint32_t gate_previous = 0;
+    std::optional<dw4::engine::DepartureChoice> pending_departure_choice() const override {
+        if (!gate_menu || stage_ != "stagml11" || pending_) return std::nullopt;
+        dw4::engine::DepartureChoice d;
+        d.stage = gate_target;
+        d.point = gate_point;
+        d.purpose = dw4::engine::DepartureChoice::Purpose::gate;
+        d.menu = "i_zzstchgcur";
+        d.items = 4;
+        d.reader = identity_;
+        return d;
+    }
+
     std::string stage() const override { return stage_; }
     std::optional<std::string> pending_stage() const override { return pending_; }
     int pending_point() const override { return 1; }
@@ -226,6 +246,24 @@ public:
         auto masked = pads;
         for (int s = 0; s < 4; ++s)
             if (leaving_ & (1u << s)) masked[std::size_t(s)] = dw4::PadSample{true, {}, {}, 0}; // leaving: neutral and connected (6.5)
+        if (stage_ == "stagml11" && identity_ >= 0 && identity_ < 4) {
+            const std::uint32_t held = masked[std::size_t(identity_)].buttons;
+            const std::uint32_t pressed = held & ~gate_previous;
+            gate_previous = held;
+            if (gate_menu && (pressed & dw4::pad_button::a)) {
+                gate_menu = false;
+                ++gate_confirms;
+                state_ = mix(state_, 0x8000 + std::uint64_t(gate_point));
+                pending_ = gate_target;
+                transition_left_ = transition_steps;
+                return;
+            }
+            if (gate_menu && (pressed & dw4::pad_button::b)) {
+                gate_menu = false;
+                ++gate_cancels;
+                state_ = mix(state_, 0x8100);
+            }
+        }
         for (int s = 0; s < 4; ++s) {
             const auto& p = masked[std::size_t(s)];
             const bool here = (present_ & (1u << s)) != 0;
@@ -462,6 +500,16 @@ public:
     }
     int suggested_delay = 3;
     bool answer_barriers = true;
+    // Round I1b, the arrival prompt: the rows PLAN is answered with (none:
+    // nothing to choose) and a barrier from a hub stage without a plan is
+    // held for (BARRIER_WAIT choice + OPTIONS); PLANs dropped unanswered
+    // (W2b's hook); what came.
+    std::optional<w::Options> prompt;
+    bool drop_plans = false;
+    std::vector<w::Plan> plans;
+    std::vector<w::PromptChoice> choices;
+    std::vector<std::uint16_t> barrier_plans; // the plan id of every BARRIER from a hub stage into a field
+    std::set<std::uint32_t> prompt_held;
     double co_arrival_hold = 3.0;
     // Round 60: WELCOME announces PRESENCE2 (a hub of this round), and what came.
     bool presence_v2 = false;
@@ -709,7 +757,7 @@ public:
             }
         // Co-arrival holds that ran out: NEW.
         for (auto& [id, m] : members)
-            if (m.parked && answer_barriers && wait_hold <= 0 && now - m.parked_at > co_arrival_hold) decide(m, now);
+            if (m.parked && answer_barriers && wait_hold <= 0 && now - m.parked_at > co_arrival_hold && !prompt_held.contains(id)) decide(m, now);
     }
 
     void lag(std::uint32_t member, bool on, double now) {
@@ -1061,9 +1109,70 @@ public:
             }
             break;
         }
+        case w::Type::plan: {
+            const auto plan = w::decode_plan(f.payload);
+            plans.push_back(plan);
+            if (drop_plans) break;
+            w::Options o = prompt.value_or(w::Options{});
+            o.plan = plan.plan;
+            o.inst = o.visit = 0;
+            o.stage = plan.stage;
+            if (!prompt) o.flags = w::Options::nothing;
+            send(id, w::Type::options, w::encode(o), now);
+            break;
+        }
+        case w::Type::choice: {
+            const auto c = w::decode_choice(f.payload);
+            choices.push_back(c);
+            if (c.plan != 0 || !m.parked || !prompt_held.contains(id)) break;
+            prompt_held.erase(id);
+            if (c.choice == w::ChoiceKind::back) {
+                // *Back to the lobby*: a DISSOLVE redirected to the lobby (19.7.5).
+                auto& hub = new_instance("stagml11", 1);
+                hub.hub = true;
+                hub.slots[0] = m.id;
+                w::BarrierOk ok;
+                ok.inst = m.parked->inst;
+                ok.visit = m.parked->visit;
+                ok.stage = m.parked->stage;
+                ok.point = m.parked->point;
+                ok.decision = w::Decision::dissolve;
+                ok.new_inst = hub.id;
+                ok.new_visit = 1;
+                ok.own_slot = 0;
+                ok.slot_map[std::size_t(m.slot)] = 0;
+                ok.mode = w::Mode::hub;
+                ok.redirect_stage = "stagml11";
+                ok.redirect_point = c.back_point == 0xFF ? 3 : c.back_point;
+                m.inst = hub.id;
+                m.slot = 0;
+                m.parked.reset();
+                send(m.id, w::Type::barrier_ok, w::encode(ok), now);
+                log_lines.push_back("prompt back: " + m.name);
+                break;
+            }
+            decide(m, now);
+            break;
+        }
         case w::Type::barrier: {
             const auto b = w::decode_barrier(f.payload);
             m.parked = b;
+            const bool from_hub = instances.contains(b.inst) && instances[b.inst].hub && !is_hub_stage(b.stage);
+            if (from_hub) barrier_plans.push_back(b.plan);
+            if (from_hub && prompt && b.plan == 0 && answer_barriers) {
+                // The loading-screen form: held without a time limit, OPTIONS with it.
+                m.parked_at = now;
+                prompt_held.insert(id);
+                send(id, w::Type::barrier_wait, w::encode(w::BarrierWait{b.inst, w::WaitReason::choice, 0, {}, 0}), now);
+                w::Options o = *prompt;
+                o.plan = 0;
+                o.inst = b.inst;
+                o.visit = b.visit;
+                o.stage = b.stage;
+                send(id, w::Type::options, w::encode(o), now);
+                log_lines.push_back("prompt hold: " + m.name);
+                break;
+            }
             // The instance leaves its stage while joiners still catch up on it:
             // they go back to their own fallback as NEW (6.6).
             if (auto it = instances.find(b.inst); it != instances.end()) {

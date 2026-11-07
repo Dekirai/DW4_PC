@@ -43,6 +43,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
   src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_scenes.cpp src/engine/online_story.cpp
+  src/engine/online_departure.cpp
   src/engine/tick_state.cpp src/engine/tick_state_managers.cpp)
 # Data Overflow, the survival mode's run engine rules (docs/SURVIVAL.md 13.4):
 # the hooks' values and the native run scripts; inert without OverflowRules.
@@ -70,7 +71,8 @@ add_library(dw4_online STATIC
   src/game/online/pacing.cpp src/game/online/net_stats.cpp src/game/online/net_log.cpp src/game/online/host_priority.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
   src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
-  src/game/online/lobby.cpp src/game/online/achievement_api.cpp src/game/online/title_driver.cpp)
+  src/game/online/lobby.cpp src/game/online/achievement_api.cpp src/game/online/title_driver.cpp
+  src/game/online/prompt_wire.cpp src/game/online/session_prompt.cpp)
 target_include_directories(dw4_online PUBLIC src/game)
 target_link_libraries(dw4_online PUBLIC dw4_engine)
 if(DW4_ONLINE_DEV)
@@ -336,7 +338,8 @@ if(DW4_BUILD_APP)
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
-    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
+    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp
+    src/game/online_prompt_ui.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)

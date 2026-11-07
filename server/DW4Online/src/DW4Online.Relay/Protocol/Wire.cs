@@ -70,6 +70,10 @@ public static class Msg
     public const byte Checkpoint = 0x16;
     /// <summary>Round J: a joiner's rebuild from a checkpoint failed.</summary>
     public const byte CheckpointBad = 0x17;
+    /// <summary>Round I1b (protocol 49, 19.7.4): the gate form's plan while the confirming press is held (PromptMessages.cs).</summary>
+    public const byte Plan = 0x18;
+    /// <summary>Round I1b (protocol 49): the prompt's answer (PromptMessages.cs).</summary>
+    public const byte Choice = 0x19;
     /// <summary>Round I1 (protocol 49): the host's or staff's instance operation (visibility, remove, end).</summary>
     public const byte InstanceOp = 0x1B;
 
@@ -91,7 +95,9 @@ public static class Msg
     public const byte Reassign = 0x8E;
     public const byte NetStat = 0x8F;
     public const byte Presence2Out = 0x90;
-    /// <summary>Round J: the donor uploads its tick state at its next state-safe tick (0x91 stays free).</summary>
+    /// <summary>Round I1b (protocol 49, 19.7.3): the arrival prompt's rows (PromptMessages.cs).</summary>
+    public const byte Options = 0x91;
+    /// <summary>Round J: the donor uploads its tick state at its next state-safe tick.</summary>
     public const byte CheckpointAsk = 0x92;
     /// <summary>Round I1 (protocol 49): the member's own instance (members, seats, the host's grace).</summary>
     public const byte InstanceInfo = 0x95;
@@ -111,7 +117,7 @@ public static class Msg
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
         Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
-        MemberInfo => "MEMBER_INFO",
+        MemberInfo => "MEMBER_INFO", Plan => "PLAN", Choice => "CHOICE", Options => "OPTIONS",
         _ => "0x" + type.ToString("X2"),
     };
 }
@@ -161,6 +167,8 @@ public enum WaitReason : byte
     NotJoinable = 2,
     BossLock = 3,
     Snapshot = 4,
+    /// <summary>Round I1b (19.7.5): a fresh arrival's barrier held for the prompt (HoldKind.Prompt); OPTIONS follows.</summary>
+    Choice = 5,
 }
 
 public enum IntentKind : byte

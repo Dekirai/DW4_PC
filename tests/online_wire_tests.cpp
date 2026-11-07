@@ -11,6 +11,7 @@
 #include "online/pacing.hpp"
 #include "online/pad_wire.hpp"
 #include "online/wire.hpp"
+#include "online/prompt_wire.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -101,6 +102,71 @@ std::string hex(const std::vector<std::uint8_t>& bytes) {
 // Round I1a (protocol 49, docs/SEAMLESS.md 19.18; the layouts and golden
 // bytes of DW4_PC-wt/i1a-contract.md, held by the relay's
 // WireGoldenTests.World_messages_equal_the_clients too).
+// Round I1b: the arrival prompt (prompt_wire.hpp). The relay's PromptTests.Prompt_messages_have_the_agreed_bytes holds the same bytes.
+void prompt_messages() {
+    check(hex(w::encode(w::Plan{7, w::PlanPurpose::gate, "stag0201", 0, 5, 1})) == "0700" "01" "08" "7374616730323031" "00" "0500000000000000" "01",
+          "golden PLAN");
+    check(hex(w::encode(w::PromptChoice{3, 0, 0, w::ChoiceKind::join, 9, w::Visibility::public_, 0, 0xFF})) ==
+              "0300" "00000000" "00000000" "01" "09000000" "00" "00" "ff",
+          "golden CHOICE");
+    w::Options o;
+    o.plan = 3;
+    o.stage = "stag0201";
+    o.visibility = w::Visibility::friends;
+    o.preselected = 0;
+    o.rtt = 38;
+    w::OptionRow row;
+    row.wid = 9;
+    row.host = 5;
+    row.host_name = "kim";
+    row.relation = w::OptionRow::friend_host;
+    row.friends_inside = 1;
+    row.host_stage = "dng205b1";
+    row.players = 2;
+    row.taken = 2;
+    row.story_label = "Chapter 4, Hard";
+    row.difficulty = 1;
+    row.settings = w::OptionRow::randomizer;
+    row.ping = 41;
+    row.members.push_back({"kim", 23, 4});
+    o.rows.push_back(row);
+    const auto bytes = w::encode(o);
+    check(hex(bytes) == "0300" "00000000" "00000000" "08" "7374616730323031" "00" "01" "00" "2600" "00" "00" "01"
+                        "09000000" "05000000" "03" "6b696d" "02" "01" "08" "646e673230356231" "02" "00" "02" "00" "00"
+                        "0f" "436861707465722034" "2c2048617264" "00" "01" "01" "00" "ff" "2900" "01" "03" "6b696d" "1700" "04",
+          "golden OPTIONS " + hex(bytes));
+    const auto back = w::decode_options(bytes);
+    check(back.rows.size() == 1 && back.rows[0] == row && back.preselected == 0 && back.visibility == w::Visibility::friends && back.rtt == 38,
+          "OPTIONS round trip");
+    const auto plan = w::decode_plan(w::encode(w::Plan{9, w::PlanPurpose::return_mat, "dng205b2", 2, 77, 1}));
+    check(plan.plan == 9 && plan.purpose == w::PlanPurpose::return_mat && plan.stage == "dng205b2" && plan.point == 2 && plan.context == 77,
+          "PLAN round trip");
+    const auto choice = w::decode_choice(w::encode(w::PromptChoice{0, 4, 5, w::ChoiceKind::back, 0, w::Visibility::private_, 0, 3}));
+    check(choice.inst == 4 && choice.visit == 5 && choice.choice == w::ChoiceKind::back && choice.visibility == w::Visibility::private_ &&
+              choice.back_point == 3,
+          "CHOICE round trip");
+    // Malformed: a preselection past the rows, a row count above eight, a plan id 0, an unknown choice.
+    auto bad = [](auto f) {
+        try {
+            f();
+        } catch (const w::WireError&) {
+            return true;
+        }
+        return false;
+    };
+    w::Options past = o;
+    past.preselected = 1;
+    check(bad([&] { (void)w::decode_options(w::encode(past)); }), "OPTIONS preselection past the rows refused");
+    auto many = bytes;
+    many[26] = 9; // (the row count: after plan 2, inst 4, visit 4, stage 9, flags, visibility, preselected, rtt 2, notice, name 1)
+    check(bad([&] { (void)w::decode_options(many); }), "OPTIONS damaged refused");
+    check(bad([&] { (void)w::decode_plan(w::encode(w::Plan{0, w::PlanPurpose::gate, "stag0201", 0, 5, 1})); }), "PLAN id 0 refused");
+    auto wrong = w::encode(w::PromptChoice{});
+    wrong[10] = 9;
+    check(bad([&] { (void)w::decode_choice(wrong); }), "CHOICE kind 9 refused");
+    check(w::choosable(w::RowState::loading) && !w::choosable(w::RowState::story_not_here) && !w::choosable(w::RowState::full), "choosable states");
+}
+
 void world_messages() {
     w::Settings settings{1, 1, 0, 1, 4242, 1, 1, 2};
     {
@@ -426,6 +492,7 @@ void messages() {
     auto empty_chunks = w::make_chunks(1, 1, {});
     check(empty_chunks.size() == 1 && w::ChunkAssembler{}.add(empty_chunks[0], 10).value().empty(), "an empty body is one chunk");
     world_messages();
+    prompt_messages();
     auto ping = w::decode_ping(w::encode(w::Ping{9, 1000, -2, 3}));
     check(ping.margin_ms == -2 && ping.delay == 3, "PING");
     // NETSTAT (round 62): golden bytes shared with WireGoldenTests.cs.
@@ -487,9 +554,9 @@ void messages() {
         for (int b = 0; b < 256; ++b)
             if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
-                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD INSTANCE_OP WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT "
-                       "STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE "
-                       "MEMBER_INFO",
+                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD PLAN CHOICE INSTANCE_OP WELCOME SEALED LIVE JOIN_REQ BARRIER_OK "
+                       "BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 OPTIONS CHECKPOINT_ASK "
+                       "INSTANCE_INFO WORLD_NOTICE MEMBER_INFO",
               "type registry: " + known);
         check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
         // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).

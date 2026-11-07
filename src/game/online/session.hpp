@@ -35,6 +35,7 @@
 #include "net_stats.hpp"
 #include "pacing.hpp"
 #include "presence.hpp"
+#include "prompt_wire.hpp"
 #include "transport.hpp"
 #include "wire.hpp"
 
@@ -52,6 +53,12 @@
 #include <vector>
 
 namespace dw4::game::online {
+
+// Round I1b (19.24): development builds answer the arrival prompt without a
+// person (DW4_ONLINE_AUTOCHOICE): first = the first choosable row by 19.7.3's
+// order (New instance when none), new = New instance, cursor = the
+// preselection, back = B.
+enum class AutoChoice : std::uint8_t { none, first, new_instance, cursor, back };
 
 struct SessionConfig {
     std::string ticket;
@@ -79,6 +86,16 @@ struct SessionConfig {
     // DW4_ONLINE_AUTOCHOICE=new (development builds, 19.24): a BARRIER that
     // leaves a hub stage asks for a new instance (plan id 0xFFFF).
     bool plan_new_instance = false;
+    // Round I1b, the arrival prompt (19.7.4): the gate form holds the own
+    // player's confirming press while the engine names a departure from home
+    // (off: every arrival gets the loading-screen form, DW4_ONLINE_TEST_GATE_
+    // FORM=0, W11b); World:PlanWaitMs, after which a held press goes out
+    // without an answer; the development builds' automatic answer and its
+    // delay (a picture of the prompt in a test run).
+    bool gate_form = true;
+    double plan_wait = 1.0;
+    AutoChoice auto_choice = AutoChoice::none;
+    double auto_choice_delay = 0;
     // A stage folder as the player reads it ("Dry Land: Mummy Desert"; the
     // game's area table). Unset: the folder.
     std::function<std::string(std::string_view)> stage_name;
@@ -133,9 +150,29 @@ struct Overlay {
     bool slow_uplink = false;   // the server fills this member's pads
     std::array<bool, 4> lagging{};
     bool boss_choice = false;   // "Wait for <names>" / "Go alone" on the loading screen
+    bool prompt = false;        // round I1b: the arrival prompt is open (Session::prompt)
     // A running line while the game plays on (19.5.5: "Kim lost the
     // connection. Waiting for Kim... 52 s", counting down).
     std::string status;
+};
+
+// Round I1b, the arrival prompt as the overlay draws it (19.5.3, 19.7.3-19.7.5):
+// the gate form over the frozen game where the gate's list was, or the
+// loading-screen form on the own loading screen of a held barrier. The rows
+// come in the relay's order (decision 40); `cursor` == rows.size() is *New
+// instance*.
+enum class PromptForm : std::uint8_t { gate, loading };
+struct PromptView {
+    PromptForm form = PromptForm::gate;
+    std::string stage;                  // the arrival stage (folder)
+    std::vector<wire::OptionRow> rows;
+    std::size_t cursor = 0;
+    wire::Visibility visibility = wire::Visibility::public_; // *New instance*'s (Left / Right)
+    bool details = false;               // X
+    std::string notice;                 // "Kim's instance is full now."
+    int rtt_ms = -1;                    // the own round trip (the header's "Your ping"); -1 unknown
+    double opened_at = 0;
+    bool new_instance() const { return cursor >= rows.size(); }
 };
 
 class Session {
@@ -255,6 +292,17 @@ public:
     // The host must supply a new connection (lost, reconnecting).
     bool wants_transport() const { return mode_ == Mode::lost || (resume_after_lost_ && !transport_); }
 
+    // Round I1b: the arrival prompt (19.7), open in either form; nothing while
+    // none is open. prompt_input takes the own pad's held buttons once per
+    // picture (its presses: D-pad / stick up and down the rows, left and
+    // right the visibility on *New instance*, A choose, B back, X details);
+    // the game gets neutral pads while the gate form holds its press.
+    const std::optional<PromptView>& prompt() const { return prompt_; }
+    void prompt_input(std::uint32_t buttons, double now);
+    // The gate form holds a press (waiting for OPTIONS, the overlay open, or
+    // its answer going out): the host keeps its own presses away meanwhile.
+    bool holding_press() const { return gate_phase_ != GatePhase::idle; }
+
     // The member's own choices.
     void choose_boss(wire::Choice choice);
     void send_intent(wire::IntentKind kind, int argument);
@@ -277,6 +325,36 @@ public:
     void test_cut(double now) { lose_connection(now); }
 
 private:
+    // Round I1b (session_prompt.cpp): the gate form's input hold of the own
+    // confirming press (19.7.4), PLAN / OPTIONS / CHOICE, the loading-screen
+    // form at a held barrier (19.7.5), the automatic answer of test runs.
+    enum class GatePhase : std::uint8_t { idle, waiting, open, release, cancel };
+    PadSample gate_filter(const PadSample& local, double now);
+    std::array<PadSample, 4> step_pads(const PadSample& local, double now);
+    void send_plan(double now);
+    void on_options(const wire::Options& options, double now);
+    void open_prompt(PromptForm form, const wire::Options& options, double now);
+    void answer_prompt(bool back, double now);
+    void close_prompt(const char* why);
+    void auto_answer(double now);
+    void prompt_lost(double now);
+    std::string prompt_rows_text() const;
+    GatePhase gate_phase_ = GatePhase::idle;
+    std::uint16_t gate_plan_ = 0;       // the plan id of the held press (0 while its PLAN waits for the throttle)
+    double gate_since_ = 0;             // when the press was held
+    engine::DepartureChoice gate_target_;
+    std::uint16_t next_plan_ = 1;
+    double plan_sent_at_ = -100;        // PLAN's throttle: one a second
+    std::uint16_t departure_plan_ = 0;  // the plan id the next BARRIER from home names
+    bool engine_a_ = false;             // the engine's last own pad had A held (a press is its rising edge)
+    std::optional<PromptView> prompt_;
+    std::uint16_t prompt_plan_ = 0;     // the open gate form's plan id
+    bool prompt_hold_ = false;          // BARRIER_WAIT choice: the relay holds the barrier for the prompt (no 5 s fallback)
+    std::uint32_t prompt_buttons_ = 0;  // prompt_input's last buttons (its presses are the new ones)
+    double auto_answer_at_ = -1;        // the automatic answer is due (test runs)
+    bool chosen_join_ = false;          // the arrival came from a row the player chose (the toasts)
+    std::string chosen_host_;
+
     struct PendingEvent {
         std::uint32_t tick;
         wire::Event event;

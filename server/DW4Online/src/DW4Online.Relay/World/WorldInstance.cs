@@ -42,6 +42,14 @@ public sealed class WorldHubOptions
     public int HostAwayNoticeSeconds { get; set; } = 5;
     /// <summary>A story keeper nobody plays on any more (its owner left the world, no instance runs on it) is dropped after this.</summary>
     public int KeeperIdleMinutes { get; set; } = 5;
+    /// <summary>Round I1b (19.7): the arrival prompt. False: round I1a's automatic join of the first row (the load gate's fake
+    /// clients, which answer no prompt).</summary>
+    public bool ArrivalPrompt { get; set; } = true;
+    /// <summary>OPTIONS goes again on a change at most this often (19.7.3: once a second).</summary>
+    public int OptionsRefreshMs { get; set; } = 1000;
+    /// <summary>A test hook (scenario W2b): the relay drops every PLAN unanswered, so the client's press goes out after
+    /// World:PlanWaitMs and the barrier is decided as a loading-screen arrival.</summary>
+    public bool TestDropPlans { get; set; }
 
     public bool AdmitsData(ulong dataHash) =>
         DataHashes.Count == 0 || DataHashes.Any(h => ulong.TryParse(h, out var v) && v == dataHash);

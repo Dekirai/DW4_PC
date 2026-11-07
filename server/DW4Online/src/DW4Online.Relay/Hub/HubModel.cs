@@ -105,6 +105,8 @@ public sealed class HubMember(uint id, long accountId, string name)
     public JoinState? Joining { get; set; }
     /// <summary>Set while the member is part of a parked arrival group that waits for a decision.</summary>
     public ArrivalGroup? Arrival { get; set; }
+    /// <summary>Round I1b (19.7.4): the gate form's plan of this member (PLAN, its OPTIONS and CHOICE) and PLAN's throttle.</summary>
+    public DW4Online.Relay.World.PromptPlan Prompt { get; } = new();
 
     public uint Rate { get; set; }
     public Heading? Heading { get; set; }
@@ -276,6 +278,8 @@ public enum HoldKind
     CoArrival,
     Join,
     Boss,
+    /// <summary>Round I1b (19.7.5): a fresh arrival's barrier held for the loading-screen form of the prompt, without a time limit.</summary>
+    Prompt,
 }
 
 /// <summary>
@@ -297,6 +301,16 @@ public sealed class ArrivalGroup
     public bool Fresh => World is null;
     /// <summary>The client chose *New instance* (BARRIER plan id 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, client 13:30): no automatic join.</summary>
     public bool PlanNew { get; init; }
+    /// <summary>Round I1b: the gate form's plan id the BARRIER named (0: none).</summary>
+    public ushort PlanId { get; init; }
+    /// <summary>Round I1b: the prompt's answer for this arrival (the gate form's CHOICE of the plan the BARRIER named, or the held
+    /// barrier's CHOICE); null: none (yet).</summary>
+    public DW4Online.Relay.Protocol.ChoiceMsg? PromptChoice { get; set; }
+    /// <summary>Round I1b: the last OPTIONS payload sent for the held prompt and when (the refresh compares it).</summary>
+    public byte[]? PromptOptions { get; set; }
+    public long PromptOptionsAt { get; set; }
+    /// <summary>Round I1b: the host names of the rows this arrival was offered (a refreshed prompt names a chosen instance that ended).</summary>
+    public Dictionary<uint, string> PromptHosts { get; } = [];
     /// <summary>The kind of arrival this decision is for its members (BARRIER_OK's arrival byte).</summary>
     public ArrivalKind Arrival { get; set; }
     /// <summary>The arriving members with their slot in the arriving engine and their carry.</summary>

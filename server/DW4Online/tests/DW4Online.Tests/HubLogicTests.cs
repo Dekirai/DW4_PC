@@ -2,6 +2,7 @@ using System.Diagnostics;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.Tests;
@@ -47,11 +48,13 @@ public partial class HubLogicTests
         public long Now { get; private set; } = Stopwatch.Frequency * 1000;
         public Dictionary<string, (HubMember Member, Peer Peer)> M { get; } = [];
 
+        /// <summary>(Round I1b: the hub's arrival prompt is off unless <paramref name="world"/> turns it on: the lockstep and I1a tests
+        /// below take round I1a's automatic join of the first row; PromptTests runs the prompt.)</summary>
         public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null,
-            int protocol = Wire.CheckpointProtocol)
+            int protocol = Wire.CheckpointProtocol, WorldHubOptions? world = null)
         {
             Hub = new RoomHub(new RoomInfo("ROOM01", protocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
-                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner);
+                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner, world ?? new WorldHubOptions { ArrivalPrompt = false });
         }
 
         public void Advance(double ms) => Now += (long)(ms * Stopwatch.Frequency / 1000.0);

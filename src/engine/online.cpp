@@ -154,6 +154,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round I1a's integration: W7e's link cut at the barrier (DW4_ONLINE_DEV builds only, online_run.cpp: the
         // relay decides the barrier without the lost member, the simulation is the same)
         "DW4_ONLINE_TEST_CUT_AT_PARK",
+        // round I1b: the arrival prompt's automatic answer delayed (a picture of it) and the gate form switched off (W11b's
+        // loading-screen form); DW4_ONLINE_DEV builds only, online_run.cpp: the answer is the player's, the simulation is the same
+        "DW4_ONLINE_AUTOCHOICE_DELAY_MS", "DW4_ONLINE_TEST_GATE_FORM",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK",
