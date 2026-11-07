@@ -80,3 +80,78 @@ No non-Guardian clamp in any run. Each run hash equals lane E's head measurement
 | T4 as 14.1 words it (`build/t/t4talk.sh`: the T3 walk with DW4_STATE_TEST 7400 (before the talk: the replay spans talk, run, return and walk), 7900 (after the return) and 8500 (on the walk)) | identical after loading, all three (1900, 1400, 800 frames compared); the 7400 replay ran the run again (four run lines) | `chk_i2_t4talk.log` |
 | T11 (lane E's `t11.sh`: hidden pictures of the det script at 1400 / 2600 / 4800 / 5900 and the new game's lobby at 4800 / 5900, main's client d0e005b0 against i2) | all six pictures equal | `chk_i2_t11.log`, `t/t11_i2/` |
 | The save state suite (main's `work/dref/checks/st` copied to `build/t/st`, nice 15, three at a time) | 17 of 17 identical after loading | `chk_i2_st.log` |
+| T5 with a real save (`build/t/t5card.sh`: the T3 walk with `work/survey/real.gci` in both Card A folders) | 186 of 186 fingerprint lines equal (the save changes the title's path: eb724c8dd9ff596d at 9,300 in both), the save byte for byte as before in both (cba58652), the achievement profiles equal (0d71883e), only the run wrote `overflow.dat`; the talk, the run and Welcome back happened with the save on the card | `chk_i2_t5card.log` |
+| T1 det.sh twice more on i2 | 4004f056 / 396cb219 in all four runs | `det3.log`, `det4.log` (`det_int_o1b_i2a`, `_i2b`) |
+
+### 3.3 T8 (lane E's `t8.sh`: T6 Agumon seed 1, kite, timing=1, headless and drawn at 2560x1440, exe i2)
+
+| Measure | Budget (SURVIVAL.md 12) | Headless | Drawn |
+| --- | --- | --- | --- |
+| simulation step | p95 ≤ 2 ms, max ≤ 6 ms | mean 0.88, p95 **3.04**, max **15.2** | mean 0.93, p95 **3.18**, max **15.9** |
+| traverse + draw list | p95 ≤ 1.5 ms, ≤ 400 draw items | 0.48 (traverse only) | p95 0.82, draw items p95 287, max 370 |
+| presented frame (a pass with its present) | ≤ 8 ms | - | p95 4.9, max 17.7 |
+| run hash | the same | 52e34d6ed1cbaebd | 52e34d6ed1cbaebd |
+
+The step's p95 and max are over the budget, as in lane E's measurement on its head (p95 3.06, max 230 ms): measured
+under `nice -n 15` beside another workflow's timing-sensitive scenarios, so the machine was loaded; the five slowest
+steps are spread over the run (steps 30,212-82,051, 13.5-15.9 ms). Open: a measurement on a quiet machine (lane E
+notes 12.4). Log `chk_i2_t8.log`, files `t/t8_i2/`.
+
+## 4. The screenshot set (hidden, `DW4_RENDER=1`, not in git)
+
+All in `build/t/shots/` (`.bmp` full size, `.png` half size; scripts `build/t/shots_all.sh`, `run_shot.sh`,
+`lobby_shot.sh`, `e2e.sh`), the overview sheet `build/t/shots/o1b_int_sheet.png` (24 pictures). The lobby pictures
+use a copy of the profile the gate run wrote (`shots/prof/overflow.dat`: Dorumon's clear, 5 records, 532 Sim Bits).
+
+| Screen | Picture | What it shows |
+| --- | --- | --- |
+| Gekomon by the gate (show) | `npc_4700` | the NPC beside the gate during the story's own intro talk |
+| first meeting | `talk_4100` | the talk window with the face icon, "Hello there! I keep the battle simulator ..." |
+| What will you do? | `choice_4100` | the five choices |
+| How does it work? | `help_4100` | page 1 |
+| the select | `select_4100`, `walk_7590` | the four Rookies, Agumon's class line, Art, techniques, trait, HP / MP, Armour / Chip / Level / Start |
+| Enter the simulator? | `walk_7650` | Yes / No over the select |
+| Plug Lab | `plug_lab_4100` | Agumon's seven rows, Sim Bits 532 from the profile |
+| Data Records | `records_4100` | page 1 of 4 with the four dated records of the gate run |
+| a real talk by H0, Welcome back | `walk_7530`, `walk_7790`, `walk_7830` | "What will you do?" after walking to Gekomon; "Welcome back! You lasted 0:09. Not bad at all!", then the list again |
+| HUD | `hud_overflow_2400` | timer, EXP bar, Lv, Defeated, Bits, the build row with the gear glyphs (Brave Core α, Wisdom Chip α by `loadout=`) |
+| level-up | `levelup_overflow_1100` | Forge: War Sword / Speed Chip α / Train Blast with their lines and the wrapped text |
+| pause, build page | `menus_overflow_610`, `menus_overflow_660` | |
+| Retire, results (retired) | `menus2_overflow_650`, `menus2_overflow_1050` | "End the simulation?", SIMULATION ENDED with "Bits 104" and "Sim Bits +104 (104)" |
+| a Guardian with the boss bar | `guardian_overflow_1230`, `_1290` | Mammothmon by `guardian_first=20`, the arena's i_bosshp02 bar, "Mammothmon appears" |
+| AWAKENING | `awaken_overflow_40` | Guilmon `forge_start=5 art_skill=2500`: "AWAKENING: Data Destroyer", the signature in the build row |
+| the finale | `timeup_overflow_2460` | `phase=10 end=60`: LordKnightmon, the quest timer 0:20, "LordKnightmon: the finale" |
+| TIME UP | `timeup2_overflow_3640`, results `timeup2_overflow_4000` | the timer at 0:00 with TIME UP (DW4_GOD=1 DW4_OVERFLOW_TEST_CHEATS=1), SIMULATION ENDED with Bits and Sim Bits |
+| defeat | `defeat_overflow_2880`, `_3300` | 0 HP under LordKnightmon (`defeated_by e_ldknight` in `shots/defeat_sum.txt`), SIMULATION ENDED |
+| the clear and the return gate | `gate_overflow_2700`, `_2800` | Dorumon (`phase=10 end=120`, god and one-hit cheats): "SIMULATION COMPLETE" banner, the frozen timer, "The return gate is open" |
+| results after a clear | `gate_overflow_3300` | SIMULATION COMPLETE: the Guardians, Bits 32, "Sim Bits +532 (532)", five yellow NEW! records (each line once) |
+
+## 5. SURVIVAL.md 14.2 on the integrated build
+
+The integration changed no run (3.1: the four Rookies' run hashes are lane E's head runs), so lane E's measurement
+over 20 seeds a form and bot (ROUND_O1B_E_NOTES.md 12.2) is the integrated build's: every form within 7 % of the
+others; human medians 21:05-22:34 (target 14:00-18:00: MISSED for all four), kite medians 22:58-23:07 (Dorumon 25:01,
+14 TIME UP: MISSED), Agumon's and Guilmon's kite runs clear every seed (MISSED: "not every seed clears"), the kite bot
+less than 3 minutes over the human bot (MISSED for all four), 2 of 40 human Agumon runs before 10:00 (MISSED
+narrowly); no non-Guardian clamp (highest 15.8 %), frames without control at most 4 %, close-in at least 87 %, panels
+30 frames apart, no Lua error, the first level-up at 15.7-18.2 s: met. Lane E's 12.1 shows why no Agumon lever fixes
+the newcomer target; the next balance round redoes the late curve for every form.
+
+## 6. Open after the integration
+
+- **Balance (14.2):** the newcomer's runs last 21-22.5 minutes for every Rookie; the late damage curve needs a round
+  of its own (lane E notes 12.1, 12.4). The Sim Bits per run (a cleared Agumon Normal run about 13,700-21,700) and
+  the Plug Lab's price (38,500 a form) wait for that round and the user's decision (lane F notes 3).
+- **T8:** the step's p95 / max over the budget under load; measure again on a quiet machine.
+- **The user's own run:** SURVIVAL.md 15.2's "done" includes the user talking to Gekomon and playing a run; nothing
+  here replaces his verdict.
+- **Lane D's left items** (D notes 4): the game's window models and their open / close clips (SimUi draws quads),
+  the UI sounds, the select's face sheet, STR / INT and the locked faces' record conditions, the PWR Medal's element;
+  the interactive path's several story steps in one pass while the dialog opens. TIME UP shows twice (E's notice line
+  and D's banner); the build page draws "Chips: - / -" with the font's '/' stand-in as "- - -".
+- **Lane F's left items** (F notes 3): the 20-seed Sim Bits charge with and without a full Plug Lab; Endless,
+  Hard / Very Hard, Extensions and the ?????? offer are in the format but not built (O2-O4).
+- **Lane E's left items** (E notes 12.4): Crescent Draw's and Fang Thrust's numbers of 6.3 (O2), the traits (O3).
+- **Not run here:** the Gekomon line of Welcome back in a real run (a defeat by e_geko / e_tonogeko could not be
+  staged; `welcome_back` and `defeated_by` are unit tested), the r25c segments with pictures (segments.sh draws none
+  by default, as lane D's run).
