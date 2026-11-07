@@ -1,16 +1,24 @@
-# W30b, host a (k10): hosts Dry Land and waits at stag0201's gate arrival until b's first arrival at dng205b2 is over,
-# then goes on to dng205b2 through dng205b1. The ways on are the depart action with the exits' own targets (stag0202's
-# matz01: dng205b1 point 0; dng205b1's matz02: dng205b2 point 0), a alone in its stage group. (No stay in the Dry Land
-# dungeons before b's second arrival: a k10 character fighting in dng205b1 died within 60 s in rounds r2b and r2c.)
+# W30b, host a (k10). First its own trip into dng205b1 and home by the gate disc: dng205b1's start.lua sets COUNTER 2
+# (the dungeon, a session context value, 3.7) to 205 and the lobby keeps it, so the instance a hosts next has the context
+# of a player who was in dng205, as b's. Then a hosts Dry Land and waits at stag0201's gate arrival until b's first
+# arrival at dng205b2 is over, and goes on to dng205b2 through dng205b1. The ways on are the depart action with the
+# exits' own targets (stag0202's matz01: dng205b1 point 0; dng205b1's matz02: dng205b2 point 0), a alone in its stage
+# group. (No stay in the Dry Land dungeons: a k10 character fighting in dng205b1 died within 60 s in rounds r2b and r2c.)
 campaign until stage=stagml11,control
-idle until epoch>=@80
+idle until epoch>=@110
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+depart dng205b1 0 until stage=dng205b1,control
+log a was in dng205
+disk 8 until stage=stagml11,control fail epoch>=@230
+idle until frames>=120
 explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log a hosts Dry Land
-idle until epoch>=@180
+idle until epoch>=@280
 depart dng205b1 0 until stage=dng205b1,control
 log a in dng205b1
 depart dng205b2 0 until stage=dng205b2,control
 log a in dng205b2
-idle until present=2,sealed>=600 or epoch>=@500
+idle until present=2,sealed>=600 or epoch>=@600
 log b joined a in B2
