@@ -366,3 +366,39 @@ Head before: fc9b49d3. Built (commits 127a2017, 6b7225a2, cbcb739d and later):
 
 Measurements: headless, `nice -n 15`, at most three game processes at once (another workflow ran timing-sensitive
 scenarios): `build/f/jobs3.sh` (jobs.sh of section 9 with 3 and nice 15), `build/f/eval_e.py`.
+
+### 12.1 The Agumon lever: the Art and Bomb do not shorten the human runs, Pwr Up does
+
+Before (`build/f/runs_b1`, binary g1 = 6b7225a2: the content of this section, the balance of fc9b49d3), seeds 1-20:
+human Agumon 22:34 (6:31-23:33), 1 before 10:00, 15 reach 22:00, 8 clear; kite Agumon 23:02 (21:35-23:56), every
+one of the 20 clears. The human bot takes 0.3-0.65 MaxHP a minute from 7:00 (Veemon's 0.65-1.5) and Heal Lt
+covers it; its deaths come at the finale (21-23.5 minutes).
+
+Sweeps, seeds 1-8 each (`runs_b1`, `runs_g2`, `runs_g3`, `runs_g4`; `build/f/sweep.py`; a clear counts at its time):
+
+| Variant (key) | human median (range), before 10:00, clears | kite median (range), clears / TIME UP |
+| --- | --- | --- |
+| before (Cleaver x 2.0, Bomb x 0.5, Pwr Up every 15 s) | 22:22 (21:08-23:29), 0, 3 | 23:03 (22:13-23:56), 8 / 0 |
+| Cleaver x 1.6 (`art_class=1.6`) | 23:45 (6:25-25:01), 1, 4 (2 TIME UP) | 24:10, 7 / 0 |
+| Cleaver x 1.4 | 21:31 (6:03-25:01), **3**, 2 | 24:32, 5 / 2 |
+| Cutter x 0.5 and Bomb x 0.25 (`technique_damage=`) | 22:00, 0, 3 | |
+| Pwr Up every 30 s (`technique_cooldown=80:1800`) | 21:47, 0, 1 | |
+| Pwr Up every 45 s | 21:16 (20:18-23:26), 0, 2 | 22:33 (21:39-23:32), 3 / 0 |
+| **Pwr Up every 60 s** (shipped) | 20:25 (6:28-23:40), 1, 0 | 22:34 (20:40-25:01), 4 / 1 |
+| no Pwr Up (`80:0`) | 18:48 (6:25-21:26), 2, 0 | |
+| no Pwr Up, no Resist | 20:49, 2, 0 | |
+| the force buffs 6-10 s (6.4; `buff=360,60`) | 19:28 (6:26-21:55), 1, 0 | **18:12** (16:15-22:17), 0 / 0 |
+| ... Resist keeps DW4's time (`buff_kept=75`), 5 seeds | 19:15, 1, 1 | 17:21 (16:12-18:01), 0 / 0 |
+| ... 10-14 s (`buff=600,60`), 4-5 seeds | 18:17, 1, 1 | 18:10, 0 / 0 |
+
+**Why.** A weaker Art does not shorten the human runs: the spawner keeps A(t) alive whatever dies, so the crowd
+round the player stays (near15 1.1-2.5 either way), and the runs that reach the finale clear later (Cleaver x 1.6:
+23:45), or a weak early Art ends some in phase 2 (x 1.4: 3 of 8 before 10:00). The human Agumon lives on Pwr Up:
+TECH2 from run level 8, DW4's SETPOWERUP with TIME 1800-3240 frames plus the caster's INT and +80 / +240 / +480 /
++960 / +1920 STR, DEF and MaxHP by rank (pcTech 80-84), cast every 15 s while an enemy is within 30: on for good.
+Without it 18:48. 6.4's 6-10 s by rank (OverflowRules::buff_time, kept as the key `buff=`) cut both bots to 17-19
+minutes: the kite bot loses the buff as much as the newcomer, and the kite Agumon fell at 16-22 minutes (MRβ02's
+shots and poison in phase 2, phase 4's families): no lever for 14.2. A longer cooldown keeps DW4's times: every 60 s
+the buff is off for a while at Petty / Mega (30-36 s plus INT), on for good at Terra / ∞ later.
+
+**Shipped:** Pwr Up's run cooldown 60 s (`kTechniques`, Guilmon's TECH5 too), the buff cap off (`buff_steps` 0).
