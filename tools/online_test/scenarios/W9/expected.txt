@@ -1,4 +1,6 @@
-# W9 (19.24, 19.8.3).
+# W9 (19.24, 19.8.3): b's departure into stagML02 point 1 from a's instance is redirected home.
+b: online-script: step .* log: b alone in stag0101
+b: online-script: depart stagml02 point 1
 b: online-script: step .* log: b redirected to the lobby
 b: online-script: step .* log: own story
 relay: redirect .*stage=stagml11

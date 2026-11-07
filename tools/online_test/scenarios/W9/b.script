@@ -1,13 +1,14 @@
-# W9, guest b (k2, own phase 2): through stag0101 matz01, staggf01-03 to staggf03's math00 into stagML02, a home stage
-# its own story is not at: the DISSOLVE redirects it to stagML11 point 3 on its own story (19.8.3).
+# W9, guest b (k2, own phase 2): joins a in stag0101; alone there after a went into dng101b1, it departs into stagML02
+# point 1 (the records of staggf03's math00, the Fortress's way into stagML02, posted by the development build's depart
+# action: the explore bot's characters did not survive the Fortress), a home stage its own story is not at: the DISSOLVE
+# redirects it to stagML11 point 3 on its own story (19.8.3; every guest counts as not in step).
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control
 log b joined a
-explore matz01 yes until stage=staggf01,control
-explore matz01 yes until stage=staggf02,control
-explore matz01 yes until stage=staggf03,control
-explore math00 yes until stage=stagml11,control fail stage=stagml02
+idle until present=1,frames>=120
+log b alone in stag0101
+depart stagml02 1 until stage=stagml11,control fail stage=stagml02
 log b redirected to the lobby
 idle until frames>=120 fail key:4=1
 log own story

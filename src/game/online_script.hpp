@@ -168,6 +168,7 @@ private:
     int route_frame_ = -100000;
     int wander_index_ = 0;
     std::size_t waypoint_ = 0;  // the route action's next waypoint
+    bool departed_ = false;     // the depart action posted its departure
     bool step_reached_ = false; // goto / route: the goal reached (the step ends without "until")
     std::string step_stage_;    // the stage the step began in (stagechange)
     bool failed_ = false;       // a fail condition of this step held (traced once)

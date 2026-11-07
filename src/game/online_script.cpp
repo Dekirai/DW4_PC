@@ -76,7 +76,7 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 bool OnlineScript::known_action(std::string_view name) {
     static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
                                                  "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log",
-                                                 "menu",     "browse", "talkto", "shot"};
+                                                 "menu",     "browse", "talkto", "shot", "depart"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
@@ -512,6 +512,30 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         }
         return out;
     }
+    if (step.action == "depart") {
+        // depart STAGE [POINT]: a departure as an exit's records end it
+        // (PLAYERPOINT SETGENERATEPOS, then STAGECTL NEXTSTAGE, delivered in
+        // the next step), posted once, for a member that plays its stage
+        // group alone (round I1a's W9: a guest's way into stagML02 without
+        // walking the Fortress, whose enemies the test characters do not
+        // survive). It changes the engine outside the pads, so only
+        // development builds take it, and never with another member present.
+#ifdef DW4_ONLINE_DEV
+        if (!departed_ && control && !step.args.empty() && std::popcount(unsigned(facts.present)) == 1 && !engine.pending_stage()) {
+            departed_ = true;
+            engine::Packet at;
+            at.ints.push_back(step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 0);
+            engine.messenger().post(engine.time() + engine::kFrameNs, "PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", std::move(at));
+            engine::Packet next;
+            next.strings.emplace_back(step.args[0]);
+            engine.messenger().post(engine.time() + engine::kFrameNs, "STAGECTL", std::nullopt, -1, "NEXTSTAGE", std::move(next));
+            std::printf("online-script: depart %s point %s (frame %d)\n", step.args[0].c_str(), step.args.size() > 1 ? step.args[1].c_str() : "0",
+                        facts.frame);
+            std::fflush(stdout);
+        }
+#endif
+        return out;
+    }
     if (step.action == "giveup") {
         if (defeated(engine, facts.own_slot)) out.buttons = dw4::pad_button::start;
         return out;
@@ -730,6 +754,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             disk_line_ = -1;
             answers_ = 0;
             waypoint_ = 0;
+            departed_ = false;
             step_reached_ = false;
             step_stage_ = stage;
             failed_ = false;
