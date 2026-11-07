@@ -1,0 +1,14 @@
+# W10, host a (k5): hosts a Public instance in stag0101; once b joined and played along a while, a removes b (the
+# Instance page's Remove, INSTANCE_OP remove) and plays on alone; it stays (the instance runs) while b comes back.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts in stag0101
+wander -150 -60 20 until present=2,sealed>=1200 fail stagechange
+log b joined a
+remove b
+log a removed b
+wander -150 -60 20 until present=1 fail stagechange
+log b is gone
+wander -150 -60 20 until epoch>=@480 fail stagechange
+log a still hosts

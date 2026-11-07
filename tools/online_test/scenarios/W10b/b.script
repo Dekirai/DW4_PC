@@ -1,0 +1,14 @@
+# W10b, guest b (k2): joins a in stag0101, walks into the enemies and falls; a removes it while it is defeated: HOME takes
+# exactly its slot (ForkKind::home, defeated or not), so b goes home (no game over, no stay), on its own story.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+follow 40 until sealed>=600
+log b joined a
+die until dead
+log b defeated
+idle until stage=stagml11 fail epoch>=@480
+log b home while defeated
+idle until frames>=240 fail key:4=1
+log own story at home

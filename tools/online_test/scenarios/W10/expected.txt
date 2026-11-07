@@ -1,0 +1,18 @@
+# W10 (19.24, 19.6.6): a removes b: b goes home on its own story; for 10 minutes b's arrivals and its instance list do not
+# show a's instance (the relay's Visible() and the website's / API's list by the snapshot's bars).
+a: online-script: step .* log: b joined a
+a: online-script: remove b member \d+ sent
+a: online-script: step .* log: b is gone
+b: online-script: step .* log: b plays a's story
+b: online: .*You were removed from .*'s instance\.
+b: online-script: step .* log: b home after the removal
+b: online-script: step .* log: own story at home
+b: online-script: step .* log: b on its own story there
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=join
+relay: remove .*reason=host
+relay: instance_leave .*reason=removed
+relay: instance_start .*stage=stag0101
+shared: a b >= 1000
+!a: online-script: FAIL
+!b: online-script: FAIL

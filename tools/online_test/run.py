@@ -22,7 +22,8 @@ the service's ordered stop) or killed, and starts again on the same ports N seco
 starts), "api_steps" ([{"at": S, "as": CLIENT | "admin", "method", "path", "body"}]: timed API calls, e.g. a story reset or
 a staff restore; "admin" is an admin account the harness makes; {id:NAME}, {user:NAME} and {pw:NAME} name a client's
 account and password),
-"api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX}]), a client's "crash"
+"api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX, "expect_not": REGEX}]: {user:NAME} and {id:NAME}
+expand in the regexes too), a client's "crash"
 ({"at": S, "restart": N, "script": FILE}: its process is killed at start + S and started again N seconds later with that
 script), "allow_close" (the world's CLOSEs of a server restart or an ended instance are expected), "counter_proof" (the
 scenario must FAIL: a client hook switches the checked behaviour off) with "expect_fail" ([REGEX ...]: the problem of the
@@ -1005,8 +1006,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         if check.get("status") and status != check["status"]:
             problems.append("api %s %s as %s: %s, expected %s (%s)" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), status,
                                                                        check["status"], text[:160]))
-        elif check.get("expect") and not re.search(check["expect"], text):
-            problems.append("api %s %s: %s does not match /%s/" % (check.get("method", "GET"), check["path"], text[:200], check["expect"]))
+        elif check.get("expect") and not re.search(expand(check["expect"]), text):
+            problems.append("api %s %s: %s does not match /%s/" % (check.get("method", "GET"), check["path"], text[:200], expand(check["expect"])))
+        elif check.get("expect_not") and re.search(expand(check["expect_not"]), text):
+            # (Round I1b's W10: what a list must not show, e.g. the instance a removed player is barred from.)
+            problems.append("api %s %s as %s: %s matches /%s/" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), text[:200],
+                                                                  expand(check["expect_not"])))
         else:
             notes.append("api %s %s as %s: %s" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), status))
     t0 = time.time()

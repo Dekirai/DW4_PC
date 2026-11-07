@@ -1,0 +1,13 @@
+# W10c, host a (k5): hosts stag0101 and goes into dng101b1 alone (the depart action, as W6) before b arrives; once b is
+# in a's instance in a stage group of its own (stag0101, solo-led), a removes it and plays on in the cave.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+depart dng101b1 0 until stage=dng101b1,control
+log a in dng101b1
+idle until epoch>=@260
+remove b
+log a removed b
+idle until epoch>=@380
+log a still in the cave
