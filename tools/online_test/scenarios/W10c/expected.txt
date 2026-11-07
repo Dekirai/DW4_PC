@@ -12,6 +12,7 @@ relay: remove .*reason=host
 relay: home_req .*reason=Removed
 relay: story_owner
 relay: detached
-relay: redirect .*stage=stagml11
-!relay: instance_end
+relay: redirect .*stage=stagml11 .*point=3
+# (the instance ends only when a's script ends and its client leaves the world: host_left, after b is gone)
+relay: instance_end .*reason=host_left
 !b: online-script: FAIL

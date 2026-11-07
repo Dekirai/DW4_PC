@@ -359,6 +359,7 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
         if (c == "card") {
             host.state.card_member = who->member;
             host.state.card_remove_asked = host.state.card_report_open = false;
+            host.state.card_focus = true; // (as A on the row: the controller's focus on the card's first button)
         } else if (c == "remove") {
             host.state.remove_requested = who->member;
         } else {

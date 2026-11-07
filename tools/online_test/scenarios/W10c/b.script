@@ -1,8 +1,9 @@
 # W10c, guest b (k9, DW4_ONLINE_TEST_IGNORE_HOME=1: a client that never answers its JOIN_REQ home): a guest's NEW at
 # stag0101, a solo-led stage group of a's instance on a's story. Removed (a removes at @260), it plays on: a story value it
 # makes 6 s later goes out with a's owner key and is refused (owner); the relay detaches its stage group after
-# Instances:JoinRequestTries unanswered asks (5 s each), and its next barrier (the gate disc) is a DISSOLVE home on its own
-# story (the own-story check of the card and the server story).
+# Instances:JoinRequestTries unanswered asks (5 s each), and its next barrier, an exit into the field dng101b1 (the depart
+# action, as W6's a), is a DISSOLVE home redirected to stagML11 on its own story (the own-story check of the card and the
+# server story).
 campaign until stage=stagml11,control
 idle until epoch>=@160
 explore mate00 yes until stage=stag0101,control
@@ -13,7 +14,7 @@ setflag 595
 log b made a story value
 wander 460 200 20 until epoch>=@300 fail stage=stagml11
 log b detached
-disk 8 until stage=stagml11,control fail epoch>=@500
+depart dng101b1 0 until stage=stagml11,control fail epoch>=@500,stage=dng101b1
 log b home
 idle until frames>=120
 log own story at home

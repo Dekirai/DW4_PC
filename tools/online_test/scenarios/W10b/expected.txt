@@ -12,6 +12,7 @@ relay: instance_join .*how=join
 relay: remove .*reason=host
 relay: home .*reason=Removed
 relay: instance_leave .*reason=removed
-!relay: instance_end
+# (the instance ends only when a's script ends and its client leaves the world: host_left, after b is gone)
+relay: instance_end .*reason=host_left
 !a: online-script: FAIL
 !b: online-script: FAIL
