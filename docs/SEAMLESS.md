@@ -12435,6 +12435,59 @@ here).*
   GPU measures over the budget); *Choose character* with the original
   character select and the four online boxes (round D's boxes).
 
+*Built, the integration (2026-11-07, branch `int-i1a` from main
+d0e005b0; progress note `docs/ROUND_I1A_INT_NOTES.md`, which lists every
+command, result and log path).*
+
+- **The merge:** web, client, relay in that order, each `--no-ff`; the
+  only conflicts were the contract's (19.25's Built paragraphs; the four
+  Domain stubs, ServerApp.cs, OnlineStoryTests.cs, the relay's
+  WorldRelayTests with `fakeWorld: false` and tickets through
+  `WorldService`, done by web's `resolve_trial.py`); the production
+  example's `Play:MinimumProtocol` / `CurrentProtocol` 49 / 49 and
+  DEPLOY.md's protocol notes name 49.
+- **Fixes the scenarios asked for** (each with a test that fails without
+  it, or a measurement):
+  - *HOME after the stage group's LEAD_FROM* (relay, W7b): the HOME a lost
+    host's END stamped beyond the group's LEAD_FROM (his LEAVE took an
+    earlier tick) waits again and goes to the guest leading alone as
+    JOIN_REQ home (`TrySoloHome`).
+  - *One sealed tick before LEAD_FROM* (client, W6, W7b): JOIN_REQ home
+    and an orphan JOIN_AT seal J alone; the pacer waited for two sealed
+    ticks before its first step, so the member froze at J for good. A
+    waiting stretch whose events carry the LEAD_FROM runs without the full
+    playout buffer.
+  - *CLOSE stopping* (client, W24): an ordered stop reconnects like a lost
+    link; the new process's WELCOME without the wid starts the local way
+    home (19.6.10), as after a crash.
+  - *A resume's late pads* (client, W7d): a host back after 45 s ran the
+    missed ~2,800 ticks at once and sent an INPUT frame for each, which
+    broke the relay's frame budget (400 a second, burst 2,000; CLOSE
+    abuse). Pads for ticks the relay sealed already go 32 to an INPUT while
+    the pacer runs such a backlog.
+  - *The lone host's game over* (harness, W27): a defeated member alone in
+    its stage group gets the original game over (the bit capsule's
+    `end_g_000bcaps.lua`); holding START keeps it from running, offline as
+    online (`dw4_world_probe homeover` cases 14-19), and the relay ignores
+    a give-up INTENT outside a sealed group. W27's host waits instead of
+    holding START; its expectations are unchanged.
+  - *Fake guests in a real instance* (harness, W29): the relay matches an
+    arrival only with instances of its session context (19.7.2); the
+    `instance_start` line of the world log names the instance's context and
+    FakeClient's `--context` reports it instead of the stand-in's.
+  - *The own story on the card* (harness, W1, W24): the card carries the
+    session's own confirmed story, which is the keeper's rebased copy (flag
+    503 derived, 8.8); the own-story check accepts that form of the stored
+    row.
+  - *W7e's cut*: the proxy's cut is timed by the clock and missed the short
+    park; development builds take `DW4_ONLINE_TEST_CUT_AT_PARK=SECONDS`
+    (the link is lost at the member's first park with another member in its
+    stage group, the reconnect waits that long).
+- **Results** (the numbers and logs in the progress note): ctest 57/57;
+  the server's unit tests 466/466; `det.sh` 4004f056 / 396cb219 in both
+  runs; the save state suite 17 of 17 identical after loading. The rest is
+  filled in as the runs finish.
+
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
 
