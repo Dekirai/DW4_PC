@@ -76,6 +76,18 @@ public class WorldDomainTests
                 Assert.True(WorldVisibility.Visible(Row(vis[i], 10, 20), viewer) == sees[i], $"{who} / {vis[i]}");
     }
 
+    /// <summary>Round I1b (19.6.6): a player under the instance's removal bar does not see it in the lists; staff and its members do.</summary>
+    [Fact]
+    public void A_removal_bar_hides_the_instance_from_the_barred_player_only()
+    {
+        var row = Row(VisibilityNames.Public, 10, 20) with { Barred = [30, 4] };
+        Assert.False(WorldVisibility.Visible(row, Viewer(30)));
+        Assert.False(WorldVisibility.Visible(row, Viewer(30, friends: [10])));
+        Assert.True(WorldVisibility.Visible(row, Viewer(31)));
+        Assert.True(WorldVisibility.Visible(row, Viewer(4, staff: true))); // (staff see every row in the lists, 19.14)
+        Assert.True(WorldVisibility.Visible(row with { Barred = [20] }, Viewer(20))); // (a member always sees his own)
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(46)]

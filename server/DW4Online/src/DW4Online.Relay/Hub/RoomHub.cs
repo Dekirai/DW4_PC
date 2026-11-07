@@ -292,6 +292,7 @@ public sealed partial class RoomHub
             case Msg.Checkpoint: OnCheckpoint(m, CheckpointMsg.Parse(p), now); break;
             case Msg.CheckpointBad: OnCheckpointBad(m, CheckpointBadMsg.Parse(p), now); break;
             case Msg.InstanceOp: OnInstanceOp(m, InstanceOpMsg.Parse(p), now); break;
+            case Msg.Report: OnReport(m, ReportMsg.Parse(p), now); break;
             case Msg.Bye: ByeMsg.Parse(p); break; // the connection layer closes it gracefully
             default: throw new ProtocolException("unknown frame type " + Msg.Name(type));
         }

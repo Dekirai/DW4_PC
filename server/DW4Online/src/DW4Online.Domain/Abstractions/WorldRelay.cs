@@ -106,7 +106,12 @@ public sealed record WorldInstanceRow(
     bool Ending,
     bool HostAway,
     IReadOnlyList<WorldMemberRow> Members,
-    IReadOnlyList<WorldMemberRow> Spectators);
+    IReadOnlyList<WorldMemberRow> Spectators)
+{
+    /// <summary>Accounts under a live removal bar of this instance (World:RemovedBarMinutes, round I1b, 19.6.6): the lists hide the
+    /// instance from them (<see cref="DW4Online.Domain.World.WorldVisibility"/>; staff still see every row).</summary>
+    public IReadOnlyList<long> Barred { get; init; } = [];
+}
 
 /// <summary>A member of an instance: account, member id, name, role (host, guest, staff, spectator), stage, connection state.</summary>
 public sealed record WorldMemberRow(long AccountId, uint MemberId, string Name, string Role, string Stage, bool Connected, bool Lagging);

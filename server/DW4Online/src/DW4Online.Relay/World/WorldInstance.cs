@@ -127,6 +127,8 @@ public sealed class WorldInstance(uint wid)
     public long LastAwayNotice { get; set; }
     /// <summary>Removal bars: account until (relay clock).</summary>
     public Dictionary<long, long> Bars { get; } = [];
+    /// <summary>Every account that held a seat in the instance (a report names the instance both shared, round I1b).</summary>
+    public HashSet<long> EverSeated { get; } = [];
     public int PeakPlayers { get; set; }
     /// <summary>INSTANCE_INFO is sent in the next housekeeping pass.</summary>
     public bool InfoDirty { get; set; }

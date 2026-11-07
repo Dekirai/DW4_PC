@@ -16,6 +16,12 @@ public sealed record HistoryEnd(WorldInstance World, string Reason, int Peak, Da
 public sealed record HistoryJoined(WorldInstance World, long Account, int Box, string Role, DateTime At) : WorldHistoryEvent(World);
 public sealed record HistoryLeft(WorldInstance World, long Account, DateTime JoinedAt, string Reason, DateTime At) : WorldHistoryEvent(World);
 
+/// <summary>A player's REPORT (round I1b, 19.16) as the relay resolved it: the accounts, the reason's text (ReportReasons) and the
+/// history id of the instance both shared when the relay knows it; the report service stores it off the lock and the relay answers
+/// the reporter with WORLD_NOTICE 14 (<see cref="RoomHub.ReportAnswered"/>).</summary>
+public sealed record ReportRequest(long ReporterAccount, long ReportedAccount, uint ReportedMember, string ReportedName, string Reason,
+    long? HistoryId);
+
 /// <summary>
 /// The world (SEAMLESS.md 19, round I1a): the hub generalized from one room to the whole server and not renamed (19.17.4). This
 /// part holds the members by account with their member ids, the story keepers per (account, box), the user's instances
@@ -44,6 +50,10 @@ public sealed partial class RoomHub
     public Action<string, long?, long?, object?>? Audit { get; set; }
     /// <summary>The host's visibility choice, remembered as online_prefs.default_visibility (Q9), off the lock.</summary>
     public Action<long, Visibility>? RememberVisibility { get; set; }
+    /// <summary>A player's report (round I1b), handed to the report service off the lock; null: reports are answered "failed".</summary>
+    public Action<ReportRequest>? Reports { get; set; }
+    /// <summary>Members that left the world lately, by member id (a report may name one that just left): account, name, when.</summary>
+    private readonly Dictionary<uint, (long Account, string Name, long At)> _departed = [];
     /// <summary>Runs the computation of the presence selection off the lock (the relay: the thread pool); null: at once (tests).</summary>
     public Func<Func<Dictionary<HubMember, PresenceChoice>>, Task<Dictionary<HubMember, PresenceChoice>>>? SelectionRunner { get; set; }
 
@@ -224,8 +234,14 @@ public sealed partial class RoomHub
             return;
         }
         var wasStaff = m.Staff;
+        var oldBlocks = m.Blocks;
         ApplyAdmit(m, a with { Box = m.Box, DataHash = m.DataHash });
         if (wasStaff != m.Staff) Note("role", m.Instance, ("member", m.Id), ("staff", m.Staff));
+        // A host who blocks a guest of his instance removes him (19.11, 19.6.6): only a block that is new (a moderator who joined
+        // past an older block by an audited override stays).
+        if (m.World is { Ending: false } hosted && hosted.Host == m)
+            foreach (var guest in hosted.Members.Where(x => x != m && m.Blocks.Contains(x.AccountId) && !oldBlocks.Contains(x.AccountId)).ToList())
+                RemoveBy(hosted, guest, m, RemoveWhy.Block, now);
         if (m.World is { } w) MarkInfoDirty(w);
     }
 
@@ -259,6 +275,7 @@ public sealed partial class RoomHub
         m.HomeWish = null;
         _members.Remove(m.Index);
         _byAccount.Remove(m.AccountId);
+        _departed[m.Id] = (m.AccountId, m.Name, now);
         m.LeftWorld = true;
         if (_keepers.TryGetValue((m.AccountId, m.Box), out var k) && !_worlds.Values.Any(x => x.Keeper == k)) k.IdleSince = now;
         Note("member_left", null, ("member", m.Id), ("account", m.AccountId), ("reason", reason));
@@ -330,6 +347,7 @@ public sealed partial class RoomHub
         if (m.World is { } other && other != w) FreeSeat(other, m, "left", now);
         var role = w.Host == m ? "host" : m.Staff ? "staff" : "guest";
         w.Seats[m] = new Seat(m, now, UtcNow, role);
+        w.EverSeated.Add(m.AccountId);
         m.World = w;
         w.PeakPlayers = Math.Max(w.PeakPlayers, w.Seats.Count);
         History?.Invoke(new HistoryJoined(w, m.AccountId, m.Box, role, UtcNow));
@@ -624,6 +642,11 @@ public sealed partial class RoomHub
                 _keepers.Remove(key);
         foreach (var (a, c) in _recentContexts.ToList())
             if (Ms(now - c.At) > 60_000) _recentContexts.Remove(a);
+        foreach (var (id, d) in _departed.ToList())
+            if (Ms(now - d.At) > DepartedKeepMs) _departed.Remove(id);
+        foreach (var w in _worlds.Values)
+            foreach (var (account, until) in w.Bars.ToList())
+                if (now >= until) w.Bars.Remove(account);
         foreach (var w in _worlds.Values)
             if (w.InfoDirty) SendInfoAll(w, now);
         HousekeepSelection(now);
@@ -682,12 +705,9 @@ public sealed partial class RoomHub
                 EndWorld(w, EndReason.Staff, now);
                 break;
             case InstanceOpKind.Remove when isHost || m.Staff:
-                if (w.Members.FirstOrDefault(x => x.Id == msg.Argument) is { } target && target != w.Host)
-                {
-                    // (Audit rows of 19.17.1: a staff removal staff_remove, the host's instance_remove.)
-                    Audit?.Invoke(isHost ? "instance_remove" : "staff_remove", target.AccountId, m.AccountId, new { wid = w.Wid });
-                    Remove(w, target, isHost ? HomeReason.Removed : HomeReason.Staff, now);
-                }
+                if (w.Members.FirstOrDefault(x => x.Id == msg.Argument) is { } target && target != w.Host && target != m)
+                    RemoveBy(w, target, m, isHost ? RemoveWhy.Host : RemoveWhy.Staff, now);
+                else Count("instance_op_refused");
                 break;
             default:
                 Count("instance_op_refused");
@@ -729,9 +749,31 @@ public sealed partial class RoomHub
         }
     }
 
-    /// <summary>A removal (19.6.6): HOME for the member's slot, a bar of World:RemovedBarMinutes, the seat and the story owner at once.</summary>
-    private void Remove(WorldInstance w, HubMember target, HomeReason reason, long now)
+    /// <summary>Why a member was removed (the world log's <c>remove</c> line, the audit row).</summary>
+    private enum RemoveWhy { Host, Staff, Block, Admin }
+
+    /// <summary>
+    /// A removal from the game (19.6.6): the host's or a seated staff member's INSTANCE_OP remove, or the host's new block of a guest
+    /// (19.11). Audited as 19.17.1 names it, by account ids only (web 18:15): the host's (and his block's) <c>instance_remove</c>, a
+    /// staff member's <c>staff_remove</c>; then <see cref="Remove"/>.
+    /// </summary>
+    private void RemoveBy(WorldInstance w, HubMember target, HubMember by, RemoveWhy why, long now)
     {
+        var role = w.Seats.TryGetValue(target, out var seat) ? seat.Role : "guest";
+        if (why == RemoveWhy.Staff)
+            Audit?.Invoke("staff_remove", target.AccountId, by.AccountId, new { wid = w.Wid, historyId = w.HistoryId, hostId = w.HostAccount, role });
+        else
+            Audit?.Invoke("instance_remove", target.AccountId, by.AccountId,
+                new { wid = w.Wid, historyId = w.HistoryId, hostId = w.HostAccount, block = why == RemoveWhy.Block });
+        Remove(w, target, why == RemoveWhy.Staff ? HomeReason.Staff : HomeReason.Removed, now, by, why);
+    }
+
+    /// <summary>A removal (19.6.6): HOME for the member's slot, a bar of World:RemovedBarMinutes, the seat and the story owner at once.</summary>
+    private void Remove(WorldInstance w, HubMember target, HomeReason reason, long now, HubMember? by = null, RemoveWhy why = RemoveWhy.Admin)
+    {
+        Count("removed");
+        Note("remove", target.Instance, ("wid", w.Wid), ("account", target.AccountId), ("member", target.Id), ("by", by?.Id ?? 0),
+            ("reason", why.ToString().ToLowerInvariant()));
         w.Bars[target.AccountId] = now + FromMs(_world.RemovedBarMinutes * 60_000.0);
         target.Peer?.Send(Notice(target, WorldNoticeKind.Removed, w.Host, 0, ""));
         HomeMember(target, reason, now);
@@ -753,6 +795,62 @@ public sealed partial class RoomHub
         if (w.Host == m) EndWorld(w, EndReason.Staff, now);
         else Remove(w, m, HomeReason.Staff, now);
         return true;
+    }
+
+    // Report player (round I1b, 19.16) -----------------------------------------------------------------------------------------
+
+    /// <summary>REPORTs a member may send at once; then one a second (more are counted and dropped without an answer).</summary>
+    public const int ReportBurst = 3;
+    /// <summary>How long a member that left the world can still be reported by its member id.</summary>
+    public const double DepartedKeepMs = 30 * 60_000;
+
+    /// <summary>
+    /// REPORT (i1b-contract.md moderation 16:25): the reported member id resolves to its account (also a member that left the world
+    /// in the last <see cref="DepartedKeepMs"/>); the instance both shared is the reporter's own when the reported is or was seated in
+    /// it, else the named wid's when both were; the report service stores it off the lock (<see cref="Reports"/>) and the reporter
+    /// gets WORLD_NOTICE 14 with the result (<see cref="ReportAnswered"/>). The own id, an unknown one: "not available" at once.
+    /// </summary>
+    private void OnReport(HubMember m, ReportMsg msg, long now)
+    {
+        m.ReportTokens = double.IsNaN(m.ReportTokens) ? ReportBurst : Math.Min(ReportBurst, m.ReportTokens + Ms(now - m.ReportTokensAt) / 1000.0);
+        m.ReportTokensAt = now;
+        if (m.ReportTokens < 1)
+        {
+            Count("report_throttled");
+            return;
+        }
+        m.ReportTokens -= 1;
+        Count("reports");
+        long account;
+        string name;
+        if (_byAccount.Values.FirstOrDefault(x => x.Id == msg.Member) is { } live)
+            (account, name) = (live.AccountId, live.Name);
+        else if (_departed.TryGetValue(msg.Member, out var gone))
+            (account, name) = (gone.Account, gone.Name);
+        else
+            (account, name) = (0, "");
+        if (account == 0 || account == m.AccountId || Reports is null)
+        {
+            Count("report_refused");
+            m.Peer?.Send(new WorldNoticeMsg(WorldNoticeKind.Report, msg.Member, name, (uint)(Reports is null && account != 0 && account != m.AccountId
+                ? ReportResult.Failed : ReportResult.NotAvailable), "").Frame());
+            return;
+        }
+        long? history = null;
+        if (m.World is { } own && own.EverSeated.Contains(account)) history = own.HistoryId;
+        else if (msg.Wid != 0 && _worlds.TryGetValue(msg.Wid, out var named) && named.EverSeated.Contains(m.AccountId) && named.EverSeated.Contains(account))
+            history = named.HistoryId;
+        var reason = Domain.Abstractions.ReportReasons.FromWire(msg.Reason)!;
+        Note("report", m.Instance, ("member", m.Id), ("account", m.AccountId), ("reported", account), ("reason", reason),
+            ("wid", m.World?.Wid ?? 0), ("history", history ?? 0));
+        Reports(new ReportRequest(m.AccountId, account, msg.Member, name, reason, history));
+    }
+
+    /// <summary>The report service's answer to a REPORT: WORLD_NOTICE 14 to the reporter when he is still connected.</summary>
+    public void ReportAnswered(long reporterAccount, uint reportedMember, string reportedName, ReportResult result)
+    {
+        if (!_byAccount.TryGetValue(reporterAccount, out var m) || m.Peer is null) return;
+        m.Peer.Send(new WorldNoticeMsg(WorldNoticeKind.Report, reportedMember, reportedName, (uint)result, "").Frame());
     }
 
     // Story replaced from outside (19.8.1) ------------------------------------------------------------------------------------
@@ -1062,7 +1160,11 @@ public sealed partial class RoomHub
             rows.Add(new WorldInstanceRow(w.Wid, w.HistoryId, w.HostAccount, w.Host.Name, w.Keeper.Box, w.Area ?? "",
                 StageOf(w.Host).ToLowerInvariant(), Visibilities.Text(w.Visibility), w.DataHash, w.Settings.Difficulty,
                 w.Settings.Canonical(Wire.WorldProtocol, w.DataHash), w.Randomizer, "", w.StartedUtc, w.StartingUntil != 0, w.Ending, w.HostAway,
-                members, []));
+                members, [])
+            {
+                // (The removal bars, round I1b: the website's and the API's lists hide the instance from a barred player.)
+                Barred = w.Bars.Where(kv => now < kv.Value).Select(kv => kv.Key).ToList(),
+            });
         }
         var online = _members.Values.Where(m => m.Connected).OrderBy(m => m.Id)
             .Select(m => new WorldOnlineRow(m.AccountId, m.Id, m.Name, StageOf(m).ToLowerInvariant(), m.World is { Ending: false } w ? w.Wid : 0, m.Staff))

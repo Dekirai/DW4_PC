@@ -63,6 +63,9 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>INSTANCE_OP's token bucket (<see cref="RoomHub.InstanceOpBurst"/>, refilled at one a second) and when it was refilled.</summary>
     public double InstanceOpTokens { get; set; } = double.NaN;
     public long InstanceOpTokensAt { get; set; }
+    /// <summary>REPORT's token bucket (<see cref="RoomHub.ReportBurst"/>, refilled at one a second; round I1b).</summary>
+    public double ReportTokens { get; set; } = double.NaN;
+    public long ReportTokensAt { get; set; }
     /// <summary>A HOME the relay owes this member (its *Leave instance* or its removal, 19.6.4 / 19.6.6), asked again in its next stage
     /// group of that instance when a barrier overtook it; gone at the member's DISSOLVE or the instance's end.</summary>
     public HomeWish? HomeWish { get; set; }
