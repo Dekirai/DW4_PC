@@ -2118,6 +2118,8 @@ public:
     void set_target_filter(const ObjectView& info, std::set<std::string, std::less<>> targets) {
         filters_[{info.document(), info.reference()}] = std::move(targets);
     }
+    // The starter rows (tools: which action starts which effect sequence).
+    const std::vector<std::unique_ptr<Ram>>& rams() const { return rams_; }
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
