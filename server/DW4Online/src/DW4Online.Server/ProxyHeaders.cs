@@ -12,7 +12,9 @@ namespace DW4Online.Server;
 /// <para>
 /// Forwarded headers count only on a plain-HTTP connection from this machine (the local proxy's hop to the loopback
 /// endpoint, 127.0.0.1:5280): never from a direct client, and never on the HTTPS endpoint, so a connection a proxy only
-/// passes through (TLS passthrough to the HTTPS port) cannot name an address either. From that local proxy:
+/// passes through (TLS passthrough to the HTTPS port) cannot name an address either. The one exception (0.1.8):
+/// X-Forwarded-Prefix equal to Service:PathBase counts on every connection while BehindProxy is on (it can only put the
+/// links below the path base, which serves them too). From that local proxy:
 /// </para>
 /// <list type="bullet">
 /// <item><b>X-Forwarded-For</b>: its last entry is the address the local proxy saw (every proxy appends it or writes
@@ -117,9 +119,14 @@ public sealed class ProxyHeaders
             if (Last(headers[ForwardedProto]) is { } proto &&
                 (proto.Equals("https", StringComparison.OrdinalIgnoreCase) || proto.Equals("http", StringComparison.OrdinalIgnoreCase)))
                 request.Scheme = proto.ToLowerInvariant();
-            strippedBase = _pathBase.HasValue && Prefix(Last(headers[ForwardedPrefix])) is { } prefix &&
-                           string.Equals(prefix.Value, _pathBase.Value, StringComparison.OrdinalIgnoreCase);
         }
+        // X-Forwarded-Prefix counts on every connection while BehindProxy is on, but only as Service:PathBase itself: a
+        // proxy that strips the prefix and forwards to the HTTPS endpoint (Traefik with a https:// service url) or from
+        // another address (a container) names it too, and a client that sends it itself only gets links below the path
+        // base, which serves them as well (0.1.8; the address and the scheme stay limited to plain HTTP from this machine).
+        if (BehindProxy && _pathBase.HasValue)
+            strippedBase = Prefix(Last(request.Headers[ForwardedPrefix])) is { } prefix &&
+                           string.Equals(prefix.Value, _pathBase.Value, StringComparison.OrdinalIgnoreCase);
         if (_pathBase.HasValue && request.Path.StartsWithSegments(_pathBase, StringComparison.OrdinalIgnoreCase, out var matched, out var rest))
         {
             // Below Service:PathBase (a direct request, a non-stripping proxy, or one that kept the path and named it too).

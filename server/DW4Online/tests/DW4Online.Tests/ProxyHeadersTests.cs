@@ -136,28 +136,42 @@ public class ProxyHeadersTests
     // An edge connecting to the service itself (a Cloudflare address, not behind the local proxy) is not trusted either.
     [InlineData("198.51.100.7")]
     [InlineData("2001:db8:ed9e::9")]
-    public void Nobody_but_the_local_proxy_names_an_address_a_scheme_or_a_prefix(string peer)
+    public void Nobody_but_the_local_proxy_names_an_address_or_a_scheme(string peer)
     {
         var context = Request(peer, "/account", (ProxyHeaders.ForwardedFor, "192.0.2.77"), (ProxyHeaders.ForwardedProto, "https"),
             (ProxyHeaders.ForwardedPrefix, "/dw4online"), (ProxyHeaders.ConnectingIp, "192.0.2.78"));
         Proxy(pathBase: "/dw4online", edges: EdgeNetworks).Apply(context);
         Assert.Equal(peer, Ip(context));
         Assert.Equal("http", context.Request.Scheme);
-        Assert.Equal("", context.Request.PathBase.Value ?? "");
+        // (0.1.8: the prefix counts from anyone as Service:PathBase itself; it only puts the links below the path base.)
+        Assert.Equal("/dw4online", context.Request.PathBase.Value);
         Assert.Equal("/account", context.Request.Path.Value);
     }
 
     [Fact]
-    public void The_https_endpoint_never_takes_forwarded_headers()
+    public void The_https_endpoint_takes_no_address_but_the_path_base_prefix()
     {
         // A proxy that only passes TLS through (a TCP router) connects from 127.0.0.1 to the HTTPS port: the headers are
-        // the client's own.
+        // the client's own, so no address. A stripping proxy with a https:// service url (Traefik forwarding to port 8443)
+        // names Service:PathBase in X-Forwarded-Prefix: that one value counts (0.1.8), any other does not.
         var context = Request("127.0.0.1", "/", (ProxyHeaders.ForwardedFor, "198.51.100.7"), (ProxyHeaders.ConnectingIp, "192.0.2.78"),
             (ProxyHeaders.ForwardedPrefix, "/dw4online"));
         context.Request.Scheme = "https";
         Proxy(pathBase: "/dw4online", edges: EdgeNetworks).Apply(context);
         Assert.Equal("127.0.0.1", Ip(context));
-        Assert.Equal("", context.Request.PathBase.Value ?? "");
+        Assert.Equal("/dw4online", context.Request.PathBase.Value);
+        Assert.Equal("/", context.Request.Path.Value);
+
+        var other = Request("127.0.0.1", "/", (ProxyHeaders.ForwardedPrefix, "/evil"));
+        other.Request.Scheme = "https";
+        Proxy(pathBase: "/dw4online", edges: EdgeNetworks).Apply(other);
+        Assert.Equal("", other.Request.PathBase.Value ?? "");
+
+        var direct = Request("203.0.113.50", "/dw4online/account", (ProxyHeaders.ForwardedPrefix, "/dw4online"));
+        direct.Request.Scheme = "https";
+        Proxy(pathBase: "/dw4online", edges: EdgeNetworks).Apply(direct);
+        Assert.Equal("/dw4online", direct.Request.PathBase.Value); // never doubled
+        Assert.Equal("/account", direct.Request.Path.Value);
     }
 
     [Fact]

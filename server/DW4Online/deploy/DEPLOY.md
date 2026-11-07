@@ -522,6 +522,12 @@ HTTPS endpoint from 127.0.0.1 (a proxy that only passes TLS through, a TCP route
 The last value of `X-Forwarded-For` and `X-Forwarded-Proto` counts (the one the local proxy added; entries further
 left were written by whoever sent the request). A prefix counts only as `Service:PathBase` (letter case aside): any
 other value, or a prefix without `PathBase`, could be a browser's own header that a proxy passed on, and is ignored.
+Since release 0.1.8 that one prefix (`X-Forwarded-Prefix` equal to `Service:PathBase`, with `BehindProxy` on) counts on
+every connection, also on the HTTPS endpoint and from other addresses: a Traefik whose service url is
+`https://...:8443` (or a container) and which strips the prefix gets the right links without any change on its side.
+It can only put the links below the path base, which serves them too; the address and the scheme still come only from
+plain HTTP on this machine (so behind such a Traefik all browsers keep sharing the edge's address until its url is
+`http://127.0.0.1:5280`).
 
 **The path prefix, with or without `stripPrefix`.** Both Traefik variants work; set `"PathBase": "/dw4online"` in both
 (without `stripPrefix` the path carries the prefix, with it the proxy's `X-Forwarded-Prefix` must match `PathBase`;
