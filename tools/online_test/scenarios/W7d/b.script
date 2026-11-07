@@ -1,9 +1,11 @@
+# (b plays on near (442,-10) while a is cut: a wander towards (-150,-60) crosses stag0101's rock slope, which a k2
+# character does not survive; W7b's b died there in round r2a.)
 # W7d, guest b (k2).
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control
 log b joined a
 follow 40 until epoch>=@200
-wander -150 -60 20 until epoch>=@260 fail stage=stagml11
+wander 442 -10 8 until epoch>=@260 fail stage=stagml11
 log b stayed
 follow 40 until sealed>=1500 fail stage=stagml11
