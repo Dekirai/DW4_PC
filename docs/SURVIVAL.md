@@ -904,12 +904,14 @@ As built in round O1b (lane E's finish): the buffs keep DW4's own times
 (pcTech TIME 1800-3240 frames, 30-54 s by rank, plus the caster's INT for
 Speed and Pwr Up), not the 6-10 s above: with 6-10 s the kite bot's Agumon
 fell at 16-22 minutes as early as the newcomer's (docs/ROUND_O1B_E_NOTES.md
-12.1; the cap stays as the balance key `buff=360,60`). Pwr Up's cooldown is
-15 s until 10:00 and 120 s after: with 15 s throughout it never ended
-(Agumon's TECH2 from run level 8: +80 to +1920 STR, DEF and MaxHP) and the
-newcomer's Agumon reached the finale in 15 of 20 runs; 60 s from the start
-ended 6 of 37 newcomers' runs right after the phase 2 start, and 60 s from
-10:00 still kept it on (Giga to ∞ last 42-54 s plus INT).
+12.1; the cap stays as the balance key `buff=360,60`). With the 15 s
+cooldown Pwr Up never ends (Agumon's TECH2 from run level 8, Guilmon's TECH5:
++80 to +1920 STR, DEF and MaxHP), and the late game's damage is built on
+that DEF: every shorter uptime measured (a cooldown of 60 s from the start
+or 120 s from 10:00, the 6-10 s cap) let late hits pass 35 % of MaxHP or
+ended newcomers' runs at the phase 2 start. It stays at 15 s until the late
+damage curve is redone (an open point of 14.2 for Agumon and Dorumon's human
+runs).
 
 ### 6.5 Awakening
 
