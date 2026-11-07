@@ -12542,6 +12542,28 @@ together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
 
+*Built, lane go along (2026-11-07, branch `feat-i1b-go` from `int-i1a`
+bfc3b0a5; notes `docs/ROUND_I1B_GO_NOTES.md`; wire layout in the lanes'
+contract, protocol 49).* The first task is measured in 19.30.7. Engine:
+`Engine::online_go`, `ForkKind::go`, the GO's departure (the half fade the
+prompt would start, the exit motion, NEXTSTAGE taken as named),
+`ExitHeading::asked`, the 300-tick expiry in the session. Relay
+(`World/GoAlong.cs`): the offers with their notices, late notices and
+silent reopens, INTENT 4's wait and stamp (sealed or JOIN_REQ kind *go*),
+the GO's barrier (the offer's stage group first, its hold without
+`JoinHoldSeconds`, *Leave* from it goes home), the backstop, HEADING's
+asked mask, STATE's *no living member*. Client: OFFER, the notice window,
+the *Instance* page's *Go along* box with *B: Close* and the half second,
+the waiting line, the held barrier's *B: Back to the lobby*. Two choices
+of the lane: *B: Close* is kept by the client (no message tells the relay;
+the relay's offer only knows the members the port asked), and A on a
+closing row goes nowhere (the box greys it; the relay's *go refused* for a
+closed offer answers a request that crossed the close). Scenarios W31,
+W31b, W31c (its part without a hook), W31d2, W31e and W31g are written;
+W31d, W31f, W31h and W31i need deterministic test hooks (a defeat, a shared
+scene or a prompt at a sealed tick, a boss kill) and are marked `requires:
+go_test_hooks`.
+
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
 "sent" until they expire), blocks, the migration `friends` with its
