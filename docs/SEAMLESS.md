@@ -11983,7 +11983,7 @@ means round I1a):
 | W31c | I1b | (round 72) races: a goes into dng204b1 and back to stag0201 before b answers: the offer closes ("Kim left Sand Labyrinth."), b's late A is refused (*go refused*); a test hook holds a's way back until b's GO is stamped: b lands alone in dng204b1 in a stage group of a's instance ("... before you arrived."), its seat kept |
 | W31d | I1b | (round 72) defeated: b defeated in stag0201 when a goes in: no notice while b is defeated (it shows when b lives again); c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between the stamp and the GO's step: the GO does nothing on every engine, "Couldn't go along: you were defeated."; W31d2: a test hook defeats every member of a's stage group in dng204b1 while b's request waits: no stamp while nobody lives there (STATE *no living member*); a's game over closes the offer and ends b's request, no rescue join |
 | W31e | I1b | (round 72) two dungeons: a goes into dng204b1 and c into dng205b1 within 2 s: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then |
-| W31f | I1b | (round 72) the host goes in: host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a test hook defeats dng204b2's boss and a takes matz02 into stagML11: a's prompt shows "Your guests will return to their lobbies.", b goes home 3 s later (`end_reason` host_left) |
+| W31f | I1b | (round 72) the host goes in: host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a test hook defeats dng204b2's boss and a takes matz02 into stagML11: a's prompt shows "Your guests will return to their lobbies.", b goes home 3 s later (`end_reason` host_left); I1b runs it with the host's other way home, the Gate Disk from dng204b1 (the same line, no boss kill needed) |
 | W31g | I1b | (round 72) noise: a walks into dng204b1 and out again three times within 2 minutes: b and c see one notice and no closing line as a notice; b closes the offer with B: no notice for b when c goes in, the row stays on b's page; I2 adds: b blocked a, so b gets no notice naming a |
 | W31h | I1b | (round 72) a busy target after the stamp: a test hook starts a scene in a's stage group right after b's GO is stamped and holds it 40 s: b's barrier waits past `JoinHoldSeconds` without a new stage group of the instance at dng204b1; *B: Back to the lobby* takes b home; a second run lets the scene end after 40 s: b joins a |
 | W31i | I1b | (round 72) expiry: b's GO is stamped and a test hook opens c's exit prompt in b's stage group at the same tick and leaves it open: b's GO expires after 300 ticks on every engine (equal fingerprints), "Couldn't go along: a scene here took too long.", the relay clears `GoAlong`; an INTENT 4 sent right after b's arrival in a field, before its stage group seals, waits and is stamped (no `intent_ignored`) |
@@ -12558,11 +12558,22 @@ the waiting line, the held barrier's *B: Back to the lobby*. Two choices
 of the lane: *B: Close* is kept by the client (no message tells the relay;
 the relay's offer only knows the members the port asked), and A on a
 closing row goes nowhere (the box greys it; the relay's *go refused* for a
-closed offer answers a request that crossed the close). Scenarios W31,
-W31b, W31c (its part without a hook), W31d2, W31e and W31g are written;
-W31d, W31f, W31h and W31i need deterministic test hooks (a defeat, a shared
-scene or a prompt at a sealed tick, a boss kill) and are marked `requires:
-go_test_hooks`.
+closed offer answers a request that crossed the close).
+Scenarios: all of W31, W31b-W31i and W31d2 are written to run, with
+the lane's scenario hooks (development builds and test relays only; the
+contract's entry "go 2026-11-07 17:50"): the tick event TEST (a member's
+defeat, or a stage group neither membership-safe nor joinable for N ticks,
+the stand-in for a shared scene or an exit prompt left open), stamped by the
+relay's test options at a GO's stamp (`World:TestGoHook`), on a development
+client's request (`World:TestHooks`), and a GO barrier held for a time
+(`World:TestGoBarrierHoldMs`). W31c's hooked race runs as W31c2, W31h's
+second run as W31h2; W31d runs with four members (b falls by the hook, d's
+GO falls with it, c takes both along); W31f uses the Gate Disk (above).
+W31's host crosses dng204b1 with the campaign bot's errand: the online
+script's explore, which only strikes the enemies that come near, fell there
+twice. Measured in W31 (run r2): the press to the stamp 10.0 s (dng204b1's
+load and entry scene), the stamp to control 3.4 s (the GO's departure 2.8 s
+to the park, the barrier, the checkpoint join), as 19.30.7 estimated.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
@@ -13510,7 +13521,10 @@ started (the port's records wait for `i_fadewn01`) and uses the exit
 motion ("trans": SQ_EXIT before the full fade), 169 frames (2.8 s) from
 the GO's step to the park, then 22 to the load step; the port's own
 "run" departure of matz01 takes 110. From the stamp to control it is
-therefore about 3.5 s with a checkpoint join (W31 measures it).
+therefore about 3.5 s with a checkpoint join. W31 (real clients, run r2
+of the go lane): the press to the stamp 10.0 s (dng204b1's load and its
+entry scene: the request waited in the field), the stamp to control 3.4 s
+(JOIN_AT, the departure, 2.8 s to the park, the barrier, the join).
 
 #### 19.30.8 Edge cases
 
