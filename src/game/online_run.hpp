@@ -213,6 +213,8 @@ private:
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;
     bool left_ = false;
+    double test_cut_park_ = 0;    // DW4_ONLINE_TEST_CUT_AT_PARK (development builds, W7e): seconds the link stays cut
+    bool test_cut_done_ = false;
 };
 
 } // namespace dw4::game

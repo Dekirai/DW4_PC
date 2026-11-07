@@ -131,6 +131,7 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     // prompt, so "first" is the relay's automatic join; "new" asks for a new
     // instance at every departure from home.
     if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE"); choice && std::string(choice) == "new") config.plan_new_instance = true;
+    if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_PARK"); cut && std::atof(cut) > 0) test_cut_park_ = std::atof(cut);
 #endif
     // Round I1a: the own settings go with every BARRIER (19.8.7).
     config.own_settings = online::to_wire(room_.settings);
@@ -189,6 +190,19 @@ bool OnlineRun::connect(double now, std::string& error) {
 
 void OnlineRun::pass(double now) {
     session_->poll(now);
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_CUT_AT_PARK=SECONDS (development builds, scenario W7e): the
+    // link is cut once, the first time this member parks at a barrier with
+    // another member in its stage group, and the reconnect waits that long (a
+    // proxy's cut is timed by the clock and misses the short park).
+    if (test_cut_park_ > 0 && !test_cut_done_ && session_->mode() == online::Mode::parked && std::popcount(unsigned(session_->present())) >= 2) {
+        test_cut_done_ = true;
+        std::cout << "online: test: the link is cut at the barrier for " << test_cut_park_ << " s" << std::endl;
+        log_.line("test: the link is cut at the barrier for %.0f s (DW4_ONLINE_TEST_CUT_AT_PARK)", test_cut_park_);
+        session_->test_cut(now);
+        next_reconnect_ = now + test_cut_park_;
+    }
+#endif
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
     if (character_) {
         // Round I1a's review: the own story moves on at home and as a host; its

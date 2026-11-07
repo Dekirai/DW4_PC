@@ -1,4 +1,5 @@
-# W7e (19.24, 19.6.7): the cut is timed to the mat (route plus prompt); see the notes if the timing misses it.
+# W7e (19.24, 19.6.7): a's own client cuts its link at its park (DW4_ONLINE_TEST_CUT_AT_PARK=20).
+a: online: test: the link is cut at the barrier
 b: online-script: step .* log: b in stag0102
 a: online-script: step .* log: a joined b there, still host
 relay: instance_join .*how=join

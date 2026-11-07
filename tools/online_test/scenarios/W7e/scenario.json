@@ -1,5 +1,5 @@
 {
-  "desc": "a drops while its stage group with b is parked at a barrier: b goes on at once; a, back after 20 s, arrives alone and joins b, still host (k10 for both: the route crosses stag0101's rock slope, which a k2 character does not survive)",
+  "desc": "a drops while its stage group with b is parked at a barrier: b goes on at once; a, back after 20 s, arrives alone and joins b, still host (k10 for both: the route crosses stag0101's rock slope, which a k2 character does not survive; the cut is the client's DW4_ONLINE_TEST_CUT_AT_PARK at its park, a timed proxy cut missed the short park)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -20,10 +20,8 @@
       "script": "a.script",
       "card": "k10",
       "start": 0,
-      "cut": {
-        "at": 230,
-        "seconds": 20,
-        "mode": "close"
+      "env": {
+        "DW4_ONLINE_TEST_CUT_AT_PARK": "20"
       }
     },
     {

@@ -272,6 +272,9 @@ public:
     void send_heading(const std::string& stage, int point);
     void set_rate(std::uint32_t steps_per_second);
     void leave(const std::string& reason = "left");
+    // Development builds' scenario hook (DW4_ONLINE_TEST_CUT_AT_PARK, W7e): the
+    // link is lost here and now, as a cut cable would lose it.
+    void test_cut(double now) { lose_connection(now); }
 
 private:
     struct PendingEvent {
