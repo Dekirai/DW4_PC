@@ -12587,8 +12587,12 @@ file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
 - **Scenarios** W10 (the removal, the home departure on the own story, the bar: b's next arrival hosts its own instance,
   b's `GET /instances` does not list a's while staff's does; run.py's `api_checks` learned `expect_not`), W10b (removed
   while defeated: HOME's fork takes exactly b's slot, a's stage group plays on), W10c (the client that never answers: its
-  STORY with the host's key refused, the group detached, its gate disc a DISSOLVE home on its own story). Their results
-  are in the progress note.
+  STORY with the host's key refused, the group detached, its gate disc a DISSOLVE home on its own story), and the UI
+  scenario `card` (the host works b's card with the controller: Report, the reasons, Griefing; Remove, the question).
+  *Admin > Reports* names the instance a report came from (its host, area and start; `GET /admin/reports` rows gain
+  `instanceHost`, `instanceStage`, `instanceStarted`). Results (978efd19): server unit 474/474, integration 143 passed /
+  3 skipped, ctest 57/57, online off (`det.sh` 4004f056 / 396cb219 twice), W10, W10b, W10c and `card` passed; details in
+  the progress note.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept

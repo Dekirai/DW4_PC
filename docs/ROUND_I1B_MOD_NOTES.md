@@ -43,7 +43,7 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 | online_session / online_wire / online_script tests | pass (362 / 346398 / 304 checks) | - |
 | online off: `det.sh` on a DEV=OFF copy of 978efd19 | 4004f056 / 396cb219 twice | `DW4_PC/work/dref/checks/det/det_i1bmod2` |
 | UI scenario `card` | passed (978efd19, exe d) | `build/mod/scen_ui3.log` |
-| scenarios W10, W10b, W10c | see "Scenario rounds" | `build/mod/scen_r*.log` |
+| scenarios W10, W10b, W10c | 3 of 3 passed (978efd19, exe d, round r5) | `build/mod/scen_r5.log` |
 
 ### Scenario rounds
 
@@ -69,7 +69,8 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
   with the script shortcuts, but A on Report did nothing (ImGui activates only with the nav cursor visible; the script's
   `card` had not shown it); ui3 (exe d = 978efd19) **passed** with the controller path, screenshots card / reasons /
   reported / question / removed and b's home_after_removal (run folder `tools/online_test/.work/run_20261107_174119`).
-- r5 (exe d = 978efd19, `build/mod/scen_r5.log`): W10, W10b, W10c on the final client.
+- r5 (exe d = 978efd19, `build/mod/scen_r5.log`, run folder `tools/online_test/.work/run_20261107_174801`): **W10 (483 s),
+  W10b (197 s) and W10c (383 s) passed** on the final client, 3 of 3.
 
 ## Findings for the integration (not this lane's code)
 
@@ -83,10 +84,14 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 
 ## Left
 
-- The scenario rounds above until W10, W10b and W10c pass (they need only this lane: I1a's automatic join stands in for
-  the prompt; with the prompt lane merged, b's second arrival in W10 gets no row for a's instance, the same check).
-- Online off: `det.sh` on a DEV=OFF copy of the final tree (the engine is untouched by this lane except the allowed-env
-  list entry; the session, script and UI changes run only online or with test scripts).
+Nothing of the lane: every item of the task is built and green (server unit and integration, ctest, online off, W10, W10b,
+W10c, the UI scenario `card`). For the I1b integration:
+- Merge with the lanes prompt and go: the conflicts the contract names (online_ui.cpp's `playing()`: the go-along box above
+  the page, the card below the member table; the wire type registries; WorldHub/RoomHub hook places). With the prompt
+  merged, W10's b gets the prompt at its second arrival: a's instance is no row (Visible() with the bar), so b's
+  `DW4_ONLINE_AUTOCHOICE=first` takes *New instance* and the scenario's checks hold as they are (no change expected).
+- W10, W10b, W10c and the UI scenario `card` again on the integrated build.
+- The finding above (the double join toast), if the integration wants it fixed in I1b.
 
 ## How to run
 
