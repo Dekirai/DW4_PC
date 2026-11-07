@@ -63,6 +63,8 @@ void draw_hud(SimUi& ui, const RunScreenData& d, std::uint64_t frame) {
         ui.bar(170, 78, 300, 8, float(d.guardian_hp) / float(std::max(1, d.guardian_max)), ui_colors::red);
     }
     if (!d.notice.empty()) ui.text(0, 100, d.notice, ui_colors::yellow, 18.0f, 2, 640);
+    // The clear banner (4.4, i_bgclear's place) for 4 s after LordKnightmon's fall.
+    if (d.cleared && d.clear_frames < 240) ui.text(0, 200, text(Text::results_complete), ui_colors::yellow, 40.0f, 2, 640);
     if (d.seconds >= 20 * 60 && !d.finale && !d.time_up) ui.text(0, 38, text(Text::hud_hold_out), ui_colors::orange, 15.0f, 2, 640);
 }
 
@@ -164,7 +166,9 @@ float level_progress(int exp, int floor, int next) {
 
 std::vector<std::string> fit_result_lines(const std::vector<std::string>& lines, std::size_t most) {
     if (lines.size() <= most) return lines;
-    const auto meta = [](const std::string& line) { return line.find("NEW!") != std::string::npos || line.rfind("Sim Bits", 0) == 0; };
+    const auto meta = [](const std::string& line) {
+        return line.find("NEW!") != std::string::npos || line.rfind("Sim Bits", 0) == 0 || line.rfind("Bits ", 0) == 0;
+    };
     const std::size_t kept = std::size_t(std::count_if(lines.begin(), lines.end(), meta));
     const std::size_t room = most > kept ? most - kept : 0;
     std::vector<std::string> out;

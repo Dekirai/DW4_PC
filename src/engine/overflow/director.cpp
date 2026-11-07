@@ -803,6 +803,7 @@ void OverflowDirector::player_hit(Engine& engine, const HitTaken& hit) {
     }
     if (hit.damage <= 0) return;
     ++hits_taken_;
+    last_hit_family_ = hit.shooter;
     if (hit.clamped) ++clamps_;
     // A hit costs its damage and the whole of the poison it left (the run's
     // poison rule): 14.2's highest hit and the balance test see both.
@@ -1398,6 +1399,7 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     for (const auto& family : guardians_defeated_) out << ' ' << family;
     out << "\nfinale " << (finale_ ? 1 : 0) << "\nawakened " << (awakened_ ? 1 : 0) << '\n';
     out << "awakening_bursts " << bursts_ << "\ngate " << (gate_ >= 2 ? 1 : 0) << ' ' << (gate_entered_ ? "entered" : "-") << '\n';
+    out << "defeated_by " << (defeated_by().empty() ? std::string("-") : defeated_by()) << '\n';
     for (const auto& [step, text] : event_log_)
         if (text.starts_with("guardian ")) out << "guardian_event " << step << ' ' << text.substr(9) << '\n';
     int lua_errors = 0;

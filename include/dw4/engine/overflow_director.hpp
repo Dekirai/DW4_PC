@@ -509,6 +509,10 @@ public:
     // (none on O1b's arena yet).
     const std::array<int, 4>& tech_defeats() const { return tech_defeats_; }
     int crates() const { return 0; }
+    // The family whose hit took the last HP (lane D's "Welcome back", 3.4:
+    // the Gekomon joke); empty unless the run ended in a defeat. (A poison
+    // tick never takes the last HP, so the last damaging hit is the one.)
+    std::string defeated_by() const { return outcome_ == Outcome::defeated ? last_hit_family_ : std::string(); }
     const Vec3f& arena_centre() const { return centre_; }
     float arena_radius() const { return radius_; }
 
@@ -735,6 +739,7 @@ private:
     int minute_art_kills_ = 0, minute_tech_kills_ = 0;
     std::uint64_t minute_trapped_ = 0, minute_steps_ = 0;
     std::string end_reason_ = "-";   // what ended the run (RunEnd's reason, retire, clear)
+    std::string last_hit_family_;    // the last damaging hit's shooter (defeated_by)
     std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
     double highest_hit_ = 0;
     int panels_min_gap_ = 1 << 30;

@@ -215,7 +215,7 @@ if(BUILD_TESTING)
   # dialog's state machine, the screens' 2D items and the NPC actor.
   add_executable(dw4_overflow_screens_tests tests/overflow_screens_tests.cpp src/game/overflow_text.cpp src/game/sim_ui.cpp
     src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp src/game/overflow_run.cpp
-    src/game/ghost_figures.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
+    src/game/ghost_figures.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp src/game/overflow_profile.cpp)
   target_include_directories(dw4_overflow_screens_tests PRIVATE src/game)
   target_link_libraries(dw4_overflow_screens_tests PRIVATE dw4_engine)
   add_test(NAME overflow_screens COMMAND dw4_overflow_screens_tests "${DW4_TEST_DATA}")

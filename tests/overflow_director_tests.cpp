@@ -1093,6 +1093,30 @@ void guardians() {
     std::cout << "  guardians: gear in " << gear_lines << " lines of " << windows << " windows\n";
     check(gear_lines > windows / 4 && gear_lines < windows * 2, "gear takes about its 30 % weight");
     check(offer_priority({OfferKind::core, 0}) < offer_priority({OfferKind::plug, 2}), "the priority bot takes gear before plugs");
+    // defeated_by (the O1b integration: lane D's "Welcome back" joke): the
+    // last damaging hit's family, only once the run ended in a defeat.
+    {
+        Engine run{dw4::MountedResources{}};
+        OverflowDirector director(RunConfig{});
+        HitTaken hit;
+        hit.shooter = "e_mecha1";
+        hit.damage = 10;
+        hit.max_hp = 100;
+        director.player_hit(run, hit);
+        hit.shooter = "e_geko";
+        director.player_hit(run, hit);
+        HitTaken missed;
+        missed.shooter = "e_torta";
+        missed.missed = true;
+        director.player_hit(run, missed);
+        check(director.defeated_by().empty(), "defeated_by is empty while the run goes on");
+        director.run_end(run, dw4::engine::overflow::RunEnd{EndReason::player_defeated, {}});
+        check(director.outcome() == Outcome::defeated && director.defeated_by() == "e_geko", "defeated_by names the last damaging hit's family");
+        OverflowDirector retired(RunConfig{});
+        retired.player_hit(run, hit);
+        retired.run_end(run, dw4::engine::overflow::RunEnd{EndReason::stage_exit, "stagml11"});
+        check(retired.outcome() == Outcome::retired && retired.defeated_by().empty(), "no defeated_by for a run that did not end in a defeat");
+    }
 }
 
 int main(int argc, char** argv) {

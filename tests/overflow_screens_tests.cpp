@@ -1,9 +1,12 @@
 // Data Overflow's screens (round O1b lane D; docs/SURVIVAL.md 3, 9, 14.1):
 // T9 (every string of overflow_text.inc against the game font's characters,
-// with the game data; without it against the glyph list of 9.1), the NPC's
+// with the game data; without it against the glyph list of 9.1; since the
+// O1b integration also lane F's texts of overflow_profile.cpp and the
+// results' meta lines, and lane E's notices), the NPC's
 // rules (3.2), the talk box's reach (3.3), the dialog's state machine (3.4,
 // 9.2), the screens' 2D items and the NPC actor (n_gekoa from stag0302).
 #include "overflow_lobby.hpp"
+#include "overflow_profile.hpp"
 #include "overflow_screens.hpp"
 #include "overflow_text.hpp"
 #include "presentation_actor.hpp"
@@ -75,6 +78,50 @@ void test_text_glyphs() {
     CHECK(ov::to_game_text("∋") == u"∋");
 }
 
+// Lane F's texts that reach a screen (overflow_profile.cpp, the run
+// driver's results lines; the O1b integration put them under T9): the 23
+// Data Records (title, condition, what they open, the results' "NEW!"
+// line), the unlock texts of the 16 forms, the Plug Lab's names and
+// purchase answers, the save problems, the results' Bits and Sim Bits
+// lines; and lane E's director notices with fixed words (4.4, 6.5).
+std::vector<std::pair<std::string, std::string>> meta_texts() {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto& record : ov::record_table()) {
+        const std::string key = record.key;
+        out.push_back({key + ".title", record.title});
+        out.push_back({key + ".condition", record.condition});
+        out.push_back({key + ".opens", record.opens});
+        out.push_back({key + ".results", std::string("NEW! ") + record.title + "   opens " + record.opens});
+    }
+    for (const char* model : ov::overflow_forms())
+        if (const auto unlock = ov::form_unlock_text(model); !unlock.empty()) out.push_back({std::string(model) + ".unlock", unlock});
+    for (int upcnt = 0; upcnt < 7; ++upcnt) out.push_back({"plug_lab_name." + std::to_string(upcnt), ov::plug_lab_name(upcnt)});
+    for (const auto result : {ov::BuyResult::bought, ov::BuyResult::not_enough, ov::BuyResult::maxed, ov::BuyResult::bad_stat})
+        out.push_back({"buy_result." + std::to_string(int(result)), ov::buy_result_text(result)});
+    out.push_back({"save_problem.read_only", "Not saved: overflow.dat was in use when the game started."});
+    out.push_back({"save_problem.write", "Not saved: the profile file cannot be written."});
+    out.push_back({"results.bits", "Bits 1234567890"});
+    out.push_back({"results.sim_bits", "Sim Bits +1234567890   (1234567890)"});
+    for (const char* notice : {"The return gate is open", "TIME UP", "Hold out until 25:00", "HP Disk", "¶ Data +100", "Strength Plug +5",
+                               "Blossomon appears", "LordKnightmon: the finale", "LordKnightmon defeated", "AWAKENING: Data Destroyer"})
+        out.push_back({"notice", notice});
+    return out;
+}
+
+// T9 without the game data for lane F's texts: ASCII and the game's glyphs.
+void test_meta_glyphs() {
+    const auto texts = meta_texts();
+    CHECK(texts.size() > 100);
+    for (const auto& [id, line] : texts) {
+        CHECK(!line.empty());
+        for (const char32_t c : ov::code_points(line)) {
+            const bool ok = (c >= 0x20 && c < 0x7F) || kGlyphs.find(c) != std::u32string::npos;
+            if (!ok) std::printf("  T9 (meta): %s: U+%04X is not one of the game's glyphs\n", id.c_str(), unsigned(c));
+            CHECK(ok);
+        }
+    }
+}
+
 // The text without its printf placeholders (%s, %d: filled with game text
 // or digits, which T9 checks where they come from).
 std::string placeholders_out(std::string_view text) {
@@ -131,6 +178,18 @@ void test_font(const dw4::MountedResources& resources) {
             }
     std::printf("T9: ASCII the font lacks: [%s], drawn with stand-ins; %d gaps\n", absent.c_str(), gaps);
     CHECK(gaps == 0);
+    // Lane F's texts and lane E's notices: every character in the font
+    // itself (the space is the font's advance), none left to a stand-in.
+    const auto texts = meta_texts();
+    int meta_missing = 0;
+    for (const auto& [id, line] : texts)
+        for (const char32_t c : ov::code_points(line))
+            if (c != U' ' && !codes.contains(std::uint32_t(c))) {
+                std::printf("  T9 (meta): %s: U+%04X missing in the font\n", id.c_str(), unsigned(c));
+                ++meta_missing;
+            }
+    CHECK(meta_missing == 0);
+    std::printf("T9: lane F's texts and lane E's notices: %zu strings, %d missing glyphs\n", texts.size(), meta_missing);
 }
 
 void test_npc_rules() {
@@ -355,16 +414,17 @@ void test_run_numbers() {
     CHECK(ov::level_progress(10, 0, 0) == 0.0f);
     std::vector<std::string> lines;
     for (int i = 0; i < 19; ++i) lines.push_back("Line " + std::to_string(i));
+    lines.push_back("Bits 95");
     lines.push_back("Sim Bits +120   (480)");
     lines.push_back("NEW! Blossom Data   opens Drain Ram");
     CHECK(ov::result_columns(16) == 1);
     CHECK(ov::result_columns(lines.size()) == 2);
-    CHECK(ov::fit_result_lines(lines, 32) == lines); // (21 lines: all shown, two columns)
-    for (int i = 19; i < 40; ++i) lines.insert(lines.end() - 2, "Line " + std::to_string(i));
+    CHECK(ov::fit_result_lines(lines, 32) == lines); // (22 lines: all shown, two columns)
+    for (int i = 19; i < 40; ++i) lines.insert(lines.end() - 3, "Line " + std::to_string(i));
     const auto fit = ov::fit_result_lines(lines, 32);
     CHECK(fit.size() == 32);
-    CHECK(fit[30].starts_with("Sim Bits") && fit[31].starts_with("NEW!"));
-    CHECK(fit[0] == "Line 0" && fit[29] == "Line 29");
+    CHECK(fit[29] == "Bits 95" && fit[30].starts_with("Sim Bits") && fit[31].starts_with("NEW!"));
+    CHECK(fit[0] == "Line 0" && fit[28] == "Line 28");
     // A font without '/' and '%' (9.1): stand-ins, no gaps.
     const auto has = [](char16_t c) { return c >= 0x20 && c < 0x7F && c != u'/' && c != u'%' && c != u'['; };
     CHECK(ov::fit_to_font(u"skill 10 / cap 1300", has) == u"skill 10 - cap 1300");
@@ -550,6 +610,24 @@ void test_screen_items(const dw4::MountedResources& resources) {
     ov::draw_run_screens(ui, data, 0);
     ui.finish(items);
     CHECK(items.size() > 4);
+    // The clear banner shows for 4 s after the clear (the O1b integration),
+    // then only the HUD; TIME UP adds its banner.
+    const auto count = [&](const ov::RunScreenData& d) {
+        std::vector<dw4::engine::DrawItem> drawn;
+        ui.begin();
+        ov::draw_run_screens(ui, d, 0);
+        ui.finish(drawn);
+        return drawn.size();
+    };
+    const std::size_t plain = count(data);
+    data.cleared = true;
+    data.clear_frames = 10;
+    CHECK(count(data) > plain);
+    data.clear_frames = 240;
+    CHECK(count(data) == plain);
+    data.cleared = false;
+    data.time_up = true;
+    CHECK(count(data) > plain);
 }
 
 void test_actor(const dw4::MountedResources& resources) {
@@ -571,6 +649,7 @@ void test_actor(const dw4::MountedResources& resources) {
 
 int main(int argc, char** argv) {
     test_text_glyphs();
+    test_meta_glyphs();
     test_npc_rules();
     test_menu();
     test_lobby_keys();

@@ -2084,6 +2084,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     dw4::game::overflow::RunSummary back;
                     back.end = outcome.end;
                     back.seconds = outcome.seconds;
+                    back.defeated_by = outcome.defeated_by;
                     // The run's Sim Bits and records into the lobby's meta (lane F).
                     dw4::game::overflow::refresh_lobby(overflow_lobby, dw4::game::overflow::story_forms(engine));
                     if (outcome.end != dw4::game::overflow::RunEnd::failed && outcome.end != dw4::game::overflow::RunEnd::window_closed)

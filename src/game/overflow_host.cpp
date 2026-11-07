@@ -298,6 +298,7 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
     outcome.steps = steps_done;
     outcome.level = driver.status(run).level;
     outcome.seconds = driver.status(run).seconds;
+    outcome.defeated_by = driver.status(run).defeated_by;
     outcome.run_hash = run.net_fingerprint();
     return outcome;
 }

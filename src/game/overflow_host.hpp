@@ -44,6 +44,7 @@ struct RunOutcome {
     int level = 0;
     std::string error;          // why it failed
     double seconds = 0;         // the run clock at its end (the director's, frozen time left out)
+    std::string defeated_by;    // the family whose hit ended a defeated run (RunSummary::defeated_by)
     std::uint64_t run_hash = 0; // the run engine's net fingerprint at its end (two runs of a request compare it)
 };
 

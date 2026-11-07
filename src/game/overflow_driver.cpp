@@ -38,6 +38,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <type_traits>
 
 namespace dw4::game::overflow {
@@ -435,13 +436,15 @@ public:
         status.form_name = form_display_name(request_.form);
         status.level = director_->level(run);
         status.seconds = director_->run_seconds();
+        status.defeated_by = director_->defeated_by();
         return status;
     }
 
 private:
-    // The screens' data from the director (one function, so the merge with
-    // lane E's finale and Guardian getters changes only this; o1b contract D4).
+    // The screens' data from the director (lane D's screens; lane E's finale,
+    // lane F's meta last; o1b contract D4, F 17:40).
     std::uint64_t screen_step_ = 0; // the director step the open screen opened at (the results' pacing)
+    std::optional<std::uint64_t> cleared_step_; // the director step the clear was first drawn at (the banner)
     void fill_screen_data(engine::Engine& run) {
         auto& d = data_;
         d.seconds = director_->run_seconds();
@@ -456,24 +459,12 @@ private:
         }
         build_row(director_->build_lines(run), d);
         d.notice = !director_->notice().empty() && director_->notice_step() + 180 > director_->steps() ? director_->notice() : std::string();
-        // The finale (4.4): lane E's finale() / finale_left_steps() /
-        // time_up() where the merged build has them, else the last five
-        // minutes before the run's end at 25:00 (O1a).
-        d.finale = d.seconds >= 20 * 60 && d.seconds < 25 * 60;
-        d.finale_left = std::max(0.0, 25 * 60 - d.seconds);
-        d.time_up = false;
-        [&](const auto& director) {
-            if constexpr (requires { director.finale(); director.finale_left_steps(); }) {
-                d.finale = director.finale();
-                d.finale_left = double(director.finale_left_steps()) * 1001.0 / 60000.0;
-            }
-            if constexpr (requires { director.time_up(); }) d.time_up = director.time_up();
-        }(*director_);
-        // Lane F's run bits (9.3) where the merged build has them.
-        d.bits = 0;
-        [&](auto& self) {
-            if constexpr (requires { self.run_bits(run); }) d.bits = int(self.run_bits(run));
-        }(*this);
+        // The finale (4.4, lane E): LordKnightmon is in and the quest timer
+        // counts down (1 step = 1001/60000 s; it stops with the run's clock
+        // at the clear); TIME UP at its 0:00.
+        d.finale = director_->finale();
+        d.finale_left = double(director_->finale_left_steps()) * 1001.0 / 60000.0;
+        d.time_up = director_->time_up();
         // (hud_finale=SECONDS, test runs with pictures: the finale timer's
         // look at that many seconds left; presentation only.)
         if (const auto left = option(request_, "hud_finale"); !left.empty()) {
@@ -500,15 +491,13 @@ private:
                 d.offers.push_back({director_->offer_text(run, offer), director_->offer_detail(run, offer), director_->offer_about(run, offer)});
         d.build_lines = screen == ov::Screen::build ? director_->build_lines(run) : std::vector<std::string>{};
         d.result_lines = screen == ov::Screen::results ? director_->result_lines(run) : std::vector<std::string>{};
-        // Lane F's lines under the results (9.6: "Sim Bits +N", "NEW! <title>")
-        // where the merged build has them.
-        if (screen == ov::Screen::results)
-            [&](auto& self) {
-                if constexpr (requires { self.meta_lines(); })
-                    for (auto& line : self.meta_lines()) d.result_lines.push_back(std::move(line));
-            }(*this);
         d.cleared = director_->outcome() == ov::Outcome::cleared;
-        // The meta's part (lane F): the HUD's Bits, the results' Sim Bits and NEW! records.
+        // The clear banner (4.4: where the original shows i_bgclear; lane E
+        // sends none): the steps since LordKnightmon's fall was first drawn.
+        if (d.cleared && !cleared_step_) cleared_step_ = director_->steps();
+        d.clear_frames = cleared_step_ ? director_->steps() - *cleared_step_ : 0;
+        // The meta's part (lane F), last: the HUD's Bits; on the results the
+        // run's Bits, the Sim Bits, the NEW! records and a save problem.
         fill_meta_screen(d, run);
     }
 
@@ -554,6 +543,7 @@ private:
         fill_report(*director_, report);
         if (end_ == RunEnd::window_closed) report.outcome = "retired";
         report.bits = run_bits(run);
+        recorded_bits_ = report.bits;
         reward_ = meta().record_run(report);
         if (test_ || timing_)
             std::printf("overflow: meta %s bits %lld -> Sim Bits +%lld (balance %lld), %zu new records%s%s; used%s\n", report.outcome.c_str(),
@@ -593,6 +583,8 @@ private:
     std::vector<std::string> meta_lines() const {
         std::vector<std::string> lines;
         if (!recorded_) return lines;
+        // (The run's bits as recorded: the pickups and the credited defeats, 4.7.)
+        lines.push_back("Bits " + std::to_string(recorded_bits_));
         lines.push_back("Sim Bits +" + std::to_string(reward_.sim_bits) + "   (" + std::to_string(meta().profile().sim_bits) + ")");
         for (const auto& key : reward_.new_records)
             if (const auto* record = find_record(key)) lines.push_back(std::string("NEW! ") + record->title + "   opens " + record->opens);
@@ -745,6 +737,7 @@ private:
     std::uint64_t bits_random_ = 0;
     int counted_defeats_ = 0;
     std::int64_t credited_bits_ = 0;
+    std::int64_t recorded_bits_ = 0; // the run bits the meta file was given (the results' Bits line)
     std::uint32_t last_buttons_ = 0;
     int last_stick_ = 0, last_stick_x_ = 0;
     std::uint64_t circle_ = 0;

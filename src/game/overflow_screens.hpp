@@ -48,6 +48,7 @@ struct RunScreenData {
     std::vector<RunOffer> offers;
     std::vector<std::string> build_lines, result_lines;
     bool cleared = false;
+    std::uint64_t clear_frames = 0;  // director steps since the clear (the banner, 4.4)
     std::uint64_t screen_frames = 0; // director steps the screen is open (the results' lines appear one by one)
 };
 
@@ -62,8 +63,8 @@ void build_row(const std::vector<std::string>& build_lines, RunScreenData& data)
 // sums the levels), so the bar runs from the level's floor (NEXTEXP of the
 // level before) to its NEXTEXP.
 float level_progress(int exp, int floor, int next);
-// The results' lines (9.6): up to `most`; past that the meta lines (Sim
-// Bits, NEW!) stay and the run's lines before them are cut.
+// The results' lines (9.6): up to `most`; past that the meta lines (the
+// run's Bits, Sim Bits, NEW!) stay and the run's lines before them are cut.
 std::vector<std::string> fit_result_lines(const std::vector<std::string>& lines, std::size_t most);
 // The results' columns: one up to 16 lines, else two (up to 16 rows each).
 int result_columns(std::size_t lines);
