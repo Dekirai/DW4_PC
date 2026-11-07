@@ -545,6 +545,10 @@ void Session::handle(const w::Frame& frame, double now) {
         // (Kind 2 home: the same JOIN_AT; SEALED(J) brings HOME, 19.6.5. Kind 3
         // go is round I1b's.)
         if (m.kind == w::JoinKind::go) break;
+        if (m.kind == w::JoinKind::home && config_.test_ignore_home) {
+            trace("join_req home ignored (test hook) inst=%u visit=%u", m.inst, m.visit);
+            break;
+        }
         if (mode_ != Mode::solo || m.inst != inst_ || m.visit != visit_ || hub_ || join_at_) break;
         // 1 -> 2 (6.4): J = the current tick + d (the server suggests d);
         // delayed sampling at once, the last pad repeated for the ticks
@@ -978,7 +982,10 @@ void Session::on_world_notice(const w::WorldNotice& m) {
     case w::NoticeKind::visibility:
         notice(name + " made the instance " + visibility_name(w::Visibility(std::min<std::uint32_t>(m.argument, 2))) + ".");
         break;
-    case w::NoticeKind::removed: notice("You were removed from " + host_name() + "'s instance."); break;
+    case w::NoticeKind::removed:
+        // (The notice names the host; it comes before INSTANCE_INFO's wid 0.)
+        notice("You were removed from " + (name.empty() ? host_name() : name) + "'s instance.");
+        break;
     case w::NoticeKind::host_away:
         // (A running line with its countdown, overlay().status; the relay
         // repeats the notice every few seconds with the seconds left.)
@@ -1014,6 +1021,15 @@ void Session::on_world_notice(const w::WorldNotice& m) {
     case w::NoticeKind::lag_over: lagging_members_.erase(m.member); break;
     case w::NoticeKind::shared_progress: notice("Shared story progress saved to your story."); break;
     case w::NoticeKind::restart_in: notice("Server restart in " + std::to_string(m.argument) + " s."); break;
+    case w::NoticeKind::report:
+        // (Round I1b: the answer to REPORT; 19.5.6's "Report sent. Thank you.")
+        switch (w::ReportResult(m.argument)) {
+        case w::ReportResult::sent: notice("Report sent. Thank you."); break;
+        case w::ReportResult::limit: notice("You can't send more reports today."); break;
+        case w::ReportResult::not_available: notice((name.empty() ? std::string("This player") : name) + " is not available."); break;
+        default: notice("Couldn't send the report. Try again later."); break;
+        }
+        break;
     default: break; // kinds of later rounds (friends, party, go along)
     }
 }
@@ -1054,6 +1070,44 @@ void Session::forget_foreign_visit() {
 bool Session::set_visibility(w::Visibility visibility) {
     if (wid_ == 0 || !connected()) return false;
     send(w::Type::instance_op, w::encode(w::InstanceOp{w::InstanceOpKind::visibility, std::uint32_t(visibility)}));
+    return true;
+}
+
+std::uint32_t Session::member_by_name(std::string_view name) const {
+    auto lower = [](std::string_view s) {
+        std::string out(s);
+        for (auto& c : out) c = char(std::tolower(static_cast<unsigned char>(c)));
+        return out;
+    };
+    const auto wanted = lower(name);
+    for (const auto& [id, n] : names_)
+        if (lower(n) == wanted) return id;
+    return kNoMember;
+}
+
+bool Session::may_remove() const {
+    if (wid_ == 0 || !instance_ || instance_->wid != wid_) return false;
+    return host_ == member_id_ || instance_->role == w::Role::staff;
+}
+
+bool Session::remove_member(std::uint32_t member) {
+    if (!connected() || !may_remove() || member == member_id_ || member == host_) return false;
+    send(w::Type::instance_op, w::encode(w::InstanceOp{w::InstanceOpKind::remove, member}));
+    trace("remove member=%u wid=%u", member, wid_);
+    log("remove %s (%u) from instance %u", member_name(member).c_str(), member, wid_);
+    return true;
+}
+
+bool Session::report(std::uint32_t member, w::ReportReason reason) {
+    if (!connected() || member == member_id_ || member == kNoMember) return false;
+    // (The instance both share: this engine's when the reported member is in it now.)
+    std::uint32_t wid = 0;
+    if (instance_ && instance_->wid != 0)
+        for (const auto& m : instance_->members)
+            if (m.member == member) wid = instance_->wid;
+    send(w::Type::report, w::encode(w::Report{member, reason, wid}));
+    trace("report member=%u reason=%u wid=%u", member, unsigned(reason), wid);
+    log("report %s (%u), reason %u", member_name(member).c_str(), member, unsigned(reason));
     return true;
 }
 

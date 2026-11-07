@@ -79,6 +79,10 @@ struct SessionConfig {
     // DW4_ONLINE_AUTOCHOICE=new (development builds, 19.24): a BARRIER that
     // leaves a hub stage asks for a new instance (plan id 0xFFFF).
     bool plan_new_instance = false;
+    // DW4_ONLINE_TEST_IGNORE_HOME=1 (development builds, round I1b's W10c): a
+    // JOIN_REQ kind home goes unanswered, as from a modified client that
+    // keeps playing after its removal; the relay then detaches the group.
+    bool test_ignore_home = false;
     // A stage folder as the player reads it ("Dry Land: Mummy Desert"; the
     // game's area table). Unset: the folder.
     std::function<std::string(std::string_view)> stage_name;
@@ -186,6 +190,9 @@ public:
     // The hub takes PRESENCE2 (its WELCOME said so): this member sends it.
     bool presence_v2() const { return presence_v2_; }
     std::string member_name(std::uint32_t member) const;
+    // The member id of a name this session heard (MEMBER_INFO, WORLD_NOTICE),
+    // case-insensitive; 0xFFFFFFFF when none (the test scripts' remove / report).
+    std::uint32_t member_by_name(std::string_view name) const;
     // The relation flags of a member's last PRESENCE / MEMBER_INFO (wire::
     // MemberInfo: 1 friend, 2 party, 4 staff tag, 8 in the own instance).
     std::uint8_t member_flags(std::uint32_t member) const;
@@ -267,6 +274,19 @@ public:
     bool leave_instance();
     bool leave_pending() const { return leave_wanted_; }
     bool set_visibility(wire::Visibility visibility);
+    // Round I1b (moderation, 19.6.6): the host (or staff playing in the
+    // instance) removes a member (INSTANCE_OP 2): it goes home and cannot see
+    // or join the instance for 10 minutes. False when this member may not
+    // (not the host or staff, outside an instance, the own id, not connected).
+    bool remove_member(std::uint32_t member);
+    // Whether this member may remove others from its instance (the host, or
+    // staff playing in it as INSTANCE_INFO's own role says).
+    bool may_remove() const;
+    // *Report player* (19.16): REPORT about a member with a reason from the
+    // fixed list; the relay answers with WORLD_NOTICE 14 ("Report sent. Thank
+    // you."). The wid is the instance both share (0 when not). False when the
+    // world session is not connected or the member is the own.
+    bool report(std::uint32_t member, wire::ReportReason reason);
     // The own settings change (the Game Start's difficulty, Online > Settings).
     void set_own_settings(const wire::Settings& settings) { config_.own_settings = settings; }
     void send_heading(const std::string& stage, int point);

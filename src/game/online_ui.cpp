@@ -453,6 +453,74 @@ void starting(online::OnlineLobby& lobby) {
     if (button("Back", !lobby.busy())) lobby.back();
 }
 
+// The player card (round I1b, 19.5.2 / 19.5.4 / 19.16) of the member chosen
+// on the Instance page: *Report* with the fixed list of reasons (no free
+// text) and, for the host and staff playing in the instance, *Remove* with
+// its question. The host sends what was confirmed (INSTANCE_OP remove,
+// REPORT); the relay's answers come as toasts.
+void player_card(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive& live) {
+    if (s.card_member == 0) return;
+    const RoomLive::Member* who = nullptr;
+    for (const auto& m : live.members)
+        if (m.member == s.card_member && m.member != live.member) who = &m;
+    if (!who) {
+        // (The member left the instance: the card closes; a question with it.)
+        s.card_member = 0;
+        s.card_remove_asked = s.card_report_open = false;
+        return;
+    }
+    ImGui::SeparatorText(who->name.c_str());
+    if (who->level > 0) ImGui::TextDisabled("Lv %d   %s", who->level, area_line(who->stage).c_str());
+    const auto focus = [&] {
+        if (s.card_focus && !ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+            s.card_focus = false;
+        }
+    };
+    if (s.card_remove_asked) {
+        wrapped(("Remove " + who->name + " from your instance? They can't rejoin it for 10 minutes.").c_str());
+        focus();
+        if (button("Remove##confirm", !lobby.busy(), true)) {
+            s.remove_requested = who->member;
+            s.card_member = 0;
+            s.card_remove_asked = false;
+        }
+        ImGui::SameLine();
+        if (button("Cancel##remove", !lobby.busy())) s.card_remove_asked = false;
+        return;
+    }
+    if (s.card_report_open) {
+        wrapped(("Report " + who->name + " for:").c_str());
+        static constexpr const char* kReasons[] = {"Griefing", "Cheating", "Name", "Other"};
+        for (int r = 0; r < 4; ++r) {
+            if (r > 0) ImGui::SameLine();
+            if (r == 0) focus();
+            if (button((std::string(kReasons[r]) + "##reason").c_str(), !lobby.busy())) {
+                s.report_requested = who->member;
+                s.report_reason_requested = r + 1;
+                s.card_member = 0;
+                s.card_report_open = false;
+            }
+        }
+        if (button("Cancel##report", !lobby.busy())) s.card_report_open = false;
+        return;
+    }
+    focus();
+    if (button("Report", !lobby.busy())) {
+        s.card_report_open = true;
+        s.card_focus = true;
+    }
+    if (live.may_remove && !who->owner) {
+        ImGui::SameLine();
+        if (button("Remove", !lobby.busy())) {
+            s.card_remove_asked = true;
+            s.card_focus = true;
+        }
+    }
+    ImGui::SameLine();
+    if (button("Close##card", !lobby.busy())) s.card_member = 0;
+}
+
 // The playing screen: the F1 Online tab's *Instance* page (19.5.4): the own
 // instance's host, visibility (the host cycles it), members and *Leave
 // instance*; at home the own lobby. Then the character and *Go offline*.
@@ -497,7 +565,12 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
                 const bool you = m.member == live->member;
                 const std::string tags = you && m.owner ? " (you, host)" : you ? " (you)" : m.owner ? " (host)" : "";
                 if (you) wrapped_colored(kAccent, m.name + tags);
-                else wrapped((m.name + tags).c_str());
+                else if (ImGui::Selectable((m.name + tags + "##card" + std::to_string(m.member)).c_str(), s.card_member == m.member)) {
+                    // (A on another member's row: its player card below the table, round I1b.)
+                    s.card_member = s.card_member == m.member ? 0 : m.member;
+                    s.card_remove_asked = s.card_report_open = false;
+                    s.card_focus = s.card_member != 0;
+                }
                 ImGui::TableNextColumn();
                 wrapped(area_line(m.stage).c_str());
                 ImGui::TableNextColumn();
@@ -510,6 +583,7 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             }
             ImGui::EndTable();
         }
+        player_card(lobby, s, *live);
         if (!s.leave_instance_asked) {
             if (button("Leave instance", !lobby.busy())) s.leave_instance_asked = true;
         } else {

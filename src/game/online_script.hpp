@@ -53,6 +53,14 @@
 //                       enemies that come within 15 units on the way), strike
 //                       it (A) and page through the talk this starts with A
 //   log TEXT            one trace line
+//   remove NAME         the Instance page's *Remove* (round I1b): INSTANCE_OP
+//                       remove of the member called NAME (the host or staff;
+//                       once, then the step ends)
+//   report NAME REASON  the player card's *Report* about NAME with a reason of
+//                       the fixed list (griefing, cheating, name, other; once)
+//   setflag N [V]       the engine's flag N set to V (1), once (development
+//                       builds only: a story value the session then reports,
+//                       W10c's removed client that keeps writing)
 //   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
 //                       --screenshot's file (the ghost figures' look,
 //                       docs/SEAMLESS.md 12; a run without --screenshot
@@ -125,6 +133,7 @@ public:
         float x{}, z{};
         float reach{4.0f};
         std::string shot; // a "shot" step ended in this update: its name
+        std::string op;   // a session operation of this update: "remove NAME" or "report NAME REASON"
     };
     struct Condition {
         std::string key, op, text;
@@ -172,6 +181,8 @@ private:
     int wander_index_ = 0;
     std::size_t waypoint_ = 0;  // the route action's next waypoint
     bool departed_ = false;     // the depart action posted its departure
+    bool op_sent_ = false;      // remove / report: the request went (once per step)
+    bool flag_set_ = false;     // setflag: the flag was set (once per step)
     bool step_reached_ = false; // goto / route: the goal reached (the step ends without "until")
     std::string step_stage_;    // the stage the step began in (stagechange)
     bool failed_ = false;       // a fail condition of this step held (traced once)

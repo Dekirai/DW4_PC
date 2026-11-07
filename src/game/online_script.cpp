@@ -76,7 +76,8 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 bool OnlineScript::known_action(std::string_view name) {
     static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
                                                  "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log",
-                                                 "menu",     "browse", "talkto", "shot", "depart"};
+                                                 "menu",     "browse", "talkto", "shot", "depart", "remove", "report",
+                                                 "setflag"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
@@ -538,6 +539,31 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
 #endif
         return out;
     }
+    if (step.action == "remove" || step.action == "report") {
+        // remove NAME / report NAME REASON: the Instance page's buttons through the
+        // session (the host applies them); one request, then the step ends.
+        if (!op_sent_ && !step.args.empty()) {
+            op_sent_ = true;
+            out.op = step.action + " " + step.args[0] + (step.action == "report" && step.args.size() > 1 ? " " + step.args[1] : "");
+            std::printf("online-script: %s (frame %d)\n", out.op.c_str(), facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "setflag") {
+        // setflag N [V]: a story value set in the engine outside the pads (W10c:
+        // the removed member's engine makes a value its session then reports
+        // with the host's owner key). Development builds only, once.
+#ifdef DW4_ONLINE_DEV
+        if (!flag_set_ && !step.args.empty()) {
+            flag_set_ = true;
+            engine.flags()[std::atoi(step.args[0].c_str())] = std::uint8_t(step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 1);
+            std::printf("online-script: setflag %s (frame %d)\n", step.args[0].c_str(), facts.frame);
+            std::fflush(stdout);
+        }
+#endif
+        return out;
+    }
     if (step.action == "giveup") {
         if (defeated(engine, facts.own_slot)) out.buttons = dw4::pad_button::start;
         return out;
@@ -773,6 +799,8 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             answers_ = 0;
             waypoint_ = 0;
             departed_ = false;
+            op_sent_ = false;
+            flag_set_ = false;
             step_reached_ = false;
             step_stage_ = stage;
             failed_ = false;
@@ -802,6 +830,8 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             done = step_frames_ >= int(step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 6);
         } else if (step.action == "goto" || step.action == "route") {
             done = step_reached_;
+        } else if (step.action == "remove" || step.action == "report" || step.action == "setflag") {
+            done = step_frames_ >= 1; // (one update: the request or the flag, then the next step)
         }
         if (!done && !failed_)
             for (const auto& c : step.fail)

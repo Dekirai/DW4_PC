@@ -31,7 +31,7 @@ struct World {
     double now = 0;
     static constexpr double kPass = 1.0 / 240.0;
 
-    fake::Client& add(const std::string& name, std::uint32_t id) {
+    fake::Client& add(const std::string& name, std::uint32_t id, const std::function<void(SessionConfig&)>& tweak = {}) {
         auto c = std::make_unique<fake::Client>();
         c->name = name;
         SessionConfig config;
@@ -42,6 +42,7 @@ struct World {
         config.own_name = name;
         config.replay_budget = 0.004;
         config.trace = std::getenv("DW4_SESSION_TEST_TRACE") != nullptr; // (debugging a test: the client trace on stdout)
+        if (tweak) tweak(config);
         c->session = std::make_unique<Session>(c->engine, config);
         c->engine.take_load_snapshot();
         c->session->attach(hub.connect(id, name), now);
@@ -1117,7 +1118,7 @@ int value(const std::map<std::int32_t, std::uint8_t>& values, std::int32_t key) 
 // automatic join into host 9's instance 7 as a guest (the replace brings the
 // host's story: flag 19, key 4); every barrier into a hub stage is a DISSOLVE
 // with B's own story (the hub's room story: flag 20, key 1) by the replace.
-fake::Client& guest_of_nine(World& world, std::uint32_t id = 2) {
+fake::Client& guest_of_nine(World& world, std::uint32_t id = 2, const std::function<void(SessionConfig&)>& tweak = {}) {
     dw4::engine::RoomStory host;
     host.flags[19] = 1;
     host.folder[4] = 1;
@@ -1141,7 +1142,7 @@ fake::Client& guest_of_nine(World& world, std::uint32_t id = 2) {
         ok.story = dw4::engine::story::encode_story(host);
         ok.story_revision = host.revision;
     };
-    auto& b = world.add("lee", id);
+    auto& b = world.add("lee", id, tweak);
     b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
     check(world.run_until(20, [&] { return b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo; }), "B in the field");
     check(b.session->wid() == 7 && b.session->host() == 9 && !b.session->is_host() && !b.session->holds_own_story() &&
@@ -1239,6 +1240,82 @@ void solo_leader_home() {
     check(world.run_until(20, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && !b.session->going_home(); }),
           "B took the home departure from the one sealed tick J");
     check(b.session->wid() == 0 && b.session->holds_own_story(), "B is home on its own story");
+}
+
+// Round I1b (moderation, 19.6.6, 19.16): the host's *Remove* and the player
+// card's *Report* go out as INSTANCE_OP remove and REPORT (only who may; never
+// about oneself); the relay's answers are 19.5.6's toasts; the removed guest
+// reads whose instance it was removed from. A guest may remove nobody; staff
+// playing in the instance may.
+void moderation_session() {
+    World world;
+    auto& b = guest_of_nine(world);
+    world.run(1.0);
+    w::InstanceInfo info;
+    info.wid = 7;
+    info.host = 9;
+    info.area = "death_valley";
+    info.members = {{9, "dng101b1", 5, 1 | 8}, {2, "stag0101", 3, 1 | 16}, {4, "dng101b1", 7, 1}};
+    info.taken = 3;
+    info.role = w::Role::guest;
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 5, w::MemberInfo::own_instance}), world.now);
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{4, "Ann", 7, w::MemberInfo::own_instance}), world.now);
+    world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
+    world.run(0.3);
+    check(b.session->member_by_name("ANN") == 4 && b.session->member_by_name("kim") == 9 && b.session->member_by_name("nobody") == 0xFFFFFFFFu,
+          "names resolve to member ids");
+    // A guest may not remove; he may report anyone but himself, with the instance they share.
+    check(!b.session->may_remove() && !b.session->remove_member(4), "a guest removes nobody");
+    check(b.session->report(4, w::ReportReason::griefing) && !b.session->report(2, w::ReportReason::name), "a report, never about oneself");
+    check(b.session->report(77, w::ReportReason::name), "a report about a member outside the instance");
+    world.run(0.3);
+    check(world.hub.instance_ops.empty() && world.hub.reports.size() == 2 && world.hub.reports[0].second.member == 4 &&
+              world.hub.reports[0].second.reason == w::ReportReason::griefing && world.hub.reports[0].second.wid == 7 &&
+              world.hub.reports[1].second.wid == 0,
+          "REPORT carries the member, the reason and the shared instance");
+    // The relay's answers (WORLD_NOTICE 14).
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::report, 4, "Ann", std::uint32_t(w::ReportResult::sent), ""}), world.now);
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::report, 4, "Ann", std::uint32_t(w::ReportResult::limit), ""}), world.now);
+    world.hub.send(2, w::Type::world_notice,
+                   w::encode(w::WorldNotice{w::NoticeKind::report, 77, "Zed", std::uint32_t(w::ReportResult::not_available), ""}), world.now);
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::report, 4, "Ann", std::uint32_t(w::ReportResult::failed), ""}), world.now);
+    world.run(0.3);
+    {
+        const auto notices = b.session->take_notices();
+        check(has_notice(notices, "Report sent. Thank you.") && has_notice(notices, "You can't send more reports today.") &&
+                  has_notice(notices, "Zed is not available.") && has_notice(notices, "Couldn't send the report. Try again later."),
+              "the report's answers as toasts");
+    }
+    // Staff playing in the instance may remove (not the host, not himself).
+    info.role = w::Role::staff;
+    world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
+    world.run(0.3);
+    check(b.session->may_remove() && b.session->remove_member(4) && !b.session->remove_member(9) && !b.session->remove_member(2),
+          "staff remove a guest, never the host or themselves");
+    world.run(0.3);
+    check(world.hub.instance_ops.size() == 1 && world.hub.instance_ops[0].second.op == w::InstanceOpKind::remove &&
+              world.hub.instance_ops[0].second.argument == 4,
+          "INSTANCE_OP remove of member 4");
+    // Removed: the notice names the host (it comes before INSTANCE_INFO's wid 0).
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::removed, 9, "kim", 0, ""}), world.now);
+    world.run(0.3);
+    check(has_notice(b.session->take_notices(), "You were removed from kim's instance."), "the removed guest's toast");
+}
+
+// Round I1b's W10c hook (DW4_ONLINE_TEST_IGNORE_HOME): a JOIN_REQ home goes
+// unanswered (no JOIN_AT), so the removed guest keeps playing apart, as a
+// modified client would; without the hook it is answered (solo_leader_home).
+void ignore_home_hook() {
+    World world;
+    world.hub.co_arrival_hold = 0.3;
+    world.hub.suggested_delay = 4;
+    auto& b = guest_of_nine(world, 2, [](SessionConfig& c) { c.test_ignore_home = true; });
+    world.run(2.0);
+    const auto join_ats = world.hub.join_ats;
+    world.hub.ask_home(2, std::uint8_t(1u << b.session->own_slot()), w::HomeReason::removed, world.now);
+    world.run(3.0);
+    check(world.hub.join_ats == join_ats && b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo,
+          "the hook leaves JOIN_REQ home unanswered: B plays on in the field");
 }
 
 // Round I1a's review: a restart while the member is at home. Its engine holds
@@ -1628,6 +1705,9 @@ int main(int argc, char** argv) {
         restart_at_home();
         std::cout << "world: HOME through JOIN_REQ home\n";
         solo_leader_home();
+        std::cout << "world: remove and report (round I1b)\n";
+        moderation_session();
+        ignore_home_hook();
         std::cout << "world: CLOSE stopping reconnects\n";
         close_stopping_reconnects();
         std::cout << "world: the barrier fallback\n";

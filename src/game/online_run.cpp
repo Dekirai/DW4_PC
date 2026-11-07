@@ -132,6 +132,9 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     // instance at every departure from home.
     if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE"); choice && std::string(choice) == "new") config.plan_new_instance = true;
     if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_PARK"); cut && std::atof(cut) > 0) test_cut_park_ = std::atof(cut);
+    // DW4_ONLINE_TEST_IGNORE_HOME=1 (round I1b's W10c): a removed member's client
+    // that never answers its JOIN_REQ home.
+    if (const char* ignore = std::getenv("DW4_ONLINE_TEST_IGNORE_HOME"); ignore && std::string(ignore) == "1") config.test_ignore_home = true;
 #endif
     // Round I1a: the own settings go with every BARRIER (19.8.7).
     config.own_settings = online::to_wire(room_.settings);
