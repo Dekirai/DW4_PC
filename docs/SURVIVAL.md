@@ -1731,8 +1731,9 @@ also drawn), T3 with the fingerprint, the generator, the net fingerprint
 and the canonical snapshot equal, T4 with the det script (replays across
 a run inside dng101b1) and with a real talk, T5 with a real save on the
 card, T9 over every screen string, T10, T11 and the save state suite's 14
-real cases pass (its other three save nothing; DW4_STATE_TEST now fails
-such a case instead of passing it empty); T6 runs every Rookie to its
+real cases pass (its other three saved nothing; DW4_STATE_TEST now fails
+such a case instead of passing it empty; main has since moved them onto
+frames that save, 17 of 17 real, INT notes 7.2); T6 runs every Rookie to its
 clear or TIME UP with lane E's run hashes; every screen is in the hidden
 picture set. Not met: seven of 14.2's thirteen targets (the human median
 for all four Rookies, Dorumon's kite median, every seed clearing with
