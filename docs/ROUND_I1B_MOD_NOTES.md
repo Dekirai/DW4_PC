@@ -29,15 +29,20 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 | 4 | Website: `/admin/reports` (Open / Done / All, Done, Reopen, the reported player's open count and live instance), the admin index's open count, the account page's "Reports about this player"; tests (API, web, relay over sockets, migration, scrub) | 4cdff6cf |
 | 5 | Client: wire REPORT / NoticeKind::report / ReportResult; `Session::remove_member`, `may_remove`, `report`, `member_by_name`; the toasts; the player card on the Instance page (Report with the four reasons, Remove with its question for the host and staff playing); the online script's `remove NAME`, `report NAME REASON`, `setflag N` (DEV); the UI script's `card`, `remove`, `report`; the W10c hook `DW4_ONLINE_TEST_IGNORE_HOME=1` (DEV, on the engine's allowed list); session and wire tests | 4f540be7 |
 | 6 | Scenarios W10, W10b, W10c; run.py's `api_checks` take `expect_not` and expand `{user:NAME}` / `{id:NAME}` in the regexes | 9bc4f94f |
+| 7 | Integration test: the host's block through `POST /blocks` removes his guest (WORLD_NOTICE removed, the bar, audit `instance_remove` with block) | eaeee787 |
+| 8 | The staff list names the instance a report came from (19.20): `GET /admin/reports` rows gain `instanceHost`, `instanceStage`, `instanceStarted`; the website's *Admin > Reports* and the account page show "#id, host's, area, started"; the relay test reports from inside the instance | 81000b02 |
+| 9 | UI scenario `card` works the card with the controller (A on Report, the reasons, A on Griefing; right to Remove, the question, A); the UI script's `card` shows the nav cursor as A on the row does (ImGui activates only with a visible cursor); run.py's `run_ui` seeds a client's online story from its card (`"seed_story": true`, else the pad script's gate does not work on an empty story) | 978efd19 |
 
 ## Test results
 
 | What | Result | Log |
 | --- | --- | --- |
-| server unit (DW4Online.Tests) | 474/474 | - |
-| server integration (DW4Online.Integration.Tests, mysqld 3652) | 142 passed, 3 skipped | `build/mod/it1.log` |
-| ctest (Release DEV=OFF, `build/mod/rel`) | 57/57 | `build/mod/ctest1.log` |
+| server unit (DW4Online.Tests) | 474/474 (81000b02) | - |
+| server integration (DW4Online.Integration.Tests, mysqld 3652) | 143 passed, 3 skipped (eaeee787); the touched classes again at 81000b02: 23/23 | `build/mod/it2.log` |
+| ctest (Release DEV=OFF, `build/mod/rel`) | 57/57 (978efd19) | `build/mod/ctest2.log` |
 | online_session / online_wire / online_script tests | pass (362 / 346398 / 304 checks) | - |
+| online off: `det.sh` on a DEV=OFF copy of 978efd19 | 4004f056 / 396cb219 twice | `DW4_PC/work/dref/checks/det/det_i1bmod2` |
+| UI scenario `card` | passed (978efd19, exe d) | `build/mod/scen_ui3.log` |
 | scenarios W10, W10b, W10c | see "Scenario rounds" | `build/mod/scen_r*.log` |
 
 ### Scenario rounds
@@ -55,7 +60,26 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
   times, unanswered; `story_owner` for the STORY b made 6 s after its removal; `detached` 16 s after the removal; b's
   gate disc a DISSOLVE with its own story) but its gate disc names stagML11 point 3 itself, so no `redirect` line: b now
   leaves by an exit into the field dng101b1 (the depart action), which the relay must redirect home (1b0ab745).
-- r3 (exe c = 1b0ab745, `build/mod/scen_r3.log`): W10b, W10c; then the UI scenario `card` (`build/mod/scen_ui1.log`).
+- r3 (exe c = 1b0ab745, `build/mod/scen_r3.log`): **W10b passed** (190 s). W10c failed only because this lane's own
+  integration test run shut the harness's mysqld down (SQL SHUTDOWN at 17:07 on port 3652 mid-scenario): never run the
+  own mysqld while a scenario runs (both use 3652).
+- r4 (exe c, 81000b02, `build/mod/scen_r4.log`): **W10c passed** (383 s).
+- UI `card`: ui1 failed at once (an invalid JSON escape `\.` in scenario.json); then both clients stayed in stagML11 (an
+  empty online story: the pad script's `explore mate00` never reached a working gate) -> run_ui's `seed_story`; ui2 passed
+  with the script shortcuts, but A on Report did nothing (ImGui activates only with the nav cursor visible; the script's
+  `card` had not shown it); ui3 (exe d = 978efd19) **passed** with the controller path, screenshots card / reasons /
+  reported / question / removed and b's home_after_removal (run folder `tools/online_test/.work/run_20261107_174119`).
+- r5 (exe d = 978efd19, `build/mod/scen_r5.log`): W10, W10b, W10c on the final client.
+
+## Findings for the integration (not this lane's code)
+
+- The host gets two toasts for one guest: the instance's "<name> joined." (WORLD_NOTICE joined, 19.5.6) and the stage
+  group's JOIN event "<name> joined" (session.cpp, `slot_name(slot) + " joined"`, a rooms leftover; 19.5.6 lists only the
+  first). When INSTANCE_INFO does not (yet, or any more) list the joining member with `same_group`, the second reads "A
+  player joined" (W10 r2's a.log; the UI card run: a removal 60 ms after b's JOIN was stamped, the JOIN still applies at
+  its tick, then the HOME 6 ticks later: "b left." then "A player joined"). Suggestion: no JOIN toast in world sessions
+  (the instance notices speak), or none for a member the instance no longer lists. Untouched here (int-i1a, prompt and go
+  have the same line).
 
 ## Left
 
