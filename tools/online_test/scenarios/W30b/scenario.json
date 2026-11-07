@@ -1,5 +1,5 @@
 {
-  "desc": "the visited rule (I1a part): b arrives from home at dng205b2 (the lobby's return mat's departure) while a's Dry Land instance never was there: a NEW of its own; after a reached dng205b2, b's next arrival there joins a (the return mat's departure and a's ways on are the development build's depart action: the explore bot's characters fell in stag0201-0202, and the return mat needs dng205b2's Security Gate, which only an enemy wave powers)",
+  "desc": "the visited rule (I1a part): b arrives from home at dng205b2 (the lobby's return mat's departure) while a's Dry Land instance never was there: a NEW of its own; after a reached dng205b2, b's next arrival there joins a (both characters were in dng205 before: COUNTER 2 = 205, dng205b1's start.lua's, which the lobby keeps and a return mat to dng205b2 implies; the return mat's departure and a's ways on are the development build's depart action: the explore bot's characters fell in stag0201-0202, and the return mat needs dng205b2's Security Gate, which only an enemy wave powers)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -11,14 +11,20 @@
       "name": "a",
       "script": "a.script",
       "card": "k10",
-      "start": 0
+      "start": 0,
+      "card_counters": {
+        "2": 205
+      }
     },
     {
       "name": "b",
       "script": "b.script",
       "card": "k10",
       "start": 3,
-      "seed_story": true
+      "seed_story": true,
+      "card_counters": {
+        "2": 205
+      }
     }
   ]
 }

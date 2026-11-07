@@ -612,14 +612,17 @@ SCENARIO_DIR = os.path.join(HERE, "scenarios")
 # big-endian words after it), the version word 4 and four character records 0x2000 apart from offset 8; a record's
 # BASE_FLAG bytes start at 792 (one byte a flag).
 GCI_ENTRY, CARD_COPIES, CARD_COPY_SIZE, RECORD_FLAGS = 64, (0x2000, 0xC000), 40960, 792
+RECORD_COUNTERS = 1828  # BASE_COUNTER: 16 x i32 big endian
 
 
-def derive_card(src, dst, flags):
+def derive_card(src, dst, flags, counters=None):
     """A copy of the card folder src (its .gci files, or those of its "Card A") in dst with the story flags
     {flag: value} set in the first character record of both copies (checksums updated). A scenario's precondition
     that has nothing to do with the online play (S16: Digi-Elf 0 freed in stag0103's boat ride, which the lobby
     Digi-Elf's first quest asks for and the r25c campaign never did: flag 89, stored for the normal difficulty as 714,
-    which stagIS10 gameStart.lua copies back into 89 when the game starts); the run folder keeps the copy."""
+    which stagIS10 gameStart.lua copies back into 89 when the game starts); the run folder keeps the copy. `counters`
+    {index: value} sets BASE_COUNTER entries the same way (W30b: COUNTER 2, the dungeon a player was in last, which
+    dng205b1's start.lua sets to 205 and the lobby keeps; a session context value, 3.7)."""
     if os.path.isdir(os.path.join(src, "Card A")):
         src = os.path.join(src, "Card A")
     os.makedirs(dst, exist_ok=True)
@@ -634,6 +637,9 @@ def derive_card(src, dst, flags):
                 raise RuntimeError("%s: copy at 0x%x has no character in its first record" % (name, copy))
             for flag, value in flags.items():
                 data[base + 8 + RECORD_FLAGS + int(flag)] = int(value)
+            for index, value in (counters or {}).items():
+                at = base + 8 + RECORD_COUNTERS + 4 * int(index)
+                data[at:at + 4] = struct.pack(">i", int(value))
             words = struct.unpack(">%dI" % ((CARD_COPY_SIZE - 4) // 4), bytes(data[base + 4:base + CARD_COPY_SIZE]))
             data[base:base + 4] = struct.pack(">I", sum(words) & 0xFFFFFFFF)
         open(os.path.join(dst, name), "wb").write(bytes(data))
@@ -1051,8 +1057,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         folder = saved if os.path.isabs(saved) else os.path.join(a.cards, saved)
         if not os.path.isdir(folder):
             raise RuntimeError("no card folder %s (--cards)" % folder)
-        if c.get("card_flags"):
-            folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
+        if c.get("card_flags") or c.get("card_counters"):
+            folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c.get("card_flags", {}), c.get("card_counters"))
         return folder
 
     def start(c, play_args):

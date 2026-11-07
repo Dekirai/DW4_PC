@@ -1,11 +1,14 @@
 # W30b (19.24, 19.30.3): b's arrivals from home at dng205b2 (the return mat's departure): a NEW of its own while a's
-# instance never was there, a join once a is there.
+# instance never was there (its row greyed: Story not here yet), a join once a is there. Both cards hold COUNTER 2 =
+# 205 (the session context of a player who was in dng205, 3.7): in round r2d b's lobby context lacked it, a's group in
+# dng205b2 had it from dng205b1's start.lua, and b's second arrival was refused as another context.
 a: online-script: step .* log: a hosts Dry Land
 b: online-script: step .* log: b alone on dng205b2
 b: online-script: step .* log: b home again
 a: online-script: step .* log: a in dng205b2
 b: online-script: step .* log: b joined a on dng205b2
 relay: instance_start .*stage=stag0201
+relay: candidates .*stage=dng205b2.*story_not_here
 relay: instance_start .*stage=dng205b2
 relay: instance_join .*how=join
 !a: online-script: FAIL
