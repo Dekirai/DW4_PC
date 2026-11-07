@@ -37,6 +37,10 @@
     </table>
 </div>
 
+<h2>Reports</h2>
+<p>@(Model.OpenReports == 0 ? "No open reports." : Model.OpenReports == 1 ? "1 open report." : $"{Model.OpenReports} open reports.")
+    <a href="~/admin/reports">The players' reports</a>, with Done.</p>
+
 <h2>World</h2>
 <p>@Model.Counts.PlayersOnline players online, @Model.Counts.Instances instances
     (@string.Join(", ", Model.Counts.Areas.Select(a => $"{a.Name} {a.Instances}"))).

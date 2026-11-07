@@ -1,3 +1,4 @@
+using Dapper;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using DW4Online.Domain.Abstractions;
@@ -153,6 +154,29 @@ public class WorldRelayTests
         host.App.Services.GetRequiredService<IWorldNotifier>().AccountChanged(id);
         var close = CloseMsg.Parse(await m.NextAsync(Msg.Close));
         Assert.Equal(CloseReason.Account, close.Reason);
+    }
+
+    /// <summary>Round I1b: REPORT over the relay is stored by the report service (source game) and answered with WORLD_NOTICE 14.</summary>
+    [DbFact]
+    public async Task A_report_over_the_relay_is_stored_and_answered_and_the_own_id_is_not_available()
+    {
+        var (host, port) = await StartAsync();
+        await using var scope = host;
+        var (_, _, kimId) = await host.RegisterAsync("RelayKim");
+        var (_, _, leeId) = await host.RegisterAsync("RelayLee");
+        await using var kim = await WorldMember.ConnectAsync(port, Ticket(host, kimId));
+        await using var lee = await WorldMember.ConnectAsync(port, Ticket(host, leeId));
+        static bool IsReport(byte[] p) => WorldNoticeMsg.Parse(p).Kind == WorldNoticeKind.Report;
+        await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 1, 0).Frame());
+        var answer = WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport));
+        Assert.Equal((lee.Welcome.Member, "RelayLee", (uint)ReportResult.Sent), (answer.Member, answer.Name, answer.Argument));
+        await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 2, 0).Frame()); // a repeat: sent, no second row
+        Assert.Equal((uint)ReportResult.Sent, WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport)).Argument);
+        await kim.SendAsync(new ReportMsg(kim.Welcome.Member, 3, 0).Frame());
+        Assert.Equal((uint)ReportResult.NotAvailable, WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport)).Argument);
+        await using var sql = await host.SqlAsync();
+        Assert.Equal(("RelayKim", "RelayLee", "griefing", "game"), await sql.QuerySingleAsync<(string, string, string, string)>(
+            "SELECT reporter, reported, reason, source FROM v_player_reports"));
     }
 
     /// <summary>A raw protocol 49 member: handshake, WELCOME, the first STORY_ACK (its own story).</summary>

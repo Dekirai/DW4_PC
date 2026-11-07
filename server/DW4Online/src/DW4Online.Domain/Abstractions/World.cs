@@ -148,7 +148,7 @@ public sealed class StaffAuditRow
     public static readonly string[] Events =
     [
         "staff_join", "staff_join_override", "staff_spectate_start", "staff_spectate_end", "staff_end_instance", "staff_remove",
-        "instance_visibility", "instance_remove", "report_handled", "room_close_admin", "admin_role", "admin_status",
+        "instance_visibility", "instance_remove", "report_handled", "report_reopened", "room_close_admin", "admin_role", "admin_status",
         "admin_password_reset", "admin_unlock_revoke", "character_restore", "story_restore",
     ];
 }

@@ -361,7 +361,7 @@ public sealed class WorldService
         return true;
     }
 
-    /// <summary>Staff removes a member (it goes home; round I1b adds the 10-minute bar): audit row staff_remove.</summary>
+    /// <summary>Staff removes a member (it goes home under the 10-minute removal bar, round I1b): audit row staff_remove.</summary>
     public async Task<Result<string>> RemoveMemberAsync(long actorId, uint wid, string? username, byte[]? ip, CancellationToken ct = default)
     {
         var row = _relay.Snapshot().Instances.FirstOrDefault(i => i.Wid == wid);
