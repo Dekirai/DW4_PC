@@ -30,6 +30,7 @@
       "start": 3,
       "seed_story": true,
       "autochoice": "back",
+      "shots": true,
       "env": {
         "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "4000"
       }

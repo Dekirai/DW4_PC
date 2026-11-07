@@ -1,11 +1,15 @@
 # W30c, b (k10), a stranger to a and c: the gate to stag0201 twice. First c's row (Here (1)) above a's, the cursor on c's:
 # B (the first answer of autochoice back,first). After c went home: only a's row (nobody of it at stag0201), the cursor on
-# New instance; the first row is taken: b enters stag0201 as a guest in a new stage group of a's instance.
+# New instance; the first row is taken: b enters stag0201 as a guest in a new stage group of a's instance. After B b stands
+# on the mat with control; the mat's script opens the menu only when b steps onto it again, so b walks back to where it
+# started first (in round I1b's r2 b stood on the mat and the second gate never opened).
 campaign until stage=stagml11,control
 idle until epoch>=@220
 explore mate00 until onme:mate00
 gate mate00 1 until frames>=150
 log b went back
+idle until frames>=120
+goto 60 -30 8
 idle until epoch>=@320 fail stage=stag0201
 explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
