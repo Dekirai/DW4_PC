@@ -52,7 +52,26 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
   failed only on the own-story card check (both clients home, the rest held) -> fix 11. W27 (idle host) stayed defeated in
   stag0101 for 1,000 ticks -> fix 15. The round was stopped there (own PIDs, mysqld SHUTDOWN "Shutdown complete") to rerun
   with the later fixes.
-- r2a (exe e = 7354806d): W1 W24 W27 W29 W30b W32 W6 W7b W7d W7e W9, `build/int/scen_r2a.log` (running).
+- r2a (exe e = 7354806d, `build/int/scen_r2a.log`, run folder `run_20261107_092351`): 6 of 11 passed: **W1** (229 s),
+  **W24** (243 s), **W27** (394 s), **W29** (437 s: online_host with two fake guests in a's instance, b's online_join),
+  **W7d** (262 s: the resume after 45 s, still host), **W9** (704 s: the redirect into stagML11 point 3, own story).
+  Failed: W30b (b stood on stagML11's mate02 without a prompt: GATESTAGE needs dng205b2's Security Gate; reworked in
+  1f2c9f16), W32 (depart into staggf04 point 2, the graph's wrong point: SQ_DEMOWAIT for good; 10a0eb8b), W6 (b, k9,
+  died on stag0101's rock slope; reworked in 047fcdeb), W7b (END host_lost, HOME through JOIN_REQ home at J 10560,
+  LEAD_FROM 10561 all came, but b, k2, had died on the rock slope during the cut; ce573b30), W7e (the cut hook never saw
+  the park: loopback's BARRIER_OK came before the next pass; dcbececb; the rest of W7e held without a cut). Stuck clients
+  of W30b, W32 and W7b were ended by PID to move on.
+- r2b (exe f = dcbececb): W6 W7b W7e W30b W32 and W1x W3 W4 W4b W5 W7 W7c W8 W11 W12 W18 W19 W22 W25 W26 W28 W30 W30x,
+  `build/int/scen_r2b.log` (running).
+
+### Findings for later (not changed here)
+
+- `data/online/stage_graph.json` (`tools/export_stage_graph.py`) records funcStageChange's fourth argument as the point;
+  the point is the second (`SETGENERATEPOS I<a1>`), and NEXTSTAGE's last argument is a frame delay. The edges (what
+  AreaTableTests and the scopes use) are right, the points are not.
+- A host whose relay member was forgotten (back after the grace) gets a new member id, and the client's toast says "The
+  server restarted. Back on your own story." (W7b's a) instead of "The instance has ended." (19.6.10's texts follow the
+  member id).
 
 ## Left
 
