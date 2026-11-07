@@ -95,7 +95,7 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
     case GatePhase::waiting:
         out = neutral(local);
         if (gate_plan_ == 0) send_plan(now); // (PLAN's throttle: a second confirm within the second waits for it)
-        if (now - gate_since_ > config_.plan_wait) {
+        if (gate_plan_ != 0 && now - gate_since_ > config_.plan_wait) {
             // It never sticks: the press goes out, the barrier is decided as a loading-screen arrival.
             trace("prompt plan-timeout plan=%u", unsigned(gate_plan_));
             log("no answer to the gate's plan within %.1f s: the departure goes on", config_.plan_wait);
@@ -128,6 +128,7 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
 void Session::send_plan(double now) {
     if (now - plan_sent_at_ < 1.0 || !transport_) return;
     plan_sent_at_ = now;
+    gate_since_ = now; // (World:PlanWaitMs counts from the PLAN, not from a press the throttle held back)
     gate_plan_ = next_plan_;
     next_plan_ = std::uint16_t(next_plan_ >= 0xFFFE ? 1 : next_plan_ + 1);
     w::Plan plan;

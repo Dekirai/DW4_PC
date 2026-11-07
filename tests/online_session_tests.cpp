@@ -1154,6 +1154,28 @@ void prompt_gate_form() {
         check(!world.hub.choices.empty() && world.hub.choices.back().choice == w::ChoiceKind::back, "the relay is told (its plan closes)");
     }
     {
+        // PLAN's throttle: B, then the gate again within the second: the second PLAN waits until a second after the
+        // first, and World:PlanWaitMs counts from it (the press is not released early).
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        const double first_plan = world.now;
+        key(a, dw4::pad_button::b, world.now);
+        world.run(0.2);
+        check(a.engine.gate_cancels == 1, "B closed the menu");
+        a.engine.gate_menu = true; // (the player stands on the mat again: the menu opens again)
+        a.input = press_a_at(a.session->tick() + 2);
+        world.run(0.3);
+        check(world.hub.plans.size() == 1 && a.session->holding_press() && a.engine.gate_confirms == 0, "the second press waits for the throttle");
+        check(world.run_until(3, [&] { return world.hub.plans.size() == 2; }), "the second PLAN");
+        check(world.now - first_plan >= 0.95, "a second after the first");
+        check(world.run_until(3, [&] { return a.session->prompt().has_value(); }), "its prompt");
+        check(a.engine.gate_confirms == 0, "the press still held");
+    }
+    {
         // W2b: the relay drops the PLAN: the press goes out after World:PlanWaitMs; the BARRIER has no plan.
         World world;
         world.hub.co_arrival_hold = 0.2;
