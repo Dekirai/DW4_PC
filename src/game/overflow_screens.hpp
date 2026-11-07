@@ -52,11 +52,12 @@ struct RunScreenData {
     std::uint64_t screen_frames = 0; // director steps the screen is open (the results' lines appear one by one)
 };
 
-// The HUD's build row from the director's build page (until lane E's
-// getters): the weapon after "Art: <Art> with ", the skill / cap of the
-// class line as the weapon bar, each technique line ("  Fire: Petty (...)",
-// "  Heal Lt: not learned (...)") as its element glyph or initial with its
-// rank letter (P, M, G, T, ∞).
+// The HUD's build row from the director's build page: the weapon after
+// "Art: <Art> with ", the skill / cap of the class line as the weapon bar,
+// each technique line ("  Fire: Petty (...)", "  Heal Lt: not learned
+// (...)") as its element glyph or initial with its rank letter (P, M, G, T,
+// ∞), and the gear of lane E's "Core: / Board:" and "Chips:" lines as
+// ∋ / ∨ / ∧ with each part's grade ("∋β ∨α ∧α").
 void build_row(const std::vector<std::string>& build_lines, RunScreenData& data);
 
 // The EXP bar inside the level (9.3): NEXTEXP is cumulative (run_next_exp

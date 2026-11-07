@@ -420,6 +420,15 @@ void test_run_numbers() {
     CHECK(ov::result_columns(16) == 1);
     CHECK(ov::result_columns(lines.size()) == 2);
     CHECK(ov::fit_result_lines(lines, 32) == lines); // (22 lines: all shown, two columns)
+    // The HUD's gear glyphs from lane E's build page lines (9.3).
+    ov::RunScreenData row;
+    ov::build_row({"Art: Cleaver with Battle Hawk α", "  Blunt skill 650 / cap 1300, Forge 2 of 5", "  Fire: Petty (Blast 10 / cap 750)",
+                   "Core: Brave Core β +30   Board: Fire Board α +60", "Chips: Wisdom Chip γ / -   ¶ Data 120", "Time 01:00   Level 5   Defeated 10"},
+                  row);
+    CHECK(row.gear == "∋β ∨α ∧γ");
+    CHECK(row.techniques.size() == 1 && row.techniques[0] == "⊂P");
+    ov::build_row({"Art: Cleaver with Battle Hawk α", "Core: -   Board: -", "Chips: - / -   ¶ Data 0"}, row);
+    CHECK(row.gear.empty());
     for (int i = 19; i < 40; ++i) lines.insert(lines.end() - 3, "Line " + std::to_string(i));
     const auto fit = ov::fit_result_lines(lines, 32);
     CHECK(fit.size() == 32);

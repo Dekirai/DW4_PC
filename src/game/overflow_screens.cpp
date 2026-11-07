@@ -128,6 +128,15 @@ void draw_lines(SimUi& ui, std::string_view title, const std::vector<std::string
     }
     if (shown >= count) ui.text(x + 18, y + h - 28, help, ui_colors::grey, 15.0f);
 }
+
+// A gear part's glyph with its grade ("Brave Core β +30" -> "∋β"); "" for an empty part ("-").
+std::string gear_glyph(const char* glyph, std::string_view name) {
+    if (name.empty() || name == "-") return {};
+    std::string out = glyph;
+    for (const char* grade : {"α", "β", "γ", "δ", "ε"})
+        if (name.find(grade) != std::string_view::npos) return out + grade;
+    return out;
+}
 } // namespace
 
 void build_row(const std::vector<std::string>& lines, RunScreenData& d) {
@@ -135,10 +144,31 @@ void build_row(const std::vector<std::string>& lines, RunScreenData& d) {
     d.weapon_fraction = 0;
     d.techniques.clear();
     d.learned.clear();
+    d.gear.clear();
+    const auto add_gear = [&](const char* glyph, std::string_view name) {
+        if (const auto part = gear_glyph(glyph, name); !part.empty()) d.gear += (d.gear.empty() ? "" : " ") + part;
+    };
     for (std::size_t i = 0; i < lines.size(); ++i) {
         const auto& line = lines[i];
         if (i == 0) {
             if (const auto with = line.find(" with "); with != std::string::npos) d.weapon = line.substr(with + 6);
+            continue;
+        }
+        // The gear (lane E's "Core: X   Board: Y" and "Chips: A / B   ¶ Data N"
+        // lines): the ∋ / ∨ / ∧ glyphs with each part's grade (9.3).
+        if (line.rfind("Core: ", 0) == 0) {
+            const std::string_view rest = std::string_view(line).substr(6);
+            const auto board = rest.find("   Board: ");
+            add_gear("∋", rest.substr(0, board));
+            if (board != std::string_view::npos) add_gear("∨", rest.substr(board + 10));
+            continue;
+        }
+        if (line.rfind("Chips: ", 0) == 0) {
+            std::string_view rest = std::string_view(line).substr(7);
+            if (const auto data = rest.find("   ¶"); data != std::string_view::npos) rest = rest.substr(0, data);
+            const auto slash = rest.find(" / ");
+            add_gear("∧", rest.substr(0, slash));
+            if (slash != std::string_view::npos) add_gear("∧", rest.substr(slash + 3));
             continue;
         }
         if (line.rfind("  ", 0) != 0) continue;
