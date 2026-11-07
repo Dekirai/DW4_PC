@@ -1013,8 +1013,9 @@ What the migration does (it runs at the start, or with `migrate` in the console,
 | `instance_history`, `instance_history_members` (new tables) | every instance (host, first stage, visibility, difficulty, settings, start, end and why) and who was in it when; kept 90 days (`World:HistoryDays`) |
 | `accounts.last_seen_at`, `achievement_unlocks.instance_id`, `speedrun_times.instance_id` (new columns) | "last online" for friends; the instance an unlock or a best time came from (older rows keep `room_id`) |
 | `online_story_history.reason` | gains the value `mirror` (shared progress, a later round) |
+| `player_reports` (new table) | *Report player* (round I1b): who reported whom, the reason from a fixed list (griefing, cheating, name, other; no free text), from the game or the API, the instance both played in, open or done and by which moderator; staff handle them on the website's *Admin > Reports* |
 | data | each room host's newest room settings become his `online_prefs` (camera, light, fast loading, randomizer); nothing of a room's story is copied to its guests (a player who was only a guest starts the world with an empty story, as decided) |
-| views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit` | read-only tables with user names for HeidiSQL |
+| views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit`, `v_player_reports` | read-only tables with user names for HeidiSQL |
 | `rooms`, `room_members` | stay as they are, read-only; a later release drops them |
 
 **The one new right.** The views need the right `CREATE VIEW`. Root has it (section 2.1: nothing to do). The service
@@ -1064,13 +1065,15 @@ SELECT a.username, p.default_visibility, p.camera_mode, p.light_mode, p.fast_loa
 -- 3. Later: who played where (the views show user names; open one in the tree and use its Data tab, or query it).
 SELECT * FROM v_instance_history ORDER BY started_at DESC LIMIT 50;   -- host, area, players, minutes, end_reason
 SELECT * FROM v_staff_audit ORDER BY at DESC LIMIT 50;               -- what moderators did and looked at
+SELECT * FROM v_player_reports WHERE state = 'open' ORDER BY created_at DESC;  -- the players' open reports, newest first
 SELECT * FROM v_friends ORDER BY friends_since DESC;
 SELECT * FROM v_friend_requests ORDER BY created_at DESC;
 SELECT * FROM v_blocks ORDER BY created_at DESC;
 ```
 
 Look, do not edit: the relay writes `instance_history` and its members through a queue while instances run, and the
-website shows them. Editing `online_prefs` by hand is harmless (the next login reads it); keep `randomizer_seed` empty
+website shows them. Reports are handled on the website (*Admin > Reports*, *Done*), not in HeidiSQL: the website writes
+the audit row (`report_handled`) and the handler's name with it. Editing `online_prefs` by hand is harmless (the next login reads it); keep `randomizer_seed` empty
 or between 1 and 4294967295 and `randomizer_modes` as the table comment says (the table refuses other values).
 A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; instances it hosted keep their row.
 
@@ -1082,6 +1085,13 @@ A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; ins
   SEAMLESS.md 19.17.5. Achievements count only while the player is in the world (`Play:RequireWorld`, true). Staff see
   every instance on the website's *Admin > Instances* page and can end one or send a player home there; both are audited
   (`v_staff_audit`). The hourly housekeeping deletes instances older than `World:HistoryDays`.
+- Removal and *Report player* (round I1b, SEAMLESS.md 19.6.6, 19.16): a host removes a guest from the game's *Instance*
+  page (the guest goes home and cannot see or join that instance for `World:RemovedBarMinutes`, 10; a host who blocks a
+  guest removes him the same way). Players report others from the game's player card or `POST /api/v1/reports`: at most
+  `Reports:PerDay` (10) a day each, a second report about the same player within `Reports:RepeatHours` (24) adds nothing.
+  The website's *Admin* page shows how many are open; *Admin > Reports* lists them with the reported player's account
+  page (his instances, story and achievements; lock or ban there) and *Done* / *Reopen* (audited `report_handled`,
+  `report_reopened`). An account's deletion removes its own reports; reports about it keep the anonymous account.
 - Until release 0.1.6 (rooms): the room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
   8.6): `drop` (the default: progress the guests make while the room's owner is away is not saved and leaves their
   games at the next stage change, with a notice), `hold` (kept on the server and merged when the owner returns) or
