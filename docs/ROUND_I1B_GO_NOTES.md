@@ -72,14 +72,69 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 
 ## How to run the tests
 
+The helpers live in `build/go/` (gitignored); recreate them from these copies after a fresh checkout.
+
 - C++: `cmd //c "start /low /wait /b cmd /c build\go\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests);
   `cmd //c "build\go\ctest.cmd rel"`; single: `build/go/rel/dw4_online_session_tests.exe`,
-  `build/go/rel/dw4_online_wire_tests.exe`. DEV game for scenarios: `... bld.cmd dev OFF dev --target dw4_game`.
-- Server: `"$DOTNET" test tests/DW4Online.Tests --disable-build-servers` in `server/DW4Online` (GoAlongTests).
+  `build/go/rel/dw4_online_wire_tests.exe`, `build/go/rel/dw4_online_script_tests.exe` (parses every scenario script:
+  `fail` takes commas, never `or`). DEV game for scenarios: `... bld.cmd dev OFF dev --target dw4_game`.
+- Server unit tests without touching the bin folders a running scenario server uses: in `server/DW4Online`,
+  `"/c/Program Files/dotnet/dotnet.exe" test tests/DW4Online.Tests/DW4Online.Tests.csproj --disable-build-servers
+  --artifacts-path ../../build/go/srvart` (GoAlongTests are in HubLogicTests).
+- Server integration tests: only while no scenario runs (both use mysqld 3653).
 - Probe: `build/go/rel/dw4_world_probe.exe "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted" go [0|1|2]`.
 - Scenarios: copy `build/go/dev/dw4_game.exe` to `build/go/scen/dw4_go_dev_<TAG>.exe`, then
   `bash build/go/scen.sh LOG TAG W31 ...` (run.py --parallel 1 --keep, mysqld 3653, ports 58400-58599, the r25c cards;
-  `--no-build` after the first run). Run folders: `tools/online_test/.work/run_*`.
-- det.sh: `bash /c/Users/shinz/source/repos/DW4_PC/work/dref/checks/det.sh <DEV=OFF exe copy> <name>`.
+  `--no-build` after the first run). Run folders: `tools/online_test/.work/run_*`. A run whose script failed early runs
+  on to its frames or timeout: stop its game clients by PID (never by image name), the runner goes on.
+- det.sh: `bash /c/Users/shinz/source/repos/DW4_PC/work/dref/checks/det.sh <DEV=OFF exe copy> <name>` (copy
+  `build/go/rel/dw4_game.exe` to `build/go/off/`).
+
+`build/go/bld.cmd`:
+
+```
+@echo off
+rem i1b-go: bld.cmd DIR TESTING [dev|nodev] [extra build args]  (Release, Ninja, --parallel 4)
+call "C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars64.bat" >nul 2>nul
+set CMAKE="C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+set DEPS=C:/Users/shinz/source/repos/DW4_PC/build/Release/_deps
+cd /d C:\Users\shinz\source\repos\DW4_PC-wt\i1b-go
+set BDIR=build/go/%1
+set BT=%2
+set DEV=OFF
+if "%3"=="dev" set DEV=ON
+if not exist %BDIR%\CMakeCache.txt (
+  %CMAKE% -S . -B %BDIR% -G Ninja -DCMAKE_BUILD_TYPE=Release -DDW4_BUILD_APP=ON -DBUILD_TESTING=%BT% -DDW4_ONLINE_DEV=%DEV% -DFETCHCONTENT_SOURCE_DIR_SDL3=%DEPS%/sdl3-src -DFETCHCONTENT_SOURCE_DIR_IMGUI_SRC=%DEPS%/imgui_src-src -DFETCHCONTENT_SOURCE_DIR_PL_MPEG_SRC=%DEPS%/pl_mpeg_src-src -DFETCHCONTENT_SOURCE_DIR_STB_SRC=%DEPS%/stb_src-src -DFETCHCONTENT_SOURCE_DIR_ZSTD_SRC=%DEPS%/zstd_src-src -DFETCHCONTENT_FULLY_DISCONNECTED=ON "-DDW4_TEST_DATA=E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted"
+  if errorlevel 1 exit /b 1
+)
+%CMAKE% --build %BDIR% --parallel 4 %4 %5 %6
+```
+
+`build/go/ctest.cmd`:
+
+```
+@echo off
+set CTEST="C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
+cd /d C:\Users\shinz\source\repos\DW4_PC-wt\i1b-go
+%CTEST% --test-dir build/go/%1 --output-on-failure %2 %3 %4 %5
+```
+
+`build/go/scen.sh`:
+
+```
+#!/bin/bash
+# i1b-go: scenarios with real hidden clients. Usage: scen.sh LOG EXE_TAG SCENARIO... (extra run.py args allowed)
+export PATH="/usr/bin:/mingw64/bin:/c/Program Files/dotnet:/c/Windows/System32:/c/Windows:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 PYTHONIOENCODING=utf-8 DW4_NO_ERROR_BOX=1
+W=/c/Users/shinz/source/repos/DW4_PC-wt/i1b-go
+LOG=$1; TAG=$2; shift 2
+cd $W
+if netstat -ano -p TCP | grep -qE ':3653 .*(LISTEN|ABH)'; then echo "port 3653 in use" > $LOG; exit 3; fi
+echo "start $(date) head=$(git -C $W rev-parse --short HEAD) exe=dw4_go_dev_$TAG.exe" > $LOG
+nice -n 10 /c/Users/shinz/AppData/Local/Programs/Python/Python313/python.exe tools/online_test/run.py "$@" --parallel 1 --keep \
+  --game-exe "$(cygpath -w $W/build/go/scen/dw4_go_dev_$TAG.exe)" --data "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted" \
+  --cards "C:/Users/shinz/source/repos/DW4_PC/work/campaign/checkpoints/r25c" --mysql-port 3653 --ports 58400-58599 >> $LOG 2>&1
+echo "EXIT $? $(date)" >> $LOG
+```
 
 ## Scenario runs
