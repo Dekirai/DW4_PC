@@ -318,6 +318,12 @@ private:
     std::uint32_t roster_member_for(int slot) const;
     void run_catch_up(double now);
     void send_input_ahead(const wire::WirePad& pad);
+    // A pad for a tick the relay sealed already, sampled while a backlog runs
+    // at once (a resume after a long cut): such pads go together, up to 32 in
+    // one INPUT, instead of one frame each (round I1a, W7d: 2,800 single
+    // frames after a 45 s cut broke the relay's frame budget).
+    void queue_late_pad(const wire::WirePad& pad);
+    void flush_late_pads();
     void start_sealed(const wire::WirePad& pad);
     void notice(std::string text);
     // Room story (8.3): the pending set as STORY (at a barrier always, else
@@ -403,6 +409,11 @@ private:
     std::deque<wire::WirePad> delayed_;
     std::uint32_t input_next_ = 0;      // sealed: the next tick this member sends a pad for
     std::uint16_t skipped_buttons_ = 0; // buttons of samples skipped after a shorter delay (sent with the next pad)
+    struct LatePads {
+        std::uint32_t inst = 0, visit = 0, first = 0;
+        std::vector<wire::WirePad> pads;
+    };
+    LatePads late_pads_;                // queue_late_pad's batch (empty outside a backlog run)
 
     // Barrier.
     std::uint32_t barrier_tick_ = 0;

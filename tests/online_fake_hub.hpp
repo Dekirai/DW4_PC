@@ -509,6 +509,7 @@ public:
     std::vector<std::unique_ptr<Conn>> conns;
     std::uint32_t next_inst = 100;
     std::uint64_t netfp_compared = 0, netfp_mismatches = 0, late_pads = 0, fills_total = 0, splits = 0, snaphash_mismatches = 0, reassigns = 0;
+    std::map<std::uint32_t, std::uint64_t> input_frames, input_pads; // INPUT frames and the pads in them, per member
     double last_ping = 0;
     std::uint32_t ping_nonce = 0;
     // The room story (8.3-8.6).
@@ -1031,6 +1032,8 @@ public:
         }
         case w::Type::input: {
             const auto in = w::decode_input(f.payload);
+            ++input_frames[id];
+            input_pads[id] += in.pads.size();
             auto it = instances.find(m.inst);
             if (it == instances.end()) break;
             auto& inst = it->second;

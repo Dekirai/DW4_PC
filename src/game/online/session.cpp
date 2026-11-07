@@ -216,6 +216,7 @@ void Session::attach(std::unique_ptr<Transport> transport, double now, std::stri
     if (!ticket.empty()) config_.ticket = ticket;
     transport_ = std::move(transport);
     reader_ = {};
+    late_pads_.pads.clear();
     inbox_.clear();
     line_.clear();
     hello_done_ = false;
@@ -231,6 +232,7 @@ void Session::attach(std::unique_ptr<Transport> transport, double now, std::stri
 void Session::lose_connection(double now) {
     if (transport_) transport_->close();
     transport_.reset();
+    late_pads_.pads.clear();
     hello_done_ = false;
     if (mode_ == Mode::closed || mode_ == Mode::lost) return;
     if (mode_ == Mode::connecting) {
@@ -320,6 +322,7 @@ void Session::poll(double now) {
     now_ = now;
     poll_gap_ = last_poll_at_ >= 0 ? std::clamp(now - last_poll_at_, 0.0, 1.0) : 0.0;
     last_poll_at_ = now;
+    flush_late_pads(); // (the last backlog run's)
     if (transport_) {
         inbox_.clear();
         const bool open = transport_->receive(inbox_);
@@ -703,6 +706,15 @@ void Session::handle(const w::Frame& frame, double now) {
         const auto m = w::decode_close(p);
         trace("close reason=%u text=%s", unsigned(m.reason), m.text.c_str());
         flush_log(now, true);
+        if (m.reason == w::CloseReason::stopping && mode_ != Mode::connecting) {
+            // A planned server stop (19.6.9): the server comes back on the same
+            // address, so the session reconnects as after a lost link. The new
+            // process knows no instance: its WELCOME without the own wid starts
+            // the local way home in a field (19.6.10, W24), as after a crash (W25).
+            log("the server is stopping (CLOSE stopping); reconnecting");
+            lose_connection(now);
+            break;
+        }
         if (transport_) transport_->close();
         transport_.reset();
         mode_ = Mode::closed;
@@ -1192,8 +1204,29 @@ bool Session::apply_events(bool replaying) {
 }
 
 void Session::send_input_ahead(const w::WirePad& pad) {
+    flush_late_pads(); // (in tick order)
     send(w::Type::input, w::encode(w::Input{inst_, visit_, input_next_, {pad}}));
     ++input_next_;
+}
+
+void Session::queue_late_pad(const w::WirePad& pad) {
+    auto& b = late_pads_;
+    if (!b.pads.empty() && (b.inst != inst_ || b.visit != visit_ || b.first + std::uint32_t(b.pads.size()) != input_next_)) flush_late_pads();
+    if (b.pads.empty()) {
+        b.inst = inst_;
+        b.visit = visit_;
+        b.first = input_next_;
+    }
+    b.pads.push_back(pad);
+    ++input_next_;
+    if (b.pads.size() >= w::kMaxInputPads) flush_late_pads();
+}
+
+void Session::flush_late_pads() {
+    auto& b = late_pads_;
+    if (b.pads.empty()) return;
+    send(w::Type::input, w::encode(w::Input{b.inst, b.visit, b.first, std::move(b.pads)}));
+    b.pads.clear();
 }
 
 void Session::start_sealed(const w::WirePad& pad) {
@@ -1240,7 +1273,10 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
                 pad.buttons = std::uint16_t(pad.buttons | skipped_buttons_);
                 skipped_buttons_ = 0;
                 stats_.sampled(visit_, input_next_, now, steps_, pad);
-                send_input_ahead(pad);
+                // A backlog run at once (a resume): the relay sealed this tick
+                // already; its late pad goes with the others of the run.
+                if (pace_.catching_up() && ticks_.contains(input_next_)) queue_late_pad(pad);
+                else send_input_ahead(pad);
             }
             last_own_ = own;
         }

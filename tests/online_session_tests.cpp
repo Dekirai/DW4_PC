@@ -568,6 +568,35 @@ void co_arrival() {
     check(world.hub.fills_total > 60, "the server filled B's pads meanwhile");
 }
 
+// Round I1a's integration (W7d): a member cut for 45 s resumes into its sealed
+// group and runs the ~2,700 ticks it missed at once. The pads it samples for
+// ticks the relay sealed meanwhile go together, up to 32 in one INPUT (before:
+// one frame each, which broke the relay's frame budget of 400 a second with a
+// burst of 2,000 and closed the resumed member as abuse).
+void long_cut_resume_pads() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    a.input = press_in({{"stagis10", 20}, {"stagml11", 200}}, fake::kExitButton);
+    b.input = press_in({{"stagis10", 20}, {"stagml11", 260}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "both sealed");
+    world.run(2.0);
+    world.hub.drop(2);
+    world.run(45.0);
+    check(b.session->mode() == Mode::lost && b.session->wants_transport(), "B waits for a new connection");
+    const auto frames_before = world.hub.input_frames[2], pads_before = world.hub.input_pads[2];
+    b.session->attach(world.hub.connect(2, "lee"), world.now, "t-lee-2");
+    check(world.run_until(10, [&] { return b.session->mode() == Mode::sealed && b.session->tick() + 8 >= a.session->tick(); }),
+          "B resumes and catches up 45 s");
+    world.run(1.0); // (the frames reach the hub after its latency)
+    const auto frames = world.hub.input_frames[2] - frames_before, pads = world.hub.input_pads[2] - pads_before;
+    check(pads >= 2500, "B's pads of the missed ticks went (" + std::to_string(pads) + ")");
+    check(frames * 8 < pads, "in few INPUT frames (" + std::to_string(frames) + " frames for " + std::to_string(pads) + " pads)");
+    world.run(5.0);
+    check(b.session->mode() == Mode::sealed && world.hub.netfp_mismatches == 0, "B plays on sealed with identical fingerprints");
+}
+
 // The target leaves the stage while the joiner still waits for its state:
 // the joiner restores its own load snapshot and plays the stage as NEW.
 void target_moves_on() {
@@ -1168,6 +1197,32 @@ void restart_story_key(std::uint32_t new_id) {
     check(world.run_until(5, [&] { return world.hub.room_story.flags[22] == 1; }), "and reaches the own keeper");
 }
 
+// Round I1a's integration (W24): an ordered server stop sends CLOSE stopping.
+// The server comes back on the same address, so the session reconnects as
+// after a lost link (before: closed for good, the guest stayed in the field
+// on the host's story); the new process's WELCOME without the wid starts the
+// local way home (19.6.10).
+void close_stopping_reconnects() {
+    World world;
+    world.hub.co_arrival_hold = 0.3;
+    world.hub.suggested_delay = 6;
+    auto& b = guest_of_nine(world);
+    world.hub.send(2, w::Type::close, w::encode(w::Close{w::CloseReason::stopping, ""}), world.now);
+    world.run(0.5);
+    world.hub.drop(2);
+    world.run(1.0);
+    check(!b.session->closed(), "B's session is not closed by CLOSE stopping");
+    check(b.session->wants_transport(), "B reconnects after CLOSE stopping");
+    b.session->attach(world.hub.connect(5, "lee"), world.now, "t-lee-2");
+    check(world.run_until(25, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && !b.session->going_home(); }),
+          "B took the local way home after the restart");
+    check(b.session->wid() == 0 && b.session->holds_own_story() && b.session->visit_owner() == std::make_pair(std::uint32_t(5), std::uint8_t(1)),
+          "home on the new own key");
+    check(value(b.engine.story.flags, 19) == 0 && value(b.engine.story.flags, 20) == 1 && value(b.engine.story.folder, 4) == 0,
+          "B's lobby engine holds its own story");
+    check(has_notice(b.session->take_notices(), "The server restarted. Back on your own story."), "B is told");
+}
+
 // Round I1a's review: a restart while the member is at home. Its engine holds
 // its own story: the STORY goes under the new member id (before: the old key,
 // which the relay refuses as reason owner until the next BARRIER_OK).
@@ -1525,6 +1580,8 @@ int main(int argc, char** argv) {
         presence2_departure();
         std::cout << "co-arrival, reconnect\n";
         co_arrival();
+        std::cout << "a 45 s cut, the resume's pads\n";
+        long_cut_resume_pads();
         std::cout << "target moves on\n";
         target_moves_on();
         std::cout << "live during transition\n";
@@ -1551,6 +1608,8 @@ int main(int argc, char** argv) {
         restart_story_key(9);
         restart_story_key(3);
         restart_at_home();
+        std::cout << "world: CLOSE stopping reconnects\n";
+        close_stopping_reconnects();
         std::cout << "world: the barrier fallback\n";
         fallback_in_world();
         std::cout << "world: a kept leave, the host away, the end\n";
