@@ -12481,10 +12481,23 @@ command, result and log path).*
     Fortress and in Dry Land. Development builds' online scripts take
     `depart STAGE [POINT]` (once, only alone in the stage group): the
     departure records an exit's script ends with, to that exit's own target
-    (W9: stagML02 point 1 from stag0101; W30b: dng205b1 point 1, dng205b2
-    point 0; W32: the Fortress edges of `kExits` to stag0205's plateau and
-    back). The disk action walks the panel by its cursor (a k10's 8-row
-    panel never reached the Gate Disk).
+    (W9: stagML02 point 1 from stag0101; W30b: dng205b1 point 0, dng205b2
+    point 0, and the return mat's departure to dng205b2 point 2 from the
+    lobby, whose real use needs dng205b2's Security Gate; W32: the Fortress
+    edges of `kExits` to stag0205's plateau and back; W6 and W11 into
+    dng101b1 past stag0101's rock slope). The point is funcStageChange's
+    second argument (`stage_graph.json`'s points are not). The disk action
+    walks the panel by its cursor (a k10's 8-row panel never reached the
+    Gate Disk).
+  - *A one-tick sealed stretch* is above (W6, W7b). *The ghost cap* (W19):
+    the client counts a figure fading out after its GONE beside its
+    successor fading in, so W19 checks the figures that stay (`figures`,
+    `GhostFigures::staying`) at exactly 30.
+  - *W30b's context*: COUNTER 2 (the dungeon, set by each dungeon's first
+    floor) is a session context value (3.7); a player whose return mat
+    leads to dng205b2 was in dng205, so both players visit dng205b1 first.
+    The no-group candidate check compares the instance's first context
+    (`WorldInstance.Context`): an open question, in the progress note.
   - *Fake guests in a real instance* (harness, W29): the relay matches an
     arrival only with instances of its session context (19.7.2); the
     `instance_start` line of the world log names the instance's context and
@@ -12497,10 +12510,17 @@ command, result and log path).*
     park; development builds take `DW4_ONLINE_TEST_CUT_AT_PARK=SECONDS`
     (the link is lost at the member's first park with another member in its
     stage group, the reconnect waits that long).
-- **Results** (the numbers and logs in the progress note): ctest 57/57;
-  the server's unit tests 466/466; `det.sh` 4004f056 / 396cb219 in both
-  runs; the save state suite 17 of 17 identical after loading. The rest is
-  filled in as the runs finish.
+- **Results** (the numbers and logs in the progress note): every W
+  scenario of the Done-when passes with real hidden clients (W1, W3, W4,
+  W4b, W5, W6, W7, W7b-W7e, W8, W9, W11, W12, W18, W19, W22, W24-W29,
+  W30, W30b's I1a part, W32), the counter-proofs W1x and W30x fail as they
+  must; ctest 57/57; the server's unit tests 467/467, integration 140
+  passed and 1 skipped (the opt-in certificate-store test), the in-process
+  load gate valid in every cell (hold p99 13.5-19.2 us, p99.99 0.50-1.19
+  ms, on the busy machine); online off: `det.sh` 4004f056 / 396cb219 in
+  both runs, r25c 10 of 10 with 1,748,011 frames, the save state suite 17
+  of 17 identical after loading. The ported regression is in the progress
+  note.
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
