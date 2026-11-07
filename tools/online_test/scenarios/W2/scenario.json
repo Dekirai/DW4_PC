@@ -1,5 +1,5 @@
 {
-  "desc": "the prompt's B (19.7.4): b at the lobby gate while a's instance runs in stag0101: the gate form opens; B (autochoice back) goes to the game as its own cancel: b stands at the gate with control, no BARRIER, nothing loaded",
+  "desc": "the prompt's B (19.7.4): b at the lobby gate while a's instance runs in stag0101: the gate form opens; B (autochoice back) goes to the game as its own cancel: b stands at the gate with control, no BARRIER, nothing loaded (the answer 4 s after the overlay opened: a picture of it, w2_gate_prompt)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -29,7 +29,10 @@
       "card": "k2",
       "start": 3,
       "seed_story": true,
-      "autochoice": "back"
+      "autochoice": "back",
+      "env": {
+        "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "4000"
+      }
     }
   ]
 }

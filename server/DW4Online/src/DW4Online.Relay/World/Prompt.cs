@@ -178,7 +178,8 @@ namespace DW4Online.Relay.Hub
                 g.PromptChoice = c;
                 foreach (var (wid, name) in p.Hosts) g.PromptHosts[wid] = name;
             }
-            if (g.PlanId != 0 && p.Plan == g.PlanId) p.Clear(); // (the plan is done: its barrier came)
+            // (The plan is done: its barrier came, or another barrier did: a PLAN the client gave up after World:PlanWaitMs.)
+            if (p.Plan != 0) p.Clear();
         }
 
         /// <summary>

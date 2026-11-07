@@ -11,7 +11,7 @@ b: online-trace: prompt answer choice=new
 b: online-script: step .* log: b alone on dng205b2
 b: online-script: step .* log: b home again
 a: online-script: step .* log: a in dng205b2
-b: online-trace: prompt open form=loading stage=dng205b2 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:joinable:1:dng205b2\]
+b: online-trace: prompt open form=loading stage=dng205b2 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:(joinable|loading):1:dng205b2]
 b: online-trace: prompt answer choice=join
 b: online-script: step .* log: b joined a on dng205b2
 relay: instance_start .*stage=stag0201

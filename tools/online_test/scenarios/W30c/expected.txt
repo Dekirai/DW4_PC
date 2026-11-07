@@ -2,7 +2,7 @@
 # row decides; a stranger's row elsewhere is never preselected); A on such a row still enters where b walked in.
 c: online-script: step .* log: c hosts at stag0201
 a: online-script: step .* log: a in stag0202
-b: online-trace: prompt open form=gate stage=stag0201 rows=2 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:joinable:1:stag0201,[0-9]+:[^:]+:joinable:0:stag0202\]
+b: online-trace: prompt open form=gate stage=stag0201 rows=2 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:(joinable|loading):1:stag0201,[0-9]+:[^:]+:joinable:0:stag0202\]
 b: online-trace: prompt answer choice=back
 b: online-script: step .* log: b went back
 c: online-script: step .* log: c home

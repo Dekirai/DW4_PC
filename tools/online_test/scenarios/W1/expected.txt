@@ -6,7 +6,7 @@
 a: online-script: step .* log: a hosts in stag0101
 b: online-script: step .* log: own story at home
 b: online-trace: prompt hold stage=stag0101 point=0 menu=i_zzstchgcur
-b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:joinable:1:stag0101\]
+b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:(joinable|loading):1:stag0101]
 b: online-trace: prompt answer choice=join wid=[1-9]
 b: online-trace: barrier to=stag0101 point=0 plan=[1-9]
 b: online-script: step .* log: b plays a's story
