@@ -291,6 +291,14 @@ example "You lasted 12:41. Not bad at all!", "Simulation complete! You beat
 the whole thing!" or, after a defeat by Gekomon or TonosamaGekomon, "Beaten
 by a Gekomon? I will pretend I did not see that."
 
+As built in round O1b (lane D, the integration): "Welcome back" opens once,
+at the first step the NPC talks and player 1 has the control (so after the
+story's own talk, never over it). The defeating family is the director's
+`defeated_by()` (the last damaging hit's shooter once the run ended in a
+defeat; a poison tick never takes the last HP), handed through the driver's
+`RunStatus`, `RunOutcome` and game_main to `RunSummary::defeated_by`; the
+run's summary file has the line `defeated_by FAMILY` (`-` otherwise).
+
 ## 4. A run
 
 ### 4.1 Arenas and the route
@@ -463,6 +471,12 @@ simulation:
   matz01's box ends the run with the results. A player standing there
   when it comes steps out and in again, as with the original's mat; a test
   bot walks in (and gets the results after 60 s without it).
+  The clear banner (the integration of round O1b): the run sends no
+  i_bgclear; the HUD shows "SIMULATION COMPLETE" for 4 s after
+  LordKnightmon's fall (`RunScreenData::clear_frames`), the quest timer
+  stops with the run's clock, and "The return gate is open" follows when
+  the gate comes. TIME UP shows the quest timer at 0:00 with a large
+  "TIME UP" over the arena.
 
 ### 4.5 EXP and run levels
 
@@ -1225,6 +1239,19 @@ board), the six techniques with their ranks and skills, and the run's
 numbers (time, level, defeats). *Retire* asks "End the simulation? Yes /
 No".
 
+As built in round O1b (lane D, docs/ROUND_O1B_D_NOTES.md; the integration,
+docs/ROUND_O1B_INT_NOTES.md): every run screen is drawn with SimUi in the
+game font as windows in the game's window colours (quads; the window
+models and their clips are not played yet, 13.6's fallback). The HUD has
+the run timer (the quest-timer plate from 20:00 while LordKnightmon is in),
+the EXP bar inside the level, Lv, Defeated, Bits (the run player's BIT and
+the credited defeats' bits, 4.7), the build row (the weapon in its value
+colour with its bar, the six technique glyphs with their ranks, the gear as
+∋ / ∨ / ∧ with each part's grade, read from the build page's "Core: /
+Board:" and "Chips:" lines) and the notice line; the arena's own boss bar
+(i_bosshp02) is the Guardian bar on the Violet Ring. The build page is the
+director's build lines.
+
 ### 9.6 Results
 
 After the Game Over picture, TIME UP or the clear banner: the status window
@@ -1234,6 +1261,16 @@ defeats (total and the top five families), the damage of each ability (top
 six), the highest hit, the build, Sim Bits, and the new Data Records with
 "NEW!" in yellow. "A: Return to the lobby." The screen fades and the lobby
 comes back with Gekomon's comment (3.4).
+
+As built in round O1b: the director's lines (time, run level, Digimon, the
+Guardians defeated, defeats with the top five families, damage dealt by
+ability, the highest hit, the weapon and its Forge), then lane F's lines,
+added once by the driver's `fill_meta_screen`: "Bits N" (the run's bits as
+the meta file got them), "Sim Bits +N   (balance)", "NEW! <record>   opens
+<what>" (yellow) and "Not saved: ..." when the profile is not saved. Past 16
+lines two columns; past 32 the run's lines are cut and the Bits, Sim Bits
+and NEW! lines stay. On the Violet Ring a clear's results open when the
+player walks into the return gate (4.4).
 
 ### 9.7 Texts
 
@@ -1246,6 +1283,13 @@ hidden screenshots: Goblimon, Numemon, Sukamon, Ogremon, Kokatorimon,
 Mummymon, Minotarumon, Pharaohmon, Tyrannomon, Otamamon, Gekomon,
 MarineDevimon, Tortomon (e_torta?), Infermon, Megadramon, e_rare, e_mecha1-5
 (MRα01 / MRβ02 / MRγ03 / MRδ04 / MRε05?).
+
+As built in round O1b: the meta file's texts (the 23 Data Records' titles,
+conditions and what they open, the 16 forms' unlock texts, the Plug Lab's
+names and purchase answers, the save problems) stay in
+`src/game/overflow_profile.cpp` beside their data, the results' Bits / Sim
+Bits / NEW! lines in the run driver, the notices in the director; T9 checks
+them with the table's strings (14.1).
 
 ## 10. Controls
 
@@ -1545,7 +1589,7 @@ H10 handlers), `tables.inc` (the design tables of sections 4-8 as code),
 | T6 scripted run | `--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 100000` (headless; the run clock alone needs 90000 steps to 25:00, plus the start frames), twice, and the 20-seed batch of 14.2 | the same run hash twice; no Lua error; no budget overrun in the log; the targets of 14.2; a summary file |
 | T7 unit tests (ctest) | `overflow_profile_tests` (read, write, unknown lines, `.bak`), `overflow_offers_tests` (eligibility, weights, no empty window), `overflow_spawn_tests` (ring points on walkable cells, encirclement reuses RAMs), `overflow_rng_tests` (generator saved and restored across an Engine's construction), `overflow_balance_tests` (14.3) | pass; ctest 40 + 5 |
 | T8 performance | T6 with per-step timing (as DW4_TRACE_TRAVERSAL_TIME) and a hidden render pass | inside the budget of section 12 |
-| T9 texts | every string of overflow_text.inc against the font's character list | no missing glyph |
+| T9 texts | every string of overflow_text.inc against the font's character list; since the O1b integration also lane F's texts (records, unlock texts, Plug Lab names and answers, save problems, the results' Bits / Sim Bits / NEW! lines) and the director's fixed notices (`overflow_screens`) | no missing glyph |
 | T10 native scripts | (a) the native player hit handler with the rule set "original" against `hit_p_<form>.lua` on every hit of a recorded hidden fight (dng101b1, staggf01): HP, sequence, statuses, HUD sends; (b) each arena's native start against its first.lua with the boss lines skipped: switch states, layers, panels, camera mode | equal |
 | T11 host extraction | det.sh and hidden screenshots in three scenes (title, lobby, a dng101b1 fight) before and after O1a lane A's extraction | det unchanged, screenshots pixel-identical |
 

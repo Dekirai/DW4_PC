@@ -955,3 +955,21 @@ class factor, Bomb, Cutter) do not shorten the newcomer's runs; its Pwr Up does 
 cooldown), but every shorter uptime lets the late hits pass 35 % of MaxHP: nothing shipped. On the head all four
 Rookies' human runs last 21-22.5 minutes (14.2: 14-18) and Agumon's and Guilmon's kite runs always clear: the next
 balance round redoes the late curve for every form.
+
+## 13. The integration of round O1b (branch `int-o1b`)
+
+Lanes E, D and F merged in that order, then lane F's glue commit (docs/ROUND_O1B_INT_NOTES.md). What the
+integration changed on the director's side:
+
+- `OverflowDirector::defeated_by()`: the last damaging hit's family (`HitTaken::shooter`) once the run ended in a
+  defeat (empty otherwise); the summary gains `defeated_by FAMILY` (`-`). The driver's `RunStatus` and the host's
+  `RunOutcome` carry it to the lobby's "Welcome back" (SURVIVAL.md 3.4: the Gekomon joke). Nothing else reads it:
+  the run's draws and its run hash are unchanged.
+- The driver's screen data reads `finale()`, `finale_left_steps()` and `time_up()` directly (the O1a stand-in and the
+  lanes' requires-guards are gone); the results' meta lines are added once, by `fill_meta_screen` (D's guarded copy
+  added them a second time after the glue commit). The results gain "Bits N" (the run's bits as the meta file got
+  them); the HUD shows the clear banner for 4 s after LordKnightmon falls, and the build row's gear glyphs come from
+  the build page's "Core: / Board:" and "Chips:" lines.
+- T6 on the integrated build, seed 1, kite bot, offers=priority: the run hashes of lane E's head measurement for all
+  four Rookies (Agumon 52e34d6ed1cbaebd twice, Veemon f8ea436b118dbfdf, Guilmon 12b363fa1e29d593, Dorumon
+  c47b55c29e20d031), so lane E's 20-seed tables (ROUND_O1B_E_NOTES.md 12.2) stand for the integrated build.
