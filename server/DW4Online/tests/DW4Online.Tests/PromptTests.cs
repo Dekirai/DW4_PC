@@ -261,7 +261,7 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void A_held_prompt_is_forgotten_at_a_disconnect_and_a_members_choice_keeps_it_out_of_a_foreign_base()
+    public void A_held_prompt_is_forgotten_at_a_disconnect_and_staff_see_a_rows_visibility() // (a choice and a foreign base: PromptReviewTests)
     {
         var h = PromptHarness();
         Admit(h, "a", Player(100, "a"));
