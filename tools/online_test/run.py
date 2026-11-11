@@ -21,7 +21,7 @@ the service's ordered stop) or killed, and starts again on the same ports N seco
 "prefs" (PUT /me/online-prefs before it starts: visibility, host settings), a client's "role" (moderator / admin before it
 starts), "api_steps" ([{"at": S, "as": CLIENT | "admin", "method", "path", "body"}]: timed API calls, e.g. a story reset or
 a staff restore; "admin" is an admin account the harness makes; {id:NAME}, {user:NAME} and {pw:NAME} name a client's
-account and password),
+account and password, {run} the relay's run as GET /admin/instances names it (the staff actions' ?run=, fix-019)),
 "api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX}]), a client's "crash"
 ({"at": S, "restart": N, "script": FILE}: its process is killed at start + S and started again N seconds later with that
 script), "allow_close" (the world's CLOSEs of a server restart or an ended instance are expected), "counter_proof" (the
@@ -1001,6 +1001,10 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     def expand(text):
         for n, i in list(accounts.items()):
             text = text.replace("{id:%s}" % n, str(i)).replace("{user:%s}" % n, tag + n).replace("{pw:%s}" % n, passwords.get(n, ""))
+        if "{run}" in text:
+            # (The staff End / Remove name the relay's run, fix-019: the admin list's.)
+            s, body = api.call("GET", "/api/v1/admin/instances", None, tokens.get("admin"))
+            text = text.replace("{run}", str((body or {}).get("run", "")) if s == 200 and isinstance(body, dict) else "")
         return text.replace("{tag}", tag)
 
     def api_call(step):

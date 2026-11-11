@@ -1,0 +1,51 @@
+{
+  "desc": "fix-019's refix: staff remove a joiner during its classic catch-up and its target leaves the stage: the fallback from nobody's instance (wid 0) gets HOME at once and goes home with the replace (Instances:CheckpointJoins off, as S22a)",
+  "world": true,
+  "seed_story": true,
+  "frames": 80000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "api_steps": [
+    {
+      "at": 334,
+      "as": "admin",
+      "method": "POST",
+      "path": "/api/v1/admin/instances/1/remove?run={run}",
+      "body": {
+        "username": "{user:b}"
+      }
+    }
+  ],
+  "api_checks": [
+    {
+      "at": "after",
+      "as": "admin",
+      "method": "GET",
+      "path": "/api/v1/admin/audit?event=staff_remove",
+      "status": 200,
+      "expect": "staff_remove"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "env": {
+        "DW4_ONLINE_RATE": "200"
+      }
+    }
+  ],
+  "server": {
+    "Instances": {
+      "CheckpointJoins": false
+    }
+  }
+}

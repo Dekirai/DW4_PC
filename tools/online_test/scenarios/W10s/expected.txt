@@ -1,0 +1,15 @@
+# W10s (fix-019's refix, 19.6.6, 19.8.3): staff remove b while it catches up to join a's stag0102 stage group; a leaves
+# the stage during the catch-up: b's fallback is a stage group of nobody's instance (BARRIER_OK wid 0, no story), HOME at
+# once, and its way home a DISSOLVE with the replace of its own story (a real 0.1.8 client: no exception, no CLOSE).
+b: (?i)decision 2 .*stage=stag0102
+relay: instance_leave .*reason=removed
+relay: fallback_home .*removed=True
+b: (?i)decision 1 .*stage=stag0102 .*notice=4
+relay: home_req .*reason=Staff
+relay: dissolve .*member=2 .*mode=Replace
+b: online-script: step .* log: b home
+a: online-script: step .* log: a back in stag0101
+!relay: instance_join .*member=2 .*how=join
+!b: online-trace: join applied .*slot=1
+!b: online-script: FAIL
+!a: online-script: FAIL

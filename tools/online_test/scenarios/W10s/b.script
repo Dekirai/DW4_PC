@@ -1,0 +1,17 @@
+# W10s, member b (k10, replaying at most 200 steps a second): with a west; stays when a leaves; follows at @322 s:
+# a JOIN of a's stag0102 stage group (about 50 s of ticks, a catch-up of about 22 s); staff remove b at @334 s while it
+# catches up; a leaves the stage at @338 s: b falls back from nobody's instance and goes home on its own story.
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:-280,-190}
+wander -280 -190 6 until present=1 fail stagechange
+log a left
+wander -280 -190 6 until epoch>=@322 fail stagechange
+log b follows
+mat matz02 yes until stagechange
+log b loads stag0102
+idle until stage=stagml11,control
+log b home
+idle until frames>=600
