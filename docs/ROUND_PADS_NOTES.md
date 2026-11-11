@@ -100,3 +100,15 @@ twice, the save state suite 17 / 17, r25c 10 / 10 (section 6).
   Controls tab and the online screens' footer, for every family.
 - `DW4_TRACE_PROMPTS=1` prints every split text line's quads (button glyph,
   letter, word).
+
+Results (11 November 2026, this PC, hidden runs):
+
+| Check | Build | Result |
+| --- | --- | --- |
+| ctest, build/Clean | a2deda43 | 64 / 64 (pad_family 1523 checks, pad_detect 112 checks) |
+| det.sh (newgame_dng101b1, 6000 frames) | f2a1cb54 and a2deda43, two runs each | 4004f056 / 396cb219 every time |
+| save state suite (st_all.sh) | f2a1cb54 | 17 / 17 identical after loading with a loaded state |
+| r25c (segments.sh, 5 at a time) | 31acb024 | 10 / 10 reached, 1,748,011 frames (the reference's numbers per segment) |
+
+The commits after a check change presentation only (the pictures' sizes and
+colours, the font glyphs' registration in the draw path, documentation).
