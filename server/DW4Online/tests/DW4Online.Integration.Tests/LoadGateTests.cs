@@ -32,7 +32,7 @@ public class LoadGateTests
     public void A_lobby_members_presence_stays_plausible_for_a_long_run_and_reaches_the_others()
     {
         var hub = new RoomHub(new RoomInfo("WORLD1", LoadGate.Protocol, 1, 2, 4), new RelayOptions(), new SealingOptions(), new InstanceOptions(),
-            NullLogger.Instance, null, null, new DW4Online.Relay.World.WorldHubOptions { ArrivalPrompt = false });
+            NullLogger.Instance, null, null, new DW4Online.Relay.World.WorldHubOptions());
         var now = Stopwatch.Frequency * 1000L;
         var peers = new[] { new Peer(), new Peer() };
         var a = hub.Connect(0, 1000, "a", true, peers[0], now);
@@ -98,6 +98,29 @@ public class LoadGateTests
             LoadGate.InvalidReasons(new Dictionary<string, long> { ["presence_implausible_yaw"] = 7 }, 1000, 0));
         Assert.Single(LoadGate.InvalidReasons(new Dictionary<string, long> { ["presence_dropped"] = 11 }, 1000, 0));
         Assert.Single(LoadGate.InvalidReasons(new Dictionary<string, long>(), 1000, 2));
+    }
+
+    /// <summary>
+    /// Round I1b's review: the gate measures the arrival prompt as the relay ships it. A small *prompt* cell (two groups of three at
+    /// fields of the area table, joins a second apart, every second one through the loading-screen form, PLANs from the lobby's gate
+    /// with their overlays open a second): every join joins, every PLAN finds the groups' rows, and the holds of PLAN, CHOICE and the
+    /// refreshes are measured.
+    /// </summary>
+    [Fact]
+    public void A_small_prompt_cell_joins_through_both_forms_and_measures_plan_and_choice()
+    {
+        Assert.True(LoadGate.ArrivalPrompt);
+        var r = LoadGate.Run(new LoadGate.Cell("tp", 2, 0, 12, 1, 0, 0, false, 0, 0, 2, 60, 0, 4, 1, true), 4, 2, _ => { });
+        Assert.True((bool)r["valid"], string.Join("; ", (List<string>)r["invalid_reasons"]));
+        Assert.Equal(2, (int)r["joins_done"]);
+        Assert.True((long)r["plans_sent"] >= 6, $"plans {r["plans_sent"]}");
+        Assert.Equal((long)r["plans_sent"], (long)r["plans_with_rows"]);
+        foreach (var path in new[] { "hold_plan", "hold_plan_back", "hold_join_plan", "hold_join_choice", "hold_join_choice_held", "hold_join_barrier" })
+            Assert.True(r.ContainsKey(path), path);
+        var counters = (Dictionary<string, long>)r["counters"];
+        Assert.Equal(0, counters.GetValueOrDefault("plan_throttled"));
+        Assert.Equal(0, counters.GetValueOrDefault("choice_unoffered"));
+        Assert.True(counters.GetValueOrDefault("prompt_holds") >= 1);
     }
 
     [Fact]
