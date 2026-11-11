@@ -6,6 +6,7 @@
 // tracker driven by SDL's own events (last device with real input on
 // player 1's slot wins, stick drift does not switch) and the fallback when
 // a pad is unplugged.
+#include "../src/game/gc_adapter.hpp"
 #include "../src/game/pad_family.hpp"
 
 #include <SDL3/SDL.h>
@@ -189,6 +190,53 @@ void last_input_wins() {
     check(host.pads.empty() && host.tracker.player_family(0) == PadFamily::keyboard, "nothing left: keyboard");
 }
 
+// The Wii U mode adapter (gc_adapter.cpp): a report as SDL's GameCube
+// driver reads it, its ports as virtual GameCube controllers, and through
+// the classification and the 1:1 layout the game's own buttons.
+void gamecube_adapter() {
+    std::uint8_t report[37]{};
+    report[0] = 0x21;
+    std::uint8_t* port1 = report + 1;
+    port1[0] = 0x10;                     // wired controller
+    port1[1] = 0x02 | 0x80;              // B, D-pad up
+    port1[2] = 0x02 | 0x08;              // Z, L click
+    port1[3] = 128 + 80, port1[4] = 128; // main stick right
+    port1[5] = 128, port1[6] = 128 - 80; // C-stick down
+    port1[7] = 200, port1[8] = 30;
+    report[1 + 9 * 2] = 0x20; // port 3: a WaveBird, nothing pressed
+    std::array<GcPortState, 4> ports{};
+    check(parse_gc_adapter_report(report, sizeof report, ports), "adapter report parsed");
+    check(ports[0].connected && !ports[1].connected && ports[2].connected && !ports[3].connected, "adapter ports connected");
+    check(!parse_gc_adapter_report(report, 20, ports), "a short report is none");
+    GcPortState rest;
+    rest.l = rest.r = 30;
+    const auto state = gc_virtual_state(ports[0], rest);
+    check(state.buttons[SDL_GAMEPAD_BUTTON_WEST] && state.buttons[SDL_GAMEPAD_BUTTON_DPAD_UP] && state.buttons[SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER] &&
+              state.buttons[SDL_GAMEPAD_BUTTON_MISC3] && !state.buttons[SDL_GAMEPAD_BUTTON_SOUTH],
+          "adapter buttons in SDL's GameCube layout");
+    check(state.axes[SDL_GAMEPAD_AXIS_LEFTX] > 32000 && state.axes[SDL_GAMEPAD_AXIS_RIGHTY] > 32000, "adapter sticks (SDL's y down)");
+    check(state.axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] > 30000 && state.axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] == 0, "adapter triggers");
+    // As a virtual controller with the adapter's ids (what GcAdapter::update makes).
+    Host host;
+    const SDL_JoystickID id = attach({"Nintendo GameCube Controller", 0x057e, 0x0337, PadFamily::gamecube});
+    host.pump();
+    check(host.pads.size() == 1 && classify(pad_identity(host.pads.front())) == PadFamily::gamecube, "the adapter's port is a GameCube pad");
+    SDL_Joystick* joystick = host.joystick(id);
+    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; ++b) SDL_SetJoystickVirtualButton(joystick, b, state.buttons[std::size_t(b)]);
+    for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; ++a) {
+        int raw = state.axes[std::size_t(a)];
+        if (a == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || a == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) raw = raw * 2 - 32768;
+        SDL_SetJoystickVirtualAxis(joystick, a, std::int16_t(raw));
+    }
+    host.pump();
+    check(host.tracker.player_family(0) == PadFamily::gamecube, "the adapter's input switches the prompts");
+    const auto in = gamecube_input(read_gamepad(host.pads.front()), true);
+    check(in.buttons == (dw4::pad_button::b | dw4::pad_button::up | dw4::pad_button::z | dw4::pad_button::l), "adapter port 1:1 into the game");
+    check(in.stick.x > 0.9f && in.c_stick.y < -0.9f, "adapter sticks into the game");
+    SDL_DetachVirtualJoystick(id);
+    host.pump();
+}
+
 } // namespace
 
 int main() {
@@ -209,6 +257,7 @@ int main() {
         check(connected == 0, "no real controller reaches the test");
         classification_through_sdl();
         last_input_wins();
+        gamecube_adapter();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         result = 1;

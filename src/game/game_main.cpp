@@ -2,6 +2,7 @@
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "button_prompts.hpp"
 #include "dev_present.hpp"
+#include "gc_adapter.hpp"
 #include "gl_renderer.hpp"
 #include "host_view.hpp"
 #include "overflow_host.hpp"
@@ -1195,6 +1196,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         if (const char* forced = std::getenv("DW4_PROMPTS"); forced && options.smoke_frames)
             view.forced_prompts = dw4::game::family_from_id(forced);
+        // A GameCube adapter in Wii U mode through WinUSB (gc_adapter.hpp):
+        // not in test runs (no controller of this PC takes part in them).
+        std::optional<dw4::game::GcAdapter> gc_adapter;
+        if (draw && !options.smoke_frames) {
+            gc_adapter.emplace();
+            view.gc_adapter = &*gc_adapter;
+        }
         auto update_prompts = [&] {
             if (!button_prompts) return;
             button_prompts->update(settings);
@@ -4636,6 +4644,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (!engine.notes().empty()) std::cout << "unimplemented:\n";
         for (const auto& note : engine.notes()) std::cout << "  " << note.text << " x" << note.count << '\n';
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
+        view.gc_adapter = nullptr;
+        gc_adapter.reset();
         dw4::game::set_ui_view(nullptr);
         if (button_prompts) dw4::game::ButtonPrompts::set_active(nullptr);
     }

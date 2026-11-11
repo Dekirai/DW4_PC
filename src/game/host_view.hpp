@@ -40,6 +40,7 @@ struct ImFont;
 namespace dw4::game {
 
 class ButtonPrompts;
+class GcAdapter;
 class GhostFigures;
 namespace online {
 struct RemoteSample;
@@ -138,6 +139,9 @@ struct HostView {
     // otherwise).
     ButtonPrompts* prompts = nullptr;
     std::optional<PadFamily> forced_prompts;
+    // The Wii U / Switch GameCube adapter through WinUSB (gc_adapter.hpp;
+    // null in test runs and without a window): its ports become SDL pads.
+    GcAdapter* gc_adapter = nullptr;
 
     // The F1 menu.
     bool show_menu = false;

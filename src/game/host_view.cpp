@@ -2,6 +2,7 @@
 
 #include "button_prompts.hpp"
 #include "controls.hpp"
+#include "gc_adapter.hpp"
 #include "ghost_figures.hpp"
 #include "online/presence.hpp"
 
@@ -180,6 +181,7 @@ bool host_event(HostView& view, const SDL_Event& event) {
 }
 
 std::array<HostPadInput, 4> read_live_input(HostView& view) {
+    if (view.gc_adapter) view.gc_adapter->update();
     std::array<HostPadInput, 4> live{};
     // Keyboard: the bound keys of settings.ini [keyboard]; controllers:
     // [gamepad] and the sticks.
@@ -493,6 +495,8 @@ void menu_pad(HostView& view) {
 void new_ui_frame(bool test_gamepad) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    // (The adapter's ports also while the menus take the input.)
+    if (g_ui_view && g_ui_view->gc_adapter) g_ui_view->gc_adapter->update();
     if (g_ui_view) menu_pad(*g_ui_view);
     if (test_gamepad) ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
     ImGui::NewFrame();
