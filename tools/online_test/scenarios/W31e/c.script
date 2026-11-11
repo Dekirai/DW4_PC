@@ -19,3 +19,4 @@ depart dng205b1 0 until stage=dng205b1,control fail epoch>=@960
 log c in dng205b1
 idle until present=2,sealed>=600 fail epoch>=@1400
 log b joined c
+idle until frames>=300

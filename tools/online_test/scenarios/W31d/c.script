@@ -12,3 +12,4 @@ goalong until go=stamped or go=going
 log c goes along
 idle until stage=dng204b1,present=4,sealed>=300 fail epoch>=@1200
 log c, b and d joined a in B1
+idle until frames>=1200

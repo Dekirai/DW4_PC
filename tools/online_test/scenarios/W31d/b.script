@@ -13,3 +13,4 @@ idle until stage=dng204b1 fail notices>=1,epoch>=@1200
 log b taken along into dng204b1 without a notice
 idle until present=4,sealed>=300,alive fail epoch>=@1200
 log b alive in B1 with a, c and d
+idle until frames>=1200

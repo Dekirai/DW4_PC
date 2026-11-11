@@ -17,3 +17,4 @@ idle until stage=dng204b1 fail epoch>=@1200
 log d taken along into dng204b1
 idle until present=4,sealed>=300,alive fail epoch>=@1200
 log d alive in B1
+idle until frames>=1200

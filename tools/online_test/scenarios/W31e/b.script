@@ -12,3 +12,4 @@ idle until stage=dng205b1,present=2,sealed>=120 fail epoch>=@1400
 log b joined c in dng205b1
 idle until offers=0 fail frames>=600
 log a's offer closed for b
+idle until frames>=1800

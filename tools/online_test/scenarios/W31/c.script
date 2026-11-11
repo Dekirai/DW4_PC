@@ -27,4 +27,4 @@ goalong until go=waiting or go=stamped or go=going
 log c asked to go along
 idle until stage=dng204b2,present=2,sealed>=120 fail epoch>=@1900
 log c joined a in B2
-idle until frames>=120
+idle until frames>=1500
