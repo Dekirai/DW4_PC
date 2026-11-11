@@ -1746,11 +1746,23 @@ public sealed partial class RoomHub
 
     // Join -----------------------------------------------------------------------------------------------------------------
 
-    /// <summary>JOIN (SEAMLESS.md 3.4 step 3, 6.6): slots are reserved, the members catch up as observers, READY stamps the JOIN.</summary>
+    /// <summary>
+    /// JOIN (SEAMLESS.md 3.4 step 3, 6.6): slots are reserved, the members catch up as observers, READY stamps the JOIN. A JOIN takes
+    /// no seat (fix-019's refix; before, a member without one took it here, past a removal bar and the four seats): a fresh arrival
+    /// took its seats when it chose the instance, and one of its members that lost its seat since decides again on its own
+    /// (<see cref="DecideAlone"/>); a member of the instance removed at its barrier joins without a seat, and its owed HOME
+    /// (<see cref="RetryHome"/>) sends it home from the target's stage group, as from a NEW's.
+    /// </summary>
     private void Join(ArrivalGroup g, HubInstance target, long now)
     {
         _holds.Remove(g);
         g.Hold = HoldKind.None;
+        if (g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting && target.World is { } chosen)
+            foreach (var lost in g.Members.Select(a => a.Member).Where(x => !chosen.Seats.ContainsKey(x)).ToList())
+            {
+                Count("join_seat_lost");
+                if (DecideAlone(g, lost, now)) return;
+            }
         var free = Enumerable.Range(0, Wire.MaxSlots).Select(s => target.Slots[s] is null && target.Reserved[s] is null).ToArray();
         foreach (var a in g.Members)
         {
@@ -1766,12 +1778,11 @@ public sealed partial class RoomHub
             var w = target.World!;
             m.Joining = new JoinState(target, slot, g, a.Slot)
             {
-                Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target), Fresh = fresh, Owner = (w.Host.Id, (byte)w.Keeper.Box),
+                Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target), Fresh = fresh, Owner = (w.Host.Id, (byte)w.Keeper.Box), World = w,
             };
             target.Observers.Add(m);
             var none = new sbyte[Wire.MaxSlots];
             Array.Fill(none, (sbyte)-1);
-            if (!w.Seats.ContainsKey(m)) TakeSeat(w, m, now, "join");
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Join, target.Id, target.Visit, g.Stage, g.Point, (byte)slot, none,
                 target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob())
                 { World = WorldPart(w, fresh ? g.Arrival : ArrivalKind.None, fresh ? StoryMode.Replace : StoryMode.Merge) }.Frame());
@@ -2374,6 +2385,7 @@ public sealed partial class RoomHub
     private void FallbackHome(HubMember m, JoinState j, HubInstance inst, sbyte[] map, BarrierNotice why, long now)
     {
         inst.Detached = true;
+        inst.DetachedFrom = j.World;
         var world = new BarrierWorld(0, 0, Visibility.Public, ArrivalKind.None, m.Settings, m.Settings.Hash(Wire.WorldProtocol, m.DataHash),
             j.Owner.Member, j.Owner.Box, StoryMode.Merge);
         m.Peer?.Send(new BarrierOkMsg(j.Target.Id, j.Target.Visit, BarrierDecision.New, inst.Id, inst.Visit, inst.Stage, j.From.Point, 0, map,
@@ -2624,11 +2636,13 @@ public sealed partial class RoomHub
         // - a guest's values once its instance ends (19.8.5: the guests' values are discarded at the end; the host keeper's hold
         //   is released without a merge, so a guest's STORY after END host_left, host_lost, staff or a replaced story went into the
         //   host's keeper). The host's own values stay his (his keeper is his own story).
-        // - an engine on another's story: a stage group of nobody's instance (detached, a seatless joiner's fallback, the groups
-        //   of a removed instance) or of an instance the member holds no seat in (removed, 19.6.6). Its next barrier goes home
-        //   with the replace (19.8.3); until then the own keeper would take the former host's progress.
+        // - an engine on another's story (OnForeignStory): a stage group of nobody's instance (detached, a seatless joiner's
+        //   fallback, the groups of a removed instance) or of an instance the member holds no seat in (removed, 19.6.6), or a
+        //   JOIN whose seat went. Its next barrier goes home with the replace (19.8.3); until then the own keeper would take the
+        //   former host's progress. A detached group's former host plays his own story there (fix-019's refix: his STORY was
+        //   refused as foreign when his group did not answer the END's HOME): his values go to his keeper as at the END.
         var ended = m.World is { Ending: true } ew && ew.Keeper == keeper && (keeper.Account != m.AccountId || keeper.Box != m.Box);
-        var foreign = m.Instance is { Mode: not InstanceMode.Hub } gi && (gi.Detached || (gi.World is not null && gi.World != m.World));
+        var foreign = OnForeignStory(m, out _);
         var wrongOwner = msg.OwnerMember != owner || msg.OwnerBox != box || ended || foreign;
         if (rated || wrongOwner)
         {

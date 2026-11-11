@@ -242,6 +242,9 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     /// <summary>The story owner key (member id, box) the JOIN's BARRIER_OK named: the target instance's host, whose story the joiner's
     /// engine holds from then on (its fallback load included) until a replace on its way home (fix-019).</summary>
     public (uint Member, byte Box) Owner { get; init; }
+    /// <summary>The instance whose story and settings that BARRIER_OK gave the joiner's engine (also after the instance is gone: a
+    /// fallback from nobody's instance plays on it until its way home, fix-019's refix).</summary>
+    public DW4Online.Relay.World.WorldInstance? World { get; init; }
     /// <summary>The JOIN is stamped (sealed) or JOIN_REQ went to the solo leader.</summary>
     public bool Stamped { get; set; }
 }
@@ -499,6 +502,9 @@ public sealed class HubInstance(uint id)
     public int HomeTries { get; set; }
     /// <summary>The stage group is nobody's (its HOME went unanswered, 19.6.6): its next barrier is a DISSOLVE home with the redirect.</summary>
     public bool Detached { get; set; }
+    /// <summary>A detached stage group's former instance (fix-019's refix): its engines hold that instance's story and settings until
+    /// their way home, the own story only for its former host. The STORY refusal and the achievements' play context read it.</summary>
+    public DW4Online.Relay.World.WorldInstance? DetachedFrom { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

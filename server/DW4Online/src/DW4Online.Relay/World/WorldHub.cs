@@ -377,6 +377,7 @@ public sealed partial class RoomHub
             g.World = null;
             if (g.Ended) continue;
             g.Detached = true;
+            g.DetachedFrom = w;
             if (g.PendingHome is not null || g.AskedHome is not null) _strays.Add(g);
         }
         w.Groups.Clear();
@@ -670,6 +671,7 @@ public sealed partial class RoomHub
         Note("detached", g, ("wid", w.Wid));
         g.World = null;
         g.Detached = true;
+        g.DetachedFrom = w;
         w.Groups.Remove(g);
         foreach (var m in g.Members.ToList())
             if (m.World == w) FreeSeat(w, m, w.Ending ? "ended" : "removed", now);
@@ -760,13 +762,21 @@ public sealed partial class RoomHub
         }
     }
 
-    /// <summary>A removal (19.6.6): HOME for the member's slot, a bar of World:RemovedBarMinutes, the seat and the story owner at once.</summary>
+    /// <summary>A removal (19.6.6): HOME for the member's slot, a bar of World:RemovedBarMinutes, the seat and the story owner at once. A
+    /// fresh arrival that waits for its automatic JOIN of this instance (a JOIN or boss hold, its seat taken at the choice) leaves the
+    /// wait and decides again on its own, where the bar counts (fix-019's refix, <see cref="DecideAlone"/>).</summary>
     private void Remove(WorldInstance w, HubMember target, HomeReason reason, long now)
     {
         w.Bars[target.AccountId] = now + FromMs(_world.RemovedBarMinutes * 60_000.0);
         target.Peer?.Send(Notice(target, WorldNoticeKind.Removed, w.Host, 0, ""));
         HomeMember(target, reason, now);
         FreeSeat(w, target, "removed", now);
+        if (target.Arrival is { } g && g.World == w && g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting)
+        {
+            Count("removed_while_held");
+            Note("removed_while_held", null, ("wid", w.Wid), ("member", target.Id), ("hold", g.Hold.ToString()));
+            DecideAlone(g, target, now);
+        }
     }
 
     /// <summary>Admin End (POST /admin/instances/{wid}/end): END staff. False: no such instance in this run (<paramref name="run"/>: the
@@ -923,7 +933,12 @@ public sealed partial class RoomHub
                 if (atStage.Count > 0) otherContext.Add(w);
                 continue;
             }
-            var here = w.Members.Count(x => SameStage(StageOf(x), g.Stage));
+            // The instance's players at the arrival stage (decision 40, "Here (n)"): the members of its stage groups that stay at S (no
+            // barrier, not an exit fork's leaving side, not past their log's end: the groups a JOIN could take) and their joiners. Never
+            // the members of a group on its way elsewhere (fix-019's refix: a group at a barrier from S to another stage still counted,
+            // its row became a preselected guest's NEW, and the interim rule put a stranger alone into a new stage group of their
+            // instance at S) nor a member that plays alone at S (another engine: the arrival would not meet it either).
+            var here = w.Members.Count(x => x.Instance is { } xi ? atStage.Contains(xi) : x.Joining is { } xj && atStage.Contains(xj.Target));
             var hostFriend = members.Any(x => x.Friends.Contains(w.HostAccount));
             var friendsInside = w.Members.Count(x => members.Any(y => y.Friends.Contains(x.AccountId)));
             var ping = w.Members.Select(x => x.Rtt.Median).DefaultIfEmpty(0).Max();
@@ -1020,6 +1035,38 @@ public sealed partial class RoomHub
         else JoinOrNew(g, now);
     }
 
+    /// <summary>
+    /// A member of a fresh arrival without its seat in the chosen instance any more (removed while the arrival waited for its JOIN or
+    /// a boss choice, 19.6.6): it leaves the arrival and decides again on its own as a fresh arrival (<see cref="FreshJoinOrNew"/>:
+    /// the removal bar and the free seats count there), another instance or its own. Its engine never entered the instance, so no
+    /// HOME is owed. Before (fix-019's refix, in 0.1.8 too), the JOIN at the hold's end took the seat back past the bar and the four
+    /// seats ("joined" again for everyone, a second history row, a fifth seat that pushed a legitimate arrival into an instance of
+    /// its own). True: it was the arrival's last member, so the arrival itself was decided anew.
+    /// </summary>
+    private bool DecideAlone(ArrivalGroup g, HubMember m, long now)
+    {
+        var a = g.Members.FirstOrDefault(x => x.Member == m);
+        if (a is null) return false;
+        if (m.HomeWish is { } wish && g.World is { } chosen && wish.Wid == chosen.Wid) m.HomeWish = null;
+        if (g.Members.Count == 1 && g.CoArrivals.Count == 0)
+        {
+            _holds.Remove(g);
+            g.Hold = HoldKind.None;
+            Redecide(g, now);
+            return true;
+        }
+        g.Members.Remove(a);
+        var alone = new ArrivalGroup
+        {
+            From = g.From, BarrierTick = g.BarrierTick, Stage = g.Stage, Point = g.Point, Context = g.Context, ParkedAt = g.ParkedAt, Alive = g.Alive,
+            PlanNew = g.PlanNew,
+        };
+        alone.Members.Add(a);
+        m.Arrival = alone;
+        FreshJoinOrNew(alone, now);
+        return false;
+    }
+
     /// <summary>A co-arrival base of a fresh group may take this fresh group: no block between any of them, and the base's host's
     /// default visibility lets every member of the group see the instance it will make (19.7.6: "visible to them"; a co-arrival is
     /// automatic, so staff get no visibility bypass here, fix-019).</summary>
@@ -1069,10 +1116,18 @@ public sealed partial class RoomHub
         return ContextOf(m, now);
     }
 
-    /// <summary>The play context (web 14:10): at home Wid 0, IsHost true, Players 1 and the member's own settings; in an instance the
-    /// most players it had in the last minute.</summary>
+    /// <summary>
+    /// The play context (web 14:10): at home Wid 0, IsHost true, Players 1 and the member's own settings; in an instance the most
+    /// players it had in the last minute. An engine on another's story without a seat there (<see cref="OnForeignStory"/>: a removed
+    /// member until its HOME, a fallback from nobody's instance until its way home) is that instance's guest (fix-019's refix: it
+    /// read as at home on its own story, so the story challenges and the ruleset counted as the own while the engine held the
+    /// former host's story and settings; the 0.1.8 client's own facts say "home" there, the API decides by this context).
+    /// </summary>
     private WorldPlayContext ContextOf(HubMember m, long now)
     {
+        if (OnForeignStory(m, out var from) && from is not null)
+            return new WorldPlayContext(from.Wid, from.HistoryId, false, Math.Max(1, m.Instance?.Count ?? 1), from.Settings.RandomizerActive, from.DataHash,
+                from.Settings.Difficulty);
         if (m.World is not { } w) return new WorldPlayContext(0, null, true, 1, m.Settings.RandomizerActive, m.DataHash, m.Settings.Difficulty);
         var players = Math.Max(w.Seats.Count, 1);
         for (var n = players + 1; n < w.SeenWithPlayers.Length; ++n)
@@ -1081,6 +1136,41 @@ public sealed partial class RoomHub
     }
 
     private void RememberContext(HubMember m, long now) => _recentContexts[m.AccountId] = (ContextOf(m, now), now);
+
+    /// <summary>
+    /// The member's engine holds another's story than its story owner's (fix-019 and its refix), <paramref name="from"/> that story's
+    /// instance (null: not known): a stage group of nobody's instance (detached, a seatless joiner's fallback, the groups of a removed
+    /// instance) unless the member was that instance's host (the story is his own); a stage group of an instance it holds no seat in
+    /// (removed, 19.6.6); a JOIN whose seat went (removed while it catches up). False: the engine plays its story owner's story (its
+    /// instance host's, its own at home).
+    /// </summary>
+    private static bool OnForeignStory(HubMember m, out WorldInstance? from)
+    {
+        from = null;
+        if (m.Instance is { Mode: not InstanceMode.Hub } g)
+        {
+            if (g.Detached)
+            {
+                from = g.DetachedFrom;
+                return from is null || !OwnsStory(from, m);
+            }
+            if (g.World is { } gw && gw != m.World)
+            {
+                from = gw;
+                return true;
+            }
+            return false;
+        }
+        if (m.Joining is { World: { } jw } && jw != m.World && !OwnsStory(jw, m))
+        {
+            from = jw;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>The instance's story is the member's own (its host's keeper is the member's bound box).</summary>
+    private static bool OwnsStory(WorldInstance w, HubMember m) => w.Keeper.Account == m.AccountId && w.Keeper.Box == m.Box;
 
     private WorldSnapshot BuildSnapshot(long now)
     {
