@@ -8,8 +8,9 @@ b: online-script: step .* log: b waited past the join hold
 b: online-script: step .* log: b joined a and c in dng204b1
 relay: test_go_hook .*hook=busy_target
 relay: go_stamped .*stage=dng204b1
-relay: hold_join
 relay: go_join
+relay: hold_join
+relay: join_decided .*stage=dng204b1
 !relay: go_back
 !a: online-script: FAIL
 !b: online-script: FAIL
