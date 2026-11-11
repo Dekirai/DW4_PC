@@ -5,9 +5,11 @@ local save, achievements, the online world (instances instead of rooms since rou
 (API, website and relay share memory) backed by MariaDB. It runs as a Windows service on the user's Windows Server;
 players never forward ports.
 
-Status (feature package "online"): the service side is complete and tested on loopback: core (accounts, online
-character, cloud save, achievements), the room service and relay, and the website. The game client integration is
-separate work (see "Open ends"); `tests/winhttp_client` shows the client side of every call over WinHTTP.
+Status: the service side runs on the project's server and is tested on loopback: core (accounts, online character,
+cloud save, achievements), friends and blocks, the world (instances, their history, the staff's moderation) with the
+relay, and the website. The game client speaks it (`src/game/online`, see "Open ends"); `tests/winhttp_client` shows the
+client side of every call over WinHTTP. The room service of the releases before 0.1.7 is retired (its endpoints answer
+410, its tables are read-only).
 
 ## Layout
 
@@ -16,12 +18,12 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Domain` | Pure rules, no ASP.NET Core and no database: the 3316-byte character record codec (C# port of `src/save_data.cpp`), validation, summaries, password hashing, tokens, recovery codes, achievement rules, the services (accounts, online character, cloud save, achievements) and the repository interfaces. |
 | `src/DW4Online.Data` | MariaDB through MySqlConnector + Dapper: repositories and the startup migrator. The SQL migrations are embedded. |
 | `src/DW4Online.Api` | The JSON API `/api/v1`: endpoints, bearer-token authentication, rate limits, problem details. |
-| `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery, the presence fan-out: PRESENCE and since round 60 PRESENCE2 for the ghost figures of the lobby, with its bounds and token bucket, SEAMLESS.md 12.1), HMAC room tickets. |
+| `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one hub for the world, one connection per member, stage groups as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery, the presence fan-out: PRESENCE and since round 60 PRESENCE2 for the ghost figures of the lobby, with its bounds and token bucket, SEAMLESS.md 12.1), `World` (the user's instances: matching, seats, the end with HOME, the host's grace, SEAMLESS.md 19), HMAC world tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, friends (with the online preferences and "Recently played with"), profiles, achievements, instances, admin (accounts, instances), privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0012 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0013 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
-| `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay and fake clients, website forms, end to end on real Kestrel). |
+| `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, the world with the real relay and fake clients, website forms, end to end on real Kestrel). |
 | `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
 | `tests/winhttp_client` | `dw4online_client.cpp`, a C++20 WinHTTP test tool (the HTTP stack the game will use), and `build.cmd` (MSVC). |
 | `tests/e2e/relay_spike_test.py` | The groundwork spike's Python test on the real API and relay: an independent DW4R2 client (standard library only) that drives a co-arrival and checks the first sealed tick on both machines. |
@@ -240,14 +242,6 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /achievements` | optional | All definitions (hidden ones masked until unlocked); with a token the caller's unlocks and progress. |
 | `POST /achievements/unlock` | token | `{code, context: {roomCode, players, roomPlayers, randomizer, cheats, rebalanced, saveStateLoaded, difficulty, protocol, clientVersion}, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime, timeRejected}`. |
 | `POST /stats` | token | `{deltas: {enemies_defeated: 12, play_seconds: 60, ...}, context}` -> `{totals, unlocked}`. |
-| `GET /rooms?protocol=&dataHash=` | - | Open rooms (compatible ones only when filtered, like the HELLO check): code, name, owner, `ownerPresent`, `storyFrozen`, `hasPassword`, players / maxPlayers, ranked, randomizer, difficulty, instances. |
-| `POST /rooms` | token | `{name, password?, maxPlayers (2..10, default 4), protocol, dataHash, clientVersion, settings?}` -> 201 room state with `relayTicket`. `settings` is a JSON object: `difficulty` 0..2, `cameraMode` 0..1, `lightMode` 0..1 (default 1), `fastLoading`, `randomizer: {enabled, seed (u32), drops, enemies 0..2, zones 0..2}`; `cheats` / `rebalanced` are refused. One owned room per account. |
-| `GET /rooms/{code}` | token | Members get the room state, others the summary. |
-| `POST /rooms/{code}/join` | token | `{password?, protocol, dataHash, clientVersion}` -> room state with `relayTicket`; repeating it is a heartbeat; the owner always gets back in (no password, place kept) and unfreezes the story; joining leaves any other room. 403 `wrong_room_password` / `kicked`, 409 `room_full` / `incompatible_room`. |
-| `POST /rooms/{code}/ticket` | token | A fresh one-time relay ticket (`relayTicket`, a reconnect); it replaces the member's older ticket. 503 `relay_unavailable` with the relay off. |
-| `GET /rooms/{code}/story` | token | Members: the room story the relay keeps (SEAMLESS.md 8): `{revision, phase (0-7), flags, folder, counters (16), policy, ownerPresent, droppedFlags, droppedFolder, droppedCounters, held, started, difficulty}` (`started` false: the owner has no online story yet and its game has not entered a stage; the room starts at zero and drops what members do until then, SEAMLESS.md 8.6). 404 `not_in_room`, 404 `no_story` before the room's first relay connection. |
-| `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10) while the relay connection is down (a live relay connection counts as the heartbeat); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
-| `POST /rooms/{code}/leave`, `POST /rooms/{code}/kick` `{username}`, `DELETE /rooms/{code}` | token | Leave; the owner (present) kicks a guest (no re-join); the owner closes the room for everyone. |
 | `GET /friends` | token | `{friends: [{username, since, presence}], requestsIn: [{username, sentAt, expiresAt}], requestsOut: [...], blocks: [{username, since}], limits: {maxFriends, maxPendingOut, maxPendingIn, maxBlocks, requestDays}}`; `presence` is `{online, status ("In the lobby", "Playing in Dry Land", "Playing" in a Private instance, "Offline"), area, stage, lastSeenAt}`, or null when the friend's whereabouts preference is "nobody". One call per `RateLimits:FriendListSeconds` (2). |
 | `POST /friends/requests` | token | `{username}` (the exact user name, any case) -> `{result: "sent" or "friends", message}`; "friends" when the other player's request to the caller was open. 404 `player_not_found`, 422 `own_account`, 409 `you_blocked` / `already_friends` / `friend_limit` / `other_friend_limit` / `outgoing_limit`, 429 `friend_request_rate` with `retryAfterSeconds`. A request to a player who blocks the caller, whose open requests are full (it waits) or a repeat answers exactly like any other. Every write here may answer 503 `social_busy` when it waited 10 s for the accounts' lock. |
 | `POST /friends/requests/{username}/accept`, `.../decline`, `DELETE /friends/requests/{username}` | token | Accept (-> `{result: "friends", message}`), decline (204, silent for the sender), cancel the caller's own request (204). 404 `request_not_found`. |
@@ -259,17 +253,17 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /world` | - | `{players, playersOnline, instances, areas: {death_valley: n, ...}, areaList: [{area, name, instances, players}]}`, no names. |
 | `GET /instances?area=` | token | The instances the caller may see (Visible(), SEAMLESS.md 19.7.2: Public, Friends for the host's friends, never Private; a block either way hides; staff see all with the visibility): `{instances: [{wid, host, area, areaName, stage, stageName, players, maxPlayers, visibility, difficulty, randomizer, storyLabel, ageSeconds, yours}]}`. |
 | `GET /me/online-prefs`, `PUT /me/online-prefs` | token | `{defaultVisibility, invites, whereabouts, friendToasts, cameraMode, lightMode, fastLoading, randomizer: {enabled, seed, drops, enemies, zones}, lastBox}`; PUT takes any subset (422 `invalid_prefs`). |
-| `/rooms` and everything below it | - | 410 `rooms_retired` (round I1: rooms gave way to the world; for one release). |
-| `GET /admin/instances`, `POST /admin/instances/{wid}/end`, `POST /admin/instances/{wid}/remove` `{username}` | staff | Every instance with members and spectators; End (the instance ends, audited `staff_end_instance`) and Remove (the member goes home, `staff_remove`). |
+| `GET /rooms`, `POST /rooms`, `/rooms/{code}` and everything below it (join, ticket, story, heartbeat, leave, kick, `DELETE`) | - | **Retired** since round I1 (0.1.7): 410 `rooms_retired` (rooms gave way to the world). The clients of 0.1.6 and earlier used them. |
+| `GET /admin/instances`, `POST /admin/instances/{wid}/end?run=`, `POST /admin/instances/{wid}/remove?run=` `{username}` | staff | `{run, instances}`: every instance with members and spectators, and the relay run they are of; End (the instance ends, audited `staff_end_instance`) and Remove (the member goes home with the 10-minute bar, `staff_remove`). An instance is its run and wid: the relay numbers wids from 1 again after every restart, so End and Remove take the listing's `run` (422 `run_required` without it, 409 `instance_list_outdated` for another run: reload the list) and 404 `instance_not_found` / `member_not_found`. |
 | `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked, banned or demoted account is re-checked by the relay at once (`IWorldNotifier.AccountChanged`). `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |
 | `POST /admin/accounts/{user}/achievements/{code}/flag` `{ruleset?, flagged}`, `DELETE /admin/accounts/{user}/achievements/{code}?ruleset=`, `DELETE /admin/accounts/{user}` (admin) | staff | Flag / unflag or revoke an unlock, erase an account on request. |
 | `GET /health` (no prefix) | - | `{status, schema}` or 503 when the database is unreachable. |
 
-The room state (create, join, heartbeat, `GET` for members) is `{room, settings, settingsHash, members: [{accountId,
+Until round I1 the room state (create, join, heartbeat, `GET` for members; retired) was `{room, settings, settingsHash, members: [{accountId,
 username, slot, owner, instance, joinedAt}], instances: [{id, stage, visit, mode (hub / solo / sealed), members:
 [{accountId, username, slot, connected, lagging}], departing, bossLock, joinable, ticks, parent}], you,
 heartbeatSeconds, relay: {host, port, protocol}, relayTicket}` (`relayTicket` only after create, join and /ticket;
-`settingsHash` is the 16-hex-digit hash the DW4R2 handshake must carry).
+`settingsHash` was the 16-hex-digit hash the room's DW4R2 handshake carried).
 
 `context` (sent with uploads, unlocks and stats): `{roomCode, players, randomizer, cheats, rebalanced, saveStateLoaded,
 difficulty, protocol, clientVersion}`. With `Play:MinimumProtocol` / `Play:MinimumClientVersion` set, uploads, unlocks
@@ -410,14 +404,13 @@ The design is SEAMLESS.md section 6; the exact wire layout is its appendix "DW4R
 relay, the fake clients, the Python client and the game client (`src/game/online/wire.hpp`); golden byte vectors in
 `tests/DW4Online.Tests/WireGoldenTests.cs` and the game's `tests/online_wire_tests.cpp` hold both sides to it. In short:
 
-- **One connection per member and room**, across all its instances. Tickets come from `POST /rooms`, `POST
-  /rooms/{code}/join` and `POST /rooms/{code}/ticket`: `base64url("room|account|member|expiry|nonce")` + "." +
-  `base64url(HMAC-SHA256)`, single use, 60 s. The relay asks the room service before it accepts one: the account must
-  be a member of the open room and the ticket its newest (a new ticket replaces the older one), so tickets cannot be
-  hoarded for after a kick. A newer connection of the same member replaces the older one (CLOSE replaced).
-- **Handshake**: `DW4R2 <ticket> <protocol> <dataHash> <settingsHash hex>` -> `OK <member> <serverMs>` or `ERR
-  <code>` (`protocol`, `ticket`, `data`, `settings`, `full`); then frames of type u8 + length u32 LE + payload, at most
-  1 MiB, WELCOME first.
+- **One connection per member** to the one world hub, across all its stage groups and instances (SEAMLESS.md
+  19.17). Tickets come from `POST /world/enter` (Play) and `POST /world/ticket` (a reconnect): the fixed world channel,
+  the account, the role (member or staff), expiry and nonce, HMAC-SHA256 signed, single use, 60 s. The relay asks the
+  world service before it accepts one (the account's live status and role, its friends and blocks, the newest ticket
+  only). A newer connection of the same account replaces the older one (CLOSE replaced).
+- **Handshake**: `DW4R2 <ticket> 49 <dataHash> <ignored>` -> `OK <member> <serverMs>` or `ERR <code>` (`protocol`,
+  `ticket`, `data`, `full`); then frames of type u8 + length u32 LE + payload, at most 1 MiB, WELCOME first.
 - **Instances**: every member is in exactly one: a hub instance (hub and UI stages, solo, not logged), a solo-led one
   (its member steps on its own clock and streams LOG) or a sealed one (two to four members: the relay seals every
   tick at 59.94 Hz on its own timer thread with each member's pad, filling a missing pad at once with that member's
@@ -437,9 +430,9 @@ relay, the fake clients, the Python client and the game client (`src/game/online
 - **Log**: per visit in blocks of 600 ticks, each full block compressed with Deflate (about 240 KB for 20 minutes of
   four players); snapshots kept with every member's canonical hash; net fingerprints every 60 ticks with a majority
   vote (two members: the longer member wins) and RESYNC for the minority.
-- **Leaving**: BYE, a room leave, kick or timeout stamp LEAVE at once; a closed connection keeps its slot filled for
+- **Leaving**: BYE, a leave of the world or a timeout stamp LEAVE at once; a closed connection keeps its slot filled for
   10 s (`Relay:ReconnectSeconds`), 10 s of continuous filling (`Relay:LagLeaveSeconds`) end it too.
-- **Limits**: handshake 10 s, idle 60 s, 16 connections per IP, 200 rooms, inbound 64 KB/s with a 1 MiB burst and
+- **Limits**: handshake 10 s, idle 60 s, 16 connections per IP, inbound 64 KB/s with a 1 MiB burst and
   400 frames/s with a burst of 2000 per connection (a flood closes with CLOSE abuse), malformed frames close with
   CLOSE protocol, state transfers 4 MB/s with a 16 MiB burst, 32 MiB of unsent frames close a connection that does
   not read.
@@ -450,15 +443,17 @@ Razor Pages in `src/DW4Online.Web`, English, one embedded stylesheet (`/css/site
 
 | Page | What |
 | --- | --- |
-| `/` | Players online, open rooms, accounts, the message of the day. |
+| `/` | Players online, instances, accounts, the message of the day. |
 | `/register` | User name, password twice, optional e-mail, a honeypot field; shows the recovery code once and signs in. |
 | `/login`, `/logout`, `/recover` | Sign in (optionally persistent), sign out (POST), reset a forgotten password with the recovery code (shows the next one). |
 | `/account` | Overview, online character, password (ends every other session), e-mail, new recovery code, public / private profile, cloud save info, download and deletion (with the password), sessions (log out one or all others), account deletion. A temporary password from an admin must be changed first; every other page redirects here until then. |
 | `/u/{name}` | Profile: online character (Digimon, name, level, play time, forms, story clears) and achievements with unlock dates, rulesets, player counts and progress bars. Private profiles show only to the owner and staff; unlocks under review only to them. Signed-in visitors get the friend and block buttons of their relation (*Add friend*, *Request sent* / *Cancel request*, *Accept request* / *Decline*, *Friends* / *Remove friend*, *Block* / *Unblock*), on private profiles too; the other side's block never shows. |
 | `/account/friends` | Friends (Remove, Block), friend requests (Accept, Decline), sent requests (Cancel; declined ones stay listed until they expire), blocked players (Unblock), a request or a block by exact user name. |
 | `/achievements` | Every definition by category with tier, points and rarity (share of players holding it); hidden ones masked unless the visitor holds them. |
-| `/rooms` | Open rooms, read-only (host away = story paused). |
-| `/admin`, `/admin/account/{name}` | Staff: account search, open rooms (close), lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks; admins also set roles and erase accounts. |
+| `/instances` | The world's instances: signed-in players see those open to them by area (host, stage, players, story point, age; Visible(), SEAMLESS.md 19.7.2), staff all with their visibility, signed-out visitors the counts per area. `/rooms` (retired) redirects here. |
+| `/admin`, `/admin/account/{name}` | Staff: account search, lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks, the account's instance history; admins also set roles and erase accounts. |
+| `/admin/instances` | Staff: every instance, Private ones included, with *End* and *Remove* (audited); the forms name the relay run with the wid, so a page from before a server restart is refused. |
+| `/admin/audit` | Staff: the staff rows of the audit log (a moderator his own, an admin all). |
 | `/privacy` | What is stored, why, how long, cookies, recipients, rights, deletion (GDPR, server in Germany); the controller from `Web:Operator*`. |
 
 Below a path (`Service:PathBase`, for example `/dw4online` for `https://dekirai.crygod.de/dw4online`) every link,
@@ -484,11 +479,11 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
 
 ## Open ends (other lanes)
 
-- Game client: round S1 built the WinHTTP client with pinning, the DPAPI token, the command-line room login and the
-  DW4R2 client (`src/game/online`, speaking the relay's layout since the round S1 integration); round S2 adds the title /
-  F1 room UI and the online character in place of the card.
-- Round S2: STORY / STORY_ACK and the room story; round S4: the resync path completed, RESUME with missing ticks after
-  a crash-free reconnect, UDP for INPUT / SEALED (the S1 loss matrix, SEAMLESS.md 6.4).
+- Game client: round S1 built the WinHTTP client with pinning, the DPAPI token and the DW4R2 client
+  (`src/game/online`); round I1a's client lane its world session (*Play*, the own lobby, instances, *Leave instance*;
+  SEAMLESS.md 19.21). Next rounds (19.25): I1b (the arrival prompt, removal and reports), I2 (friends in the game), I3
+  (the instance browser and travel), I4 (parties); UDP for INPUT / SEALED stays open (the S1 loss matrix, SEAMLESS.md
+  6.4).
   For the IP phase it talks to `https://88.198.52.221:8443` (a Traefik holds 443 there, DEPLOY.md 4.1) and pins the
   two SPKI pins of the server's TLS keys (in use and
   spare; `deploy/tls-key.ps1` makes the keys and their certificates, `deploy/print-pins.ps1` writes the pins for the

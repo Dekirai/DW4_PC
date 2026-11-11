@@ -337,36 +337,91 @@ are off online; a guest that leaves plays on released, a host that leaves ends
 the session for the others (they play on alone). The host needs the port
 open (router / firewall) for guests outside the local network.
 
-These sessions are the first step. The planned online play goes through the
-project's own server (next section): rooms of up to ten players, everyone in
-the same stage playing it together (at most four per stage instance, shared
-enemies and drops), all traffic relayed by the server so nobody opens a
-port, and an online character per account that starts from zero, separate
-from the local save.
+These LAN sessions are separate from the online play below, which goes
+through the project's own server: all traffic is relayed by the server, so
+nobody opens a port, and every account plays its own online character, which
+starts from zero, separate from the local save.
 
-### Online co-op (preview)
+### Online co-op (the world)
 
-The seamless online co-op ([docs/SEAMLESS.md](docs/SEAMLESS.md)) runs as a
-preview on one PC against a local server: every player has their own camera
-and walks wherever they like (no leash); members in the same field, dungeon
-or boss stage play one shared stage instance (up to four), a member who
-arrives later joins it mid-stage, exits and the gate disc take only the
-members who say yes, and members who leave the lobby together a few seconds
-apart start the field together. Lobby and menu stages stay single player:
-there the other room members in the same lobby appear as ghost figures, their
-Digimon in their current form with their weapon and name tag, walking and
-standing where they really are (look only: no collision, no talks, nothing
-they do changes your game; a figure in your way or inside your own Digimon
-turns see-through). With a server older than this version the figures come
-without their weapon and only run or stand.
+The seamless online co-op ([docs/SEAMLESS.md](docs/SEAMLESS.md), section 19)
+has no rooms: everyone who presses *Play* is in one world. The title menu has
+a third entry below Game Start and Option: **Online** (the same lettering,
+the cursor moves to it with down from Option). It opens the account screens
+over the title, connected to the project's server (fixed in the build): log
+in or register (the recovery code is shown once). The home screen then has:
+
+- **Play: <form> Lv <n> (Box 1)**: it ends an offline game (after asking),
+  restarts the game online with your online character (a new account starts
+  at Create Digimon; the save on this PC is not used) and takes you to **your
+  own lobby, on your own story**: NPCs, shops, quest boards and the Digi-Lab
+  behave as in single player. The character is saved on the server when the
+  save room writes, at every stage change and when you go offline.
+- **Settings**: the visibility of the instances you start (*Public*,
+  *Friends*, *Private*), camera and light mode, fast loading and the
+  randomizer of the instances you host. Your settings count at home and in
+  every instance you host; as a guest you play with the host's. The
+  difficulty is the character's, chosen at the Game Start; online there are
+  no cheats and no rebalancing.
+- **Account** (password, online character reset, log out everywhere) and
+  **Log out**, and "Online now: <n> players, <m> instances".
+
+B (or Esc) goes back a screen and from the first one back to the title menu.
+The screens work with a controller first (text fields open an on-screen
+keyboard), the keyboard and the mouse. Friends and blocks are kept on the
+server's website (your account page).
+
+**The lobby.** Other players in the same lobby stage appear as ghost
+figures: their Digimon in its current form with its weapon and name tag,
+walking and standing where they really are (look only: no collision, no
+talks, nothing they do changes your game; a figure in your way or inside your
+own Digimon turns see-through).
+
+**Instances.** Leaving your lobby for a field or a dungeon (the lobby gate,
+a quest board, the return mat) puts you into an *instance* of that stage's
+area: a running one or a new one that you host. Until the arrival prompt
+comes (round I1b), the choice is automatic and cautious: you join a running
+instance only when it is a friend's (its host is your friend, or friends of
+yours play in it) or when players of it are at the very stage you arrive in,
+and only when its visibility lets you in (*Public*; *Friends* for the host's
+friends; *Private* for nobody else, moderators who simply play included). A
+stranger's instance elsewhere in the area is never chosen for you. Otherwise
+you start a new instance with your default visibility and host it ("New
+instance (Public). View: Online menu"); players who take the same gate within
+a few seconds of you arrive together. A join says "You joined Kim's instance.
+Kim is in <stage>. Leave: Online menu". An instance belongs to its area (a
+region of the map); inside it everyone travels freely, with their own camera:
+members in the same field, dungeon or boss stage play one shared stage
+instance (up to four, shared enemies and drops), a member who arrives later
+joins it mid-stage, and exits and the gate disc take only the members who
+say yes.
+
+**The instance's story is its host's.** A guest plays the host's story (its
+chapter, quests and opened ways) with his own level, items, Bits and
+Digimon, and everybody's field progress counts for the host's story. Going
+home (the gate disc, an exit into the lobby, the game over, *Leave
+instance*) gives you your own story back ("Back on your own story."); the
+EXP, items and Bits you earned stay yours.
+
+**The Online menu** is the F1 menu's *Online* tab (View/Back on the pad, F1
+on the keyboard; online it pauses nothing): the instance's host, its
+visibility (the host changes it with A; the members are told), the members
+with their stage, level and connection, and **Leave instance** ("Leave Kim's
+instance? You return to your lobby."; for the host "End the instance for
+everyone?"). When the host leaves, is defeated or does not come back within
+a minute after losing the connection ("Kim lost the connection. Waiting for
+Kim..."), the instance ends for everyone ("Kim left. The instance ends.")
+and every member goes home. **Go offline** saves the online character and
+returns to the title.
+
 Everyone plays for themselves as in an online game: the status window (START),
 NPC talks and the map recorders in fields and dungeons are the member's own -
 they open on that member's screen only (the others see "Kim is in the menu"
 or "Kim is talking" over the name tag), several members can have their menus
 open at once, and they pause nothing: enemies, generators, the other members,
 timers and music run on, and a member in a menu stands still and can be hit.
-Only one NPC talk runs in an instance at a time, as in local co-op: while
-Kim talks, another member's NPC does not answer yet. An NPC's exchange
+Only one NPC talk runs in a stage instance at a time, as in local co-op:
+while Kim talks, another member's NPC does not answer yet. An NPC's exchange
 trades with the talking member's own folders.
 
 ```bat
@@ -375,78 +430,67 @@ powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
 
 starts a private database and the DW4Online server on 127.0.0.1 (nothing
 leaves the PC), builds a development client (`build\OnlineDev`, needs
-`DW4_ONLINE_DEV`) the first time, and opens two game windows in one room;
-closing both windows stops the server. `-Data` names the game data (default:
-the `[data]` path of `build\Game\settings.ini`), `-Card` a card folder whose
-saves both start with. Player builds connect only to the project's server
-and take its certificate pins from the build (`local/online_pins.txt` or
-`-DDW4_ONLINE_PINS`, [server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md)
-6.4); a build without them refuses the server. In a room, achievements also
-count for the online account (only your own player; the story challenges
-only for the room owner, whose story it is), shown on the server's website.
+`DW4_ONLINE_DEV`) the first time, and opens two game windows that both press
+Play; closing both windows stops the server. `-Data` names the game data
+(default: the `[data]` path of `build\Game\settings.ini`), `-Card` a card
+folder whose saves both start with. Player builds connect only to the
+project's server and take its certificate pins from the build
+(`local/online_pins.txt` or `-DDW4_ONLINE_PINS`,
+[server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md) 6.4); a
+build without them refuses the server. Online, achievements also count for
+the online account (only your own player; the story challenges only on your
+own story, at home or as a host), shown on the server's website.
 
-The title menu has a third entry below Game Start and Option: **Online**
-(the same lettering, the cursor moves to it with down from Option). Choosing
-it opens the account and room screens over the title, connected to the
-project's server (fixed in the build): log in or register (the recovery code
-is shown once), the room list (refresh; name, lock, players n/10, owner,
-settings), creating a room (name, optional password, up to ten players,
-difficulty, camera and light mode) or joining one (its password if it has
-one), and the room itself (who is where, kick for the owner, Play, leave).
-The room plays the online character, never the save on this PC: a new
-account starts a new game, and the character is saved on the server when the
-save room writes, at every stage change and when leaving the room. The room's
-story is the owner's: everybody's story progress counts for it, and every
-member starts the game with it. Leaving returns to the offline title. B (or Esc) goes back a screen and from the
-first one back to the title menu. The screens work with a controller first
-(text fields open an on-screen keyboard), the keyboard and the mouse; the F1
-menu's Online tab shows the same screens, and starting a room from there
-ends an offline game only after asking.
-
-While a room plays, a small box in the lower left corner shows the ping (the
-network's round trip to the server) and, while others share your stage, the
-input delay: every member's input waits this many 60 Hz ticks so that all
+While you play online, a small box in the lower left corner shows the ping
+(the network's round trip to the server) and, while others share your stage,
+the input delay: every member's input waits this many 60 Hz ticks so that all
 machines run the same frames, about the ping plus 25-40 ms (3 ticks, 50 ms, at
 20 ms of ping; 4 ticks, 67 ms, at 25-30 ms with a 60 Hz display). It is green,
 yellow or red by how the link holds up; F1 > Settings can hide it, F1 > Online
 shows the details. Every online session writes `saves/online.log` (the
 versions and protocols, the input delay and why it changed, the link every ten
 seconds, the game's pictures per second, vsync, the display's refresh rate and
-whether its window was in front, losses and resyncs; no password, token or
-room code; rotated at about 1 MB; a second game started from the same folder
-writes `saves/online-2.log`): send that file when online play lags (F1 >
-Online has "Copy path" and "Open folder" for it).
+whether its window was in front, losses and resyncs; no password or token;
+rotated at about 1 MB; a second game started from the same folder writes
+`saves/online-2.log`): send that file when online play lags (F1 > Online has
+"Copy path" and "Open folder" for it).
 
-Known limits of the preview:
+Known limits:
 
+- The arrival prompt (choosing among the area's instances at the gate) and
+  the instance browser come with later rounds; until then the automatic
+  choice above decides, so friends meet by taking the gate into the area of
+  the friend's instance, or by arriving together.
 - Camera tours and tutorials on mats, the shaking mats and the story scenes
-  still pause the whole instance (every member in it), as in local co-op;
-  only the status window, NPC talks and the map recorders are each member's
-  own so far. A map recorder's floor map shows for the member who read it.
-- Pits still darken every member's screen in the instance.
-- Story progress made while the room owner is away is not kept (the
-  server's default; the player is told at the next stage change).
-- Nothing of a room comes back into the local save; F1 > Saves > Cloud backup
-  keeps one copy of the local save on the server (outside rooms).
+  still pause the whole stage instance (every member in it), as in local
+  co-op; only the status window, NPC talks and the map recorders are each
+  member's own so far. A map recorder's floor map shows for the member who
+  read it.
+- Pits still darken every member's screen in the stage instance.
+- Story progress that guests make while the host reconnects is held and kept
+  only if he comes back; an instance that ends drops what was not saved yet.
+- Nothing of the online play comes back into the local save; F1 > Saves >
+  Cloud backup keeps one copy of the local save on the server.
 - Online needs a CPU with FMA3 (every machine must compute alike); the game
   refuses online play without it.
-- Ghost figures appear only in the lobby rooms; in the fields and dungeons
-  members of other instances still show only as name tags.
+- Ghost figures appear only in the lobby stages; in the fields and dungeons
+  members of other stage instances show only as name tags.
 
 ### Online server (DW4Online)
 
 `server/DW4Online` is the backend for that: one ASP.NET Core (.NET 10)
 service with MariaDB that holds the accounts (open registration with rate
 limits, optional e-mail, one-time recovery codes, admin resets), the online
-character, one private cloud backup of the local save per account (the
-latest and five earlier revisions), the online achievements (only online
-play counts; cheats, rebalancing and loaded save states never, randomizer
-runs as their own category, speedrun times in in-game time without loading),
-the room list with stage instances, the TCP relay with one-time HMAC tickets
-(port 52041) and the website (accounts, profiles, achievements with their
-rarity, rooms, admin, privacy page). It runs on loopback in its tests and is
-not deployed yet; building, configuration, the deployment kit for a Windows
-server (Windows service, TLS, backups) and the API are described in
+character and its story, one private cloud backup of the local save per
+account (the latest and five earlier revisions), the online achievements
+(only online play counts; cheats, rebalancing and loaded save states never,
+randomizer runs as their own category, speedrun times in in-game time without
+loading), friends and blocks, the world (the instances, their history and
+the staff's moderation), the TCP relay with one-time HMAC tickets (port
+52041) and the website (accounts, friends, profiles, achievements with their
+rarity, the instances, admin, privacy page). Its tests run on loopback;
+building, configuration, the deployment kit for a Windows server (Windows
+service, TLS, backups, updates) and the API are described in
 [server/DW4Online/README.md](server/DW4Online/README.md) and
 [server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md).
 

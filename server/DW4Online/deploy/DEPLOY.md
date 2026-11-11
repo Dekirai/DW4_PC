@@ -956,8 +956,8 @@ scan of the release) is left, and the `migrate` run before the start (sections 5
 
 ### 9.1 Migration 0012 `friends` (round I2-social): what it adds and the HeidiSQL check
 
-The release with migration 0012 adds friends and blocks on the website and in the API (the game shows them from a
-later release on). It creates three tables and changes nothing that exists:
+The release with migration 0012 (DW4Online **0.1.6**, schema 12) adds friends and blocks on the website and in the API
+(the game shows them from a later release on). It creates three tables and changes nothing that exists:
 
 | Table | One row per | Columns |
 | --- | --- | --- |
@@ -1004,6 +1004,11 @@ has no rows in any of the three tables. The views with user names (`v_friends`, 
 with a later release that also grants `CREATE VIEW`; until then the queries above stand in for them.
 
 ### 9.2 Migration 0013 `world` (round I1): the rooms give way to the online world
+
+Which releases carry which migration: 0.1.6 brought 0012 (section 9.1, schema 12), 0.1.7 brings 0013 (schema 13); 0.1.8
+and 0.1.9 add none. The project's server went 0.1.4 (schema 11) -> 0.1.6 (0012 applied at its start) -> 0.1.7 (0013)
+-> 0.1.8 -> 0.1.9; a server that skips 0.1.6 applies 0012 and 0013 in one start of 0.1.7 or later (both with the same
+backup first, section 8, and the `CREATE VIEW` right below before it).
 
 The release with migration 0013 (DW4Online 0.1.7) replaces rooms by the online world (SEAMLESS.md 19): the game's *Play* enters the
 world, a player's lobby is always his own, and taking the gate to an area where a visible instance runs puts him into
@@ -1087,7 +1092,10 @@ A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; ins
   instance); the relay's own `World:*` keys (members, instances, the host's grace, the presence budget) have the defaults of
   SEAMLESS.md 19.17.5. Achievements count only while the player is in the world (`Play:RequireWorld`, true). Staff see
   every instance on the website's *Admin > Instances* page and can end one or send a player home there; both are audited
-  (`v_staff_audit`). The hourly housekeeping deletes instances older than `World:HistoryDays`.
+  (`v_staff_audit`). Since release 0.1.9 an instance there is its relay run and wid (the relay numbers wids from 1 again
+  at every start): a page loaded before a server restart is refused ("The server restarted since this list was loaded";
+  reload it), and `POST /api/v1/admin/instances/{wid}/end` and `.../remove` need the `run` of `GET /api/v1/admin/instances`
+  as `?run=`. The hourly housekeeping deletes instances older than `World:HistoryDays`.
 - Until release 0.1.6 (rooms): the room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
   8.6): `drop` (the default: progress the guests make while the room's owner is away is not saved and leaves their
   games at the next stage change, with a notice), `hold` (kept on the server and merged when the owner returns) or

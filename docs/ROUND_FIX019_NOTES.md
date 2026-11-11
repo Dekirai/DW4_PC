@@ -39,6 +39,6 @@ Server unit tests: 472/472 (`build/f19/unit1.log`). ctest (code of 0d8791d2, Rel
 - Server: `"$DOTNET" build --disable-build-servers` in `server/DW4Online`; `"$DOTNET" test tests/DW4Online.Tests --disable-build-servers`;
   the integration tests the same with `tests/DW4Online.Integration.Tests` and a mysqld on 3671 (`bash server/DW4Online/.local/mysqld.sh`
   in the background, gitignored, made with XAMPP's `mysql_install_db.exe`; SQL `SHUTDOWN` after; never together with a scenario
-  run, whose harness starts its own mysqld on the same port). The WinHTTP end-to-end client: `tests\winhttp_clientuild.cmd`.
+  run, whose harness starts its own mysqld on the same port). The WinHTTP end-to-end client: `tests/winhttp_client/build.cmd`.
 - Counter-proofs: a script outside the repo applied each fix's reversal to the working tree, built and ran the unit tests
   (`build/f19/cp/unit_{auto,staff,ended,foreign,fallback,removeworld,run}.log`), then restored the files.

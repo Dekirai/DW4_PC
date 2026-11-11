@@ -9557,6 +9557,22 @@ is solo-led and its client does not answer the *home* JOIN_REQ within
 instance (a stage group of nobody's instance: no joins, no story, its next
 barrier a DISSOLVE home with the redirect, 19.8.3).
 
+Since fix-019 the relay also refuses (reason *owner*) every STORY from an
+engine on another's story whatever owner key it names: a stage group of
+nobody's instance, or of an instance the member holds no seat in (a
+removed member; before, a STORY with the member's own key reached its own
+keeper with the host's progress). A member removed **while it still
+loads** (a JOIN not yet READY) gets no seat back when its JOIN falls back
+(before, the fallback took a seat past the removal bar and the four
+seats): its fallback NEW is a stage group of nobody's instance with HOME
+at once, asked again like an instance's, and its way home is the DISSOLVE
+with the replace; the same when the instance went meanwhile (before, the
+fallback made an own instance whose merge carried the former host's
+story into the own). An instance that goes with its last seat detaches
+the stage groups it leaves behind (removed members still playing in
+them), so their next barrier goes home too instead of being a fresh
+arrival.
+
 #### 19.6.7 The host's connection loss (Q8)
 
 - **When it starts.** Today the relay notices a lost connection in two
@@ -9668,14 +9684,25 @@ with its leader (I4), a travel, a seat rejoin.
 - Nothing: NEW with the remembered visibility, the toast.
 
 Round I1a builds the world without the prompt: there an arrival from home
-with candidates enters the first of them by 19.7.3's order automatically
-(today's `JoinOrNew`, filtered by Visible() and the instance, at the
-stage, or as a guest in a new stage group there, 19.30.4), with the toast
-"You joined Kim's instance. Kim is in <stage>. Leave: Online menu". It
-takes the first row even where the prompt would preselect *New instance*
-(decision 40): the guest's NEW is I1a's to test (W30), and I1a is never
-deployed without I1b. Round I1b puts the prompt in front. Both are merged
-separately and deployed together (19.25).
+with candidates enters automatically the row the prompt would preselect
+(19.7.3, decision 40), a JOIN at the stage or as a guest in a new stage
+group there (19.30.4), with the toast "You joined Kim's instance. Kim is
+in <stage>. Leave: Online menu"; where the prompt would preselect *New
+instance*, it makes a new instance (`Matching.AutoJoinRow` =
+`Preselected`).
+
+**The I1a interim rule** (fix-019, the review of 0.1.7: I1a went live as
+0.1.7 and 0.1.8 without I1b, against "never deployed without I1b"): the
+automatic join takes only a first row that is not greyed and is the
+party's (I4) or a friend's (the host a friend, or friends in it) or has
+players of its instance at the arrival stage; otherwise *New instance*.
+Before it, I1a took the first non-greyed row, also a stranger's instance
+with nobody of it at the arrival stage, which made a quick player a guest
+in a stranger's story elsewhere in the area. The guest's NEW (19.30.4)
+stays I1a's to test with a friend (W30, W30x, W6 make a and b friends;
+W29's fake guests befriend the host). Round I1b's prompt replaces the
+automatic join; staff pass the visibility only by their own choice of a
+row (19.7.2), never in the automatic join.
 
 (Before round 72 a host alone in his instance who moved on was a fresh
 arrival too, with *Join* ending his instance and *Continue alone* keeping
@@ -9691,7 +9718,12 @@ never prompted, 19.30.3; the user confirmed it on 2026-11-06, decision
 - m is not under a removal bar of i;
 - i is Public; or i is Friends and m is a friend of i's host or in the
   host's party; or i is Private and m is in the host's party; or m is staff
-  (wish (a): staff join "no matter how the instance was set").
+  and chooses the row himself (wish (a): staff join "no matter how the
+  instance was set": a prompt row, I1b, or the browser, I3). The automatic
+  join and the co-arrivals (19.7.6) are no choice of his: there a
+  moderator who simply plays is a player for the visibility too (fix-019;
+  before, I1a put him into strangers' Private and Friends instances and
+  replaced his story with theirs). `Matching.Visible(..., staffChoice)`.
 
 For staff the first two give way only to an explicit moderation action:
 *Spectate*, *Join as moderator* (a staff row's second action, audited
@@ -9851,7 +9883,8 @@ later groups spawned in the base's load step). In the world:
 
 - **Automatic** only among fresh arrivals whose base *starts a new
   instance*: the later groups become guests of the base's host if the new
-  instance is visible to them and has seats for them. Toast: "You arrived
+  instance is visible to them (staff without the bypass: a co-arrival is
+  automatic, 19.7.2) and has seats for them. Toast: "You arrived
   together with Kim: you're a guest in Kim's story. Leave: Online menu."
 - A base holds only for announced groups that may see it and did not choose
   otherwise in a prompt.
@@ -10085,6 +10118,11 @@ in the world.
 - The host is in his instance or in his grace, always. The grace holds
   guests' values (8.6's *hold*): merged when the host returns, discarded at
   the end; the guests' engines go home and are replaced, so nothing lingers.
+  From the END on (any reason: `host_left`, `host_lost`, `staff`, a story
+  replaced) a guest's STORY is refused (reason *owner*), also while its
+  seat waits for its DISSOLVE (fix-019; before, it still merged into the
+  host's keeper once the hold was released). The host's own values stay
+  his (his keeper is his own story).
   Therefore round 59's *not_started*, start epochs, `OwnerSeen` and
   `OwnerEnters`, the dropped sets with their drop epochs, BARRIER_OK's
   dropped set and `Rooms:StoryWhileOwnerAway` retire: a new account's home
@@ -10761,8 +10799,10 @@ a hundred requests are one toast, not two hundred seconds of them).
   for a host, ends his instance). The client never claims a role.
 - **Seeing.** Staff see every instance in the prompt and the browser,
   Private and Friends ones labelled, and the website's admin list.
-- **Playing** with a free seat: a normal guest regardless of visibility,
-  with a gold *Staff* tag (`World:StaffTagWhenPlaying`, true; members can
+- **Playing** with a free seat: a normal guest regardless of visibility
+  where he chooses the instance himself (a prompt row, I1b; the browser,
+  I3); the automatic join and the co-arrivals treat a moderator who simply
+  plays as a player (fix-019, 19.7.2). With a gold *Staff* tag (`World:StaffTagWhenPlaying`, true; members can
   tell a moderator is in their instance). Audit row `staff_join`. Blocks
   and removal bars count for a playing moderator as for anyone; *Join as
   moderator* passes them and is audited as `staff_join_override` with the
@@ -11651,7 +11691,7 @@ rise. The direct `--host` / `--join` LAN sessions are untouched.
 | `GET /blocks`, `POST /blocks {username}`, `DELETE /blocks/{username}` | player | blocks (19.11) |
 | `GET /players/{username}` | player | the public card plus the relation to the caller |
 | `GET /me/online-prefs`, `PUT /me/online-prefs` | player | 19.17.1 |
-| `GET /admin/instances`, `POST /admin/instances/{id}/end`, `POST /admin/instances/{id}/remove {username}` | staff | audited |
+| `GET /admin/instances`, `POST /admin/instances/{id}/end?run=`, `POST /admin/instances/{id}/remove?run= {username}` | staff | audited; the listing names the relay's run (`WorldSnapshot.Run`), and End / Remove need it: wids count from 1 again after a restart (fix-019: 422 `run_required`, 409 `instance_list_outdated`) |
 | `GET /admin/audit?event=` | staff | the staff rows (a moderator his own, an admin all) |
 | `POST /reports {username, reason}` | player | *Report player* (I1b; the relay's REPORT goes to the same service) |
 | `GET /admin/reports`, `POST /admin/reports/{id}/done` | staff | the report list; audited `report_handled` |
@@ -12075,7 +12115,7 @@ The design changes the results force, for the lanes:
 
 | Lane | Scope |
 | --- | --- |
-| relay world | member ids; `POST /world/enter` admission with the fixed world channel and the role `staff` accepted by `HandleAsync`; one world session per account (a replaced host ends his instance); the hub for the world with stage cells (not renamed); `WorldInstance` (`wid` and `HistoryId`, creation with the host in the base group, visibility, seats, the data hash filter, settings and their hash per stage group, the starting window, END, HOME sealed and through JOIN_REQ, the host's grace from the first silence with neutral fill, no `lagOut` and the member timeout's margin, a barrier decided without a lost host and his resume into it); `Decide` / `JoinOrNew` filtered by instance and Visible(), the automatic join of the first row by 19.7.3's order (decision 40's order; its preselection of *New instance* comes with I1b's prompt, 19.7.1); co-arrival with visibility and the starting window; the DISSOLVE redirects; lost instances (WELCOME and RESUME without the instance, a continuing guest filed at its stage); presence server-wide (nearest first; friends in I2) with the selection, tiers and budget; INSTANCE_INFO, WORLD_NOTICE, MEMBER_INFO; the staff role with its live re-check, the visibility bypass and the audit rows; the history queue; the protocol floor; the load gate |
+| relay world | member ids; `POST /world/enter` admission with the fixed world channel and the role `staff` accepted by `HandleAsync`; one world session per account (a replaced host ends his instance); the hub for the world with stage cells (not renamed); `WorldInstance` (`wid` and `HistoryId`, creation with the host in the base group, visibility, seats, the data hash filter, settings and their hash per stage group, the starting window, END, HOME sealed and through JOIN_REQ, the host's grace from the first silence with neutral fill, no `lagOut` and the member timeout's margin, a barrier decided without a lost host and his resume into it); `Decide` / `JoinOrNew` filtered by instance and Visible(), the automatic join of the first row by 19.7.3's order (decision 40's order; fix-019 made it the I1a interim rule: only the row the prompt would preselect, else *New instance*, 19.7.1); co-arrival with visibility and the starting window; the DISSOLVE redirects; lost instances (WELCOME and RESUME without the instance, a continuing guest filed at its stage); presence server-wide (nearest first; friends in I2) with the selection, tiers and budget; INSTANCE_INFO, WORLD_NOTICE, MEMBER_INFO; the staff role with its live re-check, the visibility bypass (only for the staff member's own choice since fix-019, 19.7.2) and the audit rows; the history queue; the protocol floor; the load gate |
 | story | `StoryKeeper` per (account, box) in the hub's registry, loaded outside the lock; the owner key, *owner* refusals, the earned queue across owners; merge and replace in BARRIER_OK with the own story rebased, in the order of 19.8.3; the grace hold; `StoryReplaced`; *not_started*, epochs, `OwnerSeen`, dropped sets and `Rooms:StoryWhileOwnerAway` retired |
 | server and web | the migration `world` (prefs with `RoomSettings.Default`'s values, history, `last_seen_at`, the achievements' `instance_id`, the story history's reasons, the views; no story copy for guest-only accounts, question 36 (b)); `WorldService` (counts, the play context with `Play:RequireWorld`, `AccountChanged`, `StoryReplaced`); `ScrubAsync` for the new tables; `/world/*`, `/me/online-prefs`, `/instances`, `/admin/instances` with *End* and *Remove*; 410 for `/rooms*`; DEPLOY.md with the HeidiSQL steps and the protocol setting |
 | client | the replace at DISSOLVE and `redirect_pending_stage` with the generate point; HOME with `ForkKind::home`; the local way home (19.6.10); the settings at a restore and at DISSOLVE; the original difficulty dialog online; the world session, member ids, two confirmed stories; the home screen (room screens removed), Online > Settings; the F1 Online tab's *Instance* page (visibility, *Leave instance*), the line under the own status window, notices and toasts; 30 ghost figures, the farther ones at half rate; Discord; `--online-play` |
@@ -13062,10 +13102,12 @@ is the party's or a friend's; else *New instance* is. A *starting*
 instance at S still takes the arrival without a prompt (answer 21,
 19.7.6): co-arrival is about landing together, so it stays per stage.
 
-Round I1a (no prompt yet) enters the first candidate by that order
-automatically ("You joined Kim's instance. Kim is in Ancient Ruins B2.
-Leave: Online menu"), also one with nobody at S (19.7.1); round I1b puts
-the prompt in front. From round I3 a row whose players are elsewhere gets
+Round I1a (no prompt yet) enters automatically the row the prompt would
+preselect ("You joined Kim's instance. Kim is in Ancient Ruins B2.
+Leave: Online menu"): a row with nobody at S only when it is the party's
+or a friend's, else *New instance* (the I1a interim rule of fix-019,
+19.7.1; before, it took the first row also with nobody at S); round I1b
+puts the prompt in front. From round I3 a row whose players are elsewhere gets
 a second action, *Y: Join at Kim* (a travel next to the host, 19.9),
 which also makes the *Story not here yet* rows choosable. Decision 40
 ranks such rows lower and leaves them unpreselected (unless the party's or
@@ -13816,6 +13858,31 @@ over sockets had one stall of the relay process of 1.34 s whose cause is
 not found (it came before M4 (e); the eleven later *storm* and
 *storm-wait* runs over sockets had a sealing lateness max of 12.0-35.9 ms,
 `build/i1arelay/gate/`).
+
+### 19.32 Round fix-019: the review of 0.1.7 (DW4Online 0.1.9)
+
+The adversarial review of 0.1.7 (main 3ad4621e) found eleven points; branch
+`fix-019` (progress notes `docs/ROUND_FIX019_NOTES.md`) fixed them for
+DW4Online 0.1.9, a server release (the game client is unchanged):
+
+1. **The I1a interim rule** (19.7.1): the automatic join takes only the row
+   I1b's prompt would preselect (decision 40), else *New instance*.
+2. **Staff visibility** (19.7.2, 19.7.6, 19.14): the bypass only for the
+   staff member's own choice of a row, never for the automatic join or a
+   co-arrival.
+3. **A guest's STORY after END** is refused (19.8.5).
+4. **A removed joiner's fallback** goes home from a stage group of
+   nobody's instance (19.6.6); an engine on another's story writes no
+   story whatever its key; a removed instance detaches the stage groups it
+   leaves behind.
+5. **No fallback takes a seat back** past the removal bar or the four seats
+   (19.6.6).
+6. **The staff actions name the relay's run** with the wid (19.19).
+7. The restore test lost in I1a's merge is back.
+8. and 9. The regression scenarios and the load gate were run again
+   (`docs/ROUND_I1A_INT_NOTES.md`, `docs/ROUND_FIX019_NOTES.md`).
+10. The documents (README, the server's README, DEPLOY.md 9.1 / 9.2).
+11. The version 0.1.9.
 
 ## 20. Risks
 
