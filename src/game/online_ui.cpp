@@ -1,5 +1,7 @@
 #include "online_ui.hpp"
 
+#include "button_prompts.hpp"
+
 #include "presence_data.hpp"
 
 #include "dw4/engine/randomizer.hpp"
@@ -480,7 +482,7 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             }
             if (button((std::string(kVisibilities[vis]) + "##visibility").c_str(), !lobby.busy())) s.visibility_requested = (vis + 1) % 3;
             ImGui::SameLine();
-            ImGui::TextDisabled("A: change");
+            prompt_text_disabled("{OK} change");
         } else {
             ImGui::TextUnformatted(kVisibilities[vis]);
             s.focus_visibility = false;
@@ -538,7 +540,7 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
     if (const auto& counts = lobby.world_counts())
         ImGui::TextDisabled("Online now: %d %s, %d %s", counts->players, counts->players == 1 ? "player" : "players", counts->instances,
                             counts->instances == 1 ? "instance" : "instances");
-    if (live && live->leave_prompt) wrapped_colored(kAccent, "Go offline? (you held B + X + START)");
+    if (live && live->leave_prompt) prompt_text("Go offline? (you held {B} + {X} + {START})", false, ImGui::GetColorU32(kAccent));
     if (!s.leave_asked && !(live && live->leave_prompt)) {
         if (live && live->active) {
             if (button("Play", true, true)) s.close_requested = true;
@@ -644,7 +646,11 @@ void keyboard_popup(OnlineUiState::Keyboard& k) {
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) ||
         ImGui::IsKeyPressed(ImGuiKey_Escape, false))
         done = true;
-    ImGui::TextDisabled("A  Type     X  Delete     Y  Capitals     B  Done");
+    // (The keyboard's own keys while it is the device in use: it has no
+    // Capitals key, Shift types them.)
+    const auto* prompts = ButtonPrompts::active_prompts();
+    if (prompts && prompts->family() == PadFamily::keyboard) prompt_text_disabled("{OK} Type     {DEL} Delete     {BACK} Done");
+    else prompt_text_disabled("{OK} Type     {DEL} Delete     {OPT} Capitals     {BACK} Done");
     if (done) {
         k.open = false;
         k.target = nullptr;
@@ -862,8 +868,12 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     ImGui::Separator();
     // What the buttons do (controller first).
     const bool code = lobby.screen() == Screen::registered || lobby.screen() == Screen::recovered;
-    const char* back_text = code ? "" : first ? (lobby.in_world() ? "     B  Close" : "     B  Title menu") : "     B  Back";
-    ImGui::TextDisabled("A  Select%s     (keyboard: arrows, Enter, Esc; or the mouse)", back_text);
+    const char* back_text = code ? "" : first ? (lobby.in_world() ? "     {BACK} Close" : "     {BACK} Title menu") : "     {BACK} Back";
+    const auto* prompts = ButtonPrompts::active_prompts();
+    if (prompts && prompts->family() == PadFamily::keyboard)
+        prompt_text_disabled(std::string("{OK} Select") + back_text + "     (the arrows move; or the mouse)");
+    else
+        prompt_text_disabled(std::string("{OK} Select") + back_text + "     (keyboard: arrows, Enter, Esc; or the mouse)");
     ImGui::End();
 
     ImGui::PopFont();

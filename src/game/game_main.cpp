@@ -1,6 +1,8 @@
 // Native Digimon World 4 runtime: SDL3 window, OpenGL renderer and the
 // reconstructed engine in dw4::engine. Original data is read from --data.
+#include "button_prompts.hpp"
 #include "dev_present.hpp"
+#include "gc_adapter.hpp"
 #include "gl_renderer.hpp"
 #include "host_view.hpp"
 #include "overflow_host.hpp"
@@ -1060,6 +1062,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
     const bool draw = !options.smoke_frames || !options.screenshot.empty() || std::getenv("DW4_TEXTURE_PACK") ||
                       std::getenv("DW4_DUMP_TEXTURES") || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0) ||
                       dev.presenting() || !dev.dump_dir.empty();
+    // The controller families' SDL drivers (host_view.hpp).
+    dw4::game::controller_hints(settings);
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
@@ -1178,6 +1182,56 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.audio = audio;
         view.audio_dump_path = audio_dump_path;
         view.audio_mix = audio_mix;
+        // The controller prompts (button_prompts.hpp): the game's button
+        // glyphs follow each player's device (the character select's lines
+        // are the players' own, every other line player 1's), the port's
+        // texts player 1's last device. Test runs show the original pictures
+        // unless DW4_PROMPTS=<family id> (dualsense, xbox_one, keyboard ...).
+        std::optional<dw4::game::ButtonPrompts> button_prompts;
+        if (draw) {
+            button_prompts.emplace();
+            dw4::game::ButtonPrompts::set_active(&*button_prompts);
+            renderer->set_prompts(&*button_prompts);
+            view.prompts = &*button_prompts;
+            dw4::game::set_ui_view(&view);
+            button_prompts->set_line_lookup([&engine](const dw4::engine::GeometryData* geometry) {
+                dw4::game::PromptSource::Line line;
+                if (const auto* text = engine.get<dw4::engine::TextCtlManager>())
+                    if (const auto found = text->line_of(geometry)) {
+                        line.player = dw4::game::line_player(found->layer, found->name);
+                        line.align = found->align;
+                    }
+                return line;
+            });
+        }
+        if (const char* forced = std::getenv("DW4_PROMPTS"); forced && options.smoke_frames)
+            for (std::string_view list = forced; !list.empty();) {
+                const auto comma = list.find(',');
+                if (const auto family = dw4::game::family_from_id(list.substr(0, comma))) view.forced_prompts.push_back(*family);
+                list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+            }
+        // A GameCube adapter in Wii U mode through WinUSB (gc_adapter.hpp):
+        // not in test runs (no controller of this PC takes part in them).
+        std::optional<dw4::game::GcAdapter> gc_adapter;
+        if (draw && !options.smoke_frames) {
+            gc_adapter.emplace(settings.gc_adapter);
+            view.gc_adapter = &*gc_adapter;
+        }
+        bool switch2_noted = false; // (the Switch 2 Pro notice, once a session)
+        auto update_prompts = [&] {
+            if (!button_prompts) return;
+            button_prompts->update(settings);
+            button_prompts->set_families({view.prompt_family(0), view.prompt_family(1), view.prompt_family(2), view.prompt_family(3)});
+            // (The font loads with the first stage: its glyph cells, again
+            // whenever the engine holds another font image.)
+            if (const auto* text = engine.get<dw4::engine::TextCtlManager>())
+                if (const auto* font = text->font("NORMAL"); font && font->binding && font->binding->image) {
+                    const auto& image = font->binding->image;
+                    if (!renderer->has_prompt_glyphs() || renderer->prompt_glyphs().document != image.document() ||
+                        renderer->prompt_glyphs().reference != image.reference())
+                        renderer->set_prompt_glyphs(dw4::game::prompt_glyphs(*font));
+                }
+        };
         auto& audio_dump = view.audio_dump;
         auto mix_audio = [&](int frames) { dw4::game::mix_audio(view, engine, frames); };
         // Texture packs: settings.ini [mods] textures (default mods/textures
@@ -3047,7 +3101,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     } else if (title_driver.phase() == Phase::gave_up) {
                         const auto* title = engine.get<dw4::engine::Title2Manager>();
                         if (title && title->state() == 1)
-                            toasts.push_back({"Online", "Press START to play your online character.",
+                            toasts.push_back({"Online", "Press {START} to play your online character.",
                                               std::chrono::steady_clock::now() + std::chrono::seconds(6)});
                     }
                 }
@@ -3084,7 +3138,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (line.empty() && overlay.slow_uplink) line = "Your connection is slow; the others see you lag.";
                 if (online->leave_prompt) {
                     // After the loading or waiting line, never instead of it.
-                    const std::string prompt = "Go offline?  F1 > Online > Go offline, or hold B + X + START again to stay.";
+                    const std::string prompt = "Go offline?  F1 > Online > Go offline, or hold {B} + {X} + {START} again to stay.";
                     line = line.empty() ? prompt : line + "   " + prompt;
                 }
                 if (!line.empty()) {
@@ -3247,7 +3301,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         // Play goes straight into the own lobby (19.5.1).
                         start_title_drive();
                         if (!title_driver.active() && !title_online.active)
-                            toasts.push_back({"Online", "Press START to play your online character.",
+                            toasts.push_back({"Online", "Press {START} to play your online character.",
                                               std::chrono::steady_clock::now() + std::chrono::seconds(6)});
                     } else {
                         std::cout << "online: the session did not start: " << error << '\n';
@@ -3422,6 +3476,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
 #ifdef DW4_GHOST_PROBE
                 if (probe_report) ghost_cost_max = 0; // (this pass's figure draw alone, read after present_scene)
 #endif
+                update_prompts();
+                // A Switch 2 Pro Controller this build's SDL cannot open
+                // (gc_adapter.hpp): said once rather than nothing happening.
+                if (gc_adapter && !switch2_noted && gc_adapter->switch2_pro()) {
+                    switch2_noted = true;
+                    toasts.push_back({"Controllers", "Switch 2 Pro Controller found: this build cannot read it yet (F1 > Controls).",
+                                      std::chrono::steady_clock::now() + std::chrono::seconds(10)});
+                }
                 const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend, &remote_view);
 #ifdef DW4_GHOST_PROBE
                 const double probe_draw_ms = probe_report ? ghost_cost_max : 0.0;
@@ -3569,13 +3631,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                     "Applies from the next stage change.");
                             ImGui::PopTextWrapPos();
                         }
-                        // Display, audio, name tags / Discord / achievements, keyboard and
-                        // controllers (host_view.hpp: a Data Overflow run's F1 shows them too).
+                        // Display, audio, name tags / Discord / achievements
+                        // (host_view.hpp: a Data Overflow run's F1 shows them too;
+                        // the controls have their own tab).
                         dw4::game::settings_display_section(view);
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
-                        dw4::game::settings_keyboard_section(view);
-                        dw4::game::settings_controllers_section(view);
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
@@ -3628,6 +3689,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::TextDisabled("Save (memory card slot A): %s", player_store.describe(0).c_str());
                         ImGui::TextDisabled("(the Saves tab shows slot B, the backups and imports GameCube saves)");
                         ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
+                        ImGui::EndTabItem();
+                    }
+                    // Controls: the detected controllers, the button prompts,
+                    // the Nintendo / GameCube layouts and the bindings.
+                    if (ImGui::BeginTabItem("Controls", nullptr, tab_flags("Controls"))) {
+                        dw4::game::settings_controllers_section(view);
+                        dw4::game::settings_keyboard_section(view);
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Gameplay", nullptr, tab_flags("Gameplay"))) {
@@ -4123,7 +4191,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::Begin("##state", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-                    ImGui::TextUnformatted(state_message.c_str());
+                    dw4::game::prompt_text(state_message); // ("{B} + {X} + {START}": the controller's pictures)
                     ImGui::End();
                 }
                 // The line under the own status window (19.5.4, presentation
@@ -4137,7 +4205,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         static const char* kVisibility[] = {"Public", "Friends", "Private"};
                         int vis = 0;
                         if (const auto& info = session.instance(); info && info->wid == session.wid()) vis = std::clamp(int(info->visibility), 0, 2);
-                        const std::string line = session.is_host() ? std::string("Instance: ") + kVisibility[vis] + "   View: change"
+                        const std::string line = session.is_host() ? std::string("Instance: ") + kVisibility[vis] + "   {MENU} change"
                                                                    : "Instance: " + session.member_name(session.host()) + "'s (" + kVisibility[vis] + ")";
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
                         ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 64), ImGuiCond_Always, ImVec2(0.5f, 1));
@@ -4145,7 +4213,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::Begin("##instance_line", nullptr,
                                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-                        ImGui::TextUnformatted(line.c_str());
+                        dw4::game::prompt_text(line);
                         ImGui::End();
                         instance_line_shown = true;
                     }
@@ -4208,7 +4276,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::Begin("##online", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-                    for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
+                    for (const auto& line : lines) dw4::game::prompt_text(line);
                     ImGui::End();
                 }
                 // The network indicator of a room session (round 62), lower
@@ -4263,7 +4331,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::PushTextWrapPos(std::min(display.x - 40.0f, std::max(360.0f, display.x * 0.4f)));
                     for (const auto& toast : toasts) {
                         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", toast.title.c_str());
-                        ImGui::TextUnformatted(toast.text.c_str());
+                        // ("Press {START} ...": the controller's picture.)
+                        if (toast.text.find('{') != std::string::npos) dw4::game::prompt_text(toast.text);
+                        else ImGui::TextUnformatted(toast.text.c_str());
                     }
                     ImGui::PopTextWrapPos();
                     ImGui::End();
@@ -4601,6 +4671,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (!engine.notes().empty()) std::cout << "unimplemented:\n";
         for (const auto& note : engine.notes()) std::cout << "  " << note.text << " x" << note.count << '\n';
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
+        view.gc_adapter = nullptr;
+        gc_adapter.reset();
+        dw4::game::set_ui_view(nullptr);
+        if (button_prompts) dw4::game::ButtonPrompts::set_active(nullptr);
     }
     if (draw) {
         ImGui_ImplOpenGL3_Shutdown();

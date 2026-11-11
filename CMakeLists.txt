@@ -350,7 +350,7 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
@@ -364,7 +364,8 @@ if(DW4_BUILD_APP)
   # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
   target_sources(dw4_game PRIVATE src/game/overflow_profile.cpp)
   if(WIN32)
-    target_link_libraries(dw4_game PRIVATE ws2_32)
+    # (setupapi, winusb: the GameCube adapter in Wii U mode, gc_adapter.cpp)
+    target_link_libraries(dw4_game PRIVATE ws2_32 setupapi winusb)
   endif()
   # Round I1a's ghost figure measurement (docs/SEAMLESS.md 19.13): a test
   # build's DW4_PROBE_GHOSTS* switches (ghost_figures.hpp, game_main.cpp).
@@ -378,6 +379,25 @@ if(DW4_BUILD_APP)
     add_executable(dw4_controls_tests tests/controls_tests.cpp src/game/controls.cpp src/game/settings.cpp)
     target_link_libraries(dw4_controls_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME controls COMMAND dw4_controls_tests)
+    # Controller families: classification, binding spaces, prompt pictures,
+    # the prompts in the game's text lines (laid out by the engine's
+    # layout_text), settings migration (no device), and detection through
+    # SDL's virtual joysticks with every real backend off, through the
+    # host's own pad code (docs/ROUND_PADS_NOTES.md).
+    add_executable(dw4_pad_family_tests tests/pad_family_tests.cpp src/game/pad_family.cpp src/game/button_art.cpp src/game/prompt_layout.cpp
+      src/game/controls.cpp src/game/settings.cpp src/game/gc_adapter.cpp)
+    target_link_libraries(dw4_pad_family_tests PRIVATE dw4_engine dw4_core SDL3::SDL3)
+    if(WIN32)
+      target_link_libraries(dw4_pad_family_tests PRIVATE setupapi winusb)
+    endif()
+    add_test(NAME pad_family COMMAND dw4_pad_family_tests)
+    add_executable(dw4_pad_detect_tests tests/pad_detect_tests.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/controls.cpp
+      src/game/settings.cpp src/game/gc_adapter.cpp)
+    target_link_libraries(dw4_pad_detect_tests PRIVATE dw4_core SDL3::SDL3)
+    if(WIN32)
+      target_link_libraries(dw4_pad_detect_tests PRIVATE setupapi winusb)
+    endif()
+    add_test(NAME pad_detect COMMAND dw4_pad_detect_tests)
     # The run's save store: store choice, migration, imports, online session card.
     add_executable(dw4_save_store_tests tests/save_store_tests.cpp src/game/save_store.cpp src/game/settings.cpp src/game/controls.cpp)
     target_link_libraries(dw4_save_store_tests PRIVATE dw4_core SDL3::SDL3)

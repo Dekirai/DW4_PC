@@ -317,7 +317,7 @@ std::vector<std::string> online_notices(engine::Engine& engine, int give_up_held
     };
     const int local = engine.view_slot();
     if (online_member_defeated(engine, local)) {
-        lines.push_back("Defeated - wait for a raise, or hold START to give up");
+        lines.push_back("Defeated - wait for a raise, or hold {START} to give up"); // ({START}: the controller's picture)
         if (give_up_held > 0 && give_up_frames > 0)
             lines.push_back("Giving up... " + std::to_string(std::min(100, give_up_held * 100 / give_up_frames)) + "%");
         if (const int watched = engine.picture_slot(); watched != local) lines.push_back("Watching " + name_of(watched));

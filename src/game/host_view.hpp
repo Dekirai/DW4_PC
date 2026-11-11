@@ -16,6 +16,7 @@
 #include "interpolation.hpp"
 #include "movie_decoder.hpp"
 #include "overhead_labels.hpp"
+#include "pad_family.hpp"
 #include "settings.hpp"
 
 #include "dw4/engine/engine.hpp"
@@ -38,6 +39,8 @@ struct ImFont;
 
 namespace dw4::game {
 
+class ButtonPrompts;
+class GcAdapter;
 class GhostFigures;
 namespace online {
 struct RemoteSample;
@@ -128,6 +131,24 @@ struct HostView {
     // button is up (the B that closed it must not also cancel the game's menu).
     std::vector<SDL_Gamepad*> gamepads;
     bool pad_latch = false;
+    // The controllers' families and the device player 1 used last
+    // (pad_family.hpp; the prompts follow it).
+    PromptTracker pads;
+    // The prompts' pictures (null without a window) and a test run's
+    // families (DW4_PROMPTS=<family id>[,<family id> ...]: one for every
+    // player, or player 1's, 2's ... with the last one for the rest; test
+    // runs show the original pictures otherwise).
+    ButtonPrompts* prompts = nullptr;
+    std::vector<PadFamily> forced_prompts;
+    // The Wii U / Switch GameCube adapter through WinUSB (gc_adapter.hpp;
+    // null in test runs and without a window): its ports become SDL pads.
+    GcAdapter* gc_adapter = nullptr;
+    // update_controllers: SDL's HID device change count when the 057e:0330
+    // devices were last looked for, whether one is connected, and the Wii
+    // driver hint as set.
+    std::uint32_t hid_changes = 0;
+    bool wii_u_ids = false;
+    bool wii_hint = false;
 
     // The F1 menu.
     bool show_menu = false;
@@ -155,6 +176,12 @@ struct HostView {
     LabelMode label_mode() const;
     // Smooth motion draws between the previous step and this one.
     bool smooth_blending() const;
+    // The family a player's prompts show now (0..3): settings.ini [gamepad]
+    // prompts for every player, or automatic: player 1's last device, a
+    // further player's own pad (player 1's family for an empty slot).
+    PadFamily prompt_family(std::size_t player = 0) const;
+    // A connected pad's family (generic when unknown).
+    PadFamily family_of(SDL_Gamepad* pad) const;
 };
 
 // ---- Window events and input
@@ -216,9 +243,24 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
 // (never while the game reads the pad); `cursor_always`: the cursor shows at
 // once (the game's own menus do).
 void set_menu_navigation(bool menus_take_input, bool cursor_always);
+// The view whose first controller drives the menus (ImGui's gamepad keys
+// come from it through pad_host.hpp's menu_keys: the pad's own A / Cross
+// activates and B / Circle goes back, or with menu_buttons=bindings the
+// game's A and B) and whose prompts the ImGui texts draw.
+void set_ui_view(HostView* view);
+// Once per frame with a window and outside test runs: SDL's Wii driver
+// (settings.ini wii_driver; automatic: on while a 057e:0330 device is
+// connected, looked for when SDL counts a device change) and the GameCube
+// adapter's reader (on while the setting allows it and the window has the
+// input focus, so Dolphin can take the adapter while this game is in the
+// background).
+void update_controllers(HostView& view);
 // A new ImGui frame (`test_gamepad`: a UI test run's controller keys count
 // as a controller's).
 void new_ui_frame(bool test_gamepad);
+// A pad's input through the bindings in its family's binding space (a
+// GameCube pad on its original layout: 1:1).
+HostPadInput pad_input(const HostView& view, SDL_Gamepad* pad);
 // Overhead name tags over the picture, under the menus.
 void draw_tags(HostView& view, const PresentedScene& scene);
 // ImGui's draw data over the picture.
@@ -242,5 +284,9 @@ void settings_audio_section(HostView& view);
 void settings_presence_section(HostView& view, const char* discord_status);
 void settings_keyboard_section(HostView& view);
 void settings_controllers_section(HostView& view);
+// The SDL hints for the controller families, before SDL_Init: SDL's Wii
+// driver only with wii_driver=on (automatic turns it on later, while a Wii
+// U Pro Controller's ids are connected: update_controllers).
+void controller_hints(const Settings& settings);
 
 } // namespace dw4::game

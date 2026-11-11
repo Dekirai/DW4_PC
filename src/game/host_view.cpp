@@ -1,9 +1,13 @@
 #include "host_view.hpp"
 
+#include "button_prompts.hpp"
 #include "controls.hpp"
+#include "gc_adapter.hpp"
 #include "ghost_figures.hpp"
 #include "online/presence.hpp"
+#include "pad_host.hpp"
 
+#include <SDL3/SDL_hidapi.h>
 #include <SDL3/SDL_opengl.h>
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
@@ -44,7 +48,34 @@ bool HostView::smooth_blending() const {
     return (!test_run || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
 }
 
+PadFamily HostView::prompt_family(std::size_t player) const {
+    if (!forced_prompts.empty()) return forced_prompts[std::min(player, forced_prompts.size() - 1)];
+    // Test runs keep the original pictures (the reference comparisons).
+    if (test_run) return PadFamily::gamecube;
+    if (settings.prompts != "auto")
+        if (const auto family = family_from_id(settings.prompts)) return *family;
+    // A further player without a pad of his own: player 1's pictures.
+    if (player > 0 && player >= pads.pads().size()) return pads.player_family(0);
+    return pads.player_family(player);
+}
+
+PadFamily HostView::family_of(SDL_Gamepad* pad) const { return dw4::game::family_of(pads, pad); }
+
+void controller_hints(const Settings& settings) {
+    // The Wii U Pro Controller: SDL's Wii driver (SDL leaves it off: it does
+    // not work behind a Mayflash DolphinBar). wii_driver=on starts with it;
+    // automatic (the default) turns it on only while a Wii U Pro
+    // Controller's ids are connected (update_controllers); off never.
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, settings.wii_driver == WiiDriver::on ? "1" : "0");
+    // GameCube adapters, PlayStation, Switch and Switch 2 pads: SDL's
+    // defaults (on). Bluetooth PlayStation pads stay in their simple report
+    // mode until a feature needs more (nothing here does).
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "auto");
+}
+
 namespace {
+HostView* g_ui_view = nullptr;
+
 // The controller's View / Back button opens and closes the F1 menu, unless a
 // binding gives it to a game button.
 bool back_button_free(const Settings& settings) {
@@ -64,6 +95,9 @@ void toggle_menu(HostView& view) {
 bool host_event(HostView& view, const SDL_Event& event) {
     auto& settings = view.settings;
     auto& capture = view.capture;
+    // Controllers coming and going (player pads only: pad_host.hpp) and
+    // real input (the prompts follow player 1's last device).
+    pad_slots_event(view.gamepads, view.pads, event);
     // A key binding being edited takes the next key (F1 still closes the
     // menu). A controller binding being edited takes the next button or
     // trigger pull.
@@ -71,8 +105,17 @@ bool host_event(HostView& view, const SDL_Event& event) {
         (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
          (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && event.gaxis.value > 16000 &&
           (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)))) {
-        const PadInput input = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? PadInput{PadInput::Kind::button, int(event.gbutton.button)}
-                                                                           : PadInput{PadInput::Kind::axis, int(event.gaxis.axis)};
+        // In the pad's binding space (a Nintendo pad by label: its A button
+        // binds as "a"; a GameCube pad's trigger click as its trigger).
+        SDL_Gamepad* source = pad_by_id(view.gamepads, event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? event.gbutton.which : event.gaxis.which);
+        const PadFamily family = source ? view.family_of(source) : PadFamily::generic;
+        PadInput input = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
+                             ? PadInput{PadInput::Kind::button, binding_button(int(event.gbutton.button), family, settings.nintendo_layout)}
+                             : PadInput{PadInput::Kind::axis, int(event.gaxis.axis)};
+        if (family == PadFamily::gamecube && input.kind == PadInput::Kind::button) {
+            if (input.code == SDL_GAMEPAD_BUTTON_MISC3) input = {PadInput::Kind::axis, SDL_GAMEPAD_AXIS_LEFT_TRIGGER};
+            if (input.code == SDL_GAMEPAD_BUTTON_MISC4) input = {PadInput::Kind::axis, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER};
+        }
         settings.pad[capture->button][capture->slot] = input;
         for (std::size_t b = 0; b < settings.pad.size(); ++b)
             for (std::size_t k = 0; k < settings.pad[b].size(); ++k)
@@ -99,17 +142,6 @@ bool host_event(HostView& view, const SDL_Event& event) {
         settings.height = event.window.data2;
         view.settings_changed = true;
     }
-    if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
-        if (auto* pad = SDL_OpenGamepad(event.gdevice.which)) view.gamepads.push_back(pad);
-    }
-    if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
-        for (auto it = view.gamepads.begin(); it != view.gamepads.end(); ++it)
-            if (SDL_GetGamepadID(*it) == event.gdevice.which) {
-                SDL_CloseGamepad(*it);
-                view.gamepads.erase(it);
-                break;
-            }
-    }
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free(settings))
         toggle_menu(view);
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) toggle_menu(view);
@@ -121,13 +153,42 @@ bool host_event(HostView& view, const SDL_Event& event) {
     return false;
 }
 
+void update_controllers(HostView& view) {
+    if (view.test_run || !view.draw) return;
+    // SDL's Wii driver, automatic: the device list is looked at only when
+    // SDL counts a device change (a Bluetooth pairing, a plugged pad).
+    if (const std::uint32_t changes = SDL_hid_device_change_count(); !view.hid_changes || changes != view.hid_changes) {
+        view.hid_changes = changes ? changes : 1;
+        bool found = false;
+        if (view.settings.wii_driver == WiiDriver::automatic)
+            if (SDL_hid_device_info* devices = SDL_hid_enumerate(kVendorNintendo, kProductWiiUPro)) {
+                found = true;
+                SDL_hid_free_enumeration(devices);
+            }
+        view.wii_u_ids = found;
+    }
+    if (const bool wanted = wii_driver_wanted(view.settings.wii_driver, view.wii_u_ids); wanted != view.wii_hint) {
+        // (SDL takes the hint at its next device scan: the pad follows.)
+        view.wii_hint = wanted;
+        SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, wanted ? "1" : "0");
+    }
+    if (view.gc_adapter) {
+        // Released while the window is in the background (Dolphin can take
+        // it then); its ports stay as idle pads meanwhile.
+        const bool focused = view.window && (SDL_GetWindowFlags(view.window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+        view.gc_adapter->set_enabled(view.settings.gc_adapter && focused, view.settings.gc_adapter);
+        view.gc_adapter->update();
+    }
+}
+
 std::array<HostPadInput, 4> read_live_input(HostView& view) {
+    update_controllers(view);
     std::array<HostPadInput, 4> live{};
     // Keyboard: the bound keys of settings.ini [keyboard]; controllers:
     // [gamepad] and the sticks.
     live[0] = keyboard_input(view.settings, SDL_GetKeyboardState(nullptr));
     for (std::size_t i = 0; i < view.gamepads.size() && i < 4; ++i) {
-        const auto pad = gamepad_input(view.settings, read_gamepad(view.gamepads[i]));
+        const auto pad = pad_input(view, view.gamepads[i]);
         if (i == 0) merge(live[0], pad);
         else live[i] = pad;
     }
@@ -139,6 +200,8 @@ std::array<HostPadInput, 4> read_live_input(HostView& view) {
     }
     return live;
 }
+
+HostPadInput pad_input(const HostView& view, SDL_Gamepad* pad) { return pad_input(view.settings, view.family_of(pad), pad); }
 
 engine::PadSample live_pad_sample(const HostPadInput& live) {
     float stick_x = live.stick.x, stick_y = live.stick.y;
@@ -376,9 +439,61 @@ void set_menu_navigation(bool menus_take_input, bool cursor_always) {
     io.ConfigNavCursorVisibleAlways = cursor_always;
 }
 
+void set_ui_view(HostView* view) {
+    g_ui_view = view;
+    // (The backend reads no pad itself: menu_pad below gives ImGui player
+    // 1's pad through pad_host.hpp's menu_keys.)
+    if (view && view->draw) ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
+}
+
+namespace {
+// ImGui's gamepad keys from player 1's pad (pad_host.hpp menu_keys): with
+// menu_buttons=layout (the default) the pad's own A / Cross activates and
+// B / Circle goes back on every family (a Nintendo pad as its Nintendo
+// layout reads it, a GameCube pad's A and B), whatever the game's bindings;
+// with menu_buttons=bindings the game's A and B do.
+void menu_pad(HostView& view) {
+    if (view.gamepads.empty()) return; // (no pad: a UI test run's keys stay its own)
+    SDL_Gamepad* pad = view.gamepads.front();
+    const PadFamily family = view.family_of(pad);
+    const MenuKeys keys = menu_keys(view.settings, family, read_gamepad(pad), family != PadFamily::gamecube || trigger_clicks(pad));
+    auto& io = ImGui::GetIO();
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    io.AddKeyEvent(ImGuiKey_GamepadFaceDown, keys.face_down);
+    io.AddKeyEvent(ImGuiKey_GamepadFaceRight, keys.face_right);
+    io.AddKeyEvent(ImGuiKey_GamepadFaceLeft, keys.face_left);
+    io.AddKeyEvent(ImGuiKey_GamepadFaceUp, keys.face_up);
+    io.AddKeyEvent(ImGuiKey_GamepadStart, keys.start);
+    io.AddKeyEvent(ImGuiKey_GamepadBack, keys.back);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadUp, keys.up);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadDown, keys.down);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadLeft, keys.left);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadRight, keys.right);
+    io.AddKeyEvent(ImGuiKey_GamepadL1, keys.l1);
+    io.AddKeyEvent(ImGuiKey_GamepadR1, keys.r1);
+    io.AddKeyAnalogEvent(ImGuiKey_GamepadL2, keys.l2 > 0.1f, keys.l2);
+    io.AddKeyAnalogEvent(ImGuiKey_GamepadR2, keys.r2 > 0.1f, keys.r2);
+    const auto analog = [&](ImGuiKey k, float v) {
+        const float value = std::clamp((v - 0.25f) / 0.75f, 0.0f, 1.0f);
+        io.AddKeyAnalogEvent(k, value > 0.1f, value);
+    };
+    analog(ImGuiKey_GamepadLStickLeft, -keys.left_x);
+    analog(ImGuiKey_GamepadLStickRight, keys.left_x);
+    analog(ImGuiKey_GamepadLStickUp, keys.left_y);
+    analog(ImGuiKey_GamepadLStickDown, -keys.left_y);
+    analog(ImGuiKey_GamepadRStickLeft, -keys.right_x);
+    analog(ImGuiKey_GamepadRStickRight, keys.right_x);
+    analog(ImGuiKey_GamepadRStickUp, keys.right_y);
+    analog(ImGuiKey_GamepadRStickDown, -keys.right_y);
+}
+} // namespace
+
 void new_ui_frame(bool test_gamepad) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    // (The adapter's ports and the Wii driver also while the menus take the input.)
+    if (g_ui_view) update_controllers(*g_ui_view);
+    if (g_ui_view) menu_pad(*g_ui_view);
     if (test_gamepad) ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
     ImGui::NewFrame();
 }
@@ -591,13 +706,95 @@ void settings_controllers_section(HostView& view) {
     auto& settings = view.settings;
     auto& capture = view.capture;
     if (ImGui::CollapsingHeader("Controllers", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (view.gamepads.empty()) ImGui::TextDisabled("No controller connected.");
-        for (std::size_t i = 0; i < view.gamepads.size() && i < 4; ++i) {
-            const char* name = SDL_GetGamepadName(view.gamepads[i]);
-            ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
+        ImGui::PushTextWrapPos(0.0f); // (the notes wrap at the window's edge)
+        // The detected controllers, player by player (player 1 is also the
+        // keyboard).
+        const auto& known = view.pads.pads();
+        ImGui::BulletText("Player 1: %s%s", known.empty() ? "Keyboard" : known.front().name.c_str(),
+                          known.empty() ? "" : (std::string(" (") + family_name(known.front().family) + ") and the keyboard").c_str());
+        for (std::size_t i = 1; i < known.size() && i < 4; ++i)
+            ImGui::BulletText("Player %zu: %s (%s)", i + 1, known[i].name.c_str(), family_name(known[i].family));
+        if (known.size() > 4) ImGui::TextDisabled("(%zu more controllers are not used: four players at most.)", known.size() - 4);
+        // What is connected but not (yet) a player's pad.
+        if (view.gc_adapter) {
+            switch (view.gc_adapter->state()) {
+            case GcAdapter::State::no_driver:
+                ImGui::TextWrapped("GameCube adapter (Wii U mode) found, but it needs the WinUSB driver: install it on \"WUP-028\" with Zadig, "
+                                   "as for Dolphin, then plug the adapter in again.");
+                break;
+            case GcAdapter::State::busy:
+                ImGui::TextWrapped("GameCube adapter (Wii U mode) found, but another program (Dolphin?) is using it. Close that program; "
+                                   "the game tries again every two seconds.");
+                break;
+            default: break;
+            }
+            if (view.gc_adapter->switch2_pro())
+                ImGui::TextWrapped("Switch 2 Pro Controller found. This build cannot read it yet: SDL needs libusb for it "
+                                   "(USB only; Bluetooth is not supported). See the README.");
         }
+        // Button prompts: automatic (player 1's last device) or one family.
+        {
+            static constexpr PadFamily kChoices[] = {PadFamily::ps5, PadFamily::ps4, PadFamily::xbox360, PadFamily::xbox_one, PadFamily::switch_pro,
+                                                     PadFamily::switch2_pro, PadFamily::wiiu_pro, PadFamily::gamecube, PadFamily::keyboard};
+            static constexpr const char* kNames[] = {"Automatic", "DualSense", "DualShock 4", "Xbox 360", "Xbox One/Series", "Switch Pro",
+                                                     "Switch 2 Pro", "Wii U Pro", "GameCube", "Keyboard"};
+            int choice = 0;
+            for (int i = 0; i < int(std::size(kChoices)); ++i)
+                if (settings.prompts == family_id(kChoices[i])) choice = i + 1;
+            if (ImGui::Combo("Button prompts", &choice, kNames, int(std::size(kNames)))) {
+                settings.prompts = choice == 0 ? "auto" : family_id(kChoices[choice - 1]);
+                view.settings_changed = true;
+            }
+            ImGui::TextDisabled("Automatic: every player's own controller; player 1's is the controller or keyboard used last.");
+            // What the game's button pictures show now.
+            prompt_text_disabled(std::string("Now: ") + family_name(view.prompt_family()) +
+                                 "   {A} {B} {X} {Y} {START} {L} {R} {Z} {STICK} {CSTICK} {DPAD}");
+            for (std::size_t p = 1; p < known.size() && p < 4; ++p)
+                if (view.prompt_family(p) != view.prompt_family())
+                    ImGui::TextDisabled("Player %zu: %s (the character select's prompts of that player)", p + 1, family_name(view.prompt_family(p)));
+        }
+        {
+            int layout = settings.nintendo_layout == NintendoLayout::by_position ? 1 : 0;
+            static const char* kLayouts[] = {"By label (the A button is A)", "By position (like an Xbox controller)"};
+            if (ImGui::Combo("Nintendo layout", &layout, kLayouts, 2)) {
+                settings.nintendo_layout = layout ? NintendoLayout::by_position : NintendoLayout::by_label;
+                view.settings_changed = true;
+            }
+            ImGui::TextDisabled("Switch Pro, Switch 2 Pro and Wii U Pro controllers.");
+            int gc = settings.gamecube_layout == GameCubeLayout::bindings ? 1 : 0;
+            static const char* kGameCube[] = {"Original (every button is its own)", "Use the bindings below"};
+            if (ImGui::Combo("GameCube controller", &gc, kGameCube, 2)) {
+                settings.gamecube_layout = gc ? GameCubeLayout::bindings : GameCubeLayout::original;
+                view.settings_changed = true;
+            }
+            int menu = settings.menu_buttons == MenuButtons::bindings ? 1 : 0;
+            static const char* kMenus[] = {"The controller's own A / B", "The game's A / B bindings"};
+            if (ImGui::Combo("Menu buttons", &menu, kMenus, 2)) {
+                settings.menu_buttons = menu ? MenuButtons::bindings : MenuButtons::layout;
+                view.settings_changed = true;
+            }
+            prompt_text_disabled("This menu and the online screens: {OK} confirms, {BACK} goes back.");
+            int wii = settings.wii_driver == WiiDriver::on ? 1 : settings.wii_driver == WiiDriver::off ? 2 : 0;
+            static const char* kWii[] = {"Automatic (while one is connected)", "On", "Off"};
+            if (ImGui::Combo("Wii U Pro support", &wii, kWii, 3)) {
+                settings.wii_driver = wii == 1 ? WiiDriver::on : wii == 2 ? WiiDriver::off : WiiDriver::automatic;
+                view.settings_changed = true;
+            }
+            ImGui::TextDisabled("(SDL's Wii driver, now %s. Wii remotes, also on a DolphinBar, never take a player's place.)",
+                                view.wii_hint ? "on" : "off");
+            if (ImGui::Checkbox("GameCube adapter in Wii U mode (WinUSB)", &settings.gc_adapter)) view.settings_changed = true;
+            ImGui::TextDisabled("(released while the game is in the background, so Dolphin can use it then)");
+        }
+        ImGui::Spacing();
         ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
         ImGui::TextDisabled("The left stick is the main stick (walks), the right stick the C-stick.");
+        // The names of the inputs: the prompts' family when it is a pad,
+        // else the first pad's.
+        PadFamily binding_family = view.prompt_family();
+        if (binding_family == PadFamily::keyboard) binding_family = known.empty() ? PadFamily::xbox_one : known.front().family;
+        if (binding_family == PadFamily::gamecube && settings.gamecube_layout == GameCubeLayout::original)
+            ImGui::TextDisabled("A GameCube controller plays 1:1 and does not use these bindings.");
+        ImGui::TextDisabled("Shown as on: %s", family_name(binding_family));
         for (int group = 0; group < 4; ++group) {
             ImGui::SeparatorText(pad_group_name(PadGroup(group)));
             if (!ImGui::BeginTable(("pad" + std::to_string(group)).c_str(), 4, ImGuiTableFlags_SizingStretchSame)) continue;
@@ -609,7 +806,8 @@ void settings_controllers_section(HostView& view) {
                 for (std::size_t k = 0; k < settings.pad[b].size(); ++k) {
                     ImGui::TableNextColumn();
                     const bool waiting = capture && capture->gamepad && capture->button == b && capture->slot == k;
-                    std::string label = waiting ? "press..." : pad_input_name(settings.pad[b][k]);
+                    // (Named as on the controller the bindings are shown for.)
+                    std::string label = waiting ? "press..." : pad_input_label(binding_family, settings, settings.pad[b][k]);
                     if (label.empty()) label = "-";
                     label += "##pad" + std::to_string(b * 8 + k);
                     if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k, true};
@@ -627,6 +825,7 @@ void settings_controllers_section(HostView& view) {
             capture.reset();
             view.settings_changed = true;
         }
+        ImGui::PopTextWrapPos();
     }
 }
 

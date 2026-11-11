@@ -854,10 +854,10 @@ DW4_DEV_DUMP_DIR=dump DW4_DEV_IDS=1 dw4_game --data GAME --card-dir CARDS --inpu
 | Main stick (walk, menus) | W / A / S / D | Left stick |
 | D-pad (menus, quick panel cursor) | Arrow keys | D-pad |
 | C-stick (quick panel cursor) | Keypad 8 / 4 / 2 / 6 | Right stick |
-| A (talk, confirm, use the panel's line) | Enter, Space, K | South |
-| B (cancel) | Backspace, L | East |
-| X (jump) | J | West |
-| Y | I | North |
+| A (talk, confirm, use the panel's line) | Enter, Space, K | South (Nintendo pads: the A button) |
+| B (cancel) | Backspace, L | East (Nintendo pads: the B button) |
+| X (jump) | J | West (Nintendo pads: the X button) |
+| Y | I | North (Nintendo pads: the Y button) |
 | START | Esc, Tab | Start |
 | L / R (disk / technique panel) | Q / E | Left / right trigger (L also on the left shoulder) |
 | Z | Z | Right shoulder |
@@ -878,10 +878,48 @@ reset button, as the GameCube controller does: the game reboots with the
 license screen, the memory card check, the logos and the opening (memory
 cards, mods and PC options stay).
 
+#### Controllers and button pictures
+
+The game recognizes the controller in use and draws every button picture for
+it, in the game's own texts (the GameCube button symbols, the word START, the
+title's PRESS START) and in the port's menus and notices. The pictures follow
+the last device player 1 used (keyboard or controller) from the next frame on;
+in the character select every player's own lines show his own controller's
+pictures. F1 > Controls > *Button prompts* can fix one family instead. Each
+picture shows the button bound to that game button, so rebinding changes it.
+All pictures are drawn by the program itself (no console logos).
+
+| Controller | How it connects on Windows |
+| --- | --- |
+| DualSense (PS5), DualShock 4 (PS4) | USB or Bluetooth, nothing to install |
+| Xbox 360, Xbox One, Xbox Series | USB, Bluetooth or the Xbox wireless adapter (XInput) |
+| Switch Pro Controller | USB or Bluetooth. Read by the letters on its buttons (A is A) unless F1 > Controls > *Nintendo layout* says by position |
+| Wii U Pro Controller | Bluetooth: Windows Settings > Bluetooth > Add device, press the red SYNC button, no PIN. *Wii U Pro support* (F1 > Controls) is automatic: SDL's Wii driver runs only while such a controller (057e:0330) is connected, so a Wii remote bar such as Mayflash's DolphinBar never reaches it; Wii remotes never take a player's place |
+| Original GameCube controller, adapter in PC mode (Mayflash, EVORETRO) | Set the adapter's switch to PC; no driver. Every port is its own controller |
+| Original GameCube controller, adapter in Wii U mode (Nintendo's WUP-028, Mayflash on Wii U) | Install the WinUSB driver on "WUP-028" with Zadig, as for Dolphin; the game finds the adapter when it is plugged in and every connected port is a controller. It lets go of the adapter while the game is in the background (Dolphin can use it then); F1 > Controls says when the driver is missing or another program holds it |
+| Switch 2 Pro Controller | Recognized and drawn, but this build cannot open it: SDL drives it over USB only through libusb, which the build does not include, and not over Bluetooth. The game says so when one is connected (F1 > Controls) |
+
+A GameCube controller plays 1:1 (its A is the game's A, L and R count at the
+trigger's click, the C-stick is the C-stick) and the game keeps its own
+GameCube pictures for it; F1 > Controls > *GameCube controller* can put it on
+the bindings instead. Settings.ini keeps the choices in `[gamepad]`:
+`prompts` (`auto`, `dualsense`, `dualshock4`, `xbox360`, `xbox_one`,
+`switch_pro`, `switch2_pro`, `wiiu_pro`, `gamecube`, `keyboard`),
+`nintendo_layout` (`label` / `position`; a file whose face buttons were
+rebound before keeps `position`, so those bindings play as before),
+`gamecube_layout` (`original` / `bindings`), `wii_driver` (`auto` / `on` /
+`off`), `menu_buttons` and `gc_adapter` (`true` / `false`). The menus (F1, the
+online screens, the on-screen keyboard) take the controller's own buttons:
+A / Cross confirms, B / Circle goes back, whatever the game's bindings (a
+Nintendo pad as its Nintendo layout reads it); `menu_buttons=bindings` makes
+them follow the game's A and B bindings instead. Details:
+[docs/ROUND_PADS_NOTES.md](docs/ROUND_PADS_NOTES.md).
+
 F1 opens the menu: the Settings tab (an Original / Modernized preset, the
 loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing,
-window size, volume, name tags, Discord, achievements, keyboard and controller
-bindings), the Saves tab (where the save lives, the boxes of slots A and B,
+window size, volume, name tags, Discord, achievements), the Controls tab (the
+detected controllers, the button pictures, the Nintendo and GameCube layouts,
+keyboard and controller bindings), the Saves tab (where the save lives, the boxes of slots A and B,
 importing GameCube saves), the Achievements tab, the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer

@@ -50,6 +50,27 @@ struct PadInput {
 std::string pad_input_name(const PadInput& input); // "a", "leftshoulder", "righttrigger", ""
 PadInput pad_input_from_name(std::string_view name);
 
+// [gamepad] nintendo_layout: how the bindings read a Nintendo pad's face
+// buttons (Switch Pro, Switch 2 Pro, Wii U Pro): by the letters printed on
+// them (the binding "a" is the A button) or by position like an Xbox pad
+// ("a" is the bottom button, B on these pads). pad_family.hpp.
+enum class NintendoLayout : std::uint8_t { by_label, by_position };
+// [gamepad] gamecube_layout: a GameCube controller plays 1:1 (original, its
+// A is the game's A ...) or through the bindings (by its own labels).
+enum class GameCubeLayout : std::uint8_t { original, bindings };
+// [gamepad] wii_driver: SDL's Wii driver, which reads the Wii U Pro
+// Controller. auto (the default): on only while a 057e:0330 device (a Wii U
+// Pro Controller or a Wii Remote Plus) is connected, so a Wii remote bar
+// such as the DolphinBar (057e:0306) never reaches it; on; off.
+enum class WiiDriver : std::uint8_t { automatic, on, off };
+// [gamepad] menu_buttons: which controller buttons the port's menus (F1, the
+// online screens, the on-screen keyboard) take. layout (the default): the
+// controller's own A / Cross confirms and B / Circle goes back, whatever the
+// game's bindings (a Nintendo pad as its Nintendo layout reads it, a
+// GameCube pad's A and B); bindings: the game's A binding confirms and its
+// B binding goes back.
+enum class MenuButtons : std::uint8_t { layout, bindings };
+
 struct Settings {
     // [window]
     int width = 1280;
@@ -85,6 +106,19 @@ struct Settings {
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
     // [gamepad]: up to three controller inputs per control, for every controller.
     std::array<std::array<PadInput, kKeysPerButton>, kPadKeyCount> pad{};
+    // [gamepad] the controller families (pad_family.hpp): the Nintendo and
+    // GameCube layouts, the button pictures ("auto": each player's device,
+    // player 1's last used one; else a family id such as "dualsense" or
+    // "keyboard" for every player), SDL's Wii driver for the Wii U Pro
+    // Controller, the menus' buttons and the GameCube adapter in Wii U mode
+    // (gc_adapter.hpp: WinUSB, released while the window is in the
+    // background).
+    NintendoLayout nintendo_layout = NintendoLayout::by_label;
+    GameCubeLayout gamecube_layout = GameCubeLayout::original;
+    std::string prompts = "auto";
+    WiiDriver wii_driver = WiiDriver::automatic;
+    MenuButtons menu_buttons = MenuButtons::layout;
+    bool gc_adapter = true;
     // [mods]
     std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
@@ -133,7 +167,9 @@ struct Settings {
     static Settings load();
     // The settings of a document (load() without the file search). Bindings
     // from before the separate D-pad and C-stick inputs (keyboard / gamepad
-    // "up", "down", "left", "right") are migrated, see settings.cpp.
+    // "up", "down", "left", "right") are migrated, see settings.cpp; so are
+    // face button bindings from before the Nintendo layout (they keep
+    // reading every pad by position).
     static Settings parse(IniFile ini);
     // Writes the values into the document (the next save() writes the file).
     void store();

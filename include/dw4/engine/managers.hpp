@@ -1092,6 +1092,18 @@ public:
     // The node of a text line (layer, line name such as "ITNAMEFONT",
     // "font01"), null without (the picture filter of seamless co-op).
     const Node* line_node(std::string_view layer, std::string_view name) const;
+    // A loaded font ("NORMAL", "MINIMUM"), null before bectext.igb is read:
+    // the host's controller prompts read its glyph cells (presentation only).
+    const FontImage* font(std::string_view name) const;
+    // The text line whose node holds a laid-out geometry (its layer, line
+    // name and alignment, 0 left, 1 right, 2 center), nullopt for none: the
+    // host's controller prompts pick a player's pictures by it and keep the
+    // line's alignment when a word becomes a picture (presentation only).
+    struct LineView {
+        std::string_view layer, name;
+        int align = 0;
+    };
+    std::optional<LineView> line_of(const GeometryData* geometry) const;
     // Round J: a journal entry's line copies made again (Engine::rerun).
     void replay_copies(Engine& engine, int slot, int ram, std::string_view layer, std::string_view name);
 

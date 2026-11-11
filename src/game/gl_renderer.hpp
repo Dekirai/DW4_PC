@@ -1,7 +1,10 @@
 #pragma once
 
+#include "prompt_layout.hpp"
+
 #include "dw4/engine/scene_graph.hpp"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -18,12 +21,54 @@ struct Viewport {
 // OpenGL 3.3 renderer for engine draw lists. Requires a current context.
 class TexturePack;
 
+// The controller prompts (button_prompts.hpp, docs/ROUND_PADS_NOTES.md):
+// the game font's button glyphs, the word START in its texts and the
+// title's PRESS START drawn with each player's controller pictures
+// (prompt_layout.hpp). Only the presentation changes: the engine's quads
+// and texts stay what it made; a START picture narrower than the word
+// closes its row up as the line is aligned.
+class PromptSource {
+public:
+    virtual ~PromptSource() = default;
+    // Any player's pictures differ from the game's own (else nothing is split).
+    virtual bool active() const = 0;
+    // A player's (0..3) picture atlas, 0 for the game's own pictures.
+    virtual unsigned atlas_texture(int player) const = 0;
+    // A control's cell in the atlas (the same in every family): u0, v top, u1, v bottom.
+    virtual std::array<float, 4> atlas_cell(int control) const = 0;
+    // A player's START picture for the word START: its cell trimmed to the
+    // picture (u0, v top, u1, v bottom) and its width over the cell's height.
+    struct Word {
+        std::array<float, 4> uv{};
+        float aspect = 0;
+    };
+    virtual Word atlas_word(int player) const = 0;
+    // Changes with a player's family and its bindings (the title's variants are kept by player 1's).
+    virtual std::uint64_t art_key(int player) const = 0;
+    // A text line's player (0..3) and alignment (0 left, 1 right, 2 center).
+    struct Line {
+        int player = 0;
+        int align = 0;
+    };
+    virtual Line line_info(const engine::GeometryData* geometry) const = 0;
+    // The title's PRESS START texture for player 1's family (rgba top row
+    // first, as decoded or replaced); false: keep it as it is.
+    virtual bool title_variant(const std::vector<std::uint8_t>& rgba, int width, int height, bool nearest, std::vector<std::uint8_t>& out,
+                               int& out_width, int& out_height) const = 0;
+};
+
 class GlRenderer {
 public:
     GlRenderer();
     ~GlRenderer();
     // Texture dumps and replacements (null for none); clear_cache() reloads.
     void set_texture_pack(TexturePack* pack) { pack_ = pack; }
+    // The controller prompts (null: the game's own pictures everywhere).
+    void set_prompts(PromptSource* source) { prompts_ = source; }
+    // The game font's glyph cells (once the engine loaded its font).
+    void set_prompt_glyphs(const PromptGlyphs& glyphs);
+    bool has_prompt_glyphs() const { return glyphs_.valid; }
+    const PromptGlyphs& prompt_glyphs() const { return glyphs_; }
     GlRenderer(const GlRenderer&) = delete;
     GlRenderer& operator=(const GlRenderer&) = delete;
 
@@ -77,7 +122,32 @@ private:
     struct Texture {
         unsigned id{};
         bool alpha{};
+        // The title's PRESS START texture (its decoded pixels for the
+        // prompt variants, and whether it is magnified nearest).
+        bool title_press = false;
+        bool nearest = false;
+        int width = 0, height = 0;
+        std::vector<std::uint8_t> original;
     };
+    // A text line's quads split for the prompts (prompt_layout.hpp): the
+    // text without the button glyphs and words (moved where a word picture
+    // closed its row up), and the pictures' quads in the atlas; its line's
+    // player and alignment, and the START picture's width it was laid out
+    // for (another family's: laid out again).
+    struct PromptSplit {
+        std::uint64_t serial{};
+        unsigned text_vao{}, text_vbo{}, text_ibo{};
+        int text_count{};
+        unsigned icon_vao{}, icon_vbo{}, icon_ibo{};
+        int icon_count{};
+        int player = 0, align = 0;
+        float word_aspect = 0;
+        bool words = false;
+        bool none{}; // no prompt quads: drawn as it is
+    };
+    const PromptSplit* prompt_split(const engine::GeometryData* geometry);
+    void release(PromptSplit& split);
+    unsigned title_texture(const Texture& texture);
     const Mesh* mesh(const engine::GeometryData* geometry);
     const Texture* texture(const engine::Attribute* binding);
     void render_shadow_map();
@@ -97,6 +167,12 @@ private:
     int shadow_width_{}, shadow_height_{};
     bool shadow_ready_{};
     TexturePack* pack_{};
+    PromptSource* prompts_{};
+    PromptGlyphs glyphs_;
+    std::unordered_map<const engine::GeometryData*, PromptSplit> splits_;
+    // The title's PRESS START variants by PromptSource::art_key, the latest
+    // first (a few kept: switching families back and forth draws none again).
+    std::vector<std::pair<std::uint64_t, unsigned>> title_variants_;
     bool id_pass_{};
 };
 
