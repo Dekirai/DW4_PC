@@ -13949,6 +13949,16 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   a's instance in stag0202 (a field, as W30) instead of dng205b1, where a
   k10 character died within a minute in round I1a's runs.
 
+**Results** (2026-11-11, at 001f786b; the runs in the notes): the lane's
+scenarios W1 (the prompt), W2, W2b, W11b, W30b, W30c (without friends) and
+round I1a's whole W set with `DW4_ONLINE_AUTOCHOICE=first` (W3-W9, W11, W12,
+W18, W19, W22, W24-W30, W32 and the counter-proofs W1x, W30x) pass; ctest
+57/57; the relay's unit tests 481/481 and integration tests 141 (3
+skipped); det.sh with online off 4004f056 / 396cb219 twice. W29's fake
+guests answer the loading-screen form (the first a row with nobody at
+stag0101, the cursor on *New instance*, the second a's row with one there,
+preselected).
+
 ## 20. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when

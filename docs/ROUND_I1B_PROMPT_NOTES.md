@@ -69,9 +69,9 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- r5 (below): W19, W22, W29 (fake world clients, the protocol 48 client).
-- Server integration tests again at 001f786b (only Prompt.cs's back point changed; WorldPromptTests sends 0xFF and expects
-  point 3, unchanged).
+- r6 (below): the lane's own scenarios once more on exe c.
+- For the integration: the contract entries "prompt 16:30", "prompt 17:00" and "prompt 2026-11-11 14:25" (the merge hints
+  and the unit test's uptime finding).
 
 ## Runs
 
@@ -103,7 +103,13 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
   passed. So the whole I1a W set with autochoice first passes on this branch except the three that need the fake world
   clients or the protocol 48 client: r5.
 - r5 (exe c, `build/i1bp/scen_r5.log`, `build/i1bp/scen_caps.sh`: `--capabilities fake_world_clients,old_client` with the
-  protocol 48 client copied from int-i1a's `build/int/old48`): W19 W22 W29 (running).
+  protocol 48 client copied from int-i1a's `build/int/old48`): **W19** (117 s), **W22** (3 s), **W29** (461 s) passed. W29's
+  fake guests answer the loading-screen form (FakeClient as autochoice first): the first gets a's row `Joinable:0` (nobody
+  at stag0101, the cursor on New instance) and enters as a guest in a new stage group, the second `Joinable:1`
+  preselected; b's gate form showed a's row `Loading:1` preselected (a waiting row is not greyed).
+- Server integration tests at 001f786b (own mysqld 3651, stopped by SQL SHUTDOWN): 141 passed / 3 skipped (`build/i1bp/it3.log`).
+- r6 (exe c, `build/i1bp/scen_r6.log`): the lane's own W1 W2 W2b W30b W30c again on the final exe (r2 / r3 ran them on exe b,
+  which lacks only the back point) (running).
 
 ## How to run the tests
 
