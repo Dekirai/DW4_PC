@@ -321,7 +321,86 @@ if(DW4_BUILD_APP)
     URL https://codeload.github.com/facebook/zstd/zip/refs/tags/v1.5.6
     URL_HASH SHA256=3b1c3b46e416d36931efd34663122d7f51b550c87f74de2d38249516fe7d8be5
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  # libusb (LGPL-2.1, docs/ROUND_LIBUSB_NOTES.md): SDL drives the Switch 2 Pro
+  # Controller over USB only through libusb (SDL_hidapi_switch2.c: bulk
+  # transfers on the controller's interface 1). It stays a separate
+  # libusb-1.0.dll beside the game that SDL loads at run time
+  # (SDL_HIDAPI_LIBUSB_SHARED): without the DLL the game starts and every
+  # other controller works as before. The official release archive (signed
+  # by the libusb release manager), built here from its Windows sources.
+  option(DW4_LIBUSB "Build libusb-1.0.dll and let SDL load it (Switch 2 Pro Controller over USB)" ON)
+  if(DW4_LIBUSB AND WIN32 AND MSVC)
+    # A disconnected local build (FETCHCONTENT_FULLY_DISCONNECTED with the
+    # sources given per dependency) finds the release's sources beside SDL's
+    # (<deps>/libusb_src-src) when they are not named.
+    if(FETCHCONTENT_FULLY_DISCONNECTED AND NOT FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC)
+      if(FETCHCONTENT_SOURCE_DIR_SDL3)
+        get_filename_component(DW4_DEPS_DIR ${FETCHCONTENT_SOURCE_DIR_SDL3} DIRECTORY)
+        if(EXISTS ${DW4_DEPS_DIR}/libusb_src-src/libusb/libusb.h)
+          set(FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC ${DW4_DEPS_DIR}/libusb_src-src)
+        endif()
+      endif()
+      if(NOT FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC)
+        message(FATAL_ERROR "libusb: a disconnected build needs FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC (the libusb 1.0.30 release's "
+                            "sources), or -DDW4_LIBUSB=OFF for a build without the Switch 2 Pro Controller")
+      endif()
+    endif()
+    FetchContent_Declare(libusb_src
+      URL https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2
+      URL_HASH SHA256=fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(libusb_src) # (no CMake project: the sources only)
+    # SDL's own detection (cmake/sdlchecks.cmake CheckHIDAPI) wants libusb.h
+    # and an import library whose DLL name it reads with dumpbin; it then
+    # defines HAVE_LIBUSB and SDL_LIBUSB_DYNAMIC "libusb-1.0.dll" and links
+    # nothing. The import library is made here at configure time from
+    # libusb's own export list (the DLL itself is the target below).
+    if(CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "ARM64")
+      set(DW4_LIBUSB_MACHINE ARM64)
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+      set(DW4_LIBUSB_MACHINE X64)
+    else()
+      set(DW4_LIBUSB_MACHINE X86)
+    endif()
+    set(DW4_LIBUSB_IMPORT ${CMAKE_BINARY_DIR}/libusb-import/libusb-1.0.lib)
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/libusb-import)
+    execute_process(COMMAND "${CMAKE_AR}" /nologo /machine:${DW4_LIBUSB_MACHINE} /def:${libusb_src_SOURCE_DIR}/libusb/libusb-1.0.def
+                            /out:${DW4_LIBUSB_IMPORT}
+                    RESULT_VARIABLE DW4_LIBUSB_IMPORT_RESULT OUTPUT_QUIET)
+    if(NOT DW4_LIBUSB_IMPORT_RESULT EQUAL 0 OR NOT EXISTS ${DW4_LIBUSB_IMPORT})
+      message(FATAL_ERROR "libusb: could not make the import library for SDL's detection (${DW4_LIBUSB_IMPORT_RESULT})")
+    endif()
+    set(LibUSB_INCLUDE_PATH ${libusb_src_SOURCE_DIR}/libusb CACHE PATH "libusb.h for SDL (the libusb_src release)" FORCE)
+    set(LibUSB_LIBRARY ${DW4_LIBUSB_IMPORT} CACHE FILEPATH "libusb-1.0.dll's import library for SDL's detection" FORCE)
+    set(SDL_HIDAPI_LIBUSB ON CACHE BOOL "" FORCE)
+    set(SDL_HIDAPI_LIBUSB_SHARED ON CACHE BOOL "" FORCE)
+  else()
+    # (Nor a libusb found elsewhere on the build machine.)
+    set(SDL_HIDAPI_LIBUSB OFF CACHE BOOL "" FORCE)
+  endif()
   FetchContent_MakeAvailable(SDL3 imgui_src pl_mpeg_src stb_src zstd_src)
+  if(DW4_LIBUSB AND WIN32 AND MSVC)
+    # libusb-1.0.dll as the libusb project's own MSVC build makes it
+    # (msvc/libusb_dll.vcxproj: these sources, msvc/config.h, the export
+    # list and the version resource), with this build's static C runtime so
+    # a clean Windows needs nothing more. Beside dw4_game.exe in the build.
+    set(LIBUSB_DIR ${libusb_src_SOURCE_DIR}/libusb)
+    add_library(libusb_dll SHARED
+      ${LIBUSB_DIR}/core.c ${LIBUSB_DIR}/descriptor.c ${LIBUSB_DIR}/hotplug.c ${LIBUSB_DIR}/io.c ${LIBUSB_DIR}/strerror.c ${LIBUSB_DIR}/sync.c
+      ${LIBUSB_DIR}/os/events_windows.c ${LIBUSB_DIR}/os/threads_windows.c ${LIBUSB_DIR}/os/windows_common.c
+      ${LIBUSB_DIR}/os/windows_usbdk.c ${LIBUSB_DIR}/os/windows_winusb.c
+      ${LIBUSB_DIR}/libusb-1.0.def ${LIBUSB_DIR}/libusb-1.0.rc)
+    set_target_properties(libusb_dll PROPERTIES OUTPUT_NAME libusb-1.0 PREFIX "")
+    target_include_directories(libusb_dll PRIVATE ${libusb_src_SOURCE_DIR}/msvc ${LIBUSB_DIR})
+    target_compile_definitions(libusb_dll PRIVATE _WIN32_WINNT=_WIN32_WINNT_VISTA _CRT_SECURE_NO_WARNINGS)
+    # Its license beside it (LGPL-2.1; any compatible libusb-1.0.dll may
+    # replace it: SDL loads it by name).
+    add_custom_command(TARGET libusb_dll POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${libusb_src_SOURCE_DIR}/COPYING $<TARGET_FILE_DIR:libusb_dll>/libusb-1.0-COPYING.txt)
+    set(DW4_SDL_LIBUSB ON)
+  else()
+    set(DW4_SDL_LIBUSB OFF)
+  endif()
   set(ZSTD_LIB ${zstd_src_SOURCE_DIR}/lib)
   add_library(zstd_decoder STATIC
     ${ZSTD_LIB}/common/debug.c ${ZSTD_LIB}/common/entropy_common.c ${ZSTD_LIB}/common/error_private.c
@@ -350,7 +429,7 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/pad_usb.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
@@ -366,6 +445,12 @@ if(DW4_BUILD_APP)
   if(WIN32)
     # (setupapi, winusb: the GameCube adapter in Wii U mode, gc_adapter.cpp)
     target_link_libraries(dw4_game PRIVATE ws2_32 setupapi winusb)
+  endif()
+  if(DW4_SDL_LIBUSB)
+    # SDL loads libusb-1.0.dll by name at run time (pad_usb.hpp): built with
+    # the game, never linked to it.
+    target_compile_definitions(dw4_game PRIVATE DW4_SDL_LIBUSB=1)
+    add_dependencies(dw4_game libusb_dll)
   endif()
   # Round I1a's ghost figure measurement (docs/SEAMLESS.md 19.13): a test
   # build's DW4_PROBE_GHOSTS* switches (ghost_figures.hpp, game_main.cpp).
@@ -398,6 +483,26 @@ if(DW4_BUILD_APP)
       target_link_libraries(dw4_pad_detect_tests PRIVATE setupapi winusb)
     endif()
     add_test(NAME pad_detect COMMAND dw4_pad_detect_tests)
+    # libusb-1.0.dll for SDL (docs/ROUND_LIBUSB_NOTES.md): the DLL exports
+    # what SDL loads and SDL loads it; without it SDL's other controllers
+    # still work and the notices say what is missing; who owns the GameCube
+    # adapter, decided through SDL's own device filter; the Switch 2 Pro
+    # Controller's notices. Run twice: with the DLL beside the test and with
+    # the DLL search limited to System32 (a missing DLL).
+    add_executable(dw4_pad_usb_tests tests/pad_usb_tests.cpp src/game/pad_usb.cpp src/game/pad_family.cpp src/game/pad_host.cpp
+      src/game/controls.cpp src/game/settings.cpp src/game/gc_adapter.cpp)
+    target_link_libraries(dw4_pad_usb_tests PRIVATE dw4_core SDL3::SDL3)
+    if(WIN32)
+      target_link_libraries(dw4_pad_usb_tests PRIVATE setupapi winusb)
+    endif()
+    if(DW4_SDL_LIBUSB)
+      target_compile_definitions(dw4_pad_usb_tests PRIVATE DW4_SDL_LIBUSB=1)
+      add_dependencies(dw4_pad_usb_tests libusb_dll)
+      add_test(NAME pad_usb COMMAND dw4_pad_usb_tests "$<TARGET_FILE:libusb_dll>")
+      add_test(NAME pad_usb_missing COMMAND dw4_pad_usb_tests --missing)
+    else()
+      add_test(NAME pad_usb COMMAND dw4_pad_usb_tests --not-built)
+    endif()
     # The run's save store: store choice, migration, imports, online session card.
     add_executable(dw4_save_store_tests tests/save_store_tests.cpp src/game/save_store.cpp src/game/settings.cpp src/game/controls.cpp)
     target_link_libraries(dw4_save_store_tests PRIVATE dw4_core SDL3::SDL3)
@@ -409,6 +514,12 @@ if(DW4_BUILD_APP)
   install(FILES ${imgui_src_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME imgui.txt)
   install(FILES ${stb_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME stb.txt)
   install(FILES ${zstd_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME zstd.txt)
+  if(DW4_SDL_LIBUSB)
+    # libusb-1.0.dll beside DW4_PC.exe with its license (LGPL-2.1).
+    install(FILES $<TARGET_FILE:libusb_dll> DESTINATION .)
+    install(FILES ${libusb_src_SOURCE_DIR}/COPYING DESTINATION . RENAME libusb-1.0-COPYING.txt)
+    install(FILES ${libusb_src_SOURCE_DIR}/COPYING DESTINATION licenses RENAME libusb.txt)
+  endif()
 endif()
 install(TARGETS dw4_inspect dw4_catalog RUNTIME DESTINATION .)
 install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md DESTINATION .)

@@ -3,12 +3,15 @@
 // The GameCube controller adapter for Wii U / Switch on Windows
 // (docs/ROUND_PADS_NOTES.md 2): Nintendo's WUP-028 and adapters in its mode
 // (Mayflash's "Wii U" switch position), USB 057e:0337. SDL opens this adapter
-// only through libusb, which this build does not include; with the WinUSB
-// driver on it (Zadig installs it, as for Dolphin) this reader opens it
-// through Windows' own WinUSB API and gives each connected port to SDL as a
-// virtual GameCube controller with the ids, name and button layout of SDL's
-// own GameCube driver. Detection, the GameCube binding space and the
-// prompts then treat it like any other GameCube pad.
+// only through libusb; this build lets SDL load libusb-1.0.dll for the
+// Switch 2 Pro Controller but keeps SDL's hands off the adapter
+// (SDL_HIDAPI_LIBUSB_GAMECUBE=0, pad_usb.hpp): this reader owns it, with or
+// without the DLL. With the WinUSB driver on it (Zadig installs it, as for
+// Dolphin) it opens the adapter through Windows' own WinUSB API and gives
+// each connected port to SDL as a virtual GameCube controller with the ids,
+// name and button layout of SDL's own GameCube driver. Detection, the
+// GameCube binding space and the prompts then treat it like any other
+// GameCube pad.
 //
 // Windows' device list is looked at when SDL counts a device change (and
 // every two seconds only while a found adapter is held by another program),
@@ -17,8 +20,10 @@
 // idle pads meanwhile and come back to life when it is opened again.
 //
 // The same look at the device list notices a Switch 2 Pro Controller
-// (057e:2069), which this build's SDL cannot open (it needs libusb): the F1
-// menu says so instead of showing nothing.
+// (057e:2069): on a cable or over Bluetooth, and which driver Windows has on
+// its interface 1 (the vendor interface whose bulk endpoints SDL's Switch 2
+// driver starts it through). When SDL does not make a pad of it, the F1
+// menu and a notice say why (pad_usb.hpp switch2_notice).
 //
 // An adapter in "PC" mode (Mayflash 0079:1843 / 1844) is an ordinary HID
 // device that SDL's own driver reads; it needs none of this.
@@ -63,16 +68,38 @@ struct UsbIds {
     std::uint16_t vendor = 0, product = 0;
 };
 std::optional<UsbIds> hardware_id_usb_ids(std::wstring_view hardware_id);
-// One device of the list: its hardware ids and whether its registry key
-// names a device interface GUID (the INF Zadig writes for WinUSB does).
+// The interface of a composite USB device's node ("...&MI_01" is 1).
+std::optional<int> hardware_id_interface(std::wstring_view hardware_id);
+// Whether a hardware id is a USB one ("USB\..." and a USB HID's
+// "HID\VID_..."); Bluetooth HID spells its ids "VID&0002...".
+bool hardware_id_usb(std::wstring_view hardware_id);
+// One device of the list: its hardware ids, whether its registry key names
+// a device interface GUID (the INF Zadig writes for WinUSB does) and the
+// driver service Windows runs on it ("WinUSB", "HidUsb"; empty: none).
 struct DeviceRecord {
     std::vector<std::wstring> hardware_ids;
     bool interface_guid = false;
+    std::wstring service;
 };
+// The driver on a device node.
+enum class UsbDriver : std::uint8_t {
+    unknown, // the node was not seen
+    none,    // no driver (Device Manager: "Other devices", a yellow mark)
+    winusb,  // Microsoft's WinUSB (by the device's own descriptor or Zadig)
+    other,   // another one (libusbK, libusb0, a vendor's)
+};
+UsbDriver usb_driver(std::wstring_view service);
 struct UsbFindings {
     bool adapter = false;        // a GameCube adapter in Wii U mode (057e:0337)
     bool adapter_winusb = false; // ... with the WinUSB driver
     bool switch2_pro = false;    // a Switch 2 Pro Controller (057e:2069), USB or Bluetooth
+    bool switch2_usb = false;       // ... on a USB cable
+    bool switch2_bluetooth = false; // ... paired over Bluetooth
+    // Its interface 1 (MI_01: the bulk endpoints SDL's Switch 2 driver
+    // starts it through) and that node's driver service.
+    UsbDriver switch2_vendor = UsbDriver::unknown;
+    std::wstring switch2_vendor_service;
+    bool operator==(const UsbFindings&) const = default;
 };
 UsbFindings usb_findings(const std::vector<DeviceRecord>& devices);
 
@@ -101,8 +128,12 @@ public:
     State state() const;
     // The adapter is open (WinUSB) and its ports are read.
     bool open() const { return state() == State::open; }
-    // A Switch 2 Pro Controller is connected (this build's SDL cannot open it).
+    // A Switch 2 Pro Controller is connected (USB or Bluetooth).
     bool switch2_pro() const;
+    // The latest look at the device list (the Switch 2 Pro Controller's
+    // part: pad_usb.hpp) and how many looks there were.
+    UsbFindings findings() const;
+    std::uint32_t scans() const;
 
 private:
     struct Impl;

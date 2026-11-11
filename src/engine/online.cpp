@@ -127,6 +127,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
+        // a test run's controller log and SDL's libusb in a test run (pad_usb.hpp: which USB devices SDL may open,
+        // and a file about them; a test run's pads are its script's)
+        "DW4_CONTROLLER_LOG", "DW4_TEST_LIBUSB",
         // the online client's own switches (src/game/online: development server, pin and password, the
         // calibration, the rate override, its trace, the test driver's position interval)
         "DW4_ONLINE_CALIBRATION", "DW4_ONLINE_PASSWORD", "DW4_ONLINE_PIN", "DW4_ONLINE_RATE", "DW4_ONLINE_SERVER",

@@ -125,18 +125,57 @@ std::optional<UsbIds> hardware_id_usb_ids(std::wstring_view hardware_id) {
     return std::nullopt;
 }
 
+std::optional<int> hardware_id_interface(std::wstring_view hardware_id) {
+    const std::wstring id = upper(hardware_id);
+    const auto at = id.find(L"&MI_");
+    if (at == std::wstring::npos || at + 6 > id.size()) return std::nullopt;
+    int value = 0;
+    for (std::size_t i = at + 4; i < at + 6; ++i) {
+        const wchar_t c = id[i];
+        if (c >= L'0' && c <= L'9') value = value * 16 + (c - L'0');
+        else if (c >= L'A' && c <= L'F') value = value * 16 + (c - L'A' + 10);
+        else return std::nullopt;
+    }
+    return value;
+}
+
+bool hardware_id_usb(std::wstring_view hardware_id) {
+    const std::wstring id = upper(hardware_id);
+    return id.rfind(L"USB\\", 0) == 0 || id.rfind(L"HID\\VID_", 0) == 0;
+}
+
+UsbDriver usb_driver(std::wstring_view service) {
+    if (service.empty()) return UsbDriver::none;
+    return upper(service) == L"WINUSB" ? UsbDriver::winusb : UsbDriver::other;
+}
+
 UsbFindings usb_findings(const std::vector<DeviceRecord>& devices) {
     UsbFindings found;
-    for (const auto& device : devices)
+    for (const auto& device : devices) {
+        bool adapter = false, switch2 = false, usb = false, vendor_interface = false;
         for (const auto& hardware_id : device.hardware_ids) {
             const auto ids = hardware_id_usb_ids(hardware_id);
             if (!ids || ids->vendor != kNintendo) continue;
-            if (ids->product == kAdapter) {
-                found.adapter = true;
-                found.adapter_winusb = found.adapter_winusb || device.interface_guid;
-            }
-            if (ids->product == kSwitch2Pro) found.switch2_pro = true;
+            adapter = adapter || ids->product == kAdapter;
+            if (ids->product != kSwitch2Pro) continue;
+            switch2 = true;
+            usb = usb || hardware_id_usb(hardware_id);
+            // (The USB node USB\VID_057E&PID_2069&...&MI_01, not a HID child.)
+            vendor_interface = vendor_interface || (upper(hardware_id).rfind(L"USB\\", 0) == 0 && hardware_id_interface(hardware_id) == 1);
         }
+        if (adapter) {
+            found.adapter = true;
+            found.adapter_winusb = found.adapter_winusb || device.interface_guid;
+        }
+        if (switch2) {
+            found.switch2_pro = true;
+            (usb ? found.switch2_usb : found.switch2_bluetooth) = true;
+            if (vendor_interface) {
+                found.switch2_vendor = usb_driver(device.service);
+                found.switch2_vendor_service = device.service;
+            }
+        }
+    }
     return found;
 }
 
@@ -152,6 +191,7 @@ struct GcAdapter::Impl {
     bool stop = false;
     State state = State::none;
     UsbFindings findings;
+    std::uint32_t scans = 0; // (every look at the device list)
     std::thread reader;
     // Main thread.
     std::uint32_t hid_changes = 0;
@@ -200,6 +240,16 @@ struct GcAdapter::Impl {
         return guid;
     }
 
+    // The driver service Windows runs on a device ("WinUSB", "HidUsb"),
+    // empty when it has none.
+    static std::wstring service(HDEVINFO set, SP_DEVINFO_DATA& info) {
+        wchar_t name[256]{};
+        if (!SetupDiGetDeviceRegistryPropertyW(set, &info, SPDRP_SERVICE, nullptr, reinterpret_cast<BYTE*>(name), sizeof(name) - sizeof(wchar_t),
+                                               nullptr))
+            return {};
+        return name;
+    }
+
     static std::vector<std::wstring> hardware_ids(HDEVINFO set, SP_DEVINFO_DATA& info) {
         std::vector<std::wstring> out;
         wchar_t ids[2048]{};
@@ -227,6 +277,7 @@ struct GcAdapter::Impl {
                     ours = true;
             if (!ours) continue;
             record.interface_guid = interface_guid(all, info).has_value();
+            record.service = service(all, info);
             records.push_back(std::move(record));
         }
         SetupDiDestroyDeviceInfoList(all);
@@ -330,6 +381,7 @@ struct GcAdapter::Impl {
                 const UsbFindings found = scan();
                 lock.lock();
                 findings = found;
+                ++scans;
                 next_retry = {}; // (try to open at once)
             }
             if (!enabled) {
@@ -454,6 +506,16 @@ GcAdapter::State GcAdapter::state() const {
 bool GcAdapter::switch2_pro() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->findings.switch2_pro;
+}
+
+UsbFindings GcAdapter::findings() const {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->findings;
+}
+
+std::uint32_t GcAdapter::scans() const {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->scans;
 }
 
 void GcAdapter::update() {

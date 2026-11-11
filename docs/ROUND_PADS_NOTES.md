@@ -19,7 +19,7 @@ Branch `feat-pads`, built on main `9fcd0681`.
 | The menus' buttons | `menu_keys` in `pad_host.cpp`, `menu_pad` in `host_view.cpp` | ImGui's gamepad keys come from player 1's pad (the backend reads no pad itself). `menu_buttons=layout` (the default): the pad's own A / Cross activates and B / Circle goes back whatever the game's bindings, as before this round on Xbox and PlayStation pads; a Nintendo pad as its Nintendo layout reads it (by label its A), a GameCube pad's A and B. `menu_buttons=bindings`: the game's A activates, B goes back, X / Y are the face keys left / up. |
 | F1 > Controls | `settings_controllers_section` | A tab of its own (the keyboard and controller sections moved out of Settings): the detected controller per player with its family, what is connected but cannot play (an adapter without its driver or held by another program, a Switch 2 Pro Controller), *Button prompts* (Automatic / DualSense / DualShock 4 / Xbox 360 / Xbox One/Series / Switch Pro / Switch 2 Pro / Wii U Pro / GameCube / Keyboard) with a preview of the active pictures and the other players' families, *Nintendo layout* (by label / by position), *GameCube controller* (original 1:1 / use the bindings), *Menu buttons* (the controller's own / the game's bindings), *Wii U Pro support* (automatic / on / off, at once), *GameCube adapter in Wii U mode*; the binding buttons are named as on the shown family (Cross, ZL, LB ...). |
 | SDL hints | `controller_hints`, `update_controllers` | SDL's Wii driver (SDL leaves it off: it does not work behind a DolphinBar, and it opens every Wii remote): `wii_driver=auto` (the default) turns it on only while a 057e:0330 HID device is connected (looked for with `SDL_hid_enumerate` when SDL counts a device change), never in test runs; `on` / `off`. `SDL_JOYSTICK_ENHANCED_REPORTS=auto` (Bluetooth PlayStation pads keep their simple reports; nothing here needs more). GameCube, PS4 / PS5, Switch and Switch 2 drivers are on by SDL's default. |
-| GameCube adapter, Wii U mode | `src/game/gc_adapter.*` | SDL opens 057e:0337 only through libusb, which this build does not have. With the WinUSB driver on the adapter (Zadig), a reader thread opens it through Windows' WinUSB API (SetupAPI finds the device's interface GUID), sends the start byte 0x13 and reads the 37-byte reports (layout of SDL's `SDL_hidapi_gamecube.c`); each connected port becomes an SDL virtual joystick with 057e:0337, "Nintendo GameCube Controller" and SDL's GameCube button layout, so it is detected and played like any GameCube pad. Windows' device list is looked at when SDL counts a device change (every two seconds only while a found adapter is held by another program); the adapter is let go while the window is in the background (its ports stay as idle pads, no slot moves), so Dolphin can take it; `gc_adapter=false` turns the reader off. The same look notices a Switch 2 Pro Controller (USB or Bluetooth ids). Not in test runs. |
+| GameCube adapter, Wii U mode | `src/game/gc_adapter.*` | SDL opens 057e:0337 only through libusb; since round "libusb" SDL has libusb but is told to leave the adapter (`SDL_HIDAPI_LIBUSB_GAMECUBE=0`, [ROUND_LIBUSB_NOTES.md](ROUND_LIBUSB_NOTES.md) 4), so this reader stays its only owner. With the WinUSB driver on the adapter (Zadig), a reader thread opens it through Windows' WinUSB API (SetupAPI finds the device's interface GUID), sends the start byte 0x13 and reads the 37-byte reports (layout of SDL's `SDL_hidapi_gamecube.c`); each connected port becomes an SDL virtual joystick with 057e:0337, "Nintendo GameCube Controller" and SDL's GameCube button layout, so it is detected and played like any GameCube pad. Windows' device list is looked at when SDL counts a device change (every two seconds only while a found adapter is held by another program); the adapter is let go while the window is in the background (its ports stay as idle pads, no slot moves), so Dolphin can take it; `gc_adapter=false` turns the reader off. The same look notices a Switch 2 Pro Controller (USB or Bluetooth ids). Not in test runs. |
 
 ## 2. Controllers: what is verified and what needs the device
 
@@ -36,7 +36,7 @@ pad path. Not verified: the devices themselves.
 | Xbox 360 | XInput, type XBOX360 | done | wireless receiver (SDL reports 045e:02a1) | driver from Windows |
 | Xbox One / Series | XInput, type XBOXONE | done | Elite paddles (shown as P1-P4 if bound) | USB, Bluetooth or the wireless adapter |
 | Switch Pro | SDL HIDAPI Switch, type NINTENDO_SWITCH_PRO | done | by-label default with the device | USB or Bluetooth |
-| Switch 2 Pro | by product id 057e:2069 | done | that SDL opens it at all: SDL 3.4.16 drives it over USB only through libusb (not in this build), Bluetooth not at all | not usable with this build (F1 > Controls and a notice say so when one is connected); works once SDL is built with libusb (see 5) |
+| Switch 2 Pro | by product id 057e:2069 | done (C, GL, GR when bound) | the play test over USB, and that Windows puts WinUSB on its interface 1 by itself | USB-C cable with `libusb-1.0.dll` beside the game (round "libusb", [ROUND_LIBUSB_NOTES.md](ROUND_LIBUSB_NOTES.md)); Bluetooth not at all (SDL); F1 > Controls and a notice say what is missing |
 | Wii U Pro | SDL's Wii driver: GUID extension / name (the driver runs while 057e:0330 is connected) | done | pairing through Windows' Bluetooth (SYNC button, no PIN) and that SDL's Wii driver sees it | Bluetooth; *Wii U Pro support* automatic (default) |
 | GameCube, Mayflash PC mode | SDL HIDAPI GameCube (0079:1843 / 1844), type GAMECUBE | game's own pictures (1:1); port UI GameCube pictures | the trigger clicks (MISC3 / MISC4) on the real adapter; the id Mayflash reports (Device Manager > Hardware Ids) | the adapter's switch on PC, no driver |
 | GameCube, Wii U mode (Nintendo WUP-028, Mayflash "Wii U") | own WinUSB reader, virtual pads 057e:0337 | as above | everything about the USB side: discovery through the Zadig INF's interface GUID, the start byte, the reads, plugging in and out while the game runs, letting go in the background and Dolphin taking it | WinUSB driver on "WUP-028" with Zadig (the same as for Dolphin) |
@@ -72,11 +72,10 @@ twice, the save state suite 17 / 17, r25c 10 / 10 (section 6).
 
 ## 5. Open points
 
-- **libusb**: the Switch 2 Pro needs SDL built with libusb (`SDL_HIDAPI_LIBUSB`,
-  loaded at run time as `libusb-1.0.dll`, LGPL; the header is needed at build
-  time and is not on this PC; nothing was downloaded). Then SDL's own driver
-  would also cover the Wii U mode adapter; the WinUSB reader stays as the
-  path without the DLL. The owner decides.
+- **libusb**: done in round "libusb" ([ROUND_LIBUSB_NOTES.md](ROUND_LIBUSB_NOTES.md)):
+  the owner approved libusb as a separate `libusb-1.0.dll` (LGPL-2.1) that
+  SDL loads at run time; the Switch 2 Pro Controller plays over USB. The Wii
+  U mode adapter stays the WinUSB reader's (SDL is told to leave it).
 - **Per-player pictures**: done for the lines that are a player's own (the
   character select's `font<player><line>`); every other game text, the title
   and the port's menus show player 1's family. In play, a local co-op status
@@ -134,7 +133,7 @@ Results (11 November 2026, this PC, hidden runs):
 
 | Finding | Fix |
 | --- | --- |
-| Switch 2 Pro unusable (SDL without libusb) | Unchanged in SDL (libusb, an LGPL DLL, is the owner's decision); the game now notices a connected one (Windows' device list: USB or Bluetooth ids) and says so once and in F1 > Controls instead of showing nothing |
+| Switch 2 Pro unusable (SDL without libusb) | The game noticed a connected one (Windows' device list: USB or Bluetooth ids) and said so; round "libusb" then made it playable over USB (ROUND_LIBUSB_NOTES.md) |
 | SDL's Wii driver on by default (DolphinBar, Wii remotes taking slots, start-up stalls) | `wii_driver=auto`: on only while a 057e:0330 device is connected (a DolphinBar's 057e:0306 never turns it on), never in test runs; Wii remotes never take a player slot (`player_pad`) |
 | 057e:0330 is also the Wii Remote Plus | Wii U Pro only by SDL's GUID extension byte or the name SDL sets after reading the extension |
 | Untested paths (adapter y, trigger noise, host code) | `pad_host.*` is the host's code the tests run; tests for the adapter's up, trigger noise through SDL, the slots, the menus' keys |

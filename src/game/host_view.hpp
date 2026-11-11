@@ -17,6 +17,7 @@
 #include "movie_decoder.hpp"
 #include "overhead_labels.hpp"
 #include "pad_family.hpp"
+#include "pad_usb.hpp"
 #include "settings.hpp"
 
 #include "dw4/engine/engine.hpp"
@@ -149,6 +150,15 @@ struct HostView {
     std::uint32_t hid_changes = 0;
     bool wii_u_ids = false;
     bool wii_hint = false;
+    // libusb-1.0.dll as found at start-up (pad_usb.hpp), the Switch 2 Pro
+    // Controller's notice (F1 > Controls; game_main shows it once in play),
+    // and saves/controllers.log (null in test runs).
+    LibusbInfo libusb;
+    Switch2Watch switch2;
+    ControllerLog* controller_log = nullptr;
+    UsbFindings logged_findings;   // (the device list as last written to the log)
+    std::uint32_t logged_scans = 0;
+    Switch2Notice logged_notice = Switch2Notice::none;
 
     // The F1 menu.
     bool show_menu = false;
@@ -286,7 +296,9 @@ void settings_keyboard_section(HostView& view);
 void settings_controllers_section(HostView& view);
 // The SDL hints for the controller families, before SDL_Init: SDL's Wii
 // driver only with wii_driver=on (automatic turns it on later, while a Wii
-// U Pro Controller's ids are connected: update_controllers).
-void controller_hints(const Settings& settings);
+// U Pro Controller's ids are connected: update_controllers); libusb for the
+// Switch 2 Pro Controller outside test runs, never for the GameCube adapter
+// (pad_usb.hpp controller_hint_values).
+void controller_hints(const Settings& settings, bool test_run);
 
 } // namespace dw4::game

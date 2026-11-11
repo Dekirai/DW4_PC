@@ -61,16 +61,9 @@ PadFamily HostView::prompt_family(std::size_t player) const {
 
 PadFamily HostView::family_of(SDL_Gamepad* pad) const { return dw4::game::family_of(pads, pad); }
 
-void controller_hints(const Settings& settings) {
-    // The Wii U Pro Controller: SDL's Wii driver (SDL leaves it off: it does
-    // not work behind a Mayflash DolphinBar). wii_driver=on starts with it;
-    // automatic (the default) turns it on only while a Wii U Pro
-    // Controller's ids are connected (update_controllers); off never.
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, settings.wii_driver == WiiDriver::on ? "1" : "0");
-    // GameCube adapters, PlayStation, Switch and Switch 2 pads: SDL's
-    // defaults (on). Bluetooth PlayStation pads stay in their simple report
-    // mode until a feature needs more (nothing here does).
-    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "auto");
+void controller_hints(const Settings& settings, bool test_run) {
+    // (The reasons stand with the values: pad_usb.cpp.)
+    for (const auto& hint : controller_hint_values(settings, test_run)) SDL_SetHint(hint.name, hint.value);
 }
 
 namespace {
@@ -97,7 +90,13 @@ bool host_event(HostView& view, const SDL_Event& event) {
     auto& capture = view.capture;
     // Controllers coming and going (player pads only: pad_host.hpp) and
     // real input (the prompts follow player 1's last device).
-    pad_slots_event(view.gamepads, view.pads, event);
+    if (view.controller_log && event.type == SDL_EVENT_GAMEPAD_REMOVED)
+        if (SDL_Gamepad* pad = pad_by_id(view.gamepads, event.gdevice.which))
+            view.controller_log->write("- pad " + pad_log_line(pad, view.family_of(pad)));
+    const bool slots_changed = pad_slots_event(view.gamepads, view.pads, event);
+    if (view.controller_log && slots_changed && event.type == SDL_EVENT_GAMEPAD_ADDED)
+        if (SDL_Gamepad* pad = pad_by_id(view.gamepads, event.gdevice.which))
+            view.controller_log->write("+ pad " + pad_log_line(pad, view.family_of(pad)));
     // A key binding being edited takes the next key (F1 still closes the
     // menu). A controller binding being edited takes the next button or
     // trigger pull.
@@ -178,6 +177,25 @@ void update_controllers(HostView& view) {
         const bool focused = view.window && (SDL_GetWindowFlags(view.window) & SDL_WINDOW_INPUT_FOCUS) != 0;
         view.gc_adapter->set_enabled(view.settings.gc_adapter && focused, view.settings.gc_adapter);
         view.gc_adapter->update();
+        // The Switch 2 Pro Controller: Windows' list (the adapter reader's
+        // look at it) against what SDL opened.
+        const std::uint32_t scans = view.gc_adapter->scans();
+        const UsbFindings windows = view.gc_adapter->findings();
+        bool sdl_pad = false;
+        for (auto* pad : view.gamepads) sdl_pad = sdl_pad || sdl_switch2_pad(pad);
+        const Switch2Notice notice = view.switch2.update(std::chrono::steady_clock::now(), windows, sdl_pad, view.libusb.state);
+        if (view.controller_log) {
+            // (The first look, then every change.)
+            if (scans != view.logged_scans && (view.logged_scans == 0 || windows != view.logged_findings)) {
+                view.logged_findings = windows;
+                view.controller_log->write(usb_findings_line(windows));
+            }
+            view.logged_scans = scans;
+            if (notice != view.logged_notice) {
+                view.logged_notice = notice;
+                view.controller_log->write(std::string("switch 2 pro: ") + switch2_notice_name(notice));
+            }
+        }
     }
 }
 
@@ -728,10 +746,13 @@ void settings_controllers_section(HostView& view) {
                 break;
             default: break;
             }
-            if (view.gc_adapter->switch2_pro())
-                ImGui::TextWrapped("Switch 2 Pro Controller found. This build cannot read it yet: SDL needs libusb for it "
-                                   "(USB only; Bluetooth is not supported). See the README.");
+            // A Switch 2 Pro Controller that does not play: why and what to do.
+            if (const std::string text = switch2_notice_text(view.switch2.current(), view.gc_adapter->findings()); !text.empty())
+                ImGui::TextWrapped("%s", text.c_str());
         }
+        // libusb-1.0.dll (the Switch 2 Pro Controller over USB).
+        ImGui::TextDisabled("%s", libusb_summary(view.libusb).c_str());
+        if (view.controller_log) ImGui::TextDisabled("Controller log: %s", view.controller_log->path().string().c_str());
         // Button prompts: automatic (player 1's last device) or one family.
         {
             static constexpr PadFamily kChoices[] = {PadFamily::ps5, PadFamily::ps4, PadFamily::xbox360, PadFamily::xbox_one, PadFamily::switch_pro,

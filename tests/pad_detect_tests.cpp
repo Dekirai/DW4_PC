@@ -7,7 +7,8 @@
 // player 1's slot wins, stick drift and trigger noise do not switch), the
 // fallback when a pad is unplugged, the Wii remotes SDL's Wii driver makes
 // pads of (no player slot), a pad's input and the menus' keys through the
-// host's own code (pad_host.hpp, as host_view.cpp runs it).
+// host's own code (pad_host.hpp, as host_view.cpp runs it), and the Switch 2
+// Pro Controller end to end (docs/ROUND_LIBUSB_NOTES.md).
 #include "../src/game/gc_adapter.hpp"
 #include "../src/game/pad_family.hpp"
 #include "../src/game/pad_host.hpp"
@@ -313,13 +314,103 @@ void host_input() {
     host.pump();
 }
 
+// The Switch 2 Pro Controller end to end as SDL's Switch 2 driver reports it
+// (SDL_hidapi_switch2.c with SDL_gamepad.c's HIDAPI mapping: positional
+// face buttons, A on EAST; Minus BACK, Plus START, Home GUIDE, Capture
+// MISC1, C MISC2, GR RIGHT_PADDLE1, GL LEFT_PADDLE1): its family, the
+// labels, by label (the default) the printed A is the game's A, the
+// shoulders and triggers as on the Switch Pro; C, GL and GR play nothing
+// until bound in F1 (they still count as the player's input for the
+// prompts), then they play the bound button and are drawn and named C, GL,
+// GR; Minus opens the menus' back / F1 key, A confirms.
+void switch2_pro() {
+    Host host;
+    check(host.settings.nintendo_layout == NintendoLayout::by_label, "Nintendo pads by label by default");
+    const SDL_JoystickID id = attach(kDevices[9]); // 057e:2069
+    host.pump();
+    check(host.pads.size() == 1 && host.tracker.player_family(0) == PadFamily::switch2_pro, "a Switch 2 Pro Controller");
+    SDL_Gamepad* pad = host.pads.front();
+    check(SDL_GetGamepadButtonLabel(pad, SDL_GAMEPAD_BUTTON_EAST) == SDL_GAMEPAD_BUTTON_LABEL_A, "SDL labels EAST A");
+    check(SDL_GetGamepadButtonLabel(pad, SDL_GAMEPAD_BUTTON_NORTH) == SDL_GAMEPAD_BUTTON_LABEL_X, "SDL labels NORTH X");
+    SDL_Joystick* joystick = host.joystick(id);
+    auto held = [&](SDL_GamepadButton button) {
+        SDL_SetJoystickVirtualButton(joystick, int(button), true);
+        host.pump();
+        const auto in = host.input(0);
+        SDL_SetJoystickVirtualButton(joystick, int(button), false);
+        host.pump();
+        return in.buttons;
+    };
+    namespace pb = dw4::pad_button;
+    check(held(SDL_GAMEPAD_BUTTON_EAST) == pb::a, "A is the game's A");
+    check(held(SDL_GAMEPAD_BUTTON_SOUTH) == pb::b, "B is the game's B");
+    check(held(SDL_GAMEPAD_BUTTON_NORTH) == pb::x, "X is the game's X");
+    check(held(SDL_GAMEPAD_BUTTON_WEST) == pb::y, "Y is the game's Y");
+    check(held(SDL_GAMEPAD_BUTTON_START) == pb::start, "Plus is START");
+    check(held(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) == pb::l, "L is the game's L");
+    check(held(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) == pb::z, "R is the game's Z");
+    SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 32767);
+    SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
+    host.pump();
+    check(host.input(0).buttons == (pb::l | pb::r), "ZL is the game's L, ZR its R");
+    SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
+    SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
+    host.pump();
+    // The extra buttons: nothing by default, but the player's input.
+    SDL_Event key{};
+    key.type = SDL_EVENT_KEY_DOWN;
+    key.key.scancode = SDL_SCANCODE_K;
+    key.key.down = true;
+    for (const auto extra : {SDL_GAMEPAD_BUTTON_MISC2, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1, SDL_GAMEPAD_BUTTON_MISC1,
+                             SDL_GAMEPAD_BUTTON_GUIDE}) {
+        check(SDL_GamepadHasButton(pad, extra), "SDL reports the button");
+        SDL_PushEvent(&key);
+        host.pump();
+        check(host.tracker.player_family(0) == PadFamily::keyboard, "typed: keyboard prompts");
+        check(held(extra) == 0, std::string("unbound by default: ") + SDL_GetGamepadStringForButton(extra));
+        check(host.tracker.player_family(0) == PadFamily::switch2_pro, "its press brings the Switch 2 Pro prompts back");
+    }
+    // Bound in F1 (the capture keeps these buttons as they are), they play
+    // and are named and drawn as on the controller.
+    check(binding_button(SDL_GAMEPAD_BUTTON_MISC2, PadFamily::switch2_pro, NintendoLayout::by_label) == SDL_GAMEPAD_BUTTON_MISC2 &&
+              binding_button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, PadFamily::switch2_pro, NintendoLayout::by_label) == SDL_GAMEPAD_BUTTON_LEFT_PADDLE1,
+          "the capture keeps C and GL");
+    auto& bindings = host.settings.pad;
+    bindings[std::size_t(PadKey::z)][1] = {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1};
+    bindings[std::size_t(PadKey::l)][2] = {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1};
+    bindings[std::size_t(PadKey::y)][1] = {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_MISC2};
+    check(held(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1) == pb::z, "GR bound to Z");
+    check(held(SDL_GAMEPAD_BUTTON_LEFT_PADDLE1) == pb::l, "GL bound to L");
+    check(held(SDL_GAMEPAD_BUTTON_MISC2) == pb::y, "C bound to Y");
+    check(pad_input_label(PadFamily::switch2_pro, host.settings, {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1}) == "GR" &&
+              pad_input_label(PadFamily::switch2_pro, host.settings, {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1}) == "GL" &&
+              pad_input_label(PadFamily::switch2_pro, host.settings, {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_MISC2}) == "C",
+          "F1 names GR, GL, C");
+    check(pad_input_label(PadFamily::switch_pro, host.settings, {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_MISC2}) != "C",
+          "a Switch Pro has no C");
+    check(prompt_face(PadFamily::switch2_pro, host.settings, PromptControl::a).face == Face::letter_a, "the A prompt");
+    check(prompt_face(PadFamily::switch2_pro, host.settings, PromptControl::start).face == Face::plus, "the START prompt is Plus");
+    check(prompt_face(PadFamily::switch2_pro, host.settings, PromptControl::z).face == Face::r, "Z is R (the first binding)");
+    bindings[std::size_t(PadKey::z)] = {{{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1}}};
+    check(prompt_face(PadFamily::switch2_pro, host.settings, PromptControl::z).face == Face::gr, "Z on GR alone: the GR picture");
+    // The menus: A confirms, B goes back, Minus is the menus' back / F1 key.
+    SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_EAST, true);
+    SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_BACK, true);
+    host.pump();
+    const auto menu = host.menu(0);
+    check(menu.face_down && !menu.face_right && menu.back, "A confirms, Minus is the back key");
+    SDL_DetachVirtualJoystick(id);
+    host.pump();
+    check(host.pads.empty(), "unplugged");
+}
+
 } // namespace
 
 int main() {
     // No real controller of this PC takes part (every backend but the
     // virtual one off), and no window: events arrive without focus.
     for (const char* hint : {SDL_HINT_JOYSTICK_HIDAPI, SDL_HINT_XINPUT_ENABLED, SDL_HINT_JOYSTICK_DIRECTINPUT, SDL_HINT_JOYSTICK_RAWINPUT,
-                             SDL_HINT_JOYSTICK_WGI, SDL_HINT_JOYSTICK_GAMEINPUT})
+                             SDL_HINT_JOYSTICK_WGI, SDL_HINT_JOYSTICK_GAMEINPUT, SDL_HINT_HIDAPI_LIBUSB})
         SDL_SetHint(hint, "0");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
@@ -336,6 +427,7 @@ int main() {
         gamecube_adapter();
         wii_remotes();
         host_input();
+        switch2_pro();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         result = 1;
