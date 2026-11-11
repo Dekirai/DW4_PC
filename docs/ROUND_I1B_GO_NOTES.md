@@ -59,15 +59,20 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 
 - ctest 57/57 (`build/go/ctest2.log`); session tests 397 checks (`go_along_session`); wire tests (go_messages, the golden
   bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
-- Server unit tests 474/474 (GoAlongTests: 6 new).
+- Server unit tests (2026-11-11, 49301c82): 476 of 478; the two failing ones are
+  `HubLogicTests.A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (protocol 47 and 48), which
+  fail the same way on int-i1a bfc3b0a5 itself (a `git archive` of its server: desync_votes 1, no resync of b), not this
+  lane's (GoAlongTests: 6 + 2 new, all green). For the integration.
+- Server integration tests (2026-11-11, 49301c82, mysqld 3653): 137 passed, 4 skipped, 0 failed (`build/go/itest3.log`).
+  Their artifacts must lie two levels below `server/DW4Online` (`--artifacts-path bin/goit`): two tests find
+  `Directory.Build.props` and `deploy/` from the test binary (with `build/go/srvart-it` they failed for that alone).
 - det.sh on a DEV=OFF copy (`build/go/off/dw4_go_off_a.exe`, HEAD 53cb3afb's tree): run1 and run2 4004f056 / audio 396cb219
   (`build/go/off/det_a.log`).
 - W31 runs: see the "Scenario runs" section.
 
 ## Left
 
-1. Scenario runs of W31b, W31c, W31d2, W31e, W31g (ready to run); the test hooks for W31d, W31f, W31h, W31i.
-2. The server's integration tests on this branch (needs an own mysqld on 3653 when no scenario runs).
+1. Scenario runs of every W31 scenario at HEAD (batch c1 of 2026-11-11: see "Scenario runs").
 3. The release (DW4Online 0.1.7 with I1a and I1b) is the integration's.
 
 ## How to run the tests
@@ -81,7 +86,8 @@ The helpers live in `build/go/` (gitignored); recreate them from these copies af
 - Server unit tests without touching the bin folders a running scenario server uses: in `server/DW4Online`,
   `"/c/Program Files/dotnet/dotnet.exe" test tests/DW4Online.Tests/DW4Online.Tests.csproj --disable-build-servers
   --artifacts-path ../../build/go/srvart` (GoAlongTests are in HubLogicTests).
-- Server integration tests: only while no scenario runs (both use mysqld 3653).
+- Server integration tests: `bash build/go/itest.sh /abs/path/LOG [filter]` (an absolute log path: the script changes
+  directory), only while no scenario runs (both use mysqld 3653; the scenario runner's database folder and root password).
 - Probe: `build/go/rel/dw4_world_probe.exe "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted" go [0|1|2]`.
 - Scenarios: copy `build/go/dev/dw4_game.exe` to `build/go/scen/dw4_go_dev_<TAG>.exe`, then
   `bash build/go/scen.sh LOG TAG W31 ...` (run.py --parallel 1 --keep, mysqld 3653, ports 58400-58599, the r25c cards;
@@ -135,6 +141,33 @@ nice -n 10 /c/Users/shinz/AppData/Local/Programs/Python/Python313/python.exe too
   --game-exe "$(cygpath -w $W/build/go/scen/dw4_go_dev_$TAG.exe)" --data "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted" \
   --cards "C:/Users/shinz/source/repos/DW4_PC/work/campaign/checkpoints/r25c" --mysql-port 3653 --ports 58400-58599 >> $LOG 2>&1
 echo "EXIT $? $(date)" >> $LOG
+```
+
+`build/go/itest.sh`:
+
+```
+#!/bin/bash
+# i1b-go: the server's integration tests with an own mysqld on 3653 (only while no scenario runs). Usage: itest.sh LOG [filter]
+export PATH="/usr/bin:/mingw64/bin:/c/Program Files/dotnet:/c/Windows/System32:/c/Windows:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+W=/c/Users/shinz/source/repos/DW4_PC-wt/i1b-go
+LOG=$1; FILTER=$2
+DATA=$W/tools/online_test/.work/mysql-data
+PW=$(cat $W/tools/online_test/.work/mysql-root.txt)
+if netstat -ano -p TCP | grep -qE ':3653 .*(LISTEN|ABH)'; then echo "port 3653 in use" > $LOG; exit 3; fi
+echo "start $(date) head=$(git -C $W rev-parse --short HEAD)" > $LOG
+/c/xampp/mysql/bin/mysqld.exe "--defaults-file=$(cygpath -w $DATA/my.ini)" --bind-address=127.0.0.1 --port=3653 --character-set-server=utf8mb4 \
+  --collation-server=utf8mb4_unicode_ci --default-time-zone=+00:00 --innodb-use-native-aio=0 "--log-error=$(cygpath -w $W/build/go/itest_mysqld.err)" > /dev/null 2>&1 &
+for i in $(seq 1 40); do netstat -ano -p TCP | grep -qE '127.0.0.1:3653 .*(LISTEN|ABH)' && break; sleep 1; done
+export DW4ONLINE_TEST_MYSQL="Server=127.0.0.1;Port=3653;User ID=root;Password=$PW"
+export DW4ONLINE_TEST_PORTS=58450-58599
+cd $W/server/DW4Online
+args=(test tests/DW4Online.Integration.Tests/DW4Online.Integration.Tests.csproj --disable-build-servers -nologo --artifacts-path bin/goit)
+[ -n "$FILTER" ] && args+=(--filter "$FILTER")
+"/c/Program Files/dotnet/dotnet.exe" "${args[@]}" >> $LOG 2>&1
+echo "EXIT $? $(date)" >> $LOG
+/c/xampp/mysql/bin/mysql.exe --protocol=tcp -h 127.0.0.1 -P 3653 -u root "--password=$PW" -e "SHUTDOWN" >> $LOG 2>&1
+echo "mysqld shut down $(date)" >> $LOG
 ```
 
 ## Scenario runs
