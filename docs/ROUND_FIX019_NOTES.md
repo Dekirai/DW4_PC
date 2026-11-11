@@ -84,7 +84,7 @@ decides whether a run on an idle machine is still wanted.
 ## Left
 
 - Open beyond this round (not fixed: a client release with a protocol rise): S22b's `statehash_mismatch` after a classic
-  join, `ActionManager::random_wait_min_` missing from the load snapshot (below).
+  join, `ActionManager::random_wait_min_` missing from the load snapshot ("Scenarios", r2, above).
 
 ## How to run
 
