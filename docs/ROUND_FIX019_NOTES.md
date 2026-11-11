@@ -24,7 +24,8 @@ Own resources: mysqld 3671, ports 59000-59199, build dirs `build/f19/*` (gitigno
 | 10 | documents | README.md's online section for the world; server README (rooms retired 410, migrations through 0013, the world relay, the website, the admin run); DEPLOY.md 9.1 / 9.2 (0.1.6 carried 0012, the server's way 0.1.4 -> 0.1.6 -> 0.1.7 -> 0.1.8 -> 0.1.9) and 10; SEAMLESS 19.7.1, 19.7.2, 19.7.6, 19.6.6, 19.8.5, 19.14, 19.19, 19.25, 19.30.3, 19.32; ROUND_I1A_INT_NOTES (below); `src/game/game_main.cpp`: the comment before `view.gain` at 12 spaces | - |
 | 11 | version | `server/DW4Online/Directory.Build.props` 0.1.9. Client code: unchanged (only the comment of finding 10), so 0.1.9 needs no new client | - |
 
-Server unit tests: 472/472 (`build/f19/unit1.log`). ctest (code of 0d8791d2, Release DEV=OFF): 62/62 (`build/f19/ctest1.log`).
+Server unit tests: 472/472 (`build/f19/unit1.log`; on the final tree again `build/f19/unit_final.log`). Integration tests on
+the final tree (mysqld 3671): 141 passed, 1 skipped (the opt-in certificate-store test; `build/f19/it_final.log`). ctest (code of 0d8791d2, Release DEV=OFF): 62/62 (`build/f19/ctest1.log`).
 det.sh (DEV=OFF copy `build/f19/off/dw4_f19_off_a.exe`, the C++ of every later commit: only the comment changed) twice:
 4004f056 / audio 396cb219 in all four runs (`build/f19/det_a.log`, `work/dref/checks/det/det_f19_a1`, `_a2`).
 
@@ -54,10 +55,34 @@ det.sh (DEV=OFF copy `build/f19/off/dw4_f19_off_a.exe`, the C++ of every later c
     it), which old and new clients cannot mix: a client release with a protocol rise (I1b's). Not done in this server-only
     round; recorded in ROUND_I1A_INT_NOTES and here.
 
+### The load gate (finding 9)
+
+FakeClient Release (`build/f19/fc`, with `GcTrace`), `DOTNET_gcServer=1`, 3 s warm-up, 30 s measured (joins 60 s); results
+in `build/f19/gate/` (`inproc_r1.json`, `net_r1.json`, `net_storm_r2..r4.json`, `inproc_storm_r2..r4.json`, `summ.py` prints
+them; `machine_load.csv`). **Not a quiet machine**: nothing of this round ran beside it, but the I1b workflow's scenarios
+did (2-8 `dw4_*` game clients at every sample, total CPU median 25 %, p90 35 %, max 100 %, 207 samples of 5 s); the user
+decides whether a run on an idle machine is still wanted.
+
+- In-process (`loadgate`, 8 cells): every cell valid. Hold p99 14.5-20.2 us (at most 0.5 ms: pass), p99.99 0.37-1.27 ms
+  (at most 5 ms, decision 42: pass), max 2.4-11.8 ms. Sealing lateness with the sealer's TryEnter p99 4.7-6.6 ms (the
+  in-process harness's coincident timer wakes, as in r71 / I1a), with the waiting sealer (base-wait, storm-wait) p99
+  0.56-0.59 ms. Process CPU 0.02-0.08 cores. GC trace: 7-51 collections per cell run, the longest pause 2.5-4.9 ms, no
+  stall of the process over 20 ms.
+- Over sockets (`loadgate --sockets`, 7 cells, the relay in its own process): every cell valid. Relay CPU 0.15 (select),
+  0.23 (fullhub), 0.34-0.40 (base, sealonly, storm, the waits): under half a core in every cell (pass). Sealing passes
+  over 2 ms 0.07-0.24 % (p99 under 2 ms: pass), TryEnter misses 0.2-1.1 %. Relay GC trace: 3-11 collections per 30 s,
+  pause total 6-43 ms, the longest 2.3-8.1 ms; one stall of the relay process over 20 ms in all runs (sealonly, 21.1 ms,
+  7.0 ms of it a GC pause).
+- The storm cell again with the GC trace (`storm` and `storm-wait`, three more runs each way): over sockets relay 0.38-0.45
+  cores, passes over 2 ms 0.17-0.24 %, the relay's lateness max (since its start) 10.6-13.9 ms, GC pauses at most
+  4.6-7.8 ms, **no stall over 20 ms**: the 1.34 s stall of round I1a's first storm run did not come back in 5 storm and 5
+  storm-wait runs over sockets, so its cause stays unknown (the trace would now tell a GC pause from a stall of the
+  process). In-process: hold p99.99 0.52-1.23 ms; one single `Seal` hold of 34.6 ms (storm r4) with no GC pause over
+  3.4 ms and no stall of the process (the highest-priority watcher kept waking): the sealing thread preempted while it
+  held the lock on the loaded machine, under the p99.99 reading.
+
 ## Left
 
-- 9: the load gate (running).
-- At the end: unit and integration tests on the final tree.
 - Open beyond this round (not fixed: a client release with a protocol rise): S22b's `statehash_mismatch` after a classic
   join, `ActionManager::random_wait_min_` missing from the load snapshot (below).
 

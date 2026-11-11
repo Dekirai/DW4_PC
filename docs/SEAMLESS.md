@@ -13864,6 +13864,14 @@ not found (it came before M4 (e); the eleven later *storm* and
 *storm-wait* runs over sockets had a sealing lateness max of 12.0-35.9 ms,
 `build/i1arelay/gate/`).
 
+**Run in round fix-019** (0.1.9, `docs/ROUND_FIX019_NOTES.md`): both harnesses, every cell, then *storm* and
+*storm-wait* three more times each way, with a GC trace (`GcTrace`: every collection's pause from the runtime's events
+and every stall of the process over 20 ms). Not on a quiet machine (another workflow's game clients beside it, 25 %
+median CPU). In-process: hold p99 14.5-20.2 µs and p99.99 0.37-1.27 ms (pass), the waiting sealer's lateness p99 under
+0.6 ms. Over sockets: every cell valid, relay CPU 0.15-0.45 cores (pass), sealing passes over 2 ms 0.07-0.24 % (pass),
+relay GC pauses at most 8.1 ms, one process stall over 20 ms (21 ms). The 1.34 s stall did not come back in five
+*storm* and five *storm-wait* runs over sockets; its cause stays unknown.
+
 ### 19.32 Round fix-019: the review of 0.1.7 (DW4Online 0.1.9)
 
 The adversarial review of 0.1.7 (main 3ad4621e) found eleven points; branch
