@@ -1,0 +1,23 @@
+# W10d (19.24, 19.6.6; the I1b review's race): a removes b while b's JOIN waits: b goes home from the loading screen at
+# once on its own story, it is never seated in a's instance again (no JOIN of a's stage group at all), its next arrival
+# hosts its own instance.
+a: online-script: step .* log: b waits for its join in a's instance
+a: online-script: remove \S+b member \d+ sent
+a: online-script: step .* log: b is gone
+a: online-script: step .* log: a still hosts
+b: online-script: step .* log: b waits for its join
+b: online: .*You were removed from .*'s instance\.
+b: online-script: step .* log: b home after the removal in the wait
+b: online-script: step .* log: own story at home
+b: online-script: step .* log: b on its own story there
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=join
+relay: test_hold_join
+relay: remove .*reason=host
+relay: instance_leave .*reason=removed
+relay: removed_home .*hold=join
+relay: redirect .*stage=stagml11
+!relay: join_decided
+!relay: seat_refused
+!a: online-script: FAIL
+!b: online-script: FAIL

@@ -276,8 +276,9 @@ public:
     bool set_visibility(wire::Visibility visibility);
     // Round I1b (moderation, 19.6.6): the host (or staff playing in the
     // instance) removes a member (INSTANCE_OP 2): it goes home and cannot see
-    // or join the instance for 10 minutes. False when this member may not
-    // (not the host or staff, outside an instance, the own id, not connected).
+    // or join the instance for World:RemovedBarMinutes (10). False when this
+    // member may not (not the host or staff, outside an instance, the own id,
+    // not connected).
     bool remove_member(std::uint32_t member);
     // Whether this member may remove others from its instance (the host, or
     // staff playing in it as INSTANCE_INFO's own role says).

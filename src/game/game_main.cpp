@@ -2255,6 +2255,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.mode = dw4::game::online::mode_name(online->session().mode());
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
+                        if (const auto& info = online->session().instance(); info && online->session().in_instance())
+                            facts.members = int(info->members.size());
                     }
                     facts.ghosts = ghosts.shown();
                     facts.figures = ghosts.staying();

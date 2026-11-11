@@ -456,8 +456,10 @@ void starting(online::OnlineLobby& lobby) {
 // The player card (round I1b, 19.5.2 / 19.5.4 / 19.16) of the member chosen
 // on the Instance page: *Report* with the fixed list of reasons (no free
 // text) and, for the host and staff playing in the instance, *Remove* with
-// its question. The host sends what was confirmed (INSTANCE_OP remove,
-// REPORT); the relay's answers come as toasts.
+// its question (19.5.6; the bar's length is the server's
+// World:RemovedBarMinutes, so the question names none). The host sends
+// what was confirmed (INSTANCE_OP remove, REPORT); the relay's answers
+// come as toasts.
 void player_card(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive& live) {
     if (s.card_member == 0) return;
     const RoomLive::Member* who = nullptr;
@@ -481,7 +483,7 @@ void player_card(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive& l
         }
     };
     if (s.card_remove_asked) {
-        wrapped(("Remove " + who->name + " from your instance? They can't rejoin it for 10 minutes.").c_str());
+        wrapped(("Remove " + who->name + " from your instance? They can't rejoin it for a while.").c_str());
         focus();
         if (button("Remove##confirm", !lobby.busy(), true)) {
             s.remove_requested = who->member;

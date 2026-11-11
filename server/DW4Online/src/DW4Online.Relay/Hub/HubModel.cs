@@ -316,6 +316,8 @@ public sealed class ArrivalGroup
     public List<HubMember> Awaited { get; } = [];
     public byte? Choice { get; set; }
     public long LastWaitSent { get; set; }
+    /// <summary>World:TestJoinHoldMs (test runs only): the JOIN waits until then whatever the target's state.</summary>
+    public long TestJoinHoldUntil { get; set; }
     public int Size => Members.Count + CoArrivals.Sum(c => c.Members.Count);
 }
 

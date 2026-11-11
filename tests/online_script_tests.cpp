@@ -74,6 +74,7 @@ void unknown_names() {
     check(OnlineScript::known_condition("roomflag:505") && !OnlineScript::known_condition("roomflag:") &&
               !OnlineScript::known_condition("roomflag:5x"),
           "a room story flag condition needs a flag number");
+    check(OnlineScript::known_condition("members"), "the members condition (round I1b: INSTANCE_INFO's members)");
     // Round 60: "shot NAME" (a file name of A-Z a-z 0-9 _) and the ghosts condition.
     OnlineScript d, e, f;
     error.clear();

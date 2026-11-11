@@ -122,6 +122,7 @@ struct OnlineScriptFacts {
     const engine::RoomStory* room_story = nullptr; // the session's confirmed room story (none yet: nullptr)
     int ghosts = 0;              // ghost figures shown (GhostFigures::shown, presentation)
     int figures = 0;             // of them staying, not fading out (GhostFigures::staying)
+    int members = 0;             // the members INSTANCE_INFO lists, oneself included (0 at home; round I1b)
 };
 
 class OnlineScript {

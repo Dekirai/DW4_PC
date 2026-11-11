@@ -1,0 +1,53 @@
+{
+  "desc": "the host removes a guest while its JOIN waits (19.6.6, the I1b review's race): the relay's test hold World:TestJoinHoldMs keeps b's automatic join waiting (a scene's stand-in) with b's seat taken; a sees b in its instance and removes it: b goes home from the loading screen at once on its own story and is never seated in a's instance again (no JOIN, no second seat); b's next arrival hosts its own",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1100,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "server": {
+    "World": {
+      "TestJoinHoldMs": 60000
+    },
+    "Instances": {
+      "JoinHoldSeconds": 90
+    }
+  },
+  "db_checks": [
+    {
+      "name": "b held one seat in a's instance, left removed",
+      "sql": "SELECT GROUP_CONCAT(leave_reason) FROM instance_history_members WHERE role = 'guest'",
+      "expect": "^removed$"
+    },
+    {
+      "name": "the host's removal is audited",
+      "sql": "SELECT COUNT(*) FROM audit_log WHERE event = 'instance_remove'",
+      "expect": "^1$"
+    },
+    {
+      "name": "two instances: a's and b's own",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^2$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "upload_card": true
+    }
+  ]
+}

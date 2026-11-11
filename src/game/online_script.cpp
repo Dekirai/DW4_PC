@@ -86,7 +86,7 @@ bool OnlineScript::known_condition(std::string_view key) {
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
                                                  "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts",
-                                                 "figures"};
+                                                 "figures", "members"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
@@ -231,6 +231,7 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key == "present") return compare(std::popcount(unsigned(facts.present)));
     if (c.key == "ghosts") return compare(facts.ghosts);
     if (c.key == "figures") return compare(facts.figures);
+    if (c.key == "members") return compare(facts.members); // (W10d: the host sees a waiting arrival's seat)
     if (c.key == "frames") return compare(step_frames_);
     if (c.key == "dead") return playing(engine, facts) && defeated(engine, facts.own_slot);
     if (c.key == "alive") return playing(engine, facts) && !defeated(engine, facts.own_slot);

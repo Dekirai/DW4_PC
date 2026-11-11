@@ -1301,7 +1301,13 @@ public sealed partial class RoomHub
             Note("hold_boss", g.From, ("target", target.Id));
             return;
         }
-        if (!target.Joinable || !target.Snapshot.Complete)
+        if (_world.TestJoinHoldMs > 0 && g.TestJoinHoldUntil == 0)
+        {
+            g.TestJoinHoldUntil = now + FromMs(_world.TestJoinHoldMs);
+            Count("test_join_hold");
+            Note("test_hold_join", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("ms", _world.TestJoinHoldMs));
+        }
+        if (!target.Joinable || !target.Snapshot.Complete || now < g.TestJoinHoldUntil)
         {
             if (g.Hold != HoldKind.Join)
             {
@@ -1391,7 +1397,7 @@ public sealed partial class RoomHub
                         Count("hold_context_changed");
                         Redecide(g, now);
                     }
-                    else if (g.Target.Joinable && g.Target.Snapshot.Complete && !g.Target.BossLock)
+                    else if (g.Target.Joinable && g.Target.Snapshot.Complete && !g.Target.BossLock && now >= g.TestJoinHoldUntil)
                     {
                         _holds.Remove(g);
                         Join(g, g.Target, now);

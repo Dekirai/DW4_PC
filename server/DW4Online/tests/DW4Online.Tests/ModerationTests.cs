@@ -215,6 +215,39 @@ public partial class HubLogicTests
         Assert.False(w.Ending);
     }
 
+    [Fact]
+    public void World_TestJoinHoldMs_holds_a_join_like_a_scene_and_a_removal_in_it_sends_the_member_home_as_scenario_W10d_needs()
+    {
+        var h = new Harness();
+        h.Hub.WorldOptions.TestJoinHoldMs = 20_000;
+        Admit(h, "a", Player(100, "a"));
+        Admit(h, "b", Player(101, "b"));
+        Admit(h, "c", Player(102, "c"));
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        // a is joinable, yet c's JOIN waits for the hook's 20 s (BARRIER_WAIT not joinable), then joins.
+        h.Barrier("c", "stag0101");
+        Assert.Equal(WaitReason.NotJoinable, h.P("c").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        h.Advance(19_000);
+        h.Hub.Housekeep(h.Now);
+        Assert.False(h.P("c").Has(Msg.BarrierOk));
+        h.Advance(1_500);
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(BarrierDecision.Join, h.Decision("c").Decision);
+        // b waits the same way; the host removes it in the wait: home at once, as without the hook.
+        h.Barrier("b", "stag0101");
+        Assert.True(W(h, "a").Seats.ContainsKey(h.Mem("b")));
+        h.Advance(1_000);
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
+        Assert.Equal(BarrierDecision.Dissolve, h.Decision("b").Decision);
+        h.Advance(30_000);
+        h.Hub.Housekeep(h.Now);
+        Assert.Single(h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse));
+        Assert.Equal(["Joined", "Left"], SeatNotices(h, "a", "b"));
+    }
+
     /// <summary>a hosts Dry Land and plays alone in dng205b1 (joinable); b and c are a sealed stage group of a's instance at stag0201.</summary>
     private static (Harness H, WorldInstance W) GuestPairApart()
     {
