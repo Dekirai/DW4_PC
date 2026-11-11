@@ -2271,7 +2271,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
             }
-                        // (Behind Play's loading screen the title is not heard either.)
+            // (Behind Play's loading screen the title is not heard either.)
             view.gain = overflow_switch.gain() * (title_driver.covering() ? 0.0f : 1.0f);
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
