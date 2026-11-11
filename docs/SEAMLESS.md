@@ -9573,6 +9573,24 @@ the stage groups it leaves behind (removed members still playing in
 them), so their next barrier goes home too instead of being a fresh
 arrival.
 
+The refix of fix-019 (the review of fix-019): **a JOIN never takes a
+seat.** A fresh arrival removed while it waits for its automatic JOIN (an
+entry scene's hold of up to `Instances:JoinHoldSeconds`, a boss choice)
+leaves the wait at once and decides again on its own, where the bar
+counts: another instance or its own (before, in 0.1.8 too, the JOIN at the
+hold's end took the seat back past the bar and the four seats, "joined"
+went to everyone again with a second history row, and an arrival that had
+taken the freed seat meanwhile was pushed into an instance of its own). A
+member removed at its stage group's barrier joins without a seat and goes
+home from the target's stage group by its owed HOME, as from a NEW. A
+detached stage group's former host plays his own story there, so his
+STORY still reaches his keeper (19.8.5). Until its way home, an engine on
+another's story without a seat there (a removed member, a fallback from
+nobody's instance, a JOIN whose seat went) is that instance's guest in the
+achievements' play context (19.8.9). W10s checks the fallback from
+nobody's instance with a real client (a staff removal during a classic
+catch-up whose target leaves the stage).
+
 #### 19.6.7 The host's connection loss (Q8)
 
 - **When it starts.** Today the relay notices a lost connection in two
@@ -9724,6 +9742,11 @@ never prompted, 19.30.3; the user confirmed it on 2026-11-06, decision
   moderator who simply plays is a player for the visibility too (fix-019;
   before, I1a put him into strangers' Private and Friends instances and
   replaced his story with theirs). `Matching.Visible(..., staffChoice)`.
+  In 0.1.9 (I1a: no prompt, no browser) no code path passes the staff
+  choice yet, so a moderator who simply plays enters a Private or Friends
+  instance only as the host's friend (from I4 also in his party); W18 runs
+  on a Public instance. I1b's prompt passes it for its rows, and its
+  preselection never takes a row that only the staff bypass shows.
 
 For staff the first two give way only to an explicit moderation action:
 *Spectate*, *Join as moderator* (a staff row's second action, audited
@@ -9809,6 +9832,17 @@ where he walked in, 19.30.4; from round I3 its *Y: Join at <host>*
 travels next to the host). The relay sends
 OPTIONS again on a change, at most once a second, and the client keeps the
 cursor on the same instance (or on *New instance*).
+
+*Players of the instance at the arrival's stage* (steps 3 and 6, the
+preselection; fix-019's refix) are the members of its stage groups that
+stay at that stage (no barrier, not an exit fork's leaving side, not past
+their log's end: the stage groups a JOIN could take) and their joiners.
+Never the members of a stage group at a barrier to another stage (before,
+they counted while their group waited at the exit, so the row became a
+preselected guest's NEW and I1a's interim rule put a stranger alone into a
+new stage group of their instance), nor a member playing on alone at the
+stage (another engine: the arrival would not meet it either). A stage
+group at a barrier *for* the arrival's stage is I1b's *Arriving now*.
 
 #### 19.7.4 The gate form (Q13: standing at the gate)
 
@@ -10122,7 +10156,9 @@ in the world.
   replaced) a guest's STORY is refused (reason *owner*), also while its
   seat waits for its DISSOLVE (fix-019; before, it still merged into the
   host's keeper once the hold was released). The host's own values stay
-  his (his keeper is his own story).
+  his (his keeper is his own story), also when his stage group did not
+  answer the END's HOME and was detached (fix-019's refix: fix-019 first
+  refused them there as another's story).
   Therefore round 59's *not_started*, start epochs, `OwnerSeen` and
   `OwnerEnters`, the dropped sets with their drop epochs, BARRIER_OK's
   dropped set and `Rooms:StoryWhileOwnerAway` retire: a new account's home
@@ -10351,6 +10387,16 @@ in the world.
   when it was mirrored into his own story, 19.8.6). Integration tests:
   *Lone Tamer* alone, `online_host` with three guests, a story clear as
   the host and as an in-step guest, and none for a not-in-step guest.
+- **An engine on another's story without a seat there** (fix-019's
+  refix: a removed member until its HOME, a fallback from nobody's
+  instance until its way home, a JOIN whose seat went) is that instance's
+  guest in the play context: its `wid` and history id, `IsHost` false, its
+  settings (randomizer, difficulty), the players of its stage group. Before,
+  it read as at home on its own story (`wid` 0, `IsHost` true, its own
+  settings), so story challenges and the ruleset counted as the own while
+  the engine held the former host's story and settings. The 0.1.8 client's
+  own facts still say "home" there (its BARRIER_OK names no instance); the
+  API decides by the relay's context.
 - **Uploads** are unchanged: the server composes the own story into every
   record and ignores uploaded story bytes (8.4); round G's card store
   override and the own story bytes in `CharacterSync` stay as a net (hubs
@@ -11996,6 +12042,7 @@ means round I1a):
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
 | W10 | I1b | a removes b: b goes home; b's prompt and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached |
+| W10s | I1a | (fix-019's refix) staff remove b while it catches up (a classic JOIN, `Instances:CheckpointJoins` off, b replaying at 200 steps a second) to join a's stage group in stag0102; a leaves the stage during the catch-up: b's fallback is a stage group of nobody's instance (BARRIER_OK `wid` 0, no story, `fallback_home`), HOME at once (`home_req` *staff*), b answers it and goes home by a DISSOLVE with the replace; never `instance_join how=join` for b; the admin's call names the relay's run (run.py `{run}`) |
 | W11 | I1a / I1b | (changed in round 72; decision 41) a lone host moving inside his area: a (alone in its instance) takes stag0101's exit to dng101b1 where c's instance has a stage group: no prompt, a's instance goes on with a (a new stage group of it), a sees none of c's members. W11b (I1b): a quest board's start the census cannot name, with a running instance there: the loading-screen prompt; *B* takes a back into the lobby next to the board, on its own story |
 | W12 | I1 | settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, no randomizer) joins: in the instance b's engine is Hard / 1 / randomizer, at home Normal / 0 / none |
 | W13 | I3 | quest help: a on board quest 1 (stag0401 point 3); b without the quest travels to a: at the quest's end b is home with its own 409, 376-381 and COUNTER 2 and no reward; a gets the reward |
@@ -12586,6 +12633,17 @@ The user's steps (19.22 step 7): a fresh backup in HeidiSQL,
 together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
+
+From the review of fix-019 (0.1.9), fixed parts of I1b's scope: (a) the
+client release carries `ActionManager::random_wait_min_` (the random
+WAITCHECK minimum, 80535A60) in the StageSnapshot: `kSnapshotVersion` 44
+with the tick state's version and the protocol rise; a classic join, a
+loaded save state and a fallback restore have it 0 today while the others
+have 120, and S22b's `statehash_mismatch` (also on 0.1.8) passing is a done
+criterion; (b) the prompt's candidates pass `staffChoice` for a staff
+member's rows (19.7.2), and `Preselected` never preselects a row that only
+the staff bypass shows; (c) *Arriving now* (19.7.2) for a stage group at a
+barrier for the arrival's stage, whose members are not *Here* (19.7.3).
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
@@ -13866,11 +13924,14 @@ not found (it came before M4 (e); the eleven later *storm* and
 
 **Run in round fix-019** (0.1.9, `docs/ROUND_FIX019_NOTES.md`): both harnesses, every cell, then *storm* and
 *storm-wait* three more times each way, with a GC trace (`GcTrace`: every collection's pause from the runtime's events
-and every stall of the process over 20 ms). Not on a quiet machine (another workflow's game clients beside it, 25 %
-median CPU). In-process: hold p99 14.5-20.2 µs and p99.99 0.37-1.27 ms (pass), the waiting sealer's lateness p99 under
-0.6 ms. Over sockets: every cell valid, relay CPU 0.15-0.45 cores (pass), sealing passes over 2 ms 0.07-0.24 % (pass),
-relay GC pauses at most 8.1 ms, one process stall over 20 ms (21 ms). The 1.34 s stall did not come back in five
-*storm* and five *storm-wait* runs over sockets; its cause stays unknown.
+and every stall of the process over 20 ms). Not on a quiet machine (the I1b workflow's 2-8 game clients beside it, 25 %
+median CPU), so not the run this section asks for. In-process: hold p99 14.5-20.2 µs and p99.99 0.37-1.27 ms (pass);
+the sealing lateness p99 with the sealer's TryEnter 3.05-6.63 ms (*base* 5.44, *storm* 6.63, *sealonly* 4.86, *joins*
+4.67, the storm runs 6.38 / 3.05 / 3.42): the 2 ms criterion is **missed** as written, as in r71 (the in-process
+harness's coincident timer wakes); with the waiting sealer under 0.6 ms. Over sockets: every cell valid, relay CPU
+0.15-0.45 cores (pass), sealing passes over 2 ms 0.07-0.24 % (p99 under 2 ms: pass), relay GC pauses at most 8.1 ms,
+one process stall over 20 ms (21 ms). The 1.34 s stall did not come back in five *storm* and five *storm-wait* runs
+over sockets; its cause stays unknown. Still open: the run on a quiet machine, in a window without the I1b workflow.
 
 ### 19.32 Round fix-019: the review of 0.1.7 (DW4Online 0.1.9)
 
@@ -13896,6 +13957,25 @@ DW4Online 0.1.9, a server release (the game client is unchanged):
    (`docs/ROUND_I1A_INT_NOTES.md`, `docs/ROUND_FIX019_NOTES.md`).
 10. The documents (README, the server's README, DEPLOY.md 9.1 / 9.2).
 11. The version 0.1.9.
+
+The review of fix-019 found seven more points; the refix on the same
+branch (still 0.1.9, still without a new client):
+
+1. **A JOIN takes no seat** (19.6.6): a fresh arrival removed during its
+   JOIN or boss hold decides again on its own (the bar counts); a member
+   removed at its barrier joins without a seat and goes home by its HOME.
+   (The bug was in 0.1.8 too.)
+2. **A detached stage group's former host** keeps his own STORY (19.8.5).
+3. **Players on their way elsewhere are not *Here*** (19.7.3). (In 0.1.8
+   too.)
+4. **The play context of an engine on another's story** is that
+   instance's guest's (19.8.9); W10s on a real client.
+5. The staff choice reaches no code path in 0.1.9: moderators enter
+   Private / Friends instances only as friends until I1b (19.7.2, 19.25).
+6. The load gate's in-process lateness misses 2 ms as written (19.17.4);
+   the quiet-machine run stays open.
+7. `ActionManager::random_wait_min_` in the snapshot goes into I1b's client
+   release with S22b as a done criterion (19.25).
 
 ## 20. Risks
 

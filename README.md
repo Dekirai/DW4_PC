@@ -382,8 +382,8 @@ a quest board, the return mat) puts you into an *instance* of that stage's
 area: a running one or a new one that you host. Until the arrival prompt
 comes (round I1b), the choice is automatic and cautious: you join a running
 instance only when it is a friend's (its host is your friend, or friends of
-yours play in it) or when players of it are at the very stage you arrive in,
-and only when its visibility lets you in (*Public*; *Friends* for the host's
+yours play in it) or when players of it play at the very stage you arrive in
+(not a group of it that is just leaving), and only when its visibility lets you in (*Public*; *Friends* for the host's
 friends; *Private* for nobody else, moderators who simply play included). A
 stranger's instance elsewhere in the area is never chosen for you. Otherwise
 you start a new instance with your default visibility and host it ("New

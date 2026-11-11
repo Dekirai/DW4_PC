@@ -60,13 +60,20 @@ det.sh (DEV=OFF copy `build/f19/off/dw4_f19_off_a.exe`, the C++ of every later c
 FakeClient Release (`build/f19/fc`, with `GcTrace`), `DOTNET_gcServer=1`, 3 s warm-up, 30 s measured (joins 60 s); results
 in `build/f19/gate/` (`inproc_r1.json`, `net_r1.json`, `net_storm_r2..r4.json`, `inproc_storm_r2..r4.json`, `summ.py` prints
 them; `machine_load.csv`). **Not a quiet machine**: nothing of this round ran beside it, but the I1b workflow's scenarios
-did (2-8 `dw4_*` game clients at every sample, total CPU median 25 %, p90 35 %, max 100 %, 207 samples of 5 s); the user
-decides whether a run on an idle machine is still wanted.
+did (2-8 `dw4_*` game clients at every sample, total CPU median 25 %, p90 35 %, max 100 %, 207 samples of 5 s). So this is
+**not the run the review asked for**; the run on a quiet machine stays open and needs a window without the I1b workflow.
+
+**Verdict** (corrected by the refix, finding 6 of the review of fix-019): over sockets the gate **passes** (relay CPU,
+sealing lateness p99 under 2 ms). In-process the hold passes, but the **sealing lateness misses the 2 ms p99 criterion of
+19.17.4 as written** in every cell with the sealer's TryEnter: p99 3.05-6.63 ms (`inproc_r1`: base 5.44, storm 6.63,
+sealonly 4.86, joins 4.67; `inproc_storm_r2..r4`: 6.38 / 3.05 / 3.42), as in r71. The explanation (the in-process
+harness's coincident timer wakes; the waiting sealer's cells stay under 0.6 ms, and over sockets the same relay passes) is
+the r71 one, not a measurement that lifts the criterion: the earlier summary's "in-process passed" was wrong.
 
 - In-process (`loadgate`, 8 cells): every cell valid. Hold p99 14.5-20.2 us (at most 0.5 ms: pass), p99.99 0.37-1.27 ms
-  (at most 5 ms, decision 42: pass), max 2.4-11.8 ms. Sealing lateness with the sealer's TryEnter p99 4.7-6.6 ms (the
-  in-process harness's coincident timer wakes, as in r71 / I1a), with the waiting sealer (base-wait, storm-wait) p99
-  0.56-0.59 ms. Process CPU 0.02-0.08 cores. GC trace: 7-51 collections per cell run, the longest pause 2.5-4.9 ms, no
+  (at most 5 ms, decision 42: pass), max 2.4-11.8 ms. Sealing lateness with the sealer's TryEnter p99 4.67-6.63 ms in r1,
+  3.05-6.38 ms in the storm runs (**missed**: 2 ms; the in-process harness's coincident timer wakes, as in r71 / I1a), with
+  the waiting sealer (base-wait, storm-wait) p99 0.53-0.59 ms. Process CPU 0.02-0.08 cores. GC trace: 7-51 collections per cell run, the longest pause 2.5-4.9 ms, no
   stall of the process over 20 ms.
 - Over sockets (`loadgate --sockets`, 7 cells, the relay in its own process): every cell valid. Relay CPU 0.15 (select),
   0.23 (fullhub), 0.34-0.40 (base, sealonly, storm, the waits): under half a core in every cell (pass). Sealing passes
@@ -81,10 +88,40 @@ decides whether a run on an idle machine is still wanted.
   3.4 ms and no stall of the process (the highest-priority watcher kept waking): the sealing thread preempted while it
   held the lock on the loaded machine, under the p99.99 reading.
 
+## The refix (the review of fix-019)
+
+The review of fix-019 (head 43603e57) found seven points (one should-fix, six minor). Each code fix has a unit test that
+fails without it (`build/f19/cp/unit_refix_{seat,hoststory,here,context}.log`: the script reverses one fix in the working
+tree, runs the unit tests, restores the files).
+
+| # | Finding | Verdict | What | Test |
+| --- | --- | --- | --- | --- |
+| R1 | the JOIN path re-seats a removed member past the bar and the four seats (in 0.1.8 too) | fixed | `Remove()`: a fresh arrival held for its automatic JOIN (JOIN or boss hold) of that instance leaves the hold and decides alone (`DecideAlone` -> `FreshJoinOrNew`, the bar counts via `Visible()`), its HOME wish dropped (its engine never entered); `Join()` never takes a seat: a fresh member without one decides alone, a member removed at its barrier joins seatless and `RetryHome` sends it home (as from a NEW) | `A_fresh_arrival_removed_during_its_join_hold_decides_again_alone_and_never_takes_its_seat_back` (the review's P1 and P5: no fifth seat, one history row, one "joined"), `A_member_removed_at_its_barrier_joins_without_a_seat_and_its_story_and_context_are_a_guests` (cp `seat`) |
+| R2 | the detached host's own STORY refused as foreign (a regression of fix-019) | fixed | `HubInstance.DetachedFrom` (set by `Detach`, `RemoveWorld`, `FallbackHome` from `JoinState.World`): `OnForeignStory` excepts the former host of a detached group (the story is his own) | `A_detached_groups_former_host_keeps_his_own_story_and_his_home_context` (the review's P6; cp `hoststory`) |
+| R3 | "Here" counts players leaving the arrival stage (in 0.1.8 too) | fixed | `Candidates()`: Here = the members of the stage groups that stay at S (the `atStage` filter: no barrier, not departing, not log-full) and their joiners; never a group at a barrier to elsewhere, never a lone player | `Players_on_their_way_elsewhere_are_not_here_and_a_stranger_gets_an_instance_of_his_own` (the review's P2; cp `here`) |
+| R4 | after `FallbackHome` client and relay read "home, own story" until HOME | fixed (relay); client unchanged | `ContextOf()`: an engine on another's story without a seat there (`OnForeignStory`: removed, a detached or seatless group, a JOIN whose seat went) is that instance's guest (its wid and history id, IsHost false, its settings, its group's players), so the API refuses story challenges and takes the instance's ruleset. The 0.1.8 client's own facts still say home (its BARRIER_OK has wid 0; changing that is a client matter); the claim is checked server-side. The review's "the client ignores JOIN_REQ outside solo" does not hold here: the fallback's BARRIER_OK restores the fallback and begins the visit in the same call (`Session::on_barrier_ok` -> `begin_visit`, mode solo), so the JOIN_REQ home that follows is answered (the unit test and W10s) | `A_fallback_from_nobodys_instance_plays_as_the_former_instances_guest_until_its_way_home` (cp `context`); W10s with real clients (below) |
+| R5 | staff join only on the unit level | accepted, documented | no code: in 0.1.9 a moderator enters Private / Friends instances only as the host's friend (W18 runs Public); for I1b: pass `staffChoice` into the prompt's candidates, never preselect a staff-only row (SEAMLESS 19.7.2, 19.25) | - |
+| R6 | the load gate's report | accepted, documented | the verdict above: sockets pass, in-process misses the lateness as written, the quiet-machine run is open (also SEAMLESS 19.17.4) | - |
+| R7 | `random_wait_min_` missing from the StageSnapshot (older, live) | accepted for I1b | not in this server-only round: SEAMLESS 19.25 puts it into I1b's client release (`kSnapshotVersion` 44 with the protocol rise) with S22b as a done criterion | S22b (fails on 0.1.8 and here) |
+
+W10s (new, `tools/online_test/scenarios/W10s`): S22a's classic catch-up (b at `DW4_ONLINE_RATE` 200) with a staff removal of
+b at @334 s through `POST /admin/instances/1/remove?run={run}` (run.py's new `{run}`: the run GET /admin/instances names),
+then a leaves stag0102: b's fallback is `fallback_home` (wid 0), `home_req` reason Staff, b's way home a DISSOLVE with the
+replace; never `instance_join how=join` for b.
+
+Documents: SEAMLESS 19.6.6, 19.7.2, 19.7.3, 19.8.5, 19.8.9, 19.17.4, 19.24 (W10s), 19.25 (I1b's fixed scope), 19.32; README
+(the automatic choice). Server unit tests 477/477 (`build/f19/unit_refix.log`), integration tests 141 passed, 1 skipped
+(`build/f19/it_refix.log`).
+
 ## Left
 
-- Open beyond this round (not fixed: a client release with a protocol rise): S22b's `statehash_mismatch` after a classic
-  join, `ActionManager::random_wait_min_` missing from the load snapshot ("Scenarios", r2, above).
+- Open beyond this round (not fixed: a client release with a protocol rise, I1b's): S22b's `statehash_mismatch` after a
+  classic join, `ActionManager::random_wait_min_` missing from the load snapshot ("Scenarios", r2, above; SEAMLESS 19.25).
+- The load gate on a quiet machine (a window without the I1b workflow).
+- For the user: in 0.1.9 moderators cannot enter Private or Friends instances (except as the host's friend) until I1b's
+  prompt passes the staff choice.
+- For I1b: `staffChoice` in the prompt's candidates, `Preselected` never on a staff-only row; *Arriving now* for a group at
+  a barrier for the arrival stage (its members are not *Here*).
 
 ## How to run
 
@@ -100,4 +137,5 @@ decides whether a run on an idle machine is still wanted.
   `build/f19/scen/dw4_f19_dev_TAG.exe`; `ui` or `--fake` instead of scenario names for those sets; `--no-build` after the
   first run). det: `bash work/dref/checks/det.sh EXE NAME` from the main repo.
 - Counter-proofs: a script outside the repo applied each fix's reversal to the working tree, built and ran the unit tests
-  (`build/f19/cp/unit_{auto,staff,ended,foreign,fallback,removeworld,run}.log`), then restored the files.
+  (`build/f19/cp/unit_{auto,staff,ended,foreign,fallback,removeworld,run}.log`; the refix's
+  `unit_refix_{seat,hoststory,here,context}.log`), then restored the files.
