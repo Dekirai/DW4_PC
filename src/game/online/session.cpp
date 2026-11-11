@@ -1645,7 +1645,7 @@ void Session::park(double now) {
     decision_.reset();
     loading_.clear();
     // (19.5.3: "Joining Rin..." while the gate's departure to a chosen row with players here loads.)
-    if (from_home && chosen_join_ && !chosen_host_.empty()) loading_ = "Joining " + chosen_host_ + "...";
+    if (from_home && chosen_join_ && chosen_here_ && !chosen_host_.empty()) loading_ = "Joining " + chosen_host_ + "...";
     boss_choice_ = false;
     parked_at_ = now;
     mode_ = Mode::parked;

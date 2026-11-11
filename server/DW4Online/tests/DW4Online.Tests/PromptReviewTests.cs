@@ -242,6 +242,27 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_withdrawn_plan_is_closed_and_refreshed_no_more()
+    {
+        // The client withdraws a plan whose menu closed otherwise (CHOICE back with the plan): the relay closes it, and a change of
+        // the candidates sends no refresh for the overlay that is gone.
+        var h = PromptHarness();
+        Admit(h, "a", Player(100, "a"));
+        Admit(h, "b", Player(101, "b"));
+        Admit(h, "c", Player(102, "c"));
+        HostJoinable(h, "a", "stag0101");
+        Plan(h, "b", 5, "stag0101");
+        Assert.True(h.Mem("b").Prompt.Offered);
+        Choose(h, "b", 5, ChoiceKind.Back);
+        Assert.Equal((0, 1L), (h.Mem("b").Prompt.Plan, h.Hub.Counters.GetValueOrDefault("plan_closed")));
+        var sent = h.P("b").All(Msg.Options, OptionsMsg.Parse).Count;
+        HostJoinable(h, "c", "stag0102"); // (a second row for b's plan, were it open)
+        h.Advance(1_100);
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(sent, h.P("b").All(Msg.Options, OptionsMsg.Parse).Count);
+    }
+
+    [Fact]
     public void Plan_s_throttle_tolerates_the_networks_jitter()
     {
         // The client spaces its PLANs a second apart by its own clock; one that arrives 950 ms after the first is answered.

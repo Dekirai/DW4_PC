@@ -335,6 +335,7 @@ private:
     PadSample gate_filter(const PadSample& local, double now);
     std::array<PadSample, 4> step_pads(const PadSample& local, double now);
     void send_plan(double now);
+    void withdraw_plan(std::uint16_t plan, const char* why);
     void on_options(const wire::Options& options, double now);
     void open_prompt(PromptForm form, const wire::Options& options, double now);
     void answer_prompt(bool back, double now);
@@ -359,6 +360,7 @@ private:
     double auto_answer_at_ = -1;        // the automatic answer is due (test runs)
     AutoChoice auto_now_ = AutoChoice::none; // and which one
     bool chosen_join_ = false;          // the arrival came from a row the player chose (the toasts)
+    bool chosen_here_ = false;          // and that row had players at the arrival stage ("Joining <host>...", 19.5.3)
     std::string chosen_host_;
 
     struct PendingEvent {

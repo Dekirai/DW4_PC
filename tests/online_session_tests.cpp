@@ -1188,6 +1188,22 @@ void prompt_gate_form() {
         check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "the press went out anyway");
         check(world.now - pressed_at >= 0.95 && world.now - pressed_at < 1.3, "after about a second");
         check(world.run_until(5, [&] { return !world.hub.barrier_plans.empty(); }) && world.hub.barrier_plans[0] == 0, "BARRIER plan 0");
+        check(!world.hub.choices.empty() && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == world.hub.plans[0].plan,
+              "the timed-out plan withdrawn (CHOICE back)");
+    }
+    {
+        // The menu closes otherwise while the overlay is open: the overlay closes and the plan is withdrawn (CHOICE back), so the
+        // relay sends no more refreshes for it (round I1b's review).
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        a.engine.gate_menu = false;
+        world.run(0.2);
+        check(!a.session->prompt() && !a.session->holding_press() && a.engine.gate_confirms == 0, "closed with the menu");
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == world.hub.plans[0].plan,
+              "the plan withdrawn");
     }
     {
         // The connection lost while the overlay is open: closed, the press dropped, the menu closed, the notice.
@@ -1269,6 +1285,23 @@ void prompt_loading_form() {
         check(world.run_until(8, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "a new instance");
         check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::new_instance && world.hub.choices[0].plan == 0,
               "CHOICE new at the held barrier");
+    }
+    {
+        // "Joining <host>..." only for a row with players at the arrival stage (19.5.3): Rin's row (nobody here) starts the stage as
+        // a guest, Kim's (here 1) joins.
+        for (const bool kim : {false, true}) {
+            World world;
+            world.hub.co_arrival_hold = 0.2;
+            world.hub.prompt = prompt_rows();
+            auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+            a.input = press_a_at(a.session->tick() + 30);
+            check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+            if (!kim) key(a, dw4::pad_button::down, world.now);
+            key(a, dw4::pad_button::a, world.now);
+            const auto loading = a.session->overlay(world.now).loading;
+            check(kim ? loading == "Joining Kim..." : loading.find("Joining") == std::string::npos,
+                  kim ? "Kim's row: Joining Kim..." : "Rin's row (nobody here): no Joining line");
+        }
     }
     {
         // The connection lost at the held barrier closes the prompt (the relay forgot the hold).

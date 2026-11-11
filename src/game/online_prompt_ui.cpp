@@ -31,7 +31,7 @@ const char* state_word(w::RowState s) {
     case w::RowState::host_away: return "Host reconnecting";
     case w::RowState::full: return "Full";
     case w::RowState::arriving: return "Arriving now";
-    case w::RowState::other_quest: return "Other settings";
+    case w::RowState::other_quest: return "Other quest"; // (unused before a quest's name is on the wire: 19.5.6 "Quest: <name>")
     case w::RowState::story_not_here: return "Story not here yet";
     case w::RowState::too_long: return "Too long to catch up";
     }
@@ -122,7 +122,8 @@ void draw_arrival_prompt(const online::PromptView& p, bool keyboard) {
     }
     ImGui::Separator();
     const bool home_back = p.form == online::PromptForm::loading;
-    const std::string hint = keyboard ? std::string("Enter: Choose   Left/Right: visibility   X: Details   ") +
+    // (19.5.7: the keyboard has arrows, Enter and Backspace in the prompt; X: Details is the pad's only.)
+    const std::string hint = keyboard ? std::string("Enter: Choose   Left/Right: visibility   ") +
                                             (home_back ? "Backspace: Back to the lobby" : "Backspace: Back")
                                       : std::string("A: Choose   Left/Right: visibility   X: Details   ") + (home_back ? "B: Back to the lobby" : "B: Back");
     ImGui::TextUnformatted(hint.c_str());

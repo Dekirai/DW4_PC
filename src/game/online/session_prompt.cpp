@@ -92,6 +92,7 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
                 gate_plan_ = 0;
                 departure_plan_ = 0;
                 chosen_join_ = false;
+                chosen_here_ = false;
                 chosen_host_.clear();
                 trace("prompt hold stage=%s point=%d menu=%s cursor=%d", target->stage.c_str(), target->point, target->menu.c_str(), target->cursor);
                 send_plan(now);
@@ -106,6 +107,7 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
             // It never sticks: the press goes out, the barrier is decided as a loading-screen arrival.
             trace("prompt plan-timeout plan=%u", unsigned(gate_plan_));
             log("no answer to the gate's plan within %.1f s: the departure goes on", config_.plan_wait);
+            withdraw_plan(gate_plan_, "timeout"); // (a late OPTIONS opens nothing; the relay closes the plan)
             departure_plan_ = 0;
             gate_phase_ = GatePhase::release;
         }
@@ -124,8 +126,11 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
         break;
     }
     if ((gate_phase_ == GatePhase::waiting || gate_phase_ == GatePhase::open) && !engine_.pending_departure_choice()) {
-        // (The menu went otherwise: nothing to depart from any more.)
+        // (The menu went otherwise: nothing to depart from any more. The relay closes the plan: no refreshes for an overlay
+        // that is gone, round I1b's review.)
         trace("prompt hold dropped (the menu closed)");
+        if (gate_phase_ == GatePhase::open) withdraw_plan(prompt_plan_, "menu closed");
+        else if (gate_plan_ != 0) withdraw_plan(gate_plan_, "menu closed");
         if (prompt_ && prompt_->form == PromptForm::gate) close_prompt("menu closed");
         gate_phase_ = GatePhase::idle;
         last_departure_.reset();
@@ -149,6 +154,16 @@ void Session::send_plan(double now) {
     plan.group = 1;
     send(w::Type::plan, w::encode(plan));
     trace("prompt plan=%u stage=%s point=%u", unsigned(plan.plan), plan.stage.c_str(), unsigned(plan.point));
+}
+
+void Session::withdraw_plan(std::uint16_t plan, const char* why) {
+    // CHOICE back for a plan whose press went otherwise (the relay forgets it, as after the gate form's B).
+    if (plan == 0 || !transport_) return;
+    w::PromptChoice c;
+    c.plan = plan;
+    c.choice = w::ChoiceKind::back;
+    send(w::Type::choice, w::encode(c));
+    trace("prompt plan withdrawn plan=%u (%s)", unsigned(plan), why);
 }
 
 void Session::on_options(const w::Options& o, double now) {
@@ -296,6 +311,7 @@ void Session::answer_prompt(bool back, double now) {
     trace("prompt answer choice=%s wid=%u visibility=%s form=%s back_point=%d", back ? "back" : c.choice == w::ChoiceKind::join ? "join" : "new",
           c.wid, visibility_word(c.visibility), v.form == PromptForm::gate ? "gate" : "loading", c.back_point == 0xFF ? -1 : int(c.back_point));
     chosen_join_ = !back && c.choice == w::ChoiceKind::join;
+    chosen_here_ = chosen_join_ && v.rows[v.cursor].here > 0;
     chosen_host_ = chosen_join_ ? v.rows[v.cursor].host_name : std::string();
     if (v.form == PromptForm::gate) {
         // A: CHOICE first, then the held press in the next pad (the BARRIER names the plan); B: a B press to the game.
@@ -305,7 +321,8 @@ void Session::answer_prompt(bool back, double now) {
         return;
     }
     // The loading-screen form: the relay answers with BARRIER_OK, a join's hold or a refreshed prompt.
-    if (chosen_join_) loading_ = "Joining " + chosen_host_ + "...";
+    // (19.5.3: "Joining <host>..." only for a row with players at that stage; elsewhere he starts the stage as a guest.)
+    if (chosen_here_) loading_ = "Joining " + chosen_host_ + "...";
     close_prompt(back ? "back" : "answered");
 }
 

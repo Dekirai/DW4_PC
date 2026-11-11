@@ -149,9 +149,14 @@ namespace DW4Online.Relay.Hub
                 var p = m.Prompt;
                 if (p.Plan != msg.Plan || msg.Choice == ChoiceKind.Back)
                 {
-                    // (A gate form's B goes to the game: no barrier, nothing to decide. An unknown plan: nothing open.)
-                    if (p.Plan == msg.Plan) p.Clear();
-                    Count("choice_ignored");
+                    // (A gate form's B goes to the game: no barrier, nothing to decide; the client withdraws a plan the same way when
+                    // its menu closed otherwise or World:PlanWaitMs ran out. An unknown plan: nothing open.)
+                    if (p.Plan == msg.Plan)
+                    {
+                        p.Clear();
+                        Count("plan_closed");
+                    }
+                    else Count("choice_ignored");
                     return;
                 }
                 if (p.Choice is not null)
