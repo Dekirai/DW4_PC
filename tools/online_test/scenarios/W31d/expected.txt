@@ -1,6 +1,6 @@
 # W31d (19.24, 19.30.8): no notice while defeated; a GO whose slot falls before it does nothing on every engine ("Couldn't
 # go along: you were defeated.", the withdraw); the last living member's GO takes the defeated along (the side rule), no
-# game over. The fingerprints of b's, c's and d's stage group are compared by the harness (0 differ).
+# game over (no instance end but the host's own at the run's end). The fingerprints of b's, c's and d's stage group are compared by the harness (0 differ).
 b: online-trace: test hook applied .*hook=1
 b: online-script: step .* log: b fell
 d: online-script: step .* log: d sees the notice
@@ -24,7 +24,7 @@ relay: go_stamped .*stage=dng204b1
 relay: go_stamped .*stage=dng204b1
 relay: go_barrier
 !b: online-trace: offer notice
-!relay: instance_end
+!relay: instance_end .*reason=(?!host_left)
 !a: online-script: FAIL
 !b: online-script: FAIL
 !c: online-script: FAIL
