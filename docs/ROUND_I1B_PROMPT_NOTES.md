@@ -40,6 +40,11 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - **Game** (`src/game/online_prompt_ui.{hpp,cpp}`, two hooks in game_main.cpp): the overlay in both forms (19.5.3's columns,
   "Here (n)", greyed states with their words, badges, X details, the hint line; loading form "B: Back to the lobby"), the
   prompt's keys from the own pad and the keyboard's arrows / Enter / Backspace.
+- ***Back to the lobby*'s point** (001f786b, 19.7.5 "at the point next to the departure it took"): the accessor names the
+  lobby's point next to each named departure (`DepartureChoice::back_point`: stagML11 point 1 at the gate, 3 at the return
+  mat; `dw4_world_probe DATA mats stagml11` prints the mats and the generate points); the client remembers the named
+  departure its own press last started (also with the gate form off) and sends that point in CHOICE *back*; an unnamed
+  departure or a press more than a minute before sends 0xFF (the relay's stagML11 point 3). The relay takes points 0-4 only.
 
 ## Tests
 
@@ -64,8 +69,10 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- W30c again after its b.script fix (8aee0bfd); the I1a W set again with autochoice first (the harness's default): run r3
-  below.
+- r4 (below): W11b with the back point, W9 (cut off in r3), W30 and W30x again (r3: a's explore bot fell in stag0201's
+  fights before it reached stag0202, a bot flake; I1a's runs passed them).
+- Server integration tests again at 001f786b (only Prompt.cs's back point changed; WorldPromptTests sends 0xFF and expects
+  point 3, unchanged).
 
 ## Runs
 
@@ -78,8 +85,20 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - r2 (exe b, `build/i1bp/scen_r2.log`): **W1, W11b, W2, W2b, W30b passed**; W30c: the first prompt as expected (c's row
   with Here (1) first, a's row second, the cursor on c's, B), then b stood on the mat after B and the gate's menu never
   opened again (the mat's script opens it only on a new step onto it): b.script walks back to its start first (8aee0bfd).
-- r3 (exe b, `build/i1bp/scen_r3.log`): W30c, W2 (now with its picture), then the I1a W set W3 W4 W4b W4bx W5 W6 W7 W7b W7c
-  W7d W7e W8 W9 W11 W12 W18 W19 W22 W24-W29 W30 W32 and the counter-proofs W1x W30x (running).
+- r3 (exe b, `build/i1bp/scen_r3.log`, cut off by the PC's shutdown during W9): **W30c, W2 passed**; of the I1a set with
+  autochoice first **W3 W4 W4b W4bx W5 W6 W7 W7b W7c W7d W7e W8 W11 W12 W18 W24 W25 W26 W27 W28 W32 and W1x passed**; W19,
+  W22, W29 skipped (they need fake_world_clients / old_client, as in I1a's runs); W30 failed: a's explore bot (k10) lost
+  its HP in stag0201's fights on the way to stag0202 and fell at frame 12211, so b found a at stag0201 (rows
+  `[1:...:joinable:1:stag0201]`, the cursor on a's row: decision 40 right) and the instance ended at a's defeat; W30x
+  (counter-proof) failed the same way. A bot flake, not the prompt: run again in r4.
+- At 001f786b (exe c = the DEV=ON game with the back point, `build/i1bp/scen/dw4_i1bp_dev_c.exe`): ctest 57/57; server unit
+  479/481 right after a reboot: `HubLogicTests.A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges`
+  (both protocols) fails while the machine's uptime is under ~1,016 s: `RoomHub.BecomeMember` stamps `InstanceSince` with
+  the real `Stopwatch.GetTimestamp()` while the test harness's clock starts at 1,000 s, so the joiner looks older than the
+  host and wins the two-member vote (an I1a/J harness finding, not this lane's; 481/481 at 14:27 with the longer uptime;
+  contract entry "prompt 2026-11-11 14:25"). det.sh with the DEV=OFF copy `build/i1bp/off/dw4_i1bp_off_001f786b.exe`:
+  4004f056 / 396cb219 twice (online off unchanged).
+- r4 (exe c, `build/i1bp/scen_r4.log`): W11b W9 W30 W30x (running).
 
 ## How to run the tests
 
