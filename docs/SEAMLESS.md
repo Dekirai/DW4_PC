@@ -13531,6 +13531,10 @@ therefore about 3.5 s with a checkpoint join. W31 (real clients, run r2
 of the go lane): the press to the stamp 10.0 s (dng204b1's load and its
 entry scene: the request waited in the field), the stamp to control 3.4 s
 (JOIN_AT, the departure, 2.8 s to the park, the barrier, the join).
+Run d1 (2026-11-11, the passing W31): b's press 0.7 s after a's offer
+opened, its stamp 10.9 s later (B1's load and entry scene), the join 3.3 s
+after the stamp; c's press as a's offer moved to B2, its stamp 21.3 s later
+(B2's load and entry scene), the join 3.4 s after the stamp.
 
 #### 19.30.8 Edge cases
 
