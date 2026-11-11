@@ -1,11 +1,16 @@
 # W31c, host a (k10): hosts Dry Land, b joins in stag0201; a goes into dng204b1 alone (matz01) and out again at once
 # (depart: alone in its stage group) to stag0202, before b answers.
+# (It heals from the L panel at 350 HP on the way to matz01: stag0201's mummies felled W31b's b in run d1.)
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log a hosts Dry Land
 idle until present=2,sealed>=300 or epoch>=@400 fail stagechange
+explore matz01 yes until stage=dng204b1,control or hp<=350 fail epoch>=@700
+disk 1 until hp>=700 or frames>=900
+explore matz01 yes until stage=dng204b1,control or hp<=350 fail epoch>=@700
+disk 1 until hp>=700 or frames>=900
 explore matz01 yes until stage=dng204b1,control fail epoch>=@700
 log a in dng204b1
 depart stag0202 0 until stage=stag0202,control

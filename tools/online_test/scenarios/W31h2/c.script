@@ -1,10 +1,15 @@
 # W31h2, c (k10): joins a in stag0201 and goes into dng204b1 with a (matz01, both on the mat).
+# (It heals from the L panel at 350 HP on the way to matz01: stag0201's mummies felled W31b's b in run d1.)
 campaign until stage=stagml11,control
 idle until epoch>=@120
 explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log c in stag0201
 idle until present=3,sealed>=300 or epoch>=@420 fail stagechange
+explore matz01 yes 2 until stage=dng204b1,control or hp<=350 fail epoch>=@800
+disk 1 until hp>=700 or frames>=900
+explore matz01 yes 2 until stage=dng204b1,control or hp<=350 fail epoch>=@800
+disk 1 until hp>=700 or frames>=900
 explore matz01 yes 2 until stage=dng204b1,control fail epoch>=@800
 log c in dng204b1
 disk 1 until hp>=700 or frames>=600
