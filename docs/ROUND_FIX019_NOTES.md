@@ -113,6 +113,19 @@ Documents: SEAMLESS 19.6.6, 19.7.2, 19.7.3, 19.8.5, 19.8.9, 19.17.4, 19.24 (W10s
 (the automatic choice). Server unit tests 477/477 (`build/f19/unit_refix.log`), integration tests 141 passed, 1 skipped
 (`build/f19/it_refix.log`).
 
+Scenario run rf1 (`build/f19/scen_rf1.log`, run folder `tools/online_test/.work/run_20261111_195942`; exe a, the server of
+8d5d47de, the I1b workflow beside it): **8 of 8 passed**: J1 (228 s), S22a (368 s), W1 (227 s), W10s (388 s), W24 (243 s), W27 (386 s),
+W29 (432 s), W30 (403 s). In W10s the staff removal came at relay 335.3 s during b's catch-up (JOIN decided 329.7 s, 3166 ticks),
+a left stag0102 at 343.7 s: `fallback_home` (removed=true), `home_req` reason Staff at once, HOME stamped at the
+fallback's tick 2 (26 ms later: the 0.1.8 client answered the JOIN_REQ), but b's home barrier came only at 366.8 s
+(tick 1383): the engine takes the HOME's departure after its restored stage load ended (`load_end` 357.0 s). So the
+window of finding R4 is about 20 s, not one second; the relay's guest context covers it. Then the DISSOLVE with the
+replace, no exception, no CLOSE.
+
+det.sh (the DEV=OFF copy `build/f19/off/dw4_f19_off_a.exe`; the refix changed no C++) twice: 4004f056 / audio 396cb219
+in all four runs (`build/f19/det_rf.log`, `work/dref/checks/det/det_f19_rf1`, `_rf2`). ctest not run again (no C++ change
+since its 62/62; Data Overflow untouched). The game client is unchanged: 0.1.9 stays a server release.
+
 ## Left
 
 - Open beyond this round (not fixed: a client release with a protocol rise, I1b's): S22b's `statehash_mismatch` after a
