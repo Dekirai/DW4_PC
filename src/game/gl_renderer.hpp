@@ -2,6 +2,7 @@
 
 #include "dw4/engine/scene_graph.hpp"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -18,12 +19,51 @@ struct Viewport {
 // OpenGL 3.3 renderer for engine draw lists. Requires a current context.
 class TexturePack;
 
+// The controller prompts (button_prompts.hpp, docs/ROUND_PADS_NOTES.md):
+// the game font's button glyphs, the word START in its texts and the
+// title's PRESS START drawn with the active controller's pictures. Only
+// the presentation changes: the quads, their places and the texts stay
+// what the engine made.
+struct PromptGlyphCell {
+    float u0 = 0, v0 = 0, u1 = 0, v1 = 0; // the glyph's texel rectangle in the font texture
+    int control = -1;                     // PromptControl
+};
+struct PromptGlyphs {
+    const void* document = nullptr; // the font image (its texture cache key)
+    std::uint32_t reference = 0;
+    std::vector<PromptGlyphCell> buttons;      // the button glyphs
+    std::array<PromptGlyphCell, 4> letters{};  // S, T, A, R (the word START)
+    PromptGlyphCell start_glyph;               // the START button glyph (a word next to it stays a word)
+    PromptGlyphCell space;                     // the space (it has a quad: words end at it)
+    bool valid = false;
+};
+class PromptSource {
+public:
+    virtual ~PromptSource() = default;
+    // The active family's picture atlas, 0 for the game's own pictures.
+    virtual unsigned atlas_texture() const = 0;
+    // A control's cell and the word cell in the atlas: u0, v top, u1, v bottom.
+    virtual std::array<float, 4> atlas_cell(int control) const = 0;
+    virtual std::array<float, 4> atlas_word() const = 0;
+    // Changes with the family and its bindings (the title's variants are kept by it).
+    virtual std::uint64_t art_key() const = 0;
+    // The title's PRESS START texture for the active family (rgba top row
+    // first, as decoded); false: keep the original.
+    virtual bool title_variant(const std::vector<std::uint8_t>& rgba, int width, int height, bool nearest, std::vector<std::uint8_t>& out,
+                               int& out_width, int& out_height) const = 0;
+};
+
 class GlRenderer {
 public:
     GlRenderer();
     ~GlRenderer();
     // Texture dumps and replacements (null for none); clear_cache() reloads.
     void set_texture_pack(TexturePack* pack) { pack_ = pack; }
+    // The controller prompts (null: the game's own pictures everywhere).
+    void set_prompts(PromptSource* source) { prompts_ = source; }
+    // The game font's glyph cells (once the engine loaded its font).
+    void set_prompt_glyphs(const PromptGlyphs& glyphs);
+    bool has_prompt_glyphs() const { return glyphs_.valid; }
     GlRenderer(const GlRenderer&) = delete;
     GlRenderer& operator=(const GlRenderer&) = delete;
 
@@ -77,7 +117,27 @@ private:
     struct Texture {
         unsigned id{};
         bool alpha{};
+        // The title's PRESS START texture (its decoded pixels for the
+        // prompt variants, and whether it is magnified nearest).
+        bool title_press = false;
+        bool nearest = false;
+        int width = 0, height = 0;
+        std::vector<std::uint8_t> original;
     };
+    // A text line's quads split for the prompts: the text without the
+    // button glyphs and words (the mesh's vertices, its own indices), and
+    // the pictures' quads in the atlas.
+    struct PromptSplit {
+        std::uint64_t serial{};
+        unsigned text_vao{}, text_ibo{};
+        int text_count{};
+        unsigned icon_vao{}, icon_vbo{}, icon_ibo{};
+        int icon_count{};
+        bool none{}; // no prompt quads: drawn as it is
+    };
+    const PromptSplit* prompt_split(const engine::GeometryData* geometry, const Mesh& mesh);
+    void release(PromptSplit& split);
+    unsigned title_texture(const Texture& texture);
     const Mesh* mesh(const engine::GeometryData* geometry);
     const Texture* texture(const engine::Attribute* binding);
     void render_shadow_map();
@@ -97,6 +157,10 @@ private:
     int shadow_width_{}, shadow_height_{};
     bool shadow_ready_{};
     TexturePack* pack_{};
+    PromptSource* prompts_{};
+    PromptGlyphs glyphs_;
+    std::unordered_map<const engine::GeometryData*, PromptSplit> splits_;
+    std::map<std::uint64_t, unsigned> title_variants_; // by PromptSource::art_key
     bool id_pass_{};
 };
 

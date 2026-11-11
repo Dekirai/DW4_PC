@@ -50,6 +50,15 @@ struct PadInput {
 std::string pad_input_name(const PadInput& input); // "a", "leftshoulder", "righttrigger", ""
 PadInput pad_input_from_name(std::string_view name);
 
+// [gamepad] nintendo_layout: how the bindings read a Nintendo pad's face
+// buttons (Switch Pro, Switch 2 Pro, Wii U Pro): by the letters printed on
+// them (the binding "a" is the A button) or by position like an Xbox pad
+// ("a" is the bottom button, B on these pads). pad_family.hpp.
+enum class NintendoLayout : std::uint8_t { by_label, by_position };
+// [gamepad] gamecube_layout: a GameCube controller plays 1:1 (original, its
+// A is the game's A ...) or through the bindings (by its own labels).
+enum class GameCubeLayout : std::uint8_t { original, bindings };
+
 struct Settings {
     // [window]
     int width = 1280;
@@ -85,6 +94,15 @@ struct Settings {
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
     // [gamepad]: up to three controller inputs per control, for every controller.
     std::array<std::array<PadInput, kKeysPerButton>, kPadKeyCount> pad{};
+    // [gamepad] the controller families (pad_family.hpp): the Nintendo and
+    // GameCube layouts, the button pictures ("auto": the device player 1
+    // used last, else a family id such as "dualsense" or "keyboard") and
+    // SDL's Wii driver for the Wii U Pro Controller (off for a DolphinBar;
+    // applies at the next start).
+    NintendoLayout nintendo_layout = NintendoLayout::by_label;
+    GameCubeLayout gamecube_layout = GameCubeLayout::original;
+    std::string prompts = "auto";
+    bool wii_driver = true;
     // [mods]
     std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
@@ -133,7 +151,9 @@ struct Settings {
     static Settings load();
     // The settings of a document (load() without the file search). Bindings
     // from before the separate D-pad and C-stick inputs (keyboard / gamepad
-    // "up", "down", "left", "right") are migrated, see settings.cpp.
+    // "up", "down", "left", "right") are migrated, see settings.cpp; so are
+    // face button bindings from before the Nintendo layout (they keep
+    // reading every pad by position).
     static Settings parse(IniFile ini);
     // Writes the values into the document (the next save() writes the file).
     void store();

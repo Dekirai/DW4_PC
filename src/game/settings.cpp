@@ -282,6 +282,23 @@ Settings Settings::parse(IniFile document) {
         pad_from_file[dpad] = true;
     }
     drop_defaults_in_use(settings.pad, pad_from_file);
+    // The controller families (pad_family.hpp). A file from before the
+    // Nintendo layout that binds the face buttons its own way keeps reading
+    // every pad by position, as those bindings were made for (a Switch pad's
+    // A that a player put on "b" stays where he put it); untouched face
+    // buttons read Nintendo pads by their letters.
+    if (const auto layout = ini.get("gamepad", "nintendo_layout")) {
+        settings.nintendo_layout = *layout == "position" ? NintendoLayout::by_position : NintendoLayout::by_label;
+    } else {
+        bool custom_faces = false;
+        for (const auto key : {PadKey::a, PadKey::b, PadKey::x, PadKey::y})
+            if (pad_from_file[std::size_t(key)] && settings.pad[std::size_t(key)] != kPadDefaults[std::size_t(key)]) custom_faces = true;
+        settings.nintendo_layout = custom_faces ? NintendoLayout::by_position : NintendoLayout::by_label;
+    }
+    settings.gamecube_layout =
+        ini.get_or("gamepad", "gamecube_layout", "original") == "bindings" ? GameCubeLayout::bindings : GameCubeLayout::original;
+    settings.prompts = ini.get_or("gamepad", "prompts", settings.prompts);
+    settings.wii_driver = ini.get_bool("gamepad", "wii_driver", settings.wii_driver);
     settings.texture_pack = ini.get_or("mods", "textures", "");
     settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);
     {
@@ -365,6 +382,10 @@ void Settings::store() {
         }
         ini_.set("gamepad", kKeys[i].ini, value);
     }
+    ini_.set("gamepad", "nintendo_layout", nintendo_layout == NintendoLayout::by_position ? "position" : "label");
+    ini_.set("gamepad", "gamecube_layout", gamecube_layout == GameCubeLayout::bindings ? "bindings" : "original");
+    ini_.set("gamepad", "prompts", prompts);
+    ini_.set_bool("gamepad", "wii_driver", wii_driver);
     if (!texture_pack.empty()) ini_.set("mods", "textures", texture_pack.string());
     ini_.set_bool("mods", "dump_textures", dump_textures);
     {

@@ -16,6 +16,7 @@
 #include "interpolation.hpp"
 #include "movie_decoder.hpp"
 #include "overhead_labels.hpp"
+#include "pad_family.hpp"
 #include "settings.hpp"
 
 #include "dw4/engine/engine.hpp"
@@ -38,6 +39,7 @@ struct ImFont;
 
 namespace dw4::game {
 
+class ButtonPrompts;
 class GhostFigures;
 namespace online {
 struct RemoteSample;
@@ -128,6 +130,14 @@ struct HostView {
     // button is up (the B that closed it must not also cancel the game's menu).
     std::vector<SDL_Gamepad*> gamepads;
     bool pad_latch = false;
+    // The controllers' families and the device player 1 used last
+    // (pad_family.hpp; the prompts follow it).
+    PromptTracker pads;
+    // The prompts' pictures (null without a window) and a test run's family
+    // (DW4_PROMPTS=<family id>; test runs show the original pictures
+    // otherwise).
+    ButtonPrompts* prompts = nullptr;
+    std::optional<PadFamily> forced_prompts;
 
     // The F1 menu.
     bool show_menu = false;
@@ -155,6 +165,11 @@ struct HostView {
     LabelMode label_mode() const;
     // Smooth motion draws between the previous step and this one.
     bool smooth_blending() const;
+    // The family the prompts show now: settings.ini [gamepad] prompts, or
+    // player 1's last device (automatic).
+    PadFamily prompt_family() const;
+    // A connected pad's family (generic when unknown).
+    PadFamily family_of(SDL_Gamepad* pad) const;
 };
 
 // ---- Window events and input
@@ -216,9 +231,16 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
 // (never while the game reads the pad); `cursor_always`: the cursor shows at
 // once (the game's own menus do).
 void set_menu_navigation(bool menus_take_input, bool cursor_always);
+// The view whose first controller drives the menus (ImGui's gamepad keys
+// come from its bindings: the game's A activates, B goes back, on every
+// family alike) and whose prompts the ImGui texts draw.
+void set_ui_view(HostView* view);
 // A new ImGui frame (`test_gamepad`: a UI test run's controller keys count
 // as a controller's).
 void new_ui_frame(bool test_gamepad);
+// A pad's input through the bindings in its family's binding space (a
+// GameCube pad on its original layout: 1:1).
+HostPadInput pad_input(const HostView& view, SDL_Gamepad* pad);
 // Overhead name tags over the picture, under the menus.
 void draw_tags(HostView& view, const PresentedScene& scene);
 // ImGui's draw data over the picture.
@@ -242,5 +264,8 @@ void settings_audio_section(HostView& view);
 void settings_presence_section(HostView& view, const char* discord_status);
 void settings_keyboard_section(HostView& view);
 void settings_controllers_section(HostView& view);
+// The SDL hints for the controller families, before SDL_Init (SDL's Wii
+// driver for the Wii U Pro Controller unless settings.ini turns it off).
+void controller_hints(const Settings& settings);
 
 } // namespace dw4::game

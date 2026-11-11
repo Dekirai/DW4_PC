@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -434,12 +435,236 @@ void GlRenderer::clear_cache() {
         gl.DeleteVertexArrays(1, &m.vao);
     }
     meshes_.clear();
+    for (auto& [_, split] : splits_) release(split);
+    splits_.clear();
     for (auto& [_, t] : textures_) if (t.id) glDeleteTextures(1, &t.id);
     textures_.clear();
+    for (auto& [_, id] : title_variants_) if (id) glDeleteTextures(1, &id);
+    title_variants_.clear();
+}
+
+void GlRenderer::release(PromptSplit& split) {
+    auto& gl = *gl_;
+    if (split.text_ibo) gl.DeleteBuffers(1, &split.text_ibo);
+    if (split.text_vao) gl.DeleteVertexArrays(1, &split.text_vao);
+    if (split.icon_vbo) gl.DeleteBuffers(1, &split.icon_vbo);
+    if (split.icon_ibo) gl.DeleteBuffers(1, &split.icon_ibo);
+    if (split.icon_vao) gl.DeleteVertexArrays(1, &split.icon_vao);
+    split = PromptSplit{};
+}
+
+void GlRenderer::set_prompt_glyphs(const PromptGlyphs& glyphs) {
+    glyphs_ = glyphs;
+    for (auto& [_, split] : splits_) release(split);
+    splits_.clear();
+}
+
+namespace {
+// The vertex layout of GlRenderer::mesh (52 bytes) on a vertex array.
+template <class Gl>
+void vertex_layout(Gl& gl) {
+    constexpr GLsizei stride = 52;
+    gl.EnableVertexAttribArray(0);
+    gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
+    gl.EnableVertexAttribArray(1);
+    gl.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(12));
+    gl.EnableVertexAttribArray(2);
+    gl.VertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(24));
+    gl.EnableVertexAttribArray(3);
+    gl.VertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(28));
+    gl.EnableVertexAttribArray(4);
+    gl.VertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(36));
+    gl.EnableVertexAttribArray(5);
+    gl.VertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(44));
+}
+
+bool same_cell(float u0, float v0, float u1, float v1, const PromptGlyphCell& cell) {
+    constexpr float e = 1e-4f;
+    return std::fabs(u0 - std::min(cell.u0, cell.u1)) < e && std::fabs(u1 - std::max(cell.u0, cell.u1)) < e &&
+           std::fabs(v0 - std::min(cell.v0, cell.v1)) < e && std::fabs(v1 - std::max(cell.v0, cell.v1)) < e;
+}
+} // namespace
+
+// layout_text (ui.cpp) makes four vertices and six indices per glyph, in
+// text order. Button glyphs become quads into the atlas; the word START
+// (its five letter quads, not next to the START glyph, which some texts
+// put after it) becomes one quad over the word's place.
+const GlRenderer::PromptSplit* GlRenderer::prompt_split(const engine::GeometryData* g, const Mesh& m) {
+    if (!g || !prompts_) return nullptr;
+    if (auto found = splits_.find(g); found != splits_.end()) {
+        if (found->second.serial == g->serial.value) return found->second.none ? nullptr : &found->second;
+        release(found->second);
+        splits_.erase(found);
+    }
+    PromptSplit split;
+    split.serial = g->serial.value;
+    const std::size_t quads = g->positions.size() / 4;
+    bool layout = g->positions.size() % 4 == 0 && g->texcoords.size() == g->positions.size() * 2 && g->indices.size() == quads * 6;
+    for (std::size_t q = 0; layout && q < quads; ++q) layout = g->indices[q * 6] == q * 4;
+    struct QuadInfo {
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        int control = -1; // a button glyph
+        int letter = -1;  // S T A R
+        bool start_glyph = false;
+        bool space = false; // (the font's space has a quad of its own)
+    };
+    std::vector<QuadInfo> info(layout ? quads : 0);
+    for (std::size_t q = 0; q < info.size(); ++q) {
+        auto& qi = info[q];
+        float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
+        qi.x0 = qi.y0 = 1e9f;
+        qi.x1 = qi.y1 = -1e9f;
+        for (std::size_t k = 0; k < 4; ++k) {
+            const auto& p = g->positions[q * 4 + k];
+            const float u = g->texcoords[(q * 4 + k) * 2], v = g->texcoords[(q * 4 + k) * 2 + 1];
+            u0 = std::min(u0, u), u1 = std::max(u1, u), v0 = std::min(v0, v), v1 = std::max(v1, v);
+            qi.x0 = std::min(qi.x0, p.x), qi.x1 = std::max(qi.x1, p.x), qi.y0 = std::min(qi.y0, p.y), qi.y1 = std::max(qi.y1, p.y);
+        }
+        for (const auto& cell : glyphs_.buttons)
+            if (same_cell(u0, v0, u1, v1, cell)) qi.control = cell.control;
+        for (int l = 0; l < 4; ++l)
+            if (same_cell(u0, v0, u1, v1, glyphs_.letters[std::size_t(l)])) qi.letter = l;
+        qi.start_glyph = same_cell(u0, v0, u1, v1, glyphs_.start_glyph);
+        qi.space = same_cell(u0, v0, u1, v1, glyphs_.space);
+    }
+    // START: S T A R T on one row, a word of its own (a space, a line start
+    // or a gap before it), no START glyph right before or after it (a space
+    // between counts as right: "START <glyph> button").
+    constexpr int kWord[5] = {0, 1, 2, 3, 1};
+    std::vector<int> word_at(info.size(), -1); // quad -> the word's first quad
+    for (std::size_t q = 0; q + 5 <= info.size(); ++q) {
+        const float height = info[q].y1 - info[q].y0;
+        const auto same_row = [&](std::size_t other) { return std::fabs(info[other].y0 - info[q].y0) < height * 0.3f; };
+        bool match = true;
+        for (std::size_t k = 0; k < 5 && match; ++k) match = info[q + k].letter == kWord[k] && same_row(q + k);
+        if (!match) continue;
+        if (q > 0 && same_row(q - 1) && !info[q - 1].space && info[q].x0 - info[q - 1].x1 < height * 0.17f) continue; // inside a longer word
+        // The quad beside the word, past one space (none: another row).
+        const auto beside = [&](std::size_t from, int step) -> const QuadInfo* {
+            for (std::ptrdiff_t i = std::ptrdiff_t(from) + step; i >= 0 && i < std::ptrdiff_t(info.size()); i += step) {
+                if (!same_row(std::size_t(i))) return nullptr;
+                if (!info[std::size_t(i)].space) return &info[std::size_t(i)];
+                if (std::abs(i - std::ptrdiff_t(from)) > 1) return nullptr;
+            }
+            return nullptr;
+        };
+        const QuadInfo* before = beside(q, -1);
+        const QuadInfo* after = beside(q + 4, 1);
+        if ((before && before->start_glyph) || (after && after->start_glyph)) continue;
+        for (std::size_t k = 0; k < 5; ++k) word_at[q + k] = int(q);
+        q += 4;
+    }
+    // DW4_TRACE_PROMPTS=1 (test runs): every split text line's quads.
+    static const bool trace = std::getenv("DW4_TRACE_PROMPTS") != nullptr;
+    if (trace) {
+        std::printf("prompts: geometry %llu, %zu quads%s\n", (unsigned long long)g->serial.value, quads, layout ? "" : " (not a text layout)");
+        for (std::size_t q = 0; q < info.size(); ++q)
+            std::printf("  quad %zu x %.3f..%.3f y %.3f..%.3f uv %.4f %.4f control %d letter %d%s%s\n", q, info[q].x0, info[q].x1, info[q].y0,
+                        info[q].y1, g->texcoords[q * 8], g->texcoords[q * 8 + 1], info[q].control, info[q].letter,
+                        info[q].start_glyph ? " start" : "", word_at[q] >= 0 ? " word" : "");
+        std::fflush(stdout);
+    }
+    std::vector<std::uint32_t> text;
+    std::vector<std::uint8_t> icon_data;
+    std::vector<std::uint32_t> icon_indices;
+    constexpr std::size_t stride = 52;
+    auto add_icon = [&](float x0, float y0, float x1, float y1, float z, const std::array<float, 4>& uv) {
+        // uv: u0, v top, u1, v bottom; y points up in the text's space.
+        const auto base = std::uint32_t(icon_data.size() / stride);
+        const float corners[4][4] = {{x0, y1, uv[0], uv[1]}, {x1, y1, uv[2], uv[1]}, {x1, y0, uv[2], uv[3]}, {x0, y0, uv[0], uv[3]}};
+        for (const auto& c : corners) {
+            std::uint8_t vertex[stride]{};
+            const float pos[3] = {c[0], c[1], z};
+            std::memcpy(vertex, pos, 12);
+            const std::uint32_t white = 0xffffffffu;
+            std::memcpy(vertex + 24, &white, 4);
+            std::memcpy(vertex + 28, &c[2], 4);
+            std::memcpy(vertex + 32, &c[3], 4);
+            const float weight = 1.0f;
+            std::memcpy(vertex + 36, &weight, 4);
+            icon_data.insert(icon_data.end(), vertex, vertex + stride);
+        }
+        icon_indices.insert(icon_indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
+    };
+    for (std::size_t q = 0; q < info.size(); ++q) {
+        const auto& qi = info[q];
+        if (word_at[q] >= 0) {
+            if (word_at[q] == int(q)) add_icon(qi.x0, qi.y0, info[q + 4].x1, qi.y1, g->positions[q * 4].z, prompts_->atlas_word());
+            continue;
+        }
+        if (qi.control >= 0) {
+            add_icon(qi.x0, qi.y0, qi.x1, qi.y1, g->positions[q * 4].z, prompts_->atlas_cell(qi.control));
+            continue;
+        }
+        text.insert(text.end(), g->indices.begin() + std::ptrdiff_t(q * 6), g->indices.begin() + std::ptrdiff_t(q * 6 + 6));
+    }
+    auto& stored = splits_[g];
+    if (icon_indices.empty()) {
+        split.none = true;
+        stored = split;
+        return nullptr;
+    }
+    auto& gl = *gl_;
+    if (!text.empty()) {
+        gl.GenVertexArrays(1, &split.text_vao);
+        gl.BindVertexArray(split.text_vao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, m.vbo);
+        vertex_layout(gl);
+        gl.GenBuffers(1, &split.text_ibo);
+        gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, split.text_ibo);
+        gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(text.size() * 4), text.data(), GL_STATIC_DRAW);
+        split.text_count = int(text.size());
+    }
+    gl.GenVertexArrays(1, &split.icon_vao);
+    gl.BindVertexArray(split.icon_vao);
+    gl.GenBuffers(1, &split.icon_vbo);
+    gl.BindBuffer(GL_ARRAY_BUFFER, split.icon_vbo);
+    gl.BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(icon_data.size()), icon_data.data(), GL_STATIC_DRAW);
+    vertex_layout(gl);
+    gl.GenBuffers(1, &split.icon_ibo);
+    gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, split.icon_ibo);
+    gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(icon_indices.size() * 4), icon_indices.data(), GL_STATIC_DRAW);
+    split.icon_count = int(icon_indices.size());
+    gl.BindVertexArray(0);
+    stored = split;
+    return &stored;
+}
+
+unsigned GlRenderer::title_texture(const Texture& t) {
+    const std::uint64_t key = prompts_->art_key();
+    if (auto found = title_variants_.find(key); found != title_variants_.end()) return found->second ? found->second : t.id;
+    if (title_variants_.size() > 24) {
+        for (auto& [_, id] : title_variants_) if (id) glDeleteTextures(1, &id);
+        title_variants_.clear();
+    }
+    unsigned id = 0;
+    std::vector<std::uint8_t> pixels;
+    int width = 0, height = 0;
+    if (prompts_->title_variant(t.original, t.width, t.height, t.nearest, pixels, width, height)) {
+        glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        gl_->GenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1000);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, t.nearest ? GL_NEAREST : GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    }
+    title_variants_[key] = id;
+    return id ? id : t.id;
 }
 
 void GlRenderer::release(Mesh& m) {
     auto& gl = *gl_;
+    for (auto it = splits_.begin(); it != splits_.end(); ++it)
+        if (it->second.serial == m.serial) {
+            release(it->second);
+            splits_.erase(it);
+            break;
+        }
     gl.DeleteBuffers(1, &m.vbo);
     gl.DeleteBuffers(1, &m.ibo);
     gl.DeleteVertexArrays(1, &m.vao);
@@ -543,6 +768,17 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
                 height = replaced->height;
                 pixels = replaced->rgba.data();
             }
+        }
+        // The title's PRESS START (the USA mojigc.png, not a replacement):
+        // the prompts draw its START with the active controller's picture.
+        if (!replaced && image.width == 256 && image.height == 128 && binding->image.str(22) == "mojigc.png" &&
+            TexturePack::hash(image.rgba.data(), image.rgba.size(), 256, 128) == 0xac566f5a15c2a226ull) {
+            t.title_press = true;
+            t.width = 256;
+            t.height = 128;
+            t.original = image.rgba;
+            const auto& sampler = binding->sampler;
+            t.nearest = sampler.mag_filter == 0 || sampler.mag_filter == 2 || sampler.mag_filter == 3;
         }
         glGenTextures(1, &t.id);
         glBindTexture(GL_TEXTURE_2D, t.id);
@@ -925,7 +1161,18 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         gl.Uniform4f(gl.u_modulate, mod.x, mod.y, mod.z, mod.w);
         gl.Uniform1i(gl.u_use_vcol, m->has_colors ? 1 : 0);
         const Texture* tex = (s.texture_enabled && (m->has_uvs || texgen)) ? texture(s.texture) : nullptr;
-        glBindTexture(GL_TEXTURE_2D, tex ? tex->id : white_texture_);
+        // The controller prompts: the font's button glyphs and the title's
+        // PRESS START in the active family's pictures (presentation only).
+        unsigned bound = tex ? tex->id : white_texture_;
+        const PromptSplit* split = nullptr;
+        unsigned prompt_atlas = 0;
+        if (tex && prompts_ && !id_pass_ && (prompt_atlas = prompts_->atlas_texture()) != 0) {
+            if (glyphs_.valid && s.texture->image.document() == glyphs_.document && s.texture->image.reference() == glyphs_.reference)
+                split = prompt_split(item.geometry, *m);
+            else if (tex->title_press)
+                bound = title_texture(*tex);
+        }
+        glBindTexture(GL_TEXTURE_2D, bound);
         gl.Uniform1i(gl.u_use_tex, tex ? 1 : 0);
         gl.Uniform1i(gl.u_alpha_func, s.alpha_test ? s.alpha_func : 7);
         gl.Uniform1f(gl.u_alpha_ref, s.alpha_ref);
@@ -1006,6 +1253,16 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             glDisable(GL_CULL_FACE);
         }
         glColorMask(s.color_write, s.color_write, s.color_write, s.color_write);
+        if (split) {
+            if (split->text_count) {
+                gl.BindVertexArray(split->text_vao);
+                glDrawElements(GL_TRIANGLES, split->text_count, GL_UNSIGNED_INT, nullptr);
+            }
+            glBindTexture(GL_TEXTURE_2D, prompt_atlas);
+            gl.BindVertexArray(split->icon_vao);
+            glDrawElements(GL_TRIANGLES, split->icon_count, GL_UNSIGNED_INT, nullptr);
+            continue;
+        }
         gl.BindVertexArray(m->vao);
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
