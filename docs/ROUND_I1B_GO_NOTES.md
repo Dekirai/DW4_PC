@@ -186,4 +186,9 @@ echo "mysqld shut down $(date)" >> $LOG
   on as an unregistered NEW -> BARRIER_WAIT every second (dccd2322). W31d: everything up to c's GO passed (b and d taken
   along alive), but d's spawn at dng204b1's entrance lies on matz01: its exit prompt, left open, kept c's JOIN from
   applying (lag_leave) -> a player that appears on a mat has not stepped on (2deadf82); `!relay: instance_end` also hit
-  the host's own end at the run's end (f02444ed).
+  the host's own end at the run's end (f02444ed). W31f passed. W31e: c fell in stag0202 on its way to matz01 (two
+  heals) -> c goes into dng205b1 by `depart` right after a's offer shows (6ac553a7). W31g (passed in b1): b fell to
+  stag0201's mummies -> every walk to stag0201's matz00 heals at 350 HP (8a4598be, 12351e3f). W31h: the relay held b's
+  GO barrier as designed (hold_join 37 s, then the join), but the script never saw `goback=1`: the online script ran only
+  inside steps, and frames do not count on a loading screen -> the host runs the script while parked (conditions, goback)
+  and the condition `waited>=S` (947df0e3).
