@@ -69,8 +69,7 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- r4 (below): W11b with the back point, W9 (cut off in r3), W30 and W30x again (r3: a's explore bot fell in stag0201's
-  fights before it reached stag0202, a bot flake; I1a's runs passed them).
+- r5 (below): W19, W22, W29 (fake world clients, the protocol 48 client).
 - Server integration tests again at 001f786b (only Prompt.cs's back point changed; WorldPromptTests sends 0xFF and expects
   point 3, unchanged).
 
@@ -98,7 +97,13 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
   host and wins the two-member vote (an I1a/J harness finding, not this lane's; 481/481 at 14:27 with the longer uptime;
   contract entry "prompt 2026-11-11 14:25"). det.sh with the DEV=OFF copy `build/i1bp/off/dw4_i1bp_off_001f786b.exe`:
   4004f056 / 396cb219 twice (online off unchanged).
-- r4 (exe c, `build/i1bp/scen_r4.log`): W11b W9 W30 W30x (running).
+- r4 (exe c, `build/i1bp/scen_r4.log`): **W11b** (B's CHOICE back_point=1, the relay's `prompt_back ... point=1`, a back
+  next to the gate), **W30** (404 s: b's gate form lists a's row `joinable:0:stag0202` with the cursor on New instance,
+  autochoice first takes it, "<host> is in Grief Wasteland."), **W30x** (the counter-proof fails as it must, 402 s), **W9**
+  passed. So the whole I1a W set with autochoice first passes on this branch except the three that need the fake world
+  clients or the protocol 48 client: r5.
+- r5 (exe c, `build/i1bp/scen_r5.log`, `build/i1bp/scen_caps.sh`: `--capabilities fake_world_clients,old_client` with the
+  protocol 48 client copied from int-i1a's `build/int/old48`): W19 W22 W29 (running).
 
 ## How to run the tests
 
