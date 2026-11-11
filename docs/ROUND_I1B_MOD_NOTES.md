@@ -40,6 +40,15 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 
 | What | Result | Log |
 | --- | --- | --- |
+| **Review fixes (2026-11-11, 588c83a7 / 020025e5)** | | |
+| server unit (DW4Online.Tests) | 479/479 | `build/mod/unit3.log` |
+| server integration (mysqld 3652) | 143 passed, 3 skipped | `build/mod/it3.log` |
+| ctest (Release DEV=OFF, `build/mod/rel`) | 57/57 | `build/mod/ctest3.log` |
+| online off: `det.sh` on a DEV=OFF copy (`build/mod/det/dw4_mod_det3.exe`) | 4004f056 / 396cb219 twice | `build/mod/det3.log`, `DW4_PC/work/dref/checks/det/det_i1bmod3` |
+| scenarios W10, W10b, W10c (exe e = 5891f581's client) | 3 of 3 passed (484 s, 180 s, 383 s) | `build/mod/scen_r6.log`, run `tools/online_test/.work/run_20261111_151937` |
+| scenario W10d | r6: the relay and a held (removal 1.8 s after b's seat, `removed_home hold=join`, DISSOLVE redirected, no `join_decided`), b's first script waited for `mode=parked`, which a script never sees (no updates on the loading screen): fixed in 020025e5; r7 **passed** (422 s) | `build/mod/scen_r7.log`, run `run_20261111_155422` |
+| UI scenario `card` (the new question, "Report sent. Thank you." for a known member) | passed | `build/mod/scen_ui4.log`, run `run_20261111_160130` |
+| **Before the review** | | |
 | server unit (DW4Online.Tests) | 474/474 (81000b02) | - |
 | server integration (DW4Online.Integration.Tests, mysqld 3652) | 143 passed, 3 skipped (eaeee787); the touched classes again at 81000b02: 23/23 | `build/mod/it2.log` |
 | ctest (Release DEV=OFF, `build/mod/rel`) | 57/57 (978efd19) | `build/mod/ctest2.log` |
@@ -111,13 +120,18 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 
 ## Left
 
-Nothing of the lane: every item of the task is built and green (server unit and integration, ctest, online off, W10, W10b,
-W10c, the UI scenario `card`). For the I1b integration:
+Nothing of the lane: every item of the task and every review finding is built and green (server unit and integration,
+ctest, online off, W10, W10b, W10c, W10d, the UI scenario `card`). For the I1b integration:
 - Merge with the lanes prompt and go: the conflicts the contract names (online_ui.cpp's `playing()`: the go-along box above
   the page, the card below the member table; the wire type registries; WorldHub/RoomHub hook places). With the prompt
   merged, W10's b gets the prompt at its second arrival: a's instance is no row (Visible() with the bar), so b's
   `DW4_ONLINE_AUTOCHOICE=first` takes *New instance* and the scenario's checks hold as they are (no change expected).
-- W10, W10b, W10c and the UI scenario `card` again on the integrated build.
+- W10, W10b, W10c, W10d and the UI scenario `card` again on the integrated build; W10/expected.txt gains the prompt's check
+  (b's `options` rows never name a's wid after the removal, review finding 7, contract 15:20).
+- The prompt / go lanes' new holds and seat paths: `CheckHolds` checks every hold kind for removed members first; a new path
+  that seats without `TakeSeat` or joins without `Join` should call `SendRemovedHome` (contract 15:20).
+- The base flake `A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (review finding 8, cause in
+  the contract's prompt 14:25 entry: `BecomeMember`'s real-time stamp).
 - The finding above (the double join toast), if the integration wants it fixed in I1b.
 
 ## How to run
@@ -131,5 +145,6 @@ W10c, the UI scenario `card`). For the I1b integration:
 - Server: `"$DOTNET" build --disable-build-servers` in `server/DW4Online`; `"$DOTNET" test tests/DW4Online.Tests
   --disable-build-servers`; the same for `tests/DW4Online.Integration.Tests` (needs mysqld 3652).
 - Scenarios: stop the own mysqld first; copy `build/mod/dev/dw4_game.exe` to `build/mod/scen/dw4_mod_dev_<TAG>.exe`, then
-  `bash build/mod/scen.sh LOG TAG W10 W10b W10c` (run.py with --parallel 1 --keep, the r25c cards, mysqld 3652, ports
-  58200-58399; add `--no-build` after the first run). Run folders: `tools/online_test/.work/run_*`.
+  `bash build/mod/scen.sh LOG TAG W10 W10b W10c W10d` (run.py with --parallel 1 --keep, the r25c cards, mysqld 3652, ports
+  58200-58399; add `--no-build` after the first run; W10d starts its own server with `World:TestJoinHoldMs` 60000). The UI
+  scenario: `bash build/mod/scen.sh LOG TAG ui card --no-build`. Run folders: `tools/online_test/.work/run_*`.
