@@ -1,5 +1,6 @@
 # W31d2, guest c (k10): joins a in stag0201, goes into dng204b1 alone (matz01), walks into the enemies until defeated
-# (by @880) and lies there (no A: the game over's message waits for A) until @960; then its game over takes it home.
+# (by @880) and lies there (no A: the game over's message waits for A) until @930, half of b's 60 s wait after its request
+# at @900 (run b1: at @960 the wait had ended as busy a second before the offer closed); then its game over takes it home.
 campaign until stage=stagml11,control
 idle until epoch>=@120
 explore mate00 until onme:mate00
@@ -10,6 +11,6 @@ explore matz01 yes until stage=dng204b1,control fail epoch>=@700
 log c in dng204b1
 die until dead fail epoch>=@880
 log c defeated
-idle until epoch>=@960
+idle until epoch>=@930
 talk until stage=stagml11
 log c home
