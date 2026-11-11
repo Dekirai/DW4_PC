@@ -6,6 +6,11 @@
   "frames": 130000,
   "timeout": 2100,
   "min_shared_ticks": 0,
+  "server": {
+    "World": {
+      "TestHooks": true
+    }
+  },
   "clients": [
     {
       "name": "a",

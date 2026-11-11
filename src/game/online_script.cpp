@@ -415,9 +415,13 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
     }
     if (step.action == "testhook") {
         // Round I1b's scenario hooks (development builds): once per step.
-        if (!departed_ && !step.args.empty() && (step.args[0] == "defeat" || step.args[0] == "busy")) {
-            out.test_hook = step.args[0] == "defeat" ? 1 : 2;
-            out.test_value = step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 0;
+        // "mat NAME": the value is the mat's letter << 8 | its number (matz02:
+        // 'z' << 8 | 2), asked only while this member's player has control.
+        const bool mat = step.args.size() > 1 && step.args[0] == "mat" && step.args[1].size() >= 5 && step.args[1].compare(0, 3, "mat") == 0;
+        if (!departed_ && !step.args.empty() && (step.args[0] == "defeat" || step.args[0] == "busy" || (mat && control))) {
+            out.test_hook = step.args[0] == "defeat" ? 1 : step.args[0] == "busy" ? 2 : 3;
+            out.test_value = mat ? (int(static_cast<unsigned char>(step.args[1][3])) << 8) | (std::atoi(step.args[1].c_str() + 4) & 0xFF)
+                                 : step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 0;
             departed_ = true;
             std::printf("online-script: testhook %s %d (frame %d)\n", step.args[0].c_str(), out.test_value, facts.frame);
             std::fflush(stdout);

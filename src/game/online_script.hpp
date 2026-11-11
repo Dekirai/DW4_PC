@@ -67,8 +67,11 @@
 //                       offers it (*B: Back to the lobby*, round I1b)
 //   testhook defeat     (development builds, a relay with World:TestHooks) a
 //   testhook busy N     TEST event in the own sealed stage group: this
-//                       member's player falls / the group is neither
-//                       membership-safe nor joinable for N ticks (once)
+//   testhook mat NAME   member's player falls / the group is neither
+//                       membership-safe nor joinable for N ticks / this
+//                       member's player stands on the mat NAME (matz02;
+//                       asked while it has control), the stand-in for a
+//                       floor the test characters do not survive (once)
 //   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
 //                       --screenshot's file (the ghost figures' look,
 //                       docs/SEAMLESS.md 12; a run without --screenshot

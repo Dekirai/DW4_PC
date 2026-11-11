@@ -1,10 +1,12 @@
 # W31 (19.24, 19.30.5-19.30.7): go along. The relay's world log: the offer of a's entry with a notice for b and c, b's
 # request and its stamp (the press to the stamp: go_stamped's waited_ms), the GO's barrier joining a; the offer follows a
 # to dng204b2 without a notice; c's request, its stamp and its barrier. The clients: b's waiting row (OFFER flags 8), the
-# GO applied (go applied ... departs=1), c's notice running out while the offer stays.
+# GO applied (go applied ... departs=1), c's notice running out while the offer stays. a reaches matz02 by the test hook
+# (TEST mat, World:TestHooks).
 a: online-script: step .* log: a hosts Dry Land
 a: online-script: step .* log: a in dng204b1
 a: online-script: step .* log: b joined a in B1
+a: online-trace: test hook applied .*hook=3
 a: online-script: step .* log: a in dng204b2
 a: online-script: step .* log: c joined a in B2
 b: online-script: step .* log: b sees the notice
@@ -24,6 +26,7 @@ relay: offer_notice
 relay: go_request
 relay: go_stamped .*stage=dng204b1
 relay: go_barrier
+relay: test_hook .*hook=mat
 relay: offer_move .*stage=dng204b2
 relay: go_request
 relay: go_stamped .*stage=dng204b2

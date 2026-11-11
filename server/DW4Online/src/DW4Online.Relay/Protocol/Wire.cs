@@ -143,11 +143,13 @@ public static class Ev
 }
 
 /// <summary>The TEST event's hooks (round I1b's scenarios): Defeat = the slot's player falls (0 HP, SQ_DEAD); Busy = the stage group
-/// is neither membership-safe nor joinable for the argument's ticks (a shared scene's stand-in).</summary>
+/// is neither membership-safe nor joinable for the argument's ticks (a shared scene's stand-in); Mat = the slot's player stands on the
+/// mat "mat" + letter (argument bits 8-15) + two-digit number (bits 0-7), the stand-in for a walk the test characters do not survive.</summary>
 public enum TestHook : byte
 {
     Defeat = 1,
     Busy = 2,
+    Mat = 3,
 }
 
 /// <summary>Instance modes (WELCOME, BARRIER_OK).</summary>

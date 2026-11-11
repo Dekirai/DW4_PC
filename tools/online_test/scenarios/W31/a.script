@@ -1,9 +1,9 @@
 # W31, host a (k10): hosts Dry Land (the gate to stag0201), waits for b and c, and after c went on to stag0202 takes
 # stag0201's matz01 into dng204b1 alone (b is not on the mat: the exit port asks nobody else). b goes along and joins it;
 # after c's notice ran out a takes dng204b1's matz02 to dng204b2 (b stays in B1), where c joins it by going along.
-# (Runs r2 and b1 of the go lane: the online script's explore, which only strikes the enemies that come near, fell in B1
-# on the way to matz02, also with three heals. The campaign bot's errand plays B1 as the story chain did: it clears the
-# waves and plays for survival, guarding and healing from the L panel.)
+# (B1's walk to matz02: the online script's explore fell in runs r2 and b1 of the go lane, the campaign bot's errand in run
+# c1 after 36,000 frames without finding the mat; the development test hook "testhook mat" (a TEST event of a's sealed
+# stage group, every engine alike) puts a onto matz02, whose exit port then runs as for a walk-on: a's prompt, a fork.)
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 until onme:mate00
@@ -19,7 +19,8 @@ disk 1 until hp>=700 or frames>=900
 idle until present=2,sealed>=600 fail epoch>=@1000
 log b joined a in B1
 idle until frames>=2400
-errand explore:matz02 dng204b1 until stage=dng204b2,control fail epoch>=@1600
+testhook mat matz02 until frames>=30
+mat matz02 yes until stage=dng204b2,control fail epoch>=@1600
 log a in dng204b2
 idle until present=2,sealed>=600 fail epoch>=@1900
 log c joined a in B2

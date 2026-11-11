@@ -639,7 +639,7 @@ namespace DW4Online.Relay.Hub
         private void OnTestIntent(HubMember m, IntentMsg msg)
         {
             var hook = (TestHook)(msg.Argument & 0xFF);
-            if (!_world.TestHooks || hook is not (TestHook.Defeat or TestHook.Busy) ||
+            if (!_world.TestHooks || hook is not (TestHook.Defeat or TestHook.Busy or TestHook.Mat) ||
                 Mine(m, msg.Inst, msg.Visit) is not { Mode: InstanceMode.Sealed, Sealing: true, Ended: false } i)
             {
                 Count("test_hook_ignored");

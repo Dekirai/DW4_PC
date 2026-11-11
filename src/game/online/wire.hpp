@@ -228,8 +228,10 @@ enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, g
 // The TEST event's hooks (development builds; docs/ROUND_I1B_GO_NOTES.md):
 // defeat: the slot's player falls (0 HP, SQ_DEAD, as poison's last tick);
 // busy: the stage group is neither membership-safe nor joinable for
-// `argument` ticks (a shared scene's stand-in).
-enum class TestHook : std::uint8_t { defeat = 1, busy = 2 };
+// `argument` ticks (a shared scene's stand-in); mat: the slot's player stands
+// on the mat "mat" + letter (bits 8-15) + two-digit number (bits 0-7) of
+// `argument` (a walk through a floor the test characters do not survive).
+enum class TestHook : std::uint8_t { defeat = 1, busy = 2, mat = 3 };
 // HOME's reason (19.6.5).
 enum class HomeReason : std::uint8_t { leave = 1, ended = 2, removed = 3, staff = 4 };
 // JOIN_REQ's kind (protocol 49): a JOIN, a HOME (`slot` holds the mask) or a GO (I1b).

@@ -247,6 +247,8 @@ public partial class HubLogicTests
             var i = h.I("b");
             h.Send("b", new IntentMsg(i.Id, i.Visit, IntentKind.Test, (int)TestHook.Busy | (600 << 8)).Frame());
             h.Send("a", new IntentMsg(i.Id, i.Visit, IntentKind.Test, (int)TestHook.Defeat).Frame());
+            h.Send("a", new IntentMsg(i.Id, i.Visit, IntentKind.Test, (int)TestHook.Mat | ((('z' << 8) | 2) << 8)).Frame()); // matz02
+            h.Send("a", new IntentMsg(i.Id, i.Visit, IntentKind.Test, 9).Frame()); // no such hook: ignored
             h.Seal(200);
             var tests = h.P("a").Ticks().SelectMany(t => t.Rec.Events).Where(e => e.Type == Ev.Test).ToList();
             if (!on)
@@ -254,7 +256,10 @@ public partial class HubLogicTests
                 Assert.Empty(tests);
                 continue;
             }
-            Assert.Equal(2, tests.Count);
+            Assert.Equal(3, tests.Count);
+            Assert.Contains(tests, e => e.Slot == h.Mem("a").Slot && e.Payload[1] == (byte)TestHook.Mat &&
+                                        System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(e.Payload.AsSpan(2)) == (('z' << 8) | 2));
+            Assert.Equal(1, h.Hub.Counters["test_hook_ignored"]);
             Assert.Contains(tests, e => e.Slot == h.Mem("b").Slot && e.Payload[1] == (byte)TestHook.Busy &&
                                         System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(e.Payload.AsSpan(2)) == 600);
             Assert.Contains(tests, e => e.Slot == h.Mem("a").Slot && e.Payload[1] == (byte)TestHook.Defeat);

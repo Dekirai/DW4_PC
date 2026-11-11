@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdio>
 
 namespace dw4::engine {
 
@@ -251,6 +252,30 @@ void Engine::online_test_hook(int slot, int hook, int argument) {
         models->command(*this, *ram, "SQ_DEAD", none);
     } else if (hook == 2) {
         online_test_busy_ = std::max(0, argument);
+    } else if (hook == 3) {
+        // Onto a mat: the slot's player stands at the centre of the mat
+        // "mat" + letter (bits 8-15) + two-digit number (bits 0-7), as the
+        // probe's teleport puts it (tools/world_probe.cpp): the stand-in for
+        // a walk through a floor the test characters do not survive. The
+        // mat's own script then runs as for a player that walked on.
+        auto* models = get<ModelCtrlManager>();
+        const auto* mats = get<MatCtrlManager>();
+        const auto* sys = get<GameSystem>();
+        if (!models || !mats || !sys || slot < 0 || slot > 3 || !(online_.present & std::uint8_t(1u << slot))) return;
+        const char letter = char((argument >> 8) & 0xFF);
+        if (!std::isalpha(static_cast<unsigned char>(letter))) return;
+        char name[16];
+        std::snprintf(name, sizeof name, "mat%c%02d", letter, argument & 0xFF);
+        const auto centre = mats->mat_centre(name);
+        const auto* ram = models->player(slot);
+        if (!centre || !ram || !ram->generated || !ram->node || ram->hp <= 0) return;
+        auto matrix = ram->node->matrix;
+        matrix(3, 0) = centre->x;
+        matrix(3, 1) = centre->y;
+        matrix(3, 2) = centre->z;
+        Packet packet;
+        packet.matrices.push_back(matrix);
+        messenger().send(*this, "PLAYER", std::string_view(sys->players[std::size_t(slot)].digimon), slot, "SETMATRIX", packet);
     }
 }
 

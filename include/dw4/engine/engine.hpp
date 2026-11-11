@@ -585,9 +585,13 @@ public:
     // every member applies: hook 1 defeats the slot's player (0 HP and
     // SQ_DEAD, as poison's last tick does); hook 2 keeps the engine neither
     // membership-safe nor joinable for `argument` steps (a shared scene's
-    // stand-in). Online only; nothing of it is in the snapshot or the
-    // fingerprint (it is never set offline, and no join or resync happens
-    // while it holds: joins wait for joinable()).
+    // stand-in); hook 3 puts the slot's player onto the mat "mat" + letter
+    // (bits 8-15) + number (bits 0-7) (a walk through a floor the test
+    // characters do not survive; the mat's script runs as for a walk-on).
+    // Online only; nothing of hook 2 is in the snapshot or the fingerprint
+    // (it is never set offline, and no join or resync happens while it
+    // holds: joins wait for joinable()); hooks 1 and 3 change the world as a
+    // step would.
     void online_test_hook(int slot, int hook, int argument);
     int online_test_busy() const { return online_test_busy_; }
     // 19.8.3 (M2): a parked DISSOLVE redirected: the pending stage and the
