@@ -69,7 +69,9 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- r6 (below): the lane's own scenarios once more on exe c.
+- Nothing of the lane: built and green at 001f786b (exe c). The lane's scenarios and W9, W19, W22, W29, W30, W30x passed on
+  exe c (r4-r6); the rest of round I1a's W set (W3-W8, W11, W12, W18, W24-W28, W32, W1x) on exe b in r3 (exe c adds only
+  the loading-screen form's back point, which none of them takes).
 - For the integration: the contract entries "prompt 16:30", "prompt 17:00" and "prompt 2026-11-11 14:25" (the merge hints
   and the unit test's uptime finding).
 
@@ -109,7 +111,7 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
   preselected; b's gate form showed a's row `Loading:1` preselected (a waiting row is not greyed).
 - Server integration tests at 001f786b (own mysqld 3651, stopped by SQL SHUTDOWN): 141 passed / 3 skipped (`build/i1bp/it3.log`).
 - r6 (exe c, `build/i1bp/scen_r6.log`): the lane's own W1 W2 W2b W30b W30c again on the final exe (r2 / r3 ran them on exe b,
-  which lacks only the back point) (running).
+  which lacks only the back point): **W1, W2, W2b, W30b, W30c passed**.
 
 ## How to run the tests
 

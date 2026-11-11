@@ -13949,7 +13949,9 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   a's instance in stag0202 (a field, as W30) instead of dng205b1, where a
   k10 character died within a minute in round I1a's runs.
 
-**Results** (2026-11-11, at 001f786b; the runs in the notes): the lane's
+**Results** (2026-11-07 and 2026-11-11, the runs in the notes: the later
+ones with the client of 001f786b, the earlier ones with a client that
+lacked only the back point): the lane's
 scenarios W1 (the prompt), W2, W2b, W11b, W30b, W30c (without friends) and
 round I1a's whole W set with `DW4_ONLINE_AUTOCHOICE=first` (W3-W9, W11, W12,
 W18, W19, W22, W24-W30, W32 and the counter-proofs W1x, W30x) pass; ctest
