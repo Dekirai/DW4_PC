@@ -172,10 +172,179 @@ public partial class HubLogicTests
         Assert.True(w.Bars.ContainsKey(102));
     }
 
+
+    /// <summary>The host's notices about <paramref name="about"/> (joined / left), in order.</summary>
+    private static List<string> SeatNotices(Harness h, string receiver, string about) => h.P(receiver).All(Msg.WorldNotice, WorldNoticeMsg.Parse)
+        .Where(n => n.Member == h.Mem(about).Id && n.Kind is WorldNoticeKind.Joined or WorldNoticeKind.Left).Select(n => n.Kind.ToString()).ToList();
+
+    [Fact]
+    public void A_fresh_arrival_removed_while_its_join_waits_goes_home_at_once_and_is_never_seated_again()
+    {
+        var h = new Harness();
+        Admit(h, "a", Player(100, "a"));
+        Admit(h, "b", Player(101, "b"));
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a", joinable: false); // a scene: an arrival's JOIN waits (HoldKind.Join)
+        h.Barrier("b", "stag0101");
+        var w = W(h, "a");
+        // b holds its seat while it waits (I1a: the seat at the decision): the host sees "b joined." and removes it.
+        Assert.True(w.Seats.ContainsKey(h.Mem("b")));
+        Assert.Equal(WaitReason.NotJoinable, h.P("b").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        Assert.False(h.P("b").Has(Msg.BarrierOk));
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
+        // At once: the notice, then the DISSOLVE into the lobby on b's own story; no seat, the bar, no HOME owed any more.
+        Assert.Equal(WorldNoticeKind.Removed, h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse).Last().Kind);
+        var ok = h.Decision("b");
+        Assert.Equal((BarrierDecision.Dissolve, h.Mem("b").Id, "stagml11", RoomHub.HomePoint),
+            (ok.Decision, ok.World.OwnerMember, ok.World.RedirectStage.ToLowerInvariant(), ok.World.RedirectPoint));
+        Assert.False(w.Seats.ContainsKey(h.Mem("b")));
+        Assert.True(w.Bars.ContainsKey(101));
+        Assert.Null(h.Mem("b").HomeWish);
+        Assert.Equal(InstanceMode.Hub, h.I("b").Mode);
+        // The scene ends: nothing joins (before the review's fix the hold's JOIN seated b again: "b joined." a second time, the
+        // host's story owner, HOME only later).
+        h.Joinable("a");
+        h.Hub.Housekeep(h.Now);
+        h.Hub.Housekeep(h.Now);
+        Assert.Single(h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse));
+        Assert.False(w.Seats.ContainsKey(h.Mem("b")));
+        Assert.Null(h.Mem("b").World);
+        Assert.Equal(["Joined", "Left"], SeatNotices(h, "a", "b"));
+        Assert.False(w.Ending);
+    }
+
+    /// <summary>a hosts Dry Land and plays alone in dng205b1 (joinable); b and c are a sealed stage group of a's instance at stag0201.</summary>
+    private static (Harness H, WorldInstance W) GuestPairApart()
+    {
+        var h = new Harness();
+        Admit(h, "a", Player(100, "a") with { Story = StoryAt(4) });
+        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2) });
+        Admit(h, "c", Player(102, "c") with { Story = StoryAt(2) });
+        BarrierWith(h, "a", "stag0202");
+        h.Snapshot("a");
+        BarrierWith(h, "a", "dng205b1");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        var w = W(h, "a");
+        // b takes the gate to stag0201 alone: a guest's NEW (solo-led); c follows and joins b's stage group (JOIN, sealed).
+        BarrierWith(h, "b", "stag0201");
+        h.Snapshot("b");
+        h.Log("b", 0, 120);
+        h.Joinable("b");
+        BarrierWith(h, "c", "stag0201");
+        var okC = h.Decision("c");
+        Assert.Equal(BarrierDecision.Join, okC.Decision);
+        h.Send("c", new ReadyMsg(okC.NewInst, okC.NewVisit, 120, 0, 5000, [7]).Frame());
+        var req = h.P("b").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        h.Send("b", new JoinAtMsg(req.Inst, req.Visit, 155).Frame());
+        h.Log("b", 120, 35);
+        Assert.Same(w, W(h, "b"));
+        Assert.Same(w, W(h, "c"));
+        Assert.Same(h.I("b"), h.I("c"));
+        Assert.Equal(InstanceMode.Sealed, h.I("b").Mode);
+        return (h, w);
+    }
+
+    [Fact]
+    public void A_member_removed_while_its_stage_group_gathers_at_a_barrier_goes_home_alone_and_the_others_join_on()
+    {
+        var (h, w) = GuestPairApart();
+        h.Seal(300);
+        // b reports the barrier into a's stage; the host removes c while the group gathers; then c reports it too.
+        h.Barrier("b", "dng205b1");
+        var decided = h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count;
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("c").Id).Frame());
+        Assert.Null(h.Mem("c").World);
+        Assert.Equal(decided, h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count); // (no decision before the barrier's)
+        h.Barrier("c", "dng205b1");
+        // b joins a's stage group; c goes home alone on its own story (replace: its engine held a's), into the lobby.
+        var okB = h.Decision("b");
+        var okC = h.Decision("c");
+        Assert.Equal((BarrierDecision.Join, h.Mem("a").Id), (okB.Decision, okB.World.OwnerMember));
+        Assert.Equal((BarrierDecision.Dissolve, StoryMode.Replace, h.Mem("c").Id, "stagml11"),
+            (okC.Decision, okC.World.StoryMode, okC.World.OwnerMember, okC.World.RedirectStage.ToLowerInvariant()));
+        Assert.Equal(["a", "b"], w.Seats.Keys.Select(x => x.Name).Order());
+        Assert.Null(h.Mem("c").World);
+        Assert.Null(h.Mem("c").HomeWish);
+        Assert.Equal(["Joined", "Left"], SeatNotices(h, "a", "c"));
+        // A STORY with a's key from c's modified client: refused (owner), nothing reaches a's keeper.
+        var revision = w.Keeper.Story.Revision;
+        var home = h.I("c");
+        h.Send("c", new StoryMsg(home.Id, home.Visit, 0, new StoryDelta { Flags = [67] }, h.Mem("a").Id, 1).Frame());
+        Assert.Equal(StoryRefusal.Owner, h.P("c").Last(Msg.StoryAck, StoryAckMsg.Parse).Refused.Single().Reason);
+        Assert.Equal(revision, w.Keeper.Story.Revision);
+    }
+
+    /// <summary>a hosts stag0101 and plays alone (joinable, 120 ticks logged); b arrives from home and is decided a JOIN.</summary>
+    private static (Harness H, WorldInstance W, BarrierOkMsg Join) JoiningGuest()
+    {
+        var h = new Harness();
+        Admit(h, "a", Player(100, "a"));
+        Admit(h, "b", Player(101, "b"));
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Joinable("a");
+        h.Log("a", 0, 120);
+        h.Barrier("b", "stag0101");
+        var join = h.Decision("b");
+        Assert.Equal((BarrierDecision.Join, ArrivalKind.AutoJoin), (join.Decision, join.World.Arrival));
+        Assert.NotNull(h.Mem("b").Joining);
+        return (h, W(h, "a"), join);
+    }
+
+    [Fact]
+    public void A_member_removed_while_its_join_runs_is_never_seated_again_and_gets_its_home_in_the_stage_group()
+    {
+        var (h, w, join) = JoiningGuest();
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
+        Assert.False(w.Seats.ContainsKey(h.Mem("b")));
+        // The join runs on (b's engine is catching up): READY, a's JOIN_AT; b is in a's stage group without a seat.
+        h.Send("b", new ReadyMsg(join.NewInst, join.NewVisit, 120, 0, 5000, [7]).Frame());
+        var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 155).Frame());
+        h.Log("a", 120, 35);
+        Assert.Same(h.I("a"), h.Mem("b").Instance);
+        for (var k = 0; k < 3; ++k)
+        {
+            h.Seal(300);
+            h.Hub.Housekeep(h.Now);
+        }
+        // Its owed HOME is stamped there (reason removed); it never got a seat again, the host was told once.
+        Assert.Contains(h.P("a").Ticks().SelectMany(t => t.Rec.Events),
+            e => e.Type == Ev.Home && e.HomeMask == (byte)(1 << h.Mem("b").Slot) && e.Payload[1] == (byte)HomeReason.Removed);
+        Assert.False(w.Seats.ContainsKey(h.Mem("b")));
+        Assert.Null(h.Mem("b").World);
+        Assert.Equal(["Joined", "Left"], SeatNotices(h, "a", "b"));
+    }
+
+    [Fact]
+    public void A_member_removed_while_its_join_runs_gets_no_seat_from_the_joins_fallback_and_is_asked_home_at_once()
+    {
+        var (h, w, _) = JoiningGuest();
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
+        // a walks on before b's READY: b's fallback is a new stage group of a's instance (its engine holds a's story), but no seat
+        // (before the review's fix TakeSeat seated it again) and its owed HOME at once (JOIN_REQ home: it leads alone).
+        h.Barrier("a", "stag0102", tick: 119);
+        var fallback = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, w.Wid), (fallback.Decision, fallback.World.Wid));
+        Assert.False(w.Seats.ContainsKey(h.Mem("b")));
+        Assert.Null(h.Mem("b").World);
+        Assert.Contains(h.P("b").All(Msg.JoinReq, JoinReqMsg.Parse), r => r.Kind == JoinReqKind.Home);
+        Assert.Equal(["Joined", "Left"], SeatNotices(h, "a", "b"));
+        // A STORY with a's key from b: refused (owner).
+        var group = h.I("b");
+        h.Send("b", new StoryMsg(group.Id, group.Visit, 0, new StoryDelta { Flags = [67] }, h.Mem("a").Id, 1).Frame());
+        Assert.Equal(StoryRefusal.Owner, h.P("b").Last(Msg.StoryAck, StoryAckMsg.Parse).Refused.Single().Reason);
+    }
+
     [Fact]
     public void A_report_names_the_reported_account_and_the_shared_instance_and_its_answer_reaches_the_reporter()
     {
         var h = SealedPair(out _);
+        h.Hub.Housekeep(h.Now); // (INSTANCE_INFO: b's client knows a, the card's member)
         var w = W(h, "a");
         w.HistoryId = 77;
         var reports = new List<ReportRequest>();
@@ -187,17 +356,23 @@ public partial class HubLogicTests
         h.Hub.ReportAnswered(r.ReporterAccount, r.ReportedMember, r.ReportedName, ReportResult.Sent);
         var answer = h.P("b").Last(Msg.WorldNotice, WorldNoticeMsg.Parse);
         Assert.Equal((WorldNoticeKind.Report, h.Mem("a").Id, "a", (uint)ReportResult.Sent), (answer.Kind, answer.Member, answer.Name, answer.Argument));
-        // The own id and an unknown one: "not available" at once, nothing stored.
+        // The own id and an unknown one: "not available" at once without a name, nothing stored.
         h.Send("b", new ReportMsg(h.Mem("b").Id, 1, 0).Frame());
         h.Send("b", new ReportMsg(9999, 1, 0).Frame());
         Assert.Single(reports);
-        Assert.Equal([(uint)ReportResult.NotAvailable, (uint)ReportResult.NotAvailable],
-            h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse).Where(n => n.Kind == WorldNoticeKind.Report).Skip(1).Select(n => n.Argument));
-        // Three at once, then one a second: the fourth within the second is dropped without an answer.
-        h.Advance(5000);
+        Assert.Equal([((uint)ReportResult.NotAvailable, ""), ((uint)ReportResult.NotAvailable, "")],
+            h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse).Where(n => n.Kind == WorldNoticeKind.Report).Skip(1).Select(n => (n.Argument, n.Name)));
+        // Three at once, then ten a minute as POST /reports (one each 6 s): the fourth within it is dropped without an answer.
+        h.Advance(60_000);
         var before = h.P("b").Frames.Count;
         for (var k = 0; k < 4; ++k) h.Send("b", new ReportMsg(h.Mem("a").Id, 1, 0).Frame());
         Assert.Equal(4, reports.Count);
+        h.Advance(1500);
+        h.Send("b", new ReportMsg(h.Mem("a").Id, 1, 0).Frame());
+        Assert.Equal(4, reports.Count);
+        h.Advance(6000);
+        h.Send("b", new ReportMsg(h.Mem("a").Id, 1, 0).Frame());
+        Assert.Equal(5, reports.Count);
         // A wrong reason is a protocol error.
         Assert.Throws<ProtocolException>(() => h.Send("b", new ReportMsg(h.Mem("a").Id, 5, 0).Frame()));
         Assert.Throws<ProtocolException>(() => ReportMsg.Parse(Convert.FromHexString("0100000000" + "00000000")));
@@ -205,30 +380,50 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void A_player_who_left_the_world_can_still_be_reported_and_a_stranger_report_names_no_instance()
+    public void A_report_resolves_only_members_the_reporter_was_told_about_and_tells_nobodys_name_or_presence()
     {
         var h = new Harness();
         Admit(h, "a", Player(100, "a"));
         Admit(h, "b", Player(101, "b"));
+        Admit(h, "z", Player(200, "secretname"));
         var reports = new List<ReportRequest>();
-        h.Hub.Reports = reports.Add;
-        var aId = h.Mem("a").Id;
+        // A report service whose daily limit was reached (WorldGateway maps report_limit to Limit).
+        h.Hub.Reports = r =>
+        {
+            reports.Add(r);
+            h.Hub.ReportAnswered(r.ReporterAccount, r.ReportedMember, r.ReportedName, ReportResult.Limit);
+        };
+        ReportAnswer Answer(uint member)
+        {
+            h.Advance(7000);
+            h.Send("b", new ReportMsg(member, 4, 0).Frame());
+            var n = h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse).Last(x => x.Kind == WorldNoticeKind.Report);
+            return new ReportAnswer(n.Member, (ReportResult)n.Argument, n.Name);
+        }
+        // b never met anyone: every member id, a live one or none at all, answers the same: "not available", no name, no report.
+        foreach (var id in new uint[] { h.Mem("a").Id, h.Mem("z").Id, 77 })
+            Assert.Equal(new ReportAnswer(id, ReportResult.NotAvailable, ""), Answer(id));
+        Assert.Empty(reports);
+        // a hosts, b joins: b's client is told about a (INSTANCE_INFO), not about z.
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        h.Barrier("b", "stag0101");
+        Assert.Same(W(h, "a"), W(h, "b"));
+        Assert.Equal(new ReportAnswer(h.Mem("a").Id, ReportResult.Limit, "a"), Answer(h.Mem("a").Id));
+        Assert.Equal(new ReportAnswer(h.Mem("z").Id, ReportResult.NotAvailable, ""), Answer(h.Mem("z").Id));
+        Assert.Equal([100L], reports.Select(r => r.ReportedAccount));
+        // a leaves the world; an hour later b can still report him (b's own record, not a's presence): the same answer as before.
         h.Hub.Leave(100, h.Now);
-        h.Advance(60_000);
+        h.Advance(3_600_000);
         h.Hub.Housekeep(h.Now);
-        h.Send("b", new ReportMsg(aId, 3, 0).Frame());
-        var r = reports.Single();
-        Assert.Equal((100L, "a", "name", (long?)null), (r.ReportedAccount, r.ReportedName, r.Reason, r.HistoryId));
-        // After 30 minutes the departed member is forgotten.
-        h.Advance(RoomHub.DepartedKeepMs + 1000);
-        h.Hub.Housekeep(h.Now);
-        h.Send("b", new ReportMsg(aId, 3, 0).Frame());
-        Assert.Single(reports);
-        Assert.Equal((uint)ReportResult.NotAvailable, h.P("b").Last(Msg.WorldNotice, WorldNoticeMsg.Parse).Argument);
+        Assert.Equal(new ReportAnswer(h.Mem("a").Id, ReportResult.Limit, "a"), Answer(h.Mem("a").Id));
+        Assert.Equal((100L, "a", (long?)null), (reports.Last().ReportedAccount, reports.Last().ReportedName, reports.Last().HistoryId));
         // Without a report service the answer is "failed".
         h.Hub.Reports = null;
-        Admit(h, "c", Player(102, "c"));
-        h.Send("b", new ReportMsg(h.Mem("c").Id, 4, 0).Frame());
-        Assert.Equal((uint)ReportResult.Failed, h.P("b").Last(Msg.WorldNotice, WorldNoticeMsg.Parse).Argument);
+        Assert.Equal(new ReportAnswer(h.Mem("a").Id, ReportResult.Failed, "a"), Answer(h.Mem("a").Id));
     }
+
+    private sealed record ReportAnswer(uint Member, ReportResult Result, string Name);
 }

@@ -1162,6 +1162,8 @@ public sealed partial class RoomHub
             Dissolve(g, now, redirectHome: true);
             return;
         }
+        // (Members removed while the group gathered at the barrier go home alone; the others decide on, 19.6.6.)
+        if (SendRemovedHome(g, w, now)) return;
         if (StageNames.IsHub(g.Stage))
         {
             Dissolve(g, now, redirectHome: false);
@@ -1354,6 +1356,8 @@ public sealed partial class RoomHub
         foreach (var g in _holds.ToList())
         {
             if (!_holds.Contains(g)) continue;
+            // (A member removed while the arrival waits goes home now, 19.6.6; the bar is checked again at every pass.)
+            if (SendRemovedHome(g, g.World ?? g.Target?.World, now)) continue;
             switch (g.Hold)
             {
                 case HoldKind.CoArrival:
@@ -1757,7 +1761,9 @@ public sealed partial class RoomHub
     {
         _holds.Remove(g);
         g.Hold = HoldKind.None;
-        var free = Enumerable.Range(0, Wire.MaxSlots).Select(s => target.Slots[s] is null && target.Reserved[s] is null).ToArray();
+        // (The last check before the seat: a member removed from the target's instance never joins it, 19.6.6.)
+        if (SendRemovedHome(g, target.World, now)) return;
+        var free =Enumerable.Range(0, Wire.MaxSlots).Select(s => target.Slots[s] is null && target.Reserved[s] is null).ToArray();
         foreach (var a in g.Members)
         {
             var m = a.Member;
@@ -2373,6 +2379,9 @@ public sealed partial class RoomHub
         Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id), ("wid", w.Wid));
         if (w.Ending) SendHome(inst, inst.PresentMask, HomeReason.Ended, now, 0);
         SendInfo(m, now);
+        // A joiner removed during its join (19.6.6) holds no seat (TakeSeat refused it): the HOME it owes goes to its new stage group
+        // at once (JOIN_REQ home), not at the next housekeeping pass.
+        if (m.HomeWish is { } wish && wish.Wid == w.Wid && !w.Seats.ContainsKey(m)) RetryHome(m, now);
     }
     // Fork -----------------------------------------------------------------------------------------------------------------
 

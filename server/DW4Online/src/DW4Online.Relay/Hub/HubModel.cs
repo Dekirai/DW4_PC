@@ -63,7 +63,7 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>INSTANCE_OP's token bucket (<see cref="RoomHub.InstanceOpBurst"/>, refilled at one a second) and when it was refilled.</summary>
     public double InstanceOpTokens { get; set; } = double.NaN;
     public long InstanceOpTokensAt { get; set; }
-    /// <summary>REPORT's token bucket (<see cref="RoomHub.ReportBurst"/>, refilled at one a second; round I1b).</summary>
+    /// <summary>REPORT's token bucket (<see cref="RoomHub.ReportBurst"/>, refilled at <see cref="RoomHub.ReportsPerMinute"/>; round I1b).</summary>
     public double ReportTokens { get; set; } = double.NaN;
     public long ReportTokensAt { get; set; }
     /// <summary>A HOME the relay owes this member (its *Leave instance* or its removal, 19.6.4 / 19.6.6), asked again in its next stage
@@ -78,6 +78,10 @@ public sealed class HubMember(uint id, long accountId, string name)
     public long LastInputOrPong { get; set; }
     /// <summary>The members this receiver was told about by MEMBER_INFO, with the flags it was told.</summary>
     public Dictionary<uint, byte> Known { get; } = [];
+    /// <summary>The account and name of every member this receiver was told about by MEMBER_INFO since its connection (cleared with
+    /// <see cref="Known"/>): REPORT resolves only these (round I1b review: a member id the client never learnt is "not available",
+    /// whatever that member does now, so REPORT tells nobody's name or presence).</summary>
+    public Dictionary<uint, (long Account, string Name)> Introduced { get; } = [];
     /// <summary>The ghost figures this receiver draws (the presence selection, 19.13).</summary>
     public DW4Online.Relay.World.PresenceChoice Choice { get; set; } = DW4Online.Relay.World.PresenceChoice.Empty;
     /// <summary>The receivers that draw this sender, and whether as one of their nearest.</summary>
