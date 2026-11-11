@@ -95,27 +95,59 @@ twice, the save state suite 17 / 17, r25c 10 / 10 (section 6).
 
 ## 6. Checks
 
-- `ctest` (build/Clean): all tests, among them `pad_family` (classification,
-  binding spaces, pictures per binding, tracker, migration, every family's
-  atlas, the title variant) and `pad_detect` (SDL virtual joysticks for all
-  requested controllers and variants with every real backend off: detection,
-  last input wins, drift, hotplug fallback, the adapter's virtual pads).
-- Hidden runs with forced families (`build/pads/shots.sh`, `f1shot.sh`,
-  `online_shot.sh`, screenshots under the worktree's `build/pads`):
-  the title's PRESS START, the character select's texts (Press START when
-  finished, Select / Confirm / Cancel), the status window's footer, the F1
-  Controls tab and the online screens' footer, for every family.
-- `DW4_TRACE_PROMPTS=1` prints every split text line's quads (button glyph,
-  letter, word).
+- `ctest` (build/Clean): all tests, among them `pad_family` (classification
+  with SDL's Wii driver names and GUIDs, the player slots, binding spaces,
+  pictures per binding, the menus' buttons, tracker, migration, every
+  family's atlas and its legibility: light sticks and D-pads, START as large
+  as A, the word picture's width, the keyboard's clusters and erase sign, the
+  DualShock 4's words; the atlas cache; the title variant at 2048 texels and
+  a texture pack's replacement; the prompts in text lines laid out by the
+  engine's own `layout_text`: words, their rows closing up per alignment,
+  longer words, the button glyphs; the device list's ids) and `pad_detect`
+  (SDL virtual joysticks for all requested controllers and variants with
+  every real backend off, through the host's own `pad_host` code: detection,
+  last input wins, drift and trigger noise, hotplug fallback, Wii remotes
+  without a slot, a Nintendo pad by label, the menus' keys by layout and by
+  bindings, the adapter's virtual pads with the main stick's up).
+- Each fix's test was shown to catch it: the fix taken out again (one at a
+  time, `build/fix/mutations.log`), the test fails (18 of 18).
+- Hidden runs with forced families (`DW4_PROMPTS=<id>[,<id> ...]`, one per
+  player; screenshots under the worktree's `build/fix/shots`, `f1`, `online`):
+  the title's PRESS START (1080p and 4K), the character select's texts (Press
+  START when finished, Select / Confirm / Cancel, the other players' "Press
+  A" with their own families), the status window's footer, the tutorial's
+  texts, the F1 Controls tab and the online screens' footer, for every
+  family.
+- `DW4_TRACE_PROMPTS=1` prints every text line with prompts (its player,
+  alignment, pictures and words).
 
 Results (11 November 2026, this PC, hidden runs):
 
 | Check | Build | Result |
 | --- | --- | --- |
-| ctest, build/Clean | a2deda43 | 64 / 64 (pad_family 1523 checks, pad_detect 112 checks) |
-| det.sh (newgame_dng101b1, 6000 frames) | f2a1cb54 and a2deda43, two runs each | 4004f056 / 396cb219 every time |
-| save state suite (st_all.sh) | f2a1cb54 | 17 / 17 identical after loading with a loaded state |
-| r25c (segments.sh, 5 at a time) | 31acb024 | 10 / 10 reached, 1,748,011 frames (the reference's numbers per segment) |
+| ctest, build/Clean | 1d297291 | 64 / 64 (pad_family 1682 checks, pad_detect 133 checks) |
+| det.sh (newgame_dng101b1, 6000 frames) | 1d297291, three runs of two | 4004f056 / 396cb219 every time |
+| save state suite (st_all.sh) | 1d297291 | 17 / 17 identical after loading with a loaded state |
+| r25c (segments.sh, 5 at a time) | 1d297291 | 10 / 10 reached, 1,748,011 frames (the reference's numbers per segment) |
 
-The commits after a check change presentation only (the pictures' sizes and
-colours, the font glyphs' registration in the draw path, documentation).
+## 7. Review fixes
+
+| Finding | Fix |
+| --- | --- |
+| Switch 2 Pro unusable (SDL without libusb) | Unchanged in SDL (libusb, an LGPL DLL, is the owner's decision); the game now notices a connected one (Windows' device list: USB or Bluetooth ids) and says so once and in F1 > Controls instead of showing nothing |
+| SDL's Wii driver on by default (DolphinBar, Wii remotes taking slots, start-up stalls) | `wii_driver=auto`: on only while a 057e:0330 device is connected (a DolphinBar's 057e:0306 never turns it on), never in test runs; Wii remotes never take a player slot (`player_pad`) |
+| 057e:0330 is also the Wii Remote Plus | Wii U Pro only by SDL's GUID extension byte or the name SDL sets after reading the extension |
+| Untested paths (adapter y, trigger noise, host code) | `pad_host.*` is the host's code the tests run; tests for the adapter's up, trigger noise through SDL, the slots, the menus' keys |
+| START followed by a letter | No letter or digit may touch the word on either side (`STARTS`, `STARTED`, `RESTART`, `START1` stay text; punctuation does not count) |
+| The menus followed the game's A binding | `menu_buttons=layout` (default): the controller's own A / Cross confirms as before this round; `bindings` follows the game's A / B |
+| Adapter reader polled every two seconds, held the adapter from Dolphin | Device list only when SDL counts a device change (two-second retries only while another program holds a found adapter); let go in the background with the ports kept idle; `gc_adapter` setting; F1 says when the driver is missing or the adapter busy |
+| Ten atlases redrawn on every rebinding, 25 title variants | Atlases drawn only for the families on screen; three title variants at most |
+| Pictures per player | The character select's lines follow their player's controller |
+| Dark sticks and D-pads | Light on every family, the stick as large as a face button |
+| Keyboard caps unreadable, Backspace as an arrow | Stick, D-pad and C-stick one cap with large labels; Backspace the erase sign |
+| START smaller than A, alone in a five-letter gap | Middle buttons as large as A; the word's picture takes its own width and the row closes up as the line is aligned |
+| PlayStation START inconsistent | DualShock 4: OPTIONS / SHARE pills with the words everywhere; DualSense: three lines and the Create burst everywhere (title included) |
+| Stale contact sheet | Made again from the test: `build/fix/art/atlases.png` |
+| Comment against code (Wii driver) | Rewritten with the automatic mode |
+| Title variant 4x, replaced textures kept GC | 2048 texels wide; a replacement in the original's layout gets the picture too |
+| Data Overflow's own hint texts | Not touched (paused) |
