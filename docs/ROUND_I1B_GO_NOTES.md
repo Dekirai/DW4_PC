@@ -40,6 +40,9 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
   hook | argument; 1 defeat: the slot's player falls as on poison's last tick, `Engine::online_test_hook`; 2 busy: the
   engine is neither membership-safe nor joinable for N steps, `Engine::online_test_busy`, cleared at a barrier). Only
   development clients apply it (`Session::apply_events`, `EngineLink::test_hook`); release clients skip the unknown type.
+  Hook 3 mat (2026-11-11, contract entry "go 2026-11-11 15:00"): the slot's player stands on the mat the argument names
+  (letter << 8 | number; `testhook mat matz02`): W31's way from dng204b1 to matz02, which neither the script's explore
+  nor the campaign bot's errand survives at k10.
   Relay (`GoAlong.cs`, test options in `WorldHubOptions`, all off by default): `World:TestHooks` (INTENT kind 0x7F test
   stamps TEST in the sender's sealed stage group), `World:TestGoHook` (defeat / busy_sender:N at a GO's tick before it;
   busy_target:N in the sealed target stage group), `World:TestGoHookCount` (1), `World:TestGoBarrierHoldMs` (a GO's
@@ -59,10 +62,10 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 
 - ctest 57/57 (`build/go/ctest2.log`); session tests 397 checks (`go_along_session`); wire tests (go_messages, the golden
   bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
-- Server unit tests (2026-11-11, 49301c82): 476 of 478; the two failing ones are
-  `HubLogicTests.A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (protocol 47 and 48), which
-  fail the same way on int-i1a bfc3b0a5 itself (a `git archive` of its server: desync_votes 1, no resync of b), not this
-  lane's (GoAlongTests: 6 + 2 new, all green). For the integration.
+- Server unit tests (2026-11-11, with TEST mat): 478/478 (GoAlongTests 6 + 2 new). The I1a test
+  `HubLogicTests.A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (protocol 47 and 48) is
+  intermittent: it failed four runs in a row at about 14:20 (desync_votes 1, no resync of b), on a `git archive` of int-i1a
+  bfc3b0a5's server as well, and passed every run from 14:50 on, there too. Not this lane's; for the integration.
 - Server integration tests (2026-11-11, 49301c82, mysqld 3653): 137 passed, 4 skipped, 0 failed (`build/go/itest3.log`).
   Their artifacts must lie two levels below `server/DW4Online` (`--artifacts-path bin/goit`): two tests find
   `Directory.Build.props` and `deploy/` from the test binary (with `build/go/srvart-it` they failed for that alone).
