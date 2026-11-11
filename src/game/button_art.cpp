@@ -319,7 +319,7 @@ Style style_of(PadFamily family) {
     s.face_rim = hex(0, 0);
     switch (family) {
     case PadFamily::xbox_one:
-        s.face = hex(0x26262c); s.face_rim = hex(0x9a9aa8, 0.45f); s.letter = hex(0xf2f2f4); s.letters_coloured = true;
+        s.face = hex(0x34343c); s.face_rim = hex(0xc0c0cc, 0.7f); s.letter = hex(0xf2f2f4); s.letters_coloured = true;
         s.shoulder = hex(0x2c2c33); s.shoulder_label = hex(0xf0f0f2);
         s.middle = hex(0x2c2c33); s.middle_symbol = hex(0xf0f0f2);
         s.stick = hex(0x1c1c22); s.stick_cap = hex(0x3a3a42); s.stick_label = hex(0xe8e8ec);
@@ -333,7 +333,7 @@ Style style_of(PadFamily family) {
         s.dpad = hex(0x3c3c44); s.dpad_mark = hex(0xffffff);
         break;
     case PadFamily::ps4:
-        s.face = hex(0x22222a); s.face_rim = hex(0x9a9aa8, 0.45f); s.letter = hex(0xf0f0f4);
+        s.face = hex(0x2e2e38); s.face_rim = hex(0xb0b0bc, 0.6f); s.letter = hex(0xf0f0f4);
         s.shoulder = hex(0x2a2a32); s.shoulder_label = hex(0xf0f0f4);
         s.middle = hex(0x2a2a32); s.middle_symbol = hex(0xf0f0f4);
         s.stick = hex(0x16161c); s.stick_cap = hex(0x34343c); s.stick_label = hex(0xe8e8ec);
@@ -348,8 +348,8 @@ Style style_of(PadFamily family) {
         break;
     case PadFamily::switch_pro:
     case PadFamily::switch2_pro:
-        s.face = family == PadFamily::switch2_pro ? hex(0x2a2a31) : hex(0x1e1e22);
-        s.face_rim = family == PadFamily::switch2_pro ? hex(0xb4b8c8, 0.85f) : hex(0x8a8a96, 0.45f);
+        s.face = family == PadFamily::switch2_pro ? hex(0x383842) : hex(0x30303a);
+        s.face_rim = family == PadFamily::switch2_pro ? hex(0xd0d4e4, 0.9f) : hex(0xb0b0bc, 0.65f);
         s.letter = hex(0xf4f4f6);
         s.shoulder = hex(0x2c2c32); s.shoulder_label = hex(0xf4f4f6);
         s.middle = hex(0x2c2c32); s.middle_symbol = hex(0xf4f4f6);
@@ -587,7 +587,7 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
     const Style st = style_of(family);
     const float s = b.s();
     const float cx = b.cx(), cy = b.cy();
-    const float r = s * 0.455f;
+    const float r = s * 0.47f;
     switch (pf.face) {
     case Face::none:
         if (!pf.key.empty()) key_cap(c, b, key_cap_label(pf.key), false); // (the GameCube pad's F1)
@@ -808,10 +808,10 @@ PromptAtlas build_prompt_atlas(PadFamily family, const Settings& settings) {
         cell.y = int(i / PromptAtlas::kColumns) * kPitchY + PromptAtlas::kGutter / 2;
         cell.width = PromptAtlas::kCellWidth;
         cell.height = PromptAtlas::kCellHeight;
-        draw_face(canvas, icon_box(cell, 3), family, prompt_face(family, settings, PromptControl(i)), false);
+        draw_face(canvas, icon_box(cell, 1), family, prompt_face(family, settings, PromptControl(i)), false);
     }
     atlas.start_word = {PromptAtlas::kGutter / 2, rows * kPitchY + PromptAtlas::kGutter / 2, kWordWidth, PromptAtlas::kCellHeight};
-    draw_face(canvas, icon_box(atlas.start_word, 3), family, prompt_face(family, settings, PromptControl::start), true);
+    draw_face(canvas, icon_box(atlas.start_word, 1), family, prompt_face(family, settings, PromptControl::start), true);
     atlas.image = canvas.image();
     return atlas;
 }

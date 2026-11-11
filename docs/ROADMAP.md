@@ -54,10 +54,36 @@ for every device or scene.
 | 60–300 FPS | Provisional walking-preview frame pacing only; original game scheduling remains pending | At least 60 FPS on documented hardware and presentation options up to 300 FPS, decoupled from measured original simulation |
 | VSync Off | F1 menu swap interval, saved; frame limit 0-300 | Validated frame pacing in gameplay |
 | MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
-| Keyboard / Mouse | Full original controls on rebindable keys (three per button), saved | Original gameplay, freely editable saved bindings and appropriate mouse camera support |
-| Xbox / PlayStation | Full original controls on four independent slots with hotplug; rebindable buttons and triggers (F1, saved) | Tested original gameplay mappings, independent slots, hotplug and prompts |
-| GameCube | SDL-mapped devices when available | Original gameplay mapping, dead zones and adapter support |
+| Keyboard / Mouse | Full original controls on rebindable keys (three per button), saved; key cap prompts of the bound keys | Original gameplay, freely editable saved bindings and appropriate mouse camera support |
+| Xbox / PlayStation | Full original controls on four independent slots with hotplug; rebindable buttons and triggers (F1, saved); detected family with its own prompts | Tested original gameplay mappings, independent slots, hotplug and prompts |
+| Nintendo pads | Switch Pro, Switch 2 Pro (once SDL opens it), Wii U Pro: by label or by position, own prompts | Tested with the devices |
+| GameCube | 1:1 layout (trigger clicks), the game's own pictures; Mayflash PC mode through SDL, Wii U mode adapters through WinUSB | Tested with the adapters |
 | Original / Modernized | F1 preset: Original (4:3, 60 fps motion, no MSAA, intro, original balance) or Modernized (widescreen, smooth motion, 4x MSAA, skip intro); options stay individually adjustable | Original behavior baseline plus explicit optional changes |
+
+## Controller families and button prompts
+
+Requested on 11 November 2026 (round "pads", branch `feat-pads`,
+[ROUND_PADS_NOTES.md](ROUND_PADS_NOTES.md)): the game detects the controller
+in use and every button picture follows it in real time. Render-only for the
+game's pictures (the simulation, tick state, saves and the online wire are
+unchanged; det.sh, the save state suite and r25c as before).
+
+| Controller | Detection | Prompts | Needs the real device |
+| --- | --- | --- | --- |
+| DualSense (PS5) | done (SDL type, 054c:0ce6 / 0df2) | done, monochrome symbols | play test over USB and Bluetooth |
+| DualShock 4 (PS4) | done (054c:05c4 / 09cc) | done, coloured symbols | play test, third-party pads |
+| Xbox 360 | done (SDL type) | done, START / BACK | play test, wireless receiver |
+| Xbox One / Series | done (SDL type) | done, Menu / View | play test |
+| Switch Pro | done (057e:2009) | done, by label (default) or position | play test |
+| Switch 2 Pro | done (057e:2069) | done | SDL needs libusb to open it (not in the build; owner's decision), then a play test |
+| Wii U Pro | done (name, 057e:0330; SDL's Wii driver enabled) | done | Bluetooth pairing on Windows and a play test |
+| GameCube (Mayflash PC mode) | done (SDL type, 0079:1843 / 1844) | game's own pictures; port UI GameCube pictures | trigger clicks, the adapter's reported id |
+| GameCube (Wii U mode, WUP-028) | done (own WinUSB reader, virtual SDL pads) | as above | the whole USB path with Zadig's WinUSB driver |
+| Keyboard | done | key caps of the bound keys | - |
+
+Open: per-player pictures in local co-op with mixed controllers (the
+character select's per-quadrant prompts follow player 1), libusb for the
+Switch 2 Pro, Data Overflow's own hint texts (paused).
 
 ## Requested extensions
 

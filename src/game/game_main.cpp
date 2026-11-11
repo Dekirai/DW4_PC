@@ -1207,10 +1207,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (!button_prompts) return;
             button_prompts->update(settings);
             button_prompts->set_family(view.prompt_family());
-            // (The font loads with the first stage: its glyph cells once.)
-            if (!renderer->has_prompt_glyphs())
-                if (const auto* text = engine.get<dw4::engine::TextCtlManager>())
-                    if (const auto* font = text->font("NORMAL")) renderer->set_prompt_glyphs(dw4::game::prompt_glyphs(*font));
+            // (The font loads with the first stage: its glyph cells, again
+            // whenever the engine holds another font image.)
+            if (const auto* text = engine.get<dw4::engine::TextCtlManager>())
+                if (const auto* font = text->font("NORMAL"); font && font->binding && font->binding->image) {
+                    const auto& image = font->binding->image;
+                    if (!renderer->has_prompt_glyphs() || renderer->prompt_glyphs().document != image.document() ||
+                        renderer->prompt_glyphs().reference != image.reference())
+                        renderer->set_prompt_glyphs(dw4::game::prompt_glyphs(*font));
+                }
         };
         auto& audio_dump = view.audio_dump;
         auto mix_audio = [&](int frames) { dw4::game::mix_audio(view, engine, frames); };

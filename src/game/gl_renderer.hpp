@@ -64,6 +64,7 @@ public:
     // The game font's glyph cells (once the engine loaded its font).
     void set_prompt_glyphs(const PromptGlyphs& glyphs);
     bool has_prompt_glyphs() const { return glyphs_.valid; }
+    const PromptGlyphs& prompt_glyphs() const { return glyphs_; }
     GlRenderer(const GlRenderer&) = delete;
     GlRenderer& operator=(const GlRenderer&) = delete;
 
