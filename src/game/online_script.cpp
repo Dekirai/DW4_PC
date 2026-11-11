@@ -86,7 +86,7 @@ bool OnlineScript::known_condition(std::string_view key) {
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
                                                  "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts",
-                                                 "figures", "offers", "notices", "go", "offerstage", "goback"};
+                                                 "figures", "offers", "notices", "go", "offerstage", "goback", "waited"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
@@ -269,6 +269,7 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key == "slot") return compare(facts.own_slot);
     if (c.key == "sealed") return compare(sealed_ticks_);
     if (c.key == "time") return compare(std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count());
+    if (c.key == "waited") return compare(std::chrono::duration<double>(std::chrono::steady_clock::now() - step_wall_).count());
     if (c.key == "epoch")
         return compare(std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
     if (c.key == "answered") return compare(answers_);
@@ -823,14 +824,15 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
         std::printf("online-script: stage %s (frame %d)\n", stage.c_str(), facts.frame);
         std::fflush(stdout);
     }
-    if (facts.mode == "sealed") ++sealed_ticks_;
-    trace_prompt(engine, facts);
+    if (facts.mode == "sealed" && !facts.parked) ++sealed_ticks_;
+    if (!facts.parked) trace_prompt(engine, facts);
     std::string shot; // (a "shot" step that ended in this update)
     for (int guard = 0; guard < 16 && cursor_ < steps_.size(); ++guard) {
         const auto& step = steps_[cursor_];
         if (!step_started_) {
             step_started_ = true;
             step_frames_ = 0;
+            step_wall_ = std::chrono::steady_clock::now();
             route_.clear();
             route_next_ = 0;
             explorer_.reset();
@@ -880,6 +882,14 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
                     std::fflush(stdout);
                     break;
                 }
+        if (!done && facts.parked) {
+            // A held barrier: no step runs, so only goback acts (B on the
+            // loading screen); every other action waits for the next step.
+            if (step.action == "goback") return act(engine, facts, step);
+            Output none;
+            none.shot = shot;
+            return none;
+        }
         if (!done) {
             ++step_frames_;
             // Where this member is, every five seconds (test traces;

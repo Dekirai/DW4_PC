@@ -12,7 +12,7 @@ goalong until go=stamped or go=going
 log b goes along
 idle until goback=1 fail stage=dng204b1,epoch>=@1100
 log b's barrier waits for the busy floor
-idle until frames>=1500 fail stage=dng204b1
+idle until waited>=22 fail stage=dng204b1
 log b waited past the join hold
 idle until stage=dng204b1,present=3,sealed>=120 fail epoch>=@1150
 log b joined a and c in dng204b1

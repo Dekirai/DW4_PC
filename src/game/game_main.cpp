@@ -549,6 +549,30 @@ std::uint64_t data_hash(const dw4::MountedResources& resources) {
     return h;
 }
 
+// Round I1b: the online script's go-along view of the session (online_script.hpp).
+void go_facts(dw4::game::OnlineScriptFacts& facts, const dw4::game::online::Session& session, double now) {
+    for (const auto& offer : session.go_offers())
+        if (offer.open) {
+            ++facts.offers;
+            facts.open_offers.emplace_back(offer.id, offer.stage);
+            if (!facts.newest_offer) {
+                facts.newest_offer = offer.id;
+                facts.offer_stage = offer.stage;
+            }
+        }
+    for (const auto& offer : session.go_offers())
+        if (!offer.open && !facts.closing_offer) facts.closing_offer = offer.id;
+    facts.notices = int(session.go_notices(now).size());
+    static const char* kGo[] = {"none", "asked", "waiting", "boss", "stamped", "going"};
+    facts.go = kGo[std::min<std::size_t>(std::size_t(session.go_state()), 5)];
+    facts.go_back = session.overlay(now).go_back;
+    for (const auto& offer : session.go_offers())
+        if (offer.open) {
+            facts.go_ready = session.go_grey(offer).empty();
+            break;
+        }
+}
+
 int run(const Options& options, dw4::game::Settings& settings) {
     // The engine is replaced in place when a save state loads (same storage,
     // so `engine` keeps naming the running one).
@@ -2257,27 +2281,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
                         // (Round I1b: the go-along view.)
-                        const auto& session = online->session();
-                        for (const auto& offer : session.go_offers())
-                            if (offer.open) {
-                                ++facts.offers;
-                                facts.open_offers.emplace_back(offer.id, offer.stage);
-                                if (!facts.newest_offer) {
-                                    facts.newest_offer = offer.id;
-                                    facts.offer_stage = offer.stage;
-                                }
-                            }
-                        for (const auto& offer : session.go_offers())
-                            if (!offer.open && !facts.closing_offer) facts.closing_offer = offer.id;
-                        facts.notices = int(session.go_notices(steady_seconds()).size());
-                        static const char* kGo[] = {"none", "asked", "waiting", "boss", "stamped", "going"};
-                        facts.go = kGo[std::min<std::size_t>(std::size_t(session.go_state()), 5)];
-                        facts.go_back = session.overlay(steady_seconds()).go_back;
-                        for (const auto& offer : session.go_offers())
-                            if (offer.open) {
-                                facts.go_ready = session.go_grey(offer).empty();
-                                break;
-                            }
+                        go_facts(facts, online->session(), steady_seconds());
                     }
                     facts.ghosts = ghosts.shown();
                     facts.figures = ghosts.staying();
@@ -2916,6 +2920,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (line.empty() && overlay.waiting_for_server) line = "Waiting for the server...";
                 if (line.empty()) line = overlay.status; // (19.5.5: "Kim lost the connection. Waiting for Kim... 52 s")
                 if (line.empty() && overlay.slow_uplink) line = "Your connection is slow; the others see you lag.";
+                // The online test driver while a barrier is held (no step runs, so the
+                // step loop's update does not come): its conditions, and goback.
+                if (online_script.active() && session.mode() == dw4::game::online::Mode::parked) {
+                    dw4::game::OnlineScriptFacts facts;
+                    facts.frame = frame;
+                    facts.parked = true;
+                    facts.own_slot = session.own_slot();
+                    facts.present = session.present();
+                    facts.mode = dw4::game::online::mode_name(session.mode());
+                    facts.tick = session.tick();
+                    go_facts(facts, session, online_now);
+                    facts.ghosts = ghosts.shown();
+                    facts.figures = ghosts.staying();
+                    if (online_script.update(engine, facts).go_back && session.go_back_to_lobby())
+                        std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
+                    if (online_script.finished()) running = false;
+                }
                 // Round I1b (19.30.7): a GO's barrier held over 10 s: B takes the member back to the lobby.
                 if (overlay.go_back) {
                     line += session.is_host() ? "   B: End the instance for everyone" : "   B: Back to the lobby";

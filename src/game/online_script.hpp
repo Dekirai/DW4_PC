@@ -108,6 +108,8 @@
 //         go=NAME (the own go-along request: none, asked, waiting, boss,
 //         stamped, going)  offerstage=NAME (the newest open offer's stage)
 //         goback=0|1 (a held GO barrier offers B: Back to the lobby)
+//         waited>=S (seconds since this step began, the wall clock: also
+//         counts while a barrier is held, where frames do not)
 //
 // Without "until", hold / press / log / shot end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
@@ -148,6 +150,10 @@ struct OnlineScriptFacts {
     std::uint16_t closing_offer = 0; // the newest closed offer whose line still shows (its 3 s)
     bool go_back = false;            // a held GO barrier offers B: Back to the lobby (its line after 10 s)
     bool go_ready = false;           // A on the newest open offer's row would go now (the row is not greyed)
+    // The session holds a barrier (parked: no step runs). The host calls
+    // update() once a frame then too: the conditions are checked, and of the
+    // actions only goback acts (B on a held GO barrier's loading screen).
+    bool parked = false;
 };
 
 class OnlineScript {
@@ -236,6 +242,7 @@ private:
     // The disk action: the disk's row, the rows above it, its start.
     int disk_line_ = -1, disk_ups_ = 0, disk_at_ = 0, disk_dir_ = 1;
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point step_wall_ = std::chrono::steady_clock::now(); // (waited)
 };
 
 } // namespace dw4::game
