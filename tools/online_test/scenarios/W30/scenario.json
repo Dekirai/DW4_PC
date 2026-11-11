@@ -1,11 +1,30 @@
 {
-  "desc": "the area join: b takes the gate to stag0201 while a's Dry Land instance plays in dng205b1: a guest in a new stage group with a's story",
+  "desc": "the area join: b takes the gate to stag0201 while a's Dry Land instance plays in dng205b1: a guest in a new stage group with a's story (b is a's friend: I1a's automatic join takes a row with nobody of the instance at the arrival stage only for a friend, fix-019)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
   "frames": 60000,
   "timeout": 1400,
   "min_shared_ticks": 0,
+  "api_checks": [
+    {
+      "at": 1,
+      "as": "b",
+      "method": "POST",
+      "path": "/api/v1/friends/requests",
+      "body": {
+        "username": "{user:a}"
+      },
+      "status": 200
+    },
+    {
+      "at": 2,
+      "as": "a",
+      "method": "POST",
+      "path": "/api/v1/friends/requests/{user:b}/accept",
+      "status": 200
+    }
+  ],
   "own_story": [
     "b"
   ],

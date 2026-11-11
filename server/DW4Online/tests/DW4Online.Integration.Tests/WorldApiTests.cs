@@ -381,16 +381,32 @@ public class WorldApiTests
         host.World!.Set([FakeWorldRelay.Instance(5, kim, "Kim", "dry_land", "stag0202", "private", [(lee, "Lee", "stag0202")], historyId: 55)]);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await player.GetAsync("/api/v1/admin/instances")).StatusCode);
-        var list = (await (await mod.GetAsync("/api/v1/admin/instances")).Json()).GetProperty("instances");
+        var body = await (await mod.GetAsync("/api/v1/admin/instances")).Json();
+        var list = body.GetProperty("instances");
         Assert.Equal(5u, list[0].GetProperty("wid").GetUInt32());
         Assert.Equal(55, list[0].GetProperty("historyId").GetInt64());
         Assert.Equal("private", list[0].GetProperty("visibility").GetString());
         Assert.Equal(2, list[0].GetProperty("members").GetArrayLength());
+        // fix-019: the instance is the relay run's wid (wids count from 1 again after a restart): the list names the run, End and
+        // Remove need it, and a list from before a restart is refused for the same wid.
+        var run = body.GetProperty("run").GetString()!;
+        Assert.Equal(host.World.Run, run);
+        Assert.Equal(run, list[0].GetProperty("run").GetString());
+        var oldRun = "?run=00000000deadbeef";
+        var response = await mod.PostAsync("/api/v1/admin/instances/5/end", null);
+        Assert.Equal((HttpStatusCode.UnprocessableEntity, "run_required"), (response.StatusCode, await response.ProblemCode()));
+        response = await mod.PostAsync("/api/v1/admin/instances/5/end" + oldRun, null);
+        Assert.Equal((HttpStatusCode.Conflict, "instance_list_outdated"), (response.StatusCode, await response.ProblemCode()));
+        response = await mod.PostAsJsonAsync("/api/v1/admin/instances/5/remove" + oldRun, new { username = "lee" });
+        Assert.Equal((HttpStatusCode.Conflict, "instance_list_outdated"), (response.StatusCode, await response.ProblemCode()));
+        Assert.Empty(host.World.Ended);
+        Assert.Empty(host.World.Removed);
 
-        Assert.Equal("member_not_found", await (await mod.PostAsJsonAsync("/api/v1/admin/instances/5/remove", new { username = "Nobody" })).ProblemCode());
-        Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsJsonAsync("/api/v1/admin/instances/5/remove", new { username = "lee" })).StatusCode);
-        Assert.Equal("instance_not_found", await (await mod.PostAsync("/api/v1/admin/instances/6/end", null)).ProblemCode());
-        Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync("/api/v1/admin/instances/5/end", null)).StatusCode);
+        var q = "?run=" + run;
+        Assert.Equal("member_not_found", await (await mod.PostAsJsonAsync("/api/v1/admin/instances/5/remove" + q, new { username = "Nobody" })).ProblemCode());
+        Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsJsonAsync("/api/v1/admin/instances/5/remove" + q, new { username = "lee" })).StatusCode);
+        Assert.Equal("instance_not_found", await (await mod.PostAsync("/api/v1/admin/instances/6/end" + q, null)).ProblemCode());
+        Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync("/api/v1/admin/instances/5/end" + q, null)).StatusCode);
         Assert.Equal((5u, lee), (host.World.Removed.Single().Wid, host.World.Removed.Single().Account));
         Assert.Equal(5u, host.World.Ended.Single().Wid);
         await using var c = await host.SqlAsync();

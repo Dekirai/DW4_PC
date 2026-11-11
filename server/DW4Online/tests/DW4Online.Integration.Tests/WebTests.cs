@@ -247,10 +247,21 @@ public class WebTests
         Assert.Contains("#9", instances.Html);
         Assert.Contains("private", instances.Html);
         Assert.Contains("Venom Jungle: Geko Path", instances.Html);
-        Assert.Contains("Player1 was removed from instance 9",
+        // fix-019: the forms post the relay run with the wid; a page from before a server restart is refused for the same wid.
+        var run = host.World.Run;
+        Assert.Contains($"name=\"Run\" value=\"{run}\"", instances.Html);
+        Assert.Contains("The server restarted since this list was loaded",
+            (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "9", ["Run"] = "00000000deadbeef" }, "/admin/instances")).Html);
+        Assert.Contains("Name the instance by its run",
             (await boss.PostAsync("/admin/instances?handler=Remove", new() { ["Wid"] = "9", ["Username"] = "player1" }, "/admin/instances")).Html);
-        Assert.Contains("Instance 9 was ended", (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "9" }, "/admin/instances")).Html);
-        Assert.Contains("No such instance", (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "10" }, "/admin/instances")).Html);
+        Assert.Empty(host.World.Ended);
+        Assert.Empty(host.World.Removed);
+        Assert.Contains("Player1 was removed from instance 9",
+            (await boss.PostAsync("/admin/instances?handler=Remove", new() { ["Wid"] = "9", ["Run"] = run, ["Username"] = "player1" }, "/admin/instances")).Html);
+        Assert.Contains("Instance 9 was ended",
+            (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "9", ["Run"] = run }, "/admin/instances")).Html);
+        Assert.Contains("No such instance",
+            (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "10", ["Run"] = run }, "/admin/instances")).Html);
         Assert.Single(host.World.Ended);
         Assert.Equal((9u, playerId), (host.World.Removed.Single().Wid, host.World.Removed.Single().Account));
         await using (var sql = await host.SqlAsync())

@@ -195,4 +195,27 @@ public class OnlineStoryTests
         Assert.Equal((142L, "admin_restore"), reasons[1]);
         Assert.All(reasons.Skip(2), r => Assert.Equal("room", r.Reason));
     }
+
+    /// <summary>Round 59 review: a staff restore of a revision that is not kept closed the owner's room before it failed; in the
+    /// world it must not end the owner's instance (no StoryReplaced) until a kept revision is put back. (feat-i1a-web dcd6f3ae; lost
+    /// in the merge 4b3d8a82, restored by fix-019.)</summary>
+    [DbFact]
+    public async Task A_restore_of_a_revision_that_is_not_kept_leaves_the_owners_instance_running()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (adminToken, _, _) = await host.RegisterAsync("RestoreStaff");
+        Assert.True((await host.App.Services.GetRequiredService<DW4Online.Domain.Services.AccountService>()
+            .AdminSetRoleAsync(null, "RestoreStaff", "admin", new DW4Online.Domain.Services.CallerInfo(null, "tests"))).Ok);
+        var (token, _, id) = await host.RegisterAsync("RestoreHost");
+        var s = new RoomStoryData { Revision = 1 };
+        s.Flags[505] = 1;
+        Assert.True(await host.App.Services.GetRequiredService<OnlineStoryService>().SaveAsync(id, s));
+        var owner = host.Client(token);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync("/api/v1/world/enter", Enter())).StatusCode); // keeps revision 1 (session)
+        var admin = host.Client(adminToken);
+        Assert.Equal("revision_not_found", await (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/999999", null)).ProblemCode());
+        Assert.DoesNotContain($"story {id}/1", host.World!.Notes);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/1", null)).StatusCode);
+        Assert.Contains($"story {id}/1", host.World.Notes);
+    }
 }

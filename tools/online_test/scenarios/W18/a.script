@@ -1,4 +1,4 @@
-# W18, host a (k5): a Private instance in stag0101.
+# W18, host a (k5): a Public instance in stag0101 (fix-019: a Private one takes no moderator who simply plays, W5).
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

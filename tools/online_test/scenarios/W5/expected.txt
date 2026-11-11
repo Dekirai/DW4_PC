@@ -1,7 +1,11 @@
-# W5 (19.24 W5 without friends).
+# W5 (19.24 W5 without friends). fix-019: the moderator c who takes the gate while a's Private instance runs gets his own
+# (no staff bypass for the automatic join; before, he joined a's instance and his story was replaced by a's).
 a: online-script: step .* log: nobody joined
 b: online-script: step .* log: b alone
+c: online-script: step .* log: c alone
 relay: instance_start .*visibility=private
 !relay: instance_join .*how=join
+!relay: instance_join .*role=staff
+!c: online-script: FAIL
 !a: online-script: FAIL
 !b: online-script: FAIL

@@ -1,5 +1,5 @@
 {
-  "desc": "achievements in the world: online_host with three guests (two fake guests by a guest's NEW at stag0101), online_join for the guest",
+  "desc": "achievements in the world: online_host with three guests (two fake guests, a's friends, by a guest's NEW at stag0101), online_join for the guest",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -12,7 +12,8 @@
   "fake_guests": {
     "count": 2,
     "after": "a: log: a joined b in the cave",
-    "stage": "stag0101"
+    "stage": "stag0101",
+    "friend_of": "a"
   },
   "achievements": {
     "a": {

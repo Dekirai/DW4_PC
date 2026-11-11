@@ -1,4 +1,4 @@
-# W29 (19.24, 19.8.9): online_host with three guests (b and two fake guests: a guest's NEW at stag0101), online_join for the
+# W29 (19.24, 19.8.9): online_host with three guests (b and two fake guests, a's friends: a guest's NEW at stag0101), online_join for the
 # guest b. Lone Tamer and the clear as host need a story clear in the run (no r25c card stands before a boss); the
 # integration tests cover them (AchievementTests, the world's play context).
 a: online-script: step .* log: a joined b in the cave

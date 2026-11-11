@@ -1,5 +1,5 @@
 {
-  "desc": "a Private: b (no friend) gets no row and a NEW; a moderator c sees a's row marked Private",
+  "desc": "a Private: b (no friend) gets no row and a NEW; a moderator c sees a's row marked Private and, playing, gets an instance of its own (fix-019: no staff bypass for the automatic join)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -24,9 +24,14 @@
   ],
   "db_checks": [
     {
-      "name": "two instances",
+      "name": "three instances (a's, b's, c's)",
       "sql": "SELECT COUNT(*) FROM instance_history",
-      "expect": "^2$"
+      "expect": "^3$"
+    },
+    {
+      "name": "no staff join",
+      "sql": "SELECT COUNT(*) FROM audit_log WHERE event = 'staff_join'",
+      "expect": "^0$"
     }
   ],
   "clients": [

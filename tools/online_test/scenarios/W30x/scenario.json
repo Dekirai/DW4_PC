@@ -6,6 +6,25 @@
   "frames": 60000,
   "timeout": 1400,
   "min_shared_ticks": 0,
+  "api_checks": [
+    {
+      "at": 1,
+      "as": "b",
+      "method": "POST",
+      "path": "/api/v1/friends/requests",
+      "body": {
+        "username": "{user:a}"
+      },
+      "status": 200
+    },
+    {
+      "at": 2,
+      "as": "a",
+      "method": "POST",
+      "path": "/api/v1/friends/requests/{user:b}/accept",
+      "status": 200
+    }
+  ],
   "dir": "W30",
   "counter_proof": true,
   "expect_fail": [

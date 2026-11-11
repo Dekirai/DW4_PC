@@ -1,11 +1,30 @@
 {
-  "desc": "the host's gate disc with b in another stage group: the instance ends (host_left), b goes home on its own story (a goes into dng101b1 first by the depart action, b arrives at stag0101 as a new stage group of a's instance: the explore bot's k9 fell on stag0101's rock slope on the way to matz00)",
+  "desc": "the host's gate disc with b in another stage group: the instance ends (host_left), b goes home on its own story (a goes into dng101b1 first by the depart action, b, a's friend, arrives at stag0101 as a new stage group of a's instance: the explore bot's k9 fell on stag0101's rock slope on the way to matz00)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
   "frames": 60000,
   "timeout": 1000,
   "min_shared_ticks": 0,
+  "api_checks": [
+    {
+      "at": 1,
+      "as": "b",
+      "method": "POST",
+      "path": "/api/v1/friends/requests",
+      "body": {
+        "username": "{user:a}"
+      },
+      "status": 200
+    },
+    {
+      "at": 2,
+      "as": "a",
+      "method": "POST",
+      "path": "/api/v1/friends/requests/{user:b}/accept",
+      "status": 200
+    }
+  ],
   "own_story": [
     "b"
   ],

@@ -65,7 +65,7 @@ public static class AdminEndpoints
         // The world's instances (SEAMLESS.md 19.19): every one, Private included, with members and spectators; End and
         // Remove are audited (staff_end_instance, staff_remove). The relay's wid counts from 1 again in every run (a server
         // restart), so an instance is its run and wid: the list names the run, End and Remove take it as ?run= (fix-019:
-        // missing 400 run_required, another run's 409 instance_list_outdated).
+        // missing 422 run_required, another run's 409 instance_list_outdated).
         admin.MapGet("/instances", (WorldService world) =>
         {
             var (run, rows) = world.AdminInstances();

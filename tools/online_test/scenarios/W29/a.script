@@ -1,5 +1,6 @@
-# W29, host a (k10): hosts b in stag0101, follows b into dng101b1; then two fake guests take the gate to stag0101,
-# where nobody of a's instance is (a guest's NEW: a new stage group of a's instance): four players, online_host counts.
+# W29, host a (k10): hosts b in stag0101, follows b into dng101b1; then two fake guests (a's friends: fix-019's automatic
+# join takes a row with nobody of the instance at the stage only for a friend) take the gate to stag0101, where nobody of
+# a's instance is (a guest's NEW: a new stage group of a's instance): four players, online_host counts.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

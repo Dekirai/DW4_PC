@@ -1,5 +1,5 @@
 {
-  "desc": "playing staff (I1a part): a moderator d joins a's Private instance as a guest with the Staff tag; audit row staff_join",
+  "desc": "playing staff (I1a part): a moderator d joins a's Public instance as a guest with the Staff tag; audit row staff_join (fix-019: a Private one is not his to enter without his own choice, W5)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -23,10 +23,7 @@
       "name": "a",
       "script": "a.script",
       "card": "k5",
-      "start": 0,
-      "prefs": {
-        "defaultVisibility": "private"
-      }
+      "start": 0
     },
     {
       "name": "d",

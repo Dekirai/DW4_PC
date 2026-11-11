@@ -1,4 +1,4 @@
-# W18 (19.24, 19.14).
+# W18 (19.24, 19.14): a Public instance since fix-019 (a Private one is not a playing moderator's, W5).
 a: online-script: step .* log: the moderator joined
 relay: instance_join .*role=staff
 !a: online-script: FAIL

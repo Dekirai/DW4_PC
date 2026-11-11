@@ -32,7 +32,8 @@ check; its problems are then listed as notes) and "requires" ([CAPABILITY ...]: 
 --capabilities naming them, e.g. fake_world_clients for the fake presence senders; else it is reported as SKIP with the
 reason, and a run with a SKIP exits with 3 unless --allow-skip), "fake_presence" ({"count": N, "stage": S}: N fake
 world clients that go from the title to the hub stage S and send PRESENCE there, W19), "fake_guests" ({"count": N,
-"after": "CLIENT: REGEX", "stage": S}: N fake world clients that go home and then to S once CLIENT's log shows REGEX, W29;
+"after": "CLIENT: REGEX", "stage": S, "friend_of": CLIENT}: N fake world clients that go home and then to S once CLIENT's log
+shows REGEX, W29; with "friend_of" each befriends that client first (fix-019: a guest's NEW is a friend's without the prompt);
 FakeClient's client mode after the relay lane: world tickets, protocol 49; their accounts are {id:fp1}, {id:fg1}, ...),
 "frame_times" (notes each client's pictures per second and longest passes), a client's "play_args" (instead of
 --online-play: W22's protocol 48 client opens a room the old way) and "refused": true (the client must be turned away
@@ -898,13 +899,21 @@ def is_seeded(sc, c):
     return bool(sc.get("seed_story")) and bool(c.get("card", sc.get("card")))
 
 
-def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH, context=None):
+def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH, context=None,
+                            friend=None):
     """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
     protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
     fake's engine is the stand-in (FakeEngine), never a real game: it must never share a stage group with a game client
-    (the fingerprints would differ), so W29's fake guests arrive where nobody of the host's instance is (a guest's NEW)."""
+    (the fingerprints would differ), so W29's fake guests arrive where nobody of the host's instance is (a guest's NEW).
+    friend: (username, token) of an account the fake befriends before it starts (its request, that account's accept): I1a's
+    automatic join takes a row with nobody of the instance at the arrival stage only for the party or a friend (fix-019)."""
     with lock:
         s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + name, "password": "online test fake " + secrets.token_hex(4)})
+        if s == 201 and friend:
+            s1, b1 = api.call("POST", "/api/v1/friends/requests", {"username": friend[0]}, body["token"])
+            s2, b2 = api.call("POST", "/api/v1/friends/requests/%s/accept" % (tag + name), None, friend[1])
+            if s1 != 200 or s2 != 200:
+                raise RuntimeError("befriend %s and %s: %s %s / %s %s" % (name, friend[0], s1, b1, s2, b2))
     if s != 201:
         raise RuntimeError("register %s: %s %s" % (name, s, body))
     path = os.path.join(out, name + ".script.json")
@@ -1244,8 +1253,9 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             for k in range(int(spec.get("count", 1))):
                 name = "fg%d" % (k + 1)
                 script = [{"at": 1.0, "do": "exit", "stage": "stagML11"}, {"at": 4.0 + 20.0 * k, "do": "exit", "stage": spec.get("stage", "stag0101")}]
+                friend = (tag + spec["friend_of"], tokens[spec["friend_of"]]) if spec.get("friend_of") else None
                 p, accounts[name] = start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, max(10, limit - (time.time() - t0)),
-                                                            200 + k, lock, data_hash, context)
+                                                            200 + k, lock, data_hash, context, friend)
                 fakes.append(p)
                 fake_names.append(name)
         threading.Thread(target=guests, daemon=True).start()
