@@ -192,3 +192,10 @@ echo "mysqld shut down $(date)" >> $LOG
   GO barrier as designed (hold_join 37 s, then the join), but the script never saw `goback=1`: the online script ran only
   inside steps, and frames do not count on a loading screen -> the host runs the script while parked (conditions, goback)
   and the condition `waited>=S` (947df0e3).
+- **d1** (2026-11-11, 947df0e3 code = exe f, `build/go/scen_d1.log`, run folder `run_20261111_175519`): W31 (with TEST mat:
+  b's press to stamp 10.9 s, stamp to join 3.3 s; c's 21.3 s / 3.4 s), W31c2, W31d (four members: the mat rule), W31g and W31i
+  passed. W31b: b fell to stag0201's mummies on its way to matz01 -> every walk to matz01 heals at 350 HP (9a12f9eb). W31e
+  (everything else passed): the offers close for b (reason 4) at its GO barrier, before the join -> expected order
+  (5652487b). W31h (goback worked: B on the held loading screen took b home) and W31h2 (the held barrier joined after the
+  40 s scene): the world log notes test_go_hook before go_stamped, and go_join (the barrier's decision) before hold_join ->
+  expected order (9b5559a5, aa5a0c16).
