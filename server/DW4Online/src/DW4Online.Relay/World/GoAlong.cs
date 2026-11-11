@@ -574,11 +574,19 @@ namespace DW4Online.Relay.Hub
         /// against the stage group the port ran in (an exit fork's parent when the sender is already in its child).</summary>
         private void HeadingAsked(HubMember m, HeadingMsg msg)
         {
-            m.HeadingAsked = [];
+            // A HEADING of the same departure again (run c1 of W31b: the port's HEADING with b asked, then the solo copy's NEXTSTAGE
+            // announced once more with none) keeps the asked members until the member's barrier.
+            var again = m.HeadingAskedFor is { } f && SameStage(f.Stage, msg.Stage) && f.Point == msg.Point;
+            if (!again)
+            {
+                m.HeadingAsked = [];
+                m.HeadingAskedFor = null;
+            }
             if (msg.Asked == 0 || m.Instance is not { } g) return;
             var port = g.Parent is { } pid && _instances.TryGetValue(pid, out var parent) && !parent.Ended ? parent : g;
             for (var s = 0; s < Wire.MaxSlots; ++s)
-                if ((msg.Asked & (1 << s)) != 0 && port.Slots[s] is { } x && x != m) m.HeadingAsked.Add(x);
+                if ((msg.Asked & (1 << s)) != 0 && port.Slots[s] is { } x && x != m && !m.HeadingAsked.Contains(x)) m.HeadingAsked.Add(x);
+            m.HeadingAskedFor = (msg.Stage, msg.Point);
         }
 
         /// <summary>A member's seat frees (home, left, removed): its request ends, it leaves the offers' lists and entrants.</summary>

@@ -14,7 +14,7 @@ namespace DW4Online.Tests;
 public partial class HubLogicTests
 {
     /// <summary>a and b co-arrive in stag0201 (a hosts); a forks off and walks into dng204b1 alone: the offer opens.</summary>
-    private static Harness GoPair(out GoOffer offer, byte asked = 0, WorldHubOptions? world = null)
+    private static Harness GoPair(out GoOffer offer, byte asked = 0, WorldHubOptions? world = null, bool again = false)
     {
         var h = SealedPair(out _, stage: "stag0201", world: world);
         h.Joinable("a");
@@ -25,6 +25,8 @@ public partial class HubLogicTests
         h.Send("a", new SplitMsg(i.Id, i.Visit, i.NextSeal - 1, 0b01, SplitKind.Exit).Frame());
         h.Send("b", new SplitMsg(i.Id, i.Visit, i.NextSeal - 1, 0b01, SplitKind.Exit).Frame());
         h.Seal(200);
+        // (again: the engine announces the departure once more at the solo copy's NEXTSTAGE, with no asked slots: run c1 of W31b.)
+        if (again) h.Send("a", new HeadingMsg(h.I("a").Id, "dng204b1", 0, 5, 0).Frame());
         h.Barrier("a", "dng204b1");
         var w = W(h, "a");
         offer = Assert.Single(w.Offers);
@@ -47,6 +49,9 @@ public partial class HubLogicTests
         var g = GoPair(out _, asked: 0b10);
         var asked = Assert.Single(Offers(g, "b"));
         Assert.Equal((OfferOp.Open, 0), (asked.Op, asked.Flags & OfferMsg.Notice));
+        // ... also when the same departure's HEADING comes again without them.
+        var again = GoPair(out _, asked: 0b10, again: true);
+        Assert.Equal((OfferOp.Open, 0), (Assert.Single(Offers(again, "b")).Op, Assert.Single(Offers(again, "b")).Flags & OfferMsg.Notice));
     }
 
     [Fact]

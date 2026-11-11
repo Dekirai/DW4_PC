@@ -184,6 +184,10 @@ public sealed class HubMember(uint id, long accountId, string name)
     public DW4Online.Relay.World.GoRequest? Go { get; set; }
     /// <summary>Round I1b (19.30.5): the members the exit port asked on the mat for the member's newest HEADING (no notice for them).</summary>
     public List<HubMember> HeadingAsked { get; set; } = [];
+    /// <summary>The departure (stage, point) <see cref="HeadingAsked"/> was given for, until the member's next barrier: a HEADING of the
+    /// same departure again keeps them (the engine announces a copy's NEXTSTAGE once more when the port's fork left the member alone in it,
+    /// with no asked slots).</summary>
+    public (string Stage, byte Point)? HeadingAskedFor { get; set; }
 }
 
 public sealed record Heading(string Stage, byte Point, ulong Context, long At);

@@ -1171,6 +1171,7 @@ public sealed partial class RoomHub
         g.World = w;
         // Round I1b (19.30.5-19.30.7): the offers (an entry into a dungeon, a way out) and a stamped GO's barrier.
         if (w is not null && _worlds.ContainsKey(w.Wid)) GoAtBarrier(w, g, now);
+        foreach (var a in g.Members) a.Member.HeadingAskedFor = null; // (this departure's asked members are used: a later HEADING starts anew)
         if (TestHoldGoBarrier(g, now)) return;
         // (A stage group of an instance whose members hold no seat in it any more, removed ones: their engines hold the host's
         // story, so they go home like a detached group, 19.6.6.)
