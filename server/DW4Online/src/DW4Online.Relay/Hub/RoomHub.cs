@@ -1146,7 +1146,7 @@ public sealed partial class RoomHub
     /// <summary>
     /// The decision of SEAMLESS.md 3.4 in the world (19.6.3, 19.7, 19.30.3): into a hub stage a DISSOLVE (home); an instance that
     /// ended (or a stage group nobody's any more) a DISSOLVE redirected home; an arrival from home the world's matching (a
-    /// co-arrival, a starting instance, round I1a's automatic join of the first candidate, a guest's NEW, or a new instance);
+    /// co-arrival, a starting instance, round I1a's automatic join of the preselected candidate, a guest's NEW, or a new instance);
     /// inside an instance 3.4 among the instance's own stage groups (co-arrival, JOIN with holds, a new stage group of it).
     /// </summary>
     private void Decide(ArrivalGroup g, long now)

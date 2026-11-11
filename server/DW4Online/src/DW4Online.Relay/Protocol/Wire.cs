@@ -200,7 +200,7 @@ public enum ArrivalKind : byte
     None = 0,
     /// <summary>A new instance: this member hosts it.</summary>
     NewInstance = 1,
-    /// <summary>I1a's automatic join of a running instance (the first row of 19.7.3).</summary>
+    /// <summary>I1a's automatic join of a running instance (the row 19.7.3 preselects: the I1a interim rule of fix-019, 19.7.1).</summary>
     AutoJoin = 2,
     /// <summary>A co-arrival with, or a join of, a starting instance (19.7.6).</summary>
     Starting = 3,

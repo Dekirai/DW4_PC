@@ -12085,6 +12085,11 @@ Sizes against finished rounds (S like round 60's review fixes, M like round
 deployed (after step 4) the user plays rooms as today. Elsewhere in this
 section *round I1* means I1a and I1b together.
 
+As it went: I1a went live alone, as DW4Online 0.1.7 and 0.1.8 (protocol
+49), before I1b. So round fix-019 (0.1.9, 19.32) gave I1a's automatic join
+the interim rule of 19.7.1 (only the row I1b's prompt would preselect,
+else *New instance*) until I1b's prompt replaces it.
+
 **Round I1a: the world without rooms** (proposed r68).
 
 First tasks (measurements, into this section before the lanes build on

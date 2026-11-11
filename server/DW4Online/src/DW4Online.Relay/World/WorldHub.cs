@@ -962,7 +962,8 @@ public sealed partial class RoomHub
     /// <summary>
     /// The decision of a fresh arrival (from home) at a stage outside the hub after its co-arrival holds (19.7.1, 19.7.6): a
     /// starting instance at the stage that may see it and fits takes it without a prompt; else round I1a's automatic join of the
-    /// first candidate by 19.7.3's order (decision 40), a JOIN where the instance has a stage group at the stage or a guest's NEW
+    /// row I1b's prompt would preselect (19.7.3, decision 40; the I1a interim rule of fix-019: the party's or a friend's row, or
+    /// one with players of its instance at the stage), a JOIN where the instance has a stage group at the stage or a guest's NEW
     /// (19.30.4); else a new instance of its own.
     /// </summary>
     private void FreshJoinOrNew(ArrivalGroup g, long now)
