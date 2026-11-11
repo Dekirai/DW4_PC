@@ -149,10 +149,12 @@ public static class WorldEndpoints
         };
     }
 
-    /// <summary>An instance as the staff's GET /admin/instances shows it: everything, Private ones and spectators included.</summary>
-    public static object AdminRow(WorldInstanceRow i) => new
+    /// <summary>An instance as the staff's GET /admin/instances shows it: everything, Private ones and spectators included; its relay
+    /// run with its wid (End and Remove name both, fix-019).</summary>
+    public static object AdminRow(WorldInstanceRow i, string run) => new
     {
         wid = i.Wid,
+        run,
         historyId = i.HistoryId,
         host = i.HostName,
         hostBox = i.HostBox,

@@ -66,7 +66,7 @@ public partial class HubLogicTests
     {
         var h = new Harness(new InstanceOptions { StoryMinVisitSeconds = 1, StoryFlagBurst = 1, StoryFlagSeconds = 30 });
         Admit(h, "a", Player(100, "a") with { Story = StoryAt(2) });
-        Admit(h, "b", Player(101, "b"));
+        Admit(h, "b", Player(101, "b") with { Friends = [100] }); // (a's friend: without the prompt a guest's NEW is a friend's, fix-019)
         // a hosts and walks on; b enters a's instance at stag0101 as a guest (visited), a stage group of its own.
         h.Barrier("a", "stag0101");
         h.Snapshot("a");

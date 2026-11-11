@@ -74,14 +74,11 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void Private_and_friends_instances_are_seen_by_friends_and_staff_only_and_staff_who_play_are_audited()
+    public void Private_and_friends_instances_take_friends_only_a_playing_moderator_too_and_staff_who_play_are_audited()
     {
         var h = new Harness();
-        var audits = new List<string>();
-        h.Hub.Audit = (evt, _, _, _) => audits.Add(evt);
         Admit(h, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
         Admit(h, "b", Player(101, "b"));
-        Admit(h, "c", Player(102, "c") with { Staff = true });
         h.Barrier("a", "stag0101");
         h.Snapshot("a");
         h.Log("a", 0, 60);
@@ -89,17 +86,48 @@ public partial class HubLogicTests
         h.Barrier("b", "stag0101");
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (h.Decision("b").Decision, h.Decision("b").World.Arrival));
         Assert.NotSame(W(h, "a"), W(h, "b"));
-        h.Advance(11_000); // (b's new instance is no longer *starting*: a starting one would take c as a co-arrival, 19.7.6)
-        h.Hub.Housekeep(h.Now);
-        h.Barrier("c", "stag0101");
-        Assert.Equal((BarrierDecision.Join, W(h, "a").Wid), (h.Decision("c").Decision, h.Decision("c").World.Wid));
-        Assert.Contains("staff_join", audits);
-        Assert.Equal(InstanceRole.Staff, h.P("c").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Role);
-        // Friends: a friend of the host joins, a stranger does not.
+        // fix-019: a moderator who simply plays is a player for the automatic join too: a's Private instance is not his to enter (the
+        // staff bypass is for the staff member's own choice of the row, I1b's prompt and I3's browser, 19.14). Before, c joined a's
+        // instance at once (its story replaced by a stranger's).
+        var s = new Harness();
+        var audits = new List<string>();
+        s.Hub.Audit = (evt, _, _, _) => audits.Add(evt);
+        Admit(s, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
+        Admit(s, "c", Player(102, "c") with { Staff = true });
+        s.Barrier("a", "stag0101");
+        s.Snapshot("a");
+        s.Log("a", 0, 60);
+        s.Joinable("a");
+        s.Advance(11_000);
+        s.Hub.Housekeep(s.Now);
+        s.Barrier("c", "stag0101");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (s.Decision("c").Decision, s.Decision("c").World.Arrival));
+        Assert.NotSame(W(s, "a"), W(s, "c"));
+        Assert.DoesNotContain("staff_join", audits);
+        Assert.False(Matching.Visible(W(s, "a"), s.Mem("c"), s.Now));
+        Assert.True(Matching.Visible(W(s, "a"), s.Mem("c"), s.Now, staffChoice: true)); // (his own choice of the row: the prompt, the browser)
+        // A Public instance: the playing moderator joins as a guest with the staff role, audited.
+        var p = new Harness();
+        var pAudits = new List<string>();
+        p.Hub.Audit = (evt, _, _, _) => pAudits.Add(evt);
+        Admit(p, "a", Player(100, "a"));
+        Admit(p, "c", Player(102, "c") with { Staff = true });
+        p.Barrier("a", "stag0101");
+        p.Snapshot("a");
+        p.Log("a", 0, 60);
+        p.Joinable("a");
+        p.Advance(11_000);
+        p.Hub.Housekeep(p.Now);
+        p.Barrier("c", "stag0101");
+        Assert.Equal((BarrierDecision.Join, W(p, "a").Wid), (p.Decision("c").Decision, p.Decision("c").World.Wid));
+        Assert.Contains("staff_join", pAudits);
+        Assert.Equal(InstanceRole.Staff, p.P("c").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Role);
+        // Friends: a friend of the host joins, a stranger does not, nor a moderator who is no friend.
         var g = new Harness();
         Admit(g, "a", Player(100, "a") with { DefaultVisibility = Visibility.Friends });
         Admit(g, "f", Player(101, "f") with { Friends = [100] });
         Admit(g, "s", Player(102, "s"));
+        Admit(g, "m", Player(103, "m") with { Staff = true });
         g.Barrier("a", "stag0101");
         g.Snapshot("a");
         g.Log("a", 0, 60);
@@ -108,6 +136,10 @@ public partial class HubLogicTests
         Assert.Same(W(g, "a"), W(g, "f"));
         g.Barrier("s", "stag0101");
         Assert.NotSame(W(g, "a"), W(g, "s"));
+        g.Advance(11_000); // (s's instance no longer *starting*)
+        g.Hub.Housekeep(g.Now);
+        g.Barrier("m", "stag0101");
+        Assert.NotSame(W(g, "a"), W(g, "m"));
     }
 
     [Fact]
@@ -137,9 +169,10 @@ public partial class HubLogicTests
     {
         var h = new Harness();
         Admit(h, "a", Player(100, "a") with { Story = StoryAt(4) }); // Dry Land's gate open (phase 4)
-        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2) });
+        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2), Friends = [100] });
         Admit(h, "c", Player(102, "c"));
         Admit(h, "d", Player(103, "d"));
+        Admit(h, "e", Player(104, "e"));
         var hostSettings = new RoomSettings(1, 1, 0, 4242, true, 1, 0, false);
         // a arrives on Dry Land by the return mat (stag0202) and walks into dng205b1.
         BarrierWith(h, "a", "stag0202", hostSettings);
@@ -149,7 +182,17 @@ public partial class HubLogicTests
         BarrierWith(h, "a", "dng205b1", hostSettings);
         h.Snapshot("a");
         Assert.Contains("dng205b1", w.Visited);
-        // b takes the gate to stag0201: no stage group there, a gate the host's story opened: a guest's NEW with the host's story.
+        // e, a stranger, takes the gate to stag0201: nobody of a's instance there and not a friend's: New instance (fix-019, the I1a
+        // interim rule: the automatic join takes only the row I1b's prompt would preselect, decision 40). Before, e became a guest
+        // in a stranger's story elsewhere in the area.
+        BarrierWith(h, "e", "stag0201", RoomSettings.Default);
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, StoryMode.Merge), (h.Decision("e").Decision, h.Decision("e").World.Arrival,
+            h.Decision("e").World.StoryMode));
+        Assert.NotSame(w, W(h, "e"));
+        h.Advance(11_000); // (e's instance no longer *starting*)
+        h.Hub.Housekeep(h.Now);
+        // b, a's friend, takes the gate to stag0201: no stage group of a's there, a gate the host's story opened: a guest's NEW with
+        // the host's story (the friend's row first, before e's with e at stag0201).
         BarrierWith(h, "b", "stag0201", RoomSettings.Default);
         var ok = h.Decision("b");
         Assert.Equal((BarrierDecision.New, ArrivalKind.GuestNew, StoryMode.Replace, w.Wid, h.Mem("a").Id), (ok.Decision, ok.World.Arrival,

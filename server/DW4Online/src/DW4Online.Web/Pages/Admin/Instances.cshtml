@@ -49,6 +49,7 @@
                         <td>
                             <form method="post" asp-page-handler="Remove" class="inline">
                                 <input type="hidden" name="Wid" value="@i.Wid" />
+                                <input type="hidden" name="Run" value="@Model.CurrentRun" />
                                 <input type="hidden" name="Username" value="@m.Name" />
                                 <button type="submit" class="link">Remove</button>
                             </form>
@@ -60,6 +61,7 @@
         </div>
         <form method="post" asp-page-handler="End" class="inline">
             <input type="hidden" name="Wid" value="@i.Wid" />
+            <input type="hidden" name="Run" value="@Model.CurrentRun" />
             <button type="submit" class="secondary">End instance</button>
         </form>
     </div>

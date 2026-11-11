@@ -60,16 +60,16 @@ public sealed class FakeWorldRelay : IWorldRelay, IWorldNotifier
         return Current.Online.Any(o => o.AccountId == accountId);
     }
 
-    public bool EndInstance(uint wid, long staffAccountId)
+    public bool EndInstance(uint wid, string run, long staffAccountId)
     {
-        if (Current.Instances.All(i => i.Wid != wid)) return false;
+        if (run != Current.Run || Current.Instances.All(i => i.Wid != wid)) return false;
         Ended.Enqueue((wid, staffAccountId));
         return true;
     }
 
-    public bool RemoveMember(uint wid, long accountId, long staffAccountId)
+    public bool RemoveMember(uint wid, string run, long accountId, long staffAccountId)
     {
-        if (Current.Instances.FirstOrDefault(i => i.Wid == wid) is not { } row ||
+        if (run != Current.Run || Current.Instances.FirstOrDefault(i => i.Wid == wid) is not { } row ||
             row.Members.Concat(row.Spectators).All(m => m.AccountId != accountId)) return false;
         Removed.Enqueue((wid, accountId, staffAccountId));
         return true;
@@ -97,6 +97,9 @@ public sealed class FakeWorldRelay : IWorldRelay, IWorldNotifier
             (spectators ?? []).Select(s => new WorldMemberRow(s.Account, (uint)s.Account, s.Name, InstanceRoles.Spectator, stage, true, false)).ToList());
     }
 
+    /// <summary>The relay run the snapshots are of (<see cref="WorldSnapshot.Run"/>); a test changes it to stand for a server restart.</summary>
+    public string Run { get; set; } = "0123456789abcdef";
+
     /// <summary>Puts the instances in the snapshot and every member online (plus <paramref name="atHome"/>: account, name, stage).</summary>
     public void Set(IEnumerable<WorldInstanceRow> instances, IEnumerable<(long Account, string Name, string Stage)>? atHome = null)
     {
@@ -109,6 +112,6 @@ public sealed class FakeWorldRelay : IWorldRelay, IWorldNotifier
         }
         foreach (var (account, name, stage) in atHome ?? [])
             online.Add(new WorldOnlineRow(account, (uint)account, name, stage, 0, false));
-        Current = new WorldSnapshot(DateTime.UtcNow, online.Count(o => !o.Spectating), list) { Online = online };
+        Current = new WorldSnapshot(DateTime.UtcNow, online.Count(o => !o.Spectating), list) { Online = online, Run = Run };
     }
 }

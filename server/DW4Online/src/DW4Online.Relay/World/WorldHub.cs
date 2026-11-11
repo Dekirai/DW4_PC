@@ -33,6 +33,9 @@ public sealed partial class RoomHub
     private readonly Dictionary<string, List<WorldInstance>> _byArea = new(StringComparer.Ordinal);
     private readonly Dictionary<(long Account, int Box), StoryKeeper> _keepers = [];
     private readonly Dictionary<long, (WorldPlayContext Context, long At)> _recentContexts = [];
+    /// <summary>Stage groups of nobody's instance that still owe a HOME (a seatless joiner's fallback, the groups of a removed
+    /// instance): asked again by the housekeeping like an instance's groups (fix-019).</summary>
+    private readonly HashSet<HubInstance> _strays = [];
     private uint _nextMemberId = 1;
     private uint _nextWid = 1;
     private long _lastSelection;
@@ -48,6 +51,9 @@ public sealed partial class RoomHub
     public Func<Func<Dictionary<HubMember, PresenceChoice>>, Task<Dictionary<HubMember, PresenceChoice>>>? SelectionRunner { get; set; }
 
     public WorldHubOptions WorldOptions => _world;
+    /// <summary>This hub's run (16 hex digits, random): wids count from 1 again in every run (a server restart, a rebuilt hub), so the
+    /// staff actions name an instance by its run and wid and are refused for another run (fix-019; the snapshot carries it).</summary>
+    public string RunId { get; } = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
     public AreaTable Areas => _areas;
     public IReadOnlyCollection<WorldInstance> Worlds => _worlds.Values;
     public WorldInstance? WorldInstance(uint wid) => _worlds.GetValueOrDefault(wid);
@@ -363,7 +369,16 @@ public sealed partial class RoomHub
         if (!_worlds.Remove(w.Wid)) return;
         if (w.Area is { } area && _byArea.TryGetValue(area, out var list)) list.Remove(w);
         if (w.Keeper.Held) w.Keeper.Release(merge: false);
-        foreach (var g in w.Groups) g.World = null;
+        // Its stage groups that still play (seatless members: removed ones whose engines hold the host's story) are nobody's from now
+        // on (fix-019): no story, their next barrier a DISSOLVE home with the replace (before, such a barrier was a fresh arrival
+        // from home whose own instance merged the former host's story into the own); a HOME they still owe is asked again.
+        foreach (var g in w.Groups)
+        {
+            g.World = null;
+            if (g.Ended) continue;
+            g.Detached = true;
+            if (g.PendingHome is not null || g.AskedHome is not null) _strays.Add(g);
+        }
         w.Groups.Clear();
         if (!_byAccount.ContainsKey(w.HostAccount) && !_worlds.Values.Any(x => x.Keeper == w.Keeper)) w.Keeper.IdleSince = now;
         Note("instance_removed", null, ("wid", w.Wid));
@@ -592,21 +607,18 @@ public sealed partial class RoomHub
             if (w.StartingUntil != 0 && (now >= w.StartingUntil || w.Groups.Any(g => g.Joinable))) w.StartingUntil = 0;
             var players = Math.Min(w.Seats.Count, Wire.MaxSlots);
             w.SeenWithPlayers[players] = now;
-            foreach (var g in w.Groups.ToList())
-                if (g.PendingHome is not null)
-                {
-                    if (g.Mode == InstanceMode.Sealed) StampPendingHome(g, now);
-                    else TrySoloHome(g, now);
-                }
-                else if (g.AskedHome is { } asked && Ms(now - asked.AskedAt) > 5000)
-                {
-                    // The leader did not answer JOIN_REQ home: ask again, a few times; then the group is nobody's (19.6.6).
-                    g.AskedHome = null;
-                    g.HomeTries++;
-                    Count("home_req_timeout");
-                    if (g.HomeTries >= Math.Max(1, _inst.JoinRequestTries)) Detach(g, now);
-                    else g.PendingHome = (asked.Mask, asked.Reason, now);
-                }
+            foreach (var g in w.Groups.ToList()) HousekeepHome(g, now);
+        }
+        // Stage groups of nobody's instance that owe a HOME (fix-019): asked like an instance's, dropped once it is stamped or given up
+        // (their next barrier goes home anyway).
+        foreach (var g in _strays.ToList())
+        {
+            if (g.Ended || g.PresentMask == 0 || (g.PendingHome is null && g.AskedHome is null))
+            {
+                _strays.Remove(g);
+                continue;
+            }
+            HousekeepHome(g, now);
         }
         // Members whose connection is gone leave the world after the member timeout (a host in his grace after it plus the margin).
         foreach (var m in _members.Values.ToList())
@@ -628,6 +640,25 @@ public sealed partial class RoomHub
             if (w.InfoDirty) SendInfoAll(w, now);
         HousekeepSelection(now);
         CachedSnapshot = BuildSnapshot(now);
+    }
+
+    /// <summary>A stage group's owed HOME in the housekeeping: a waiting one stamped (sealed) or asked of the solo leader; a JOIN_REQ home
+    /// the leader did not answer asked again, a few times, then the group is nobody's (19.6.6).</summary>
+    private void HousekeepHome(HubInstance g, long now)
+    {
+        if (g.PendingHome is not null)
+        {
+            if (g.Mode == InstanceMode.Sealed) StampPendingHome(g, now);
+            else TrySoloHome(g, now);
+        }
+        else if (g.AskedHome is { } asked && Ms(now - asked.AskedAt) > 5000)
+        {
+            g.AskedHome = null;
+            g.HomeTries++;
+            Count("home_req_timeout");
+            if (g.HomeTries >= Math.Max(1, _inst.JoinRequestTries)) Detach(g, now);
+            else g.PendingHome = (asked.Mask, asked.Reason, now);
+        }
     }
 
     /// <summary>A stage group that no longer answers its HOME (19.6.6): nobody's instance from now on (no joins, no story), its next
@@ -738,17 +769,20 @@ public sealed partial class RoomHub
         FreeSeat(w, target, "removed", now);
     }
 
-    /// <summary>Admin End (POST /admin/instances/{wid}/end): END staff. False: no such instance.</summary>
-    public bool StaffEnd(uint wid, long staffAccount, long now)
+    /// <summary>Admin End (POST /admin/instances/{wid}/end): END staff. False: no such instance in this run (<paramref name="run"/>: the
+    /// run the staff page listed it in, <see cref="RunId"/>; another run's wid names another instance, fix-019; null: this run).</summary>
+    public bool StaffEnd(uint wid, long staffAccount, long now, string? run = null)
     {
-        if (!_worlds.TryGetValue(wid, out var w) || w.Ending) return false;
+        if ((run is not null && run != RunId) || !_worlds.TryGetValue(wid, out var w) || w.Ending) return false;
         EndWorld(w, EndReason.Staff, now);
         return true;
     }
 
-    /// <summary>Admin Remove: the member goes home (HOME staff) with the bar; removing the host ends the instance. False: not in it.</summary>
-    public bool StaffRemove(uint wid, long accountId, long staffAccount, long now)
+    /// <summary>Admin Remove: the member goes home (HOME staff) with the bar; removing the host ends the instance. False: not in it (or
+    /// <paramref name="run"/> is another run's, as for <see cref="StaffEnd"/>).</summary>
+    public bool StaffRemove(uint wid, long accountId, long staffAccount, long now, string? run = null)
     {
+        if (run is not null && run != RunId) return false;
         if (!_worlds.TryGetValue(wid, out var w) || !_byAccount.TryGetValue(accountId, out var m) || !w.Seats.ContainsKey(m)) return false;
         if (w.Host == m) EndWorld(w, EndReason.Staff, now);
         else Remove(w, m, HomeReason.Staff, now);
@@ -986,7 +1020,8 @@ public sealed partial class RoomHub
     }
 
     /// <summary>A co-arrival base of a fresh group may take this fresh group: no block between any of them, and the base's host's
-    /// default visibility lets every member of the group see the instance it will make (19.7.6: "visible to them").</summary>
+    /// default visibility lets every member of the group see the instance it will make (19.7.6: "visible to them"; a co-arrival is
+    /// automatic, so staff get no visibility bypass here, fix-019).</summary>
     private static bool MaySeeBase(ArrivalGroup holder, ArrivalGroup g)
     {
         var host = holder.Members[0].Member;
@@ -995,13 +1030,7 @@ public sealed partial class RoomHub
         {
             var x = a.Member;
             if (inBase.Any(y => Matching.Blocked(x, y))) return false;
-            var ok = host.DefaultVisibility switch
-            {
-                Visibility.Public => true,
-                Visibility.Friends => x.Staff || x.Friends.Contains(host.AccountId),
-                _ => x.Staff,
-            };
-            if (!ok) return false;
+            if (!Matching.MayEnter(host.DefaultVisibility, host.AccountId, x)) return false;
         }
         return host.DataHash == g.Members[0].Member.DataHash;
     }
@@ -1067,7 +1096,7 @@ public sealed partial class RoomHub
         var online = _members.Values.Where(m => m.Connected).OrderBy(m => m.Id)
             .Select(m => new WorldOnlineRow(m.AccountId, m.Id, m.Name, StageOf(m).ToLowerInvariant(), m.World is { Ending: false } w ? w.Wid : 0, m.Staff))
             .ToList();
-        return new WorldSnapshot(UtcNow, online.Count, rows) { Online = online };
+        return new WorldSnapshot(UtcNow, online.Count, rows) { Online = online, Run = RunId };
     }
 
     // Presence (19.13) ---------------------------------------------------------------------------------------------------------

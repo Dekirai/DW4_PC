@@ -51,7 +51,7 @@ public partial class HubLogicTests
         // A guest's earned value that merges after the host left: the revision names the host's member id, never 0.
         var g = new Harness(new InstanceOptions { StoryMinVisitSeconds = 1, StoryFlagBurst = 1, StoryFlagSeconds = 2 });
         Admit(g, "a", Player(100, "a") with { Story = StoryAt(2) });
-        Admit(g, "b", Player(101, "b"));
+        Admit(g, "b", Player(101, "b") with { Friends = [100] }); // (a's friend: without the prompt a guest's NEW is a friend's, fix-019)
         g.Barrier("a", "stag0101");
         g.Snapshot("a");
         g.Barrier("a", "stag0102");
@@ -202,7 +202,7 @@ public partial class HubLogicTests
         // A guest's own barrier with no living slot into a field is travel inside the instance (M3 is the host's).
         var g = new Harness();
         Admit(g, "a", Player(100, "a") with { Story = StoryAt(2) });
-        Admit(g, "b", Player(101, "b"));
+        Admit(g, "b", Player(101, "b") with { Friends = [100] }); // (a's friend: without the prompt a guest's NEW is a friend's, fix-019)
         g.Barrier("a", "stag0101");
         g.Snapshot("a");
         g.Barrier("a", "stag0102");
@@ -253,7 +253,7 @@ public partial class HubLogicTests
         // b plays alone in a's instance (a guest's NEW); its Leave instance asks its own engine for HOME (JOIN_REQ kind home).
         var h = new Harness();
         Admit(h, "a", Player(100, "a") with { Story = StoryAt(2) });
-        Admit(h, "b", Player(101, "b"));
+        Admit(h, "b", Player(101, "b") with { Friends = [100] }); // (a's friend: without the prompt a guest's NEW is a friend's, fix-019)
         h.Barrier("a", "stag0101");
         h.Snapshot("a");
         h.Barrier("a", "stag0102");
@@ -299,19 +299,25 @@ public partial class HubLogicTests
     [Fact]
     public void A_co_arrival_base_takes_only_arrivals_that_may_see_its_instance()
     {
-        // A Private base waits for the staff member it may show itself to; a stranger arriving meanwhile is no co-arrival of it.
+        // A Friends base waits for the friend it may show itself to; a stranger and a moderator who is no friend arriving meanwhile
+        // are no co-arrivals of it (fix-019: a co-arrival is automatic, so no staff bypass; before, the moderator c came along into
+        // a's instance on a's story). Both go together as an instance of their own (b's base is Public).
         var h = new Harness();
-        Admit(h, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
+        Admit(h, "a", Player(100, "a") with { DefaultVisibility = Visibility.Friends });
+        Admit(h, "f", Player(103, "f") with { Friends = [100] });
         Admit(h, "b", Player(101, "b"));
         Admit(h, "c", Player(102, "c") with { Staff = true });
-        foreach (var n in new[] { "a", "b", "c" }) h.Send(n, new HeadingMsg(h.Inst(n), "stag0101", 0, 5).Frame());
+        foreach (var n in new[] { "a", "f", "b", "c" }) h.Send(n, new HeadingMsg(h.Inst(n), "stag0101", 0, 5).Frame());
         h.Barrier("a", "stag0101");
         Assert.Equal(WaitReason.CoArrival, h.P("a").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
         h.Barrier("b", "stag0101");
         h.Barrier("c", "stag0101");
-        Assert.Equal(BarrierDecision.CoArrive, h.Decision("c").Decision);
-        Assert.Same(W(h, "a"), W(h, "c"));
+        h.Barrier("f", "stag0101");
+        Assert.Equal(BarrierDecision.CoArrive, h.Decision("f").Decision);
+        Assert.Same(W(h, "a"), W(h, "f"));
         Assert.NotSame(W(h, "a"), W(h, "b"));
+        Assert.NotSame(W(h, "a"), W(h, "c"));
+        Assert.Equal(2, W(h, "a").Seats.Count);
 
         // A Public base whose host the arrival blocks: no co-arrival either (19.7.6: "visible to them").
         var g = new Harness();

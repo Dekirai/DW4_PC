@@ -1232,17 +1232,12 @@ public sealed partial class RoomHub
     }
 
     /// <summary>A fresh member <paramref name="x"/> may see the instance <paramref name="host"/> would make with this base group: no
-    /// block with any of them, and the host's default visibility lets it see it (19.7.6).</summary>
+    /// block with any of them, and the host's default visibility lets it see it (19.7.6; no staff bypass for a co-arrival, fix-019).</summary>
     private static bool MaySeeHost(HubMember host, ArrivalGroup g, HubMember x)
     {
         if (g.Members.Any(a => Matching.Blocked(a.Member, x))) return false;
         if (host.DataHash != x.DataHash) return false;
-        return host.DefaultVisibility switch
-        {
-            Visibility.Public => true,
-            Visibility.Friends => x.Staff || x.Friends.Contains(host.AccountId),
-            _ => x.Staff,
-        };
+        return Matching.MayEnter(host.DefaultVisibility, host.AccountId, x);
     }
 
     private static bool SameStage(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -1768,11 +1763,14 @@ public sealed partial class RoomHub
             m.Slot = -1;
             m.Arrival = null;
             var fresh = g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting;
-            m.Joining = new JoinState(target, slot, g, a.Slot) { Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target), Fresh = fresh };
+            var w = target.World!;
+            m.Joining = new JoinState(target, slot, g, a.Slot)
+            {
+                Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target), Fresh = fresh, Owner = (w.Host.Id, (byte)w.Keeper.Box),
+            };
             target.Observers.Add(m);
             var none = new sbyte[Wire.MaxSlots];
             Array.Fill(none, (sbyte)-1);
-            var w = target.World!;
             if (!w.Seats.ContainsKey(m)) TakeSeat(w, m, now, "join");
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Join, target.Id, target.Visit, g.Stage, g.Point, (byte)slot, none,
                 target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob())
@@ -2328,9 +2326,13 @@ public sealed partial class RoomHub
     }
 
     /// <summary>
-    /// A joiner whose target went away (or whose READY failed twice) restores its own load snapshot and enters as NEW: a fresh
-    /// arrival's automatic join (19.7.1) becomes an own instance on its own story (its seat in the target's goes); a member inside
-    /// an instance a new stage group of it (an instance that ends sends it home at once).
+    /// A joiner whose target went away (or whose READY failed twice) restores its own load snapshot and enters as NEW. Its JOIN put
+    /// the host's story in its engine (a fresh arrival's by the replace, its fallback load included, client 13:30; a member inside
+    /// the instance plays it anyway), so the fallback is a new stage group of the target's instance while the member still holds
+    /// its seat there (a guest's NEW; an instance that ends sends it home at once). A member that lost its seat while it loaded
+    /// (removed, 19.6.6) or whose instance is gone gets neither the seat back (fix-019: past the removal bar and the free seats)
+    /// nor an own instance on its own story (fix-019: its engine holds the former host's story, which that instance's merges and
+    /// STORYs would carry into the own): it goes home from a stage group of nobody's instance (<see cref="FallbackHome"/>).
     /// </summary>
     private void FallbackNew(HubMember m, long now, BarrierNotice notice = BarrierNotice.None, JoinState? joined = null)
     {
@@ -2341,36 +2343,46 @@ public sealed partial class RoomHub
         if (j.Target.SoloJoin?.Joiner == m) j.Target.SoloJoin = null;
         m.Joining = null;
         m.JoinedVia = null;
-        // A fresh arrival's JOIN replaced its engine's story with the host's, its fallback load included (client 13:30): the
-        // fallback is a new stage group of the target's instance (a guest's NEW), never an own instance on that story; an
-        // instance that ends sends it home at once.
-        var target = j.Target.World;
-        WorldInstance w;
-        var arrival = ArrivalKind.None;
-        if (target is not null && _worlds.ContainsKey(target.Wid))
-        {
-            w = target;
-            if (!w.Seats.ContainsKey(m) && !w.Ending) TakeSeat(w, m, now, "new_group");
-        }
-        else
-        {
-            w = CreateWorld(m, j.From.Stage, j.From.Context, now);
-            arrival = ArrivalKind.NewInstance;
-        }
         var inst = NewInstance(InstanceMode.SoloLed, j.From.Stage, 1, j.From.Context, now);
         Place(m, inst, 0, now);
-        inst.World = w;
-        w.Groups.Add(inst);
-        w.Visited.Add(inst.Stage);
         inst.Snapshot.Uploader = m;
         var map = new sbyte[Wire.MaxSlots];
         Array.Fill(map, (sbyte)-1);
         map[j.OldSlot] = 0;
+        var why = notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice;
+        if (j.Target.World is not { } w || !_worlds.ContainsKey(w.Wid) || !w.Seats.ContainsKey(m))
+        {
+            FallbackHome(m, j, inst, map, why, now);
+            return;
+        }
+        inst.World = w;
+        w.Groups.Add(inst);
+        w.Visited.Add(inst.Stage);
         m.Peer?.Send(new BarrierOkMsg(j.Target.Id, j.Target.Visit, BarrierDecision.New, inst.Id, inst.Visit, inst.Stage, j.From.Point, 0, map,
-            InstanceMode.SoloLed, 0, [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob(),
-            notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice, []) { World = WorldPart(w, arrival, StoryMode.Merge) }.Frame());
+            InstanceMode.SoloLed, 0, [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob(), why, []) { World = WorldPart(w, ArrivalKind.None, StoryMode.Merge) }.Frame());
         Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id), ("wid", w.Wid));
         if (w.Ending) SendHome(inst, inst.PresentMask, HomeReason.Ended, now, 0);
+        SendInfo(m, now);
+    }
+
+    /// <summary>
+    /// The fallback of a joiner without a seat in a live instance (fix-019, 19.6.6, 19.8.3): its solo stage group belongs to nobody's
+    /// instance (no joins, no story: a STORY from it is refused, <see cref="OnStory"/>), HOME goes to it at once (JOIN_REQ kind home,
+    /// asked again by the housekeeping like an instance's), and its next barrier is a DISSOLVE home whose replace gives its engine the
+    /// member's own story back. BARRIER_OK names no instance and no story: the engine keeps the former host's until that replace.
+    /// </summary>
+    private void FallbackHome(HubMember m, JoinState j, HubInstance inst, sbyte[] map, BarrierNotice why, long now)
+    {
+        inst.Detached = true;
+        var world = new BarrierWorld(0, 0, Visibility.Public, ArrivalKind.None, m.Settings, m.Settings.Hash(Wire.WorldProtocol, m.DataHash),
+            j.Owner.Member, j.Owner.Box, StoryMode.Merge);
+        m.Peer?.Send(new BarrierOkMsg(j.Target.Id, j.Target.Visit, BarrierDecision.New, inst.Id, inst.Visit, inst.Stage, j.From.Point, 0, map,
+            InstanceMode.SoloLed, 0, [], 0, [], why, []) { World = world }.Frame());
+        Count("fallback_home");
+        Note("fallback_home", inst, ("member", m.Id), ("from", j.Target.Id), ("wid", j.Target.World?.Wid ?? 0),
+            ("removed", m.HomeWish?.Reason is HomeReason.Removed or HomeReason.Staff));
+        _strays.Add(inst);
+        SendHome(inst, inst.PresentMask, m.HomeWish?.Reason ?? HomeReason.Ended, now, 0);
         SendInfo(m, now);
     }
     // Fork -----------------------------------------------------------------------------------------------------------------
@@ -2608,10 +2620,19 @@ public sealed partial class RoomHub
         StoryTake take;
         HubInstance? at = null;
         var rated = m.StoryTokens < 1;
-        var wrongOwner = msg.OwnerMember != owner || msg.OwnerBox != box;
+        // fix-019: no story from where it would land in the wrong keeper, whatever key the STORY names (refused, reason owner):
+        // - a guest's values once its instance ends (19.8.5: the guests' values are discarded at the end; the host keeper's hold
+        //   is released without a merge, so a guest's STORY after END host_left, host_lost, staff or a replaced story went into the
+        //   host's keeper). The host's own values stay his (his keeper is his own story).
+        // - an engine on another's story: a stage group of nobody's instance (detached, a seatless joiner's fallback, the groups
+        //   of a removed instance) or of an instance the member holds no seat in (removed, 19.6.6). Its next barrier goes home
+        //   with the replace (19.8.3); until then the own keeper would take the former host's progress.
+        var ended = m.World is { Ending: true } ew && ew.Keeper == keeper && (keeper.Account != m.AccountId || keeper.Box != m.Box);
+        var foreign = m.Instance is { Mode: not InstanceMode.Hub } gi && (gi.Detached || (gi.World is not null && gi.World != m.World));
+        var wrongOwner = msg.OwnerMember != owner || msg.OwnerBox != box || ended || foreign;
         if (rated || wrongOwner)
         {
-            Count(wrongOwner ? "story_owner" : "story_rate");
+            Count(ended ? "story_ended" : foreign ? "story_foreign" : wrongOwner ? "story_owner" : "story_rate");
             var why = wrongOwner ? StoryRefusal.Owner : StoryRefusal.Rate;
             var refused = new List<StoryRefused>();
             var d = msg.Delta;
@@ -2620,7 +2641,9 @@ public sealed partial class RoomHub
             refused.AddRange(d.Folder.Select(k => new StoryRefused(StoryKeyKind.Folder, k, why)));
             refused.AddRange(d.Counters.Select(g => new StoryRefused(StoryKeyKind.Counter, g.Counter, why)));
             take = new StoryTake(refused, false);
-            if (wrongOwner) Note("story_owner", m.Instance, ("member", m.Id), ("key", msg.OwnerMember), ("owner", owner));
+            if (wrongOwner)
+                Note("story_owner", m.Instance, ("member", m.Id), ("key", msg.OwnerMember), ("owner", owner),
+                    ("why", ended ? "ended" : foreign ? "foreign" : "key"));
         }
         else
         {

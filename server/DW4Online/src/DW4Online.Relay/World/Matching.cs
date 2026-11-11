@@ -36,22 +36,29 @@ public static class Matching
 
     /// <summary>
     /// Visible(i, m) (19.7.2): no block in either direction between m and any member of i; m not under a removal bar of i; i Public,
-    /// or Friends and m a friend of the host (or in his party, round I4), or Private and m in the host's party (I4); staff see every
-    /// instance whatever its visibility (the blocks and the bars still count for a staff member who simply plays, 19.14).
+    /// or Friends and m a friend of the host (or in his party, round I4), or Private and m in the host's party (I4). Staff see every
+    /// instance whatever its visibility only where they choose it themselves (<paramref name="staffChoice"/>: a row of I1b's prompt
+    /// or I3's browser, 19.14); an automatic join or a co-arrival never puts a moderator who simply plays into a Private or Friends
+    /// instance (fix-019). The blocks and the bars count for a staff member who simply plays in either case.
     /// </summary>
-    public static bool Visible(WorldInstance i, HubMember m, long now)
+    public static bool Visible(WorldInstance i, HubMember m, long now, bool staffChoice = false)
     {
         if (i.Seats.ContainsKey(m)) return true;
         if (i.Bars.TryGetValue(m.AccountId, out var until) && now < until) return false;
         foreach (var x in i.Members)
             if (Blocked(m, x)) return false;
-        return i.Visibility switch
-        {
-            Visibility.Public => true,
-            Visibility.Friends => m.Staff || m.Friends.Contains(i.HostAccount),
-            _ => m.Staff,
-        };
+        return MayEnter(i.Visibility, i.HostAccount, m, staffChoice);
     }
+
+    /// <summary>The visibility part of Visible() for an instance of <paramref name="hostAccount"/> (also the one a co-arrival base's host
+    /// would make, 19.7.6): Public, or Friends and a friend of the host, or Private (the host's party, round I4); staff only by their own
+    /// choice (<paramref name="staffChoice"/>), never for an automatic join or a co-arrival.</summary>
+    public static bool MayEnter(Visibility visibility, long hostAccount, HubMember m, bool staffChoice = false) => visibility switch
+    {
+        Visibility.Public => true,
+        Visibility.Friends => (staffChoice && m.Staff) || m.Friends.Contains(hostAccount),
+        _ => staffChoice && m.Staff,
+    };
 
     /// <summary>The lobby gate offers this gate stage on the host's story (19.30.3; stagML11_m1__mate00.lua): stag0101 after flag
     /// 503 (the training), stag0201 from phase 4 (flag 4), stag0301 from phase 5, stag0401 from phase 6 (flag 6, or 86 after the
@@ -93,9 +100,11 @@ public static class Matching
             .ThenBy(r => r.World.Wid)
             .ToList();
 
-    /// <summary>The row I1a's automatic join takes (19.7.1, decision 40): the first by <see cref="Order"/> that is not greyed, also one
-    /// with nobody at the arrival stage (I1b's prompt preselects *New instance* there instead).</summary>
-    public static CandidateRow? AutoJoinRow(IReadOnlyList<CandidateRow> ordered) => ordered.FirstOrDefault(r => r.Choosable);
+    /// <summary>The row I1a's automatic join takes (19.7.1, the I1a interim rule of fix-019): exactly the row I1b's prompt would
+    /// preselect (decision 40, <see cref="Preselected"/>): the first row when it is not greyed and is the party's or a friend's or has
+    /// players of its instance at the arrival stage; otherwise none (*New instance*). So a stranger's instance with nobody of it at
+    /// the arrival stage is never joined without a prompt. I1b's prompt replaces the automatic join.</summary>
+    public static CandidateRow? AutoJoinRow(IReadOnlyList<CandidateRow> ordered) => Preselected(ordered);
 
     /// <summary>The row I1b's prompt preselects (19.7.3): the first row when it is not greyed and is the party's or a friend's or has
     /// players at the arrival stage; otherwise none (*New instance*).</summary>

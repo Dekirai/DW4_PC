@@ -102,10 +102,11 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
 
     public bool Leave(long accountId) => _hub?.Locked((hub, now) => hub.Leave(accountId, now)) ?? false;
 
-    public bool EndInstance(uint wid, long staffAccountId) => _hub?.Locked((hub, now) => hub.StaffEnd(wid, staffAccountId, now)) ?? false;
+    public bool EndInstance(uint wid, string run, long staffAccountId) =>
+        _hub?.Locked((hub, now) => hub.StaffEnd(wid, staffAccountId, now, run ?? "")) ?? false;
 
-    public bool RemoveMember(uint wid, long accountId, long staffAccountId) =>
-        _hub?.Locked((hub, now) => hub.StaffRemove(wid, accountId, staffAccountId, now)) ?? false;
+    public bool RemoveMember(uint wid, string run, long accountId, long staffAccountId) =>
+        _hub?.Locked((hub, now) => hub.StaffRemove(wid, accountId, staffAccountId, now, run ?? "")) ?? false;
 
     // IWorldNotifier: every call returns at once; the work runs on the thread pool, off the hub lock.
 

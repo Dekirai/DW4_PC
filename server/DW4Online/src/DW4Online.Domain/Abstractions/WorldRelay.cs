@@ -35,11 +35,12 @@ public interface IWorldRelay
     /// <summary>POST /world/leave: closes the account's world connection (the relay sends CLOSE left); false when it has none.</summary>
     bool Leave(long accountId);
 
-    /// <summary>Staff: ends the instance (END reason staff, 19.6.5); false when there is no such instance.</summary>
-    bool EndInstance(uint wid, long staffAccountId);
+    /// <summary>Staff: ends the instance (END reason staff, 19.6.5); false when there is no such instance in the relay's run
+    /// <paramref name="run"/> (<see cref="WorldSnapshot.Run"/>: wids count from 1 again in every run, fix-019).</summary>
+    bool EndInstance(uint wid, string run, long staffAccountId);
 
-    /// <summary>Staff: the member goes home (round I1b adds the removal bar); false when the account is not a member of it.</summary>
-    bool RemoveMember(uint wid, long accountId, long staffAccountId);
+    /// <summary>Staff: the member goes home with the removal bar; false when the account is not a member of it (or the run is another).</summary>
+    bool RemoveMember(uint wid, string run, long accountId, long staffAccountId);
 }
 
 /// <summary>A new world ticket and its nonce (the service remembers the newest nonce per account).</summary>
@@ -84,6 +85,10 @@ public sealed record WorldSnapshot(DateTime BuiltAtUtc, int MembersOnline, IRead
 
     /// <summary>Every connected member (players, staff, spectators): where it is.</summary>
     public IReadOnlyList<WorldOnlineRow> Online { get; init; } = [];
+
+    /// <summary>The relay run the snapshot is of (random hex; empty before the first): an instance is (Run, Wid), since wids count from
+    /// 1 again after a server restart (fix-019: the staff actions name both and are refused for another run).</summary>
+    public string Run { get; init; } = "";
 }
 
 /// <summary>An instance in the snapshot. Members are players only, host first; spectators only for staff pages.</summary>
@@ -143,6 +148,6 @@ public sealed class NullWorldRelay : IWorldRelay
     public WorldSnapshot Snapshot() => WorldSnapshot.Empty;
     public WorldPlayContext? PlayContext(long accountId) => null;
     public bool Leave(long accountId) => false;
-    public bool EndInstance(uint wid, long staffAccountId) => false;
-    public bool RemoveMember(uint wid, long accountId, long staffAccountId) => false;
+    public bool EndInstance(uint wid, string run, long staffAccountId) => false;
+    public bool RemoveMember(uint wid, string run, long accountId, long staffAccountId) => false;
 }

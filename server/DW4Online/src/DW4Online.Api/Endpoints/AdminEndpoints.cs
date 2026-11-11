@@ -63,18 +63,25 @@ public static class AdminEndpoints
         });
 
         // The world's instances (SEAMLESS.md 19.19): every one, Private included, with members and spectators; End and
-        // Remove are audited (staff_end_instance, staff_remove). The id is the relay's run-local wid.
-        admin.MapGet("/instances", (WorldService world) => Results.Ok(new { instances = world.AdminInstances().Select(WorldEndpoints.AdminRow) }));
+        // Remove are audited (staff_end_instance, staff_remove). The relay's wid counts from 1 again in every run (a server
+        // restart), so an instance is its run and wid: the list names the run, End and Remove take it as ?run= (fix-019:
+        // missing 400 run_required, another run's 409 instance_list_outdated).
+        admin.MapGet("/instances", (WorldService world) =>
+        {
+            var (run, rows) = world.AdminInstances();
+            return Results.Ok(new { run, instances = rows.Select(i => WorldEndpoints.AdminRow(i, run)) });
+        });
 
-        admin.MapPost("/instances/{wid:long}/end", async (long wid, WorldService world, HttpContext ctx) =>
+        admin.MapPost("/instances/{wid:long}/end", async (long wid, string? run, WorldService world, HttpContext ctx) =>
             wid is < 1 or > uint.MaxValue
                 ? ApiProblems.Of(StatusCodes.Status404NotFound, "instance_not_found", "No such instance (it may have ended).")
-                : ApiProblems.Ok(await world.EndInstanceAsync(ctx.Session().AccountId, (uint)wid, ctx.IpBytes(), ctx.RequestAborted), _ => Results.NoContent()));
+                : ApiProblems.Ok(await world.EndInstanceAsync(ctx.Session().AccountId, (uint)wid, run, ctx.IpBytes(), ctx.RequestAborted),
+                    _ => Results.NoContent()));
 
-        admin.MapPost("/instances/{wid:long}/remove", async (long wid, UsernameRequest r, WorldService world, HttpContext ctx) =>
+        admin.MapPost("/instances/{wid:long}/remove", async (long wid, string? run, UsernameRequest r, WorldService world, HttpContext ctx) =>
             wid is < 1 or > uint.MaxValue
                 ? ApiProblems.Of(StatusCodes.Status404NotFound, "instance_not_found", "No such instance (it may have ended).")
-                : ApiProblems.Ok(await world.RemoveMemberAsync(ctx.Session().AccountId, (uint)wid, r.Username, ctx.IpBytes(), ctx.RequestAborted),
+                : ApiProblems.Ok(await world.RemoveMemberAsync(ctx.Session().AccountId, (uint)wid, run, r.Username, ctx.IpBytes(), ctx.RequestAborted),
                     _ => Results.NoContent()));
 
         // The staff rows of the audit log: a moderator his own, an admin all (19.19).

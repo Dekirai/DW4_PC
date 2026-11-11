@@ -237,8 +237,11 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     public long PendingReadyAt { get; set; }
     /// <summary>The members' fingerprint of the pending READY's tick never came in time: it is taken unchecked.</summary>
     public bool ReadyWaitExpired { get; set; }
-    /// <summary>The JOIN is a fresh arrival's automatic join (19.7.1): its fallback is an own instance, not a stage group of the target's.</summary>
+    /// <summary>The JOIN is a fresh arrival's automatic join (19.7.1): its BARRIER_OK replaced the engine's story with the host's.</summary>
     public bool Fresh { get; init; }
+    /// <summary>The story owner key (member id, box) the JOIN's BARRIER_OK named: the target instance's host, whose story the joiner's
+    /// engine holds from then on (its fallback load included) until a replace on its way home (fix-019).</summary>
+    public (uint Member, byte Box) Owner { get; init; }
     /// <summary>The JOIN is stamped (sealed) or JOIN_REQ went to the solo leader.</summary>
     public bool Stamped { get; set; }
 }

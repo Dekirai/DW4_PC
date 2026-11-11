@@ -345,34 +345,53 @@ public sealed class WorldService
 
     // --- Staff --------------------------------------------------------------------------------------------------------------
 
-    /// <summary>Staff: every instance, Private ones included, with members and spectators (/admin/instances).</summary>
-    public IReadOnlyList<WorldInstanceRow> AdminInstances() =>
-        _relay.Snapshot().Instances.OrderByDescending(i => i.StartedAtUtc).ThenBy(i => i.Wid).ToList();
+    /// <summary>Staff: every instance, Private ones included, with members and spectators (/admin/instances), and the relay run they
+    /// are of (<see cref="WorldSnapshot.Run"/>: End and Remove name it with the wid), from one snapshot.</summary>
+    public (string Run, IReadOnlyList<WorldInstanceRow> Rows) AdminInstances()
+    {
+        var snapshot = _relay.Snapshot();
+        return (snapshot.Run, snapshot.Instances.OrderByDescending(i => i.StartedAtUtc).ThenBy(i => i.Wid).ToList());
+    }
 
     /// <summary>
     /// Staff ends an instance (END reason staff): audit row staff_end_instance with the instance, the host's and the members'
-    /// account ids (never names: a deleted account's name must not stay in other accounts' rows), visibility and place.
+    /// account ids (never names: a deleted account's name must not stay in other accounts' rows), visibility and place. The
+    /// instance is the wid of the relay run <paramref name="run"/> the staff list showed (fix-019: wids count from 1 again after a
+    /// server restart, so an old page's wid names another host's instance): a missing run is invalid, another run's refused.
     /// </summary>
-    public async Task<Result<bool>> EndInstanceAsync(long actorId, uint wid, byte[]? ip, CancellationToken ct = default)
+    public async Task<Result<bool>> EndInstanceAsync(long actorId, uint wid, string? run, byte[]? ip, CancellationToken ct = default)
     {
+        if (CheckRun(run) is { } refused) return refused;
         var row = _relay.Snapshot().Instances.FirstOrDefault(i => i.Wid == wid);
-        if (row is null || !_relay.EndInstance(wid, actorId)) return InstanceNotFound();
+        if (row is null || !_relay.EndInstance(wid, run!, actorId)) return InstanceNotFound();
         await _audit.WriteAsync("staff_end_instance", row.HostAccountId, actorId, ip, AuditDetail(row), Clock.Now(_time), ct);
         return true;
     }
 
-    /// <summary>Staff removes a member (it goes home; round I1b adds the 10-minute bar): audit row staff_remove.</summary>
-    public async Task<Result<string>> RemoveMemberAsync(long actorId, uint wid, string? username, byte[]? ip, CancellationToken ct = default)
+    /// <summary>Staff removes a member (it goes home with the 10-minute bar): audit row staff_remove. The instance is named as for
+    /// <see cref="EndInstanceAsync"/> (its run and wid).</summary>
+    public async Task<Result<string>> RemoveMemberAsync(long actorId, uint wid, string? run, string? username, byte[]? ip, CancellationToken ct = default)
     {
+        if (CheckRun(run) is { } refused) return refused;
         var row = _relay.Snapshot().Instances.FirstOrDefault(i => i.Wid == wid);
         if (row is null) return InstanceNotFound();
         var member = row.Members.Concat(row.Spectators).FirstOrDefault(m => string.Equals(m.Name, username?.Trim(), StringComparison.OrdinalIgnoreCase));
-        if (member is null || !_relay.RemoveMember(wid, member.AccountId, actorId))
+        if (member is null || !_relay.RemoveMember(wid, run!, member.AccountId, actorId))
             return DomainError.NotFound("member_not_found", "No such player in this instance.");
         // (The member is the row's account, the staff member its actor; the host by account id: no names in the detail.)
         await _audit.WriteAsync("staff_remove", member.AccountId, actorId, ip,
             new { wid, historyId = row.HistoryId, hostId = row.HostAccountId, role = member.Role }, Clock.Now(_time), ct);
         return member.Name;
+    }
+
+    /// <summary>A staff action's run (fix-019): required, and the relay's current one.</summary>
+    private DomainError? CheckRun(string? run)
+    {
+        if (string.IsNullOrWhiteSpace(run))
+            return DomainError.Invalid("run_required", "Name the instance by its run and wid, as GET /admin/instances lists it.");
+        if (!string.Equals(run, _relay.Snapshot().Run, StringComparison.Ordinal))
+            return DomainError.Conflict("instance_list_outdated", "The server restarted since this list was loaded; reload it and choose again.");
+        return null;
     }
 
     /// <summary>
