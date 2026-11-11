@@ -174,3 +174,16 @@ echo "mysqld shut down $(date)" >> $LOG
 ```
 
 ## Scenario runs
+
+- **b1** (2026-11-07, a5027b87, `build/go/scen_b1.log`): W31g passed; W31 (a's explore fell in B1), W31b (the straight
+  walk of "mat" stuck at a wall), W31d2 (c's game over 60 s after b's request: busy a second before the close), W31e (c fell
+  to stag0201's mummies) failed for their scripts.
+- **c1** (2026-11-11, 49301c82, exe c, `build/go/scen_c1.log`, run folder `run_20261111_142113`): W31c, W31d2 passed.
+  W31 failed again in B1 (the campaign bot's errand: 36,000 frames without finding matz02, then defeated) -> TEST hook 3
+  mat (ff1e5c09). W31b: b, asked on the mat, got the notice: the engine announced a's departure twice (the port's HEADING
+  with b asked, then the solo copy's NEXTSTAGE with none) and the relay took the second -> a HEADING of the same departure
+  keeps the asked members (2b19f880). W31c2: the test hold sent BARRIER_WAIT once, the client's five-second fallback went
+  on as an unregistered NEW -> BARRIER_WAIT every second (dccd2322). W31d: everything up to c's GO passed (b and d taken
+  along alive), but d's spawn at dng204b1's entrance lies on matz01: its exit prompt, left open, kept c's JOIN from
+  applying (lag_leave) -> a player that appears on a mat has not stepped on (2deadf82); `!relay: instance_end` also hit
+  the host's own end at the run's end (f02444ed).
