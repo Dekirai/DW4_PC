@@ -60,7 +60,7 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 
 ## Tests and results
 
-- ctest 57/57 (`build/go/ctest2.log`); session tests 397 checks (`go_along_session`); wire tests (go_messages, the golden
+- ctest 57/57 (2026-11-11 at 2deadf82, `build/go/ctest5.log`); online script tests 351 checks (947df0e3); session tests 397 checks (`go_along_session`); wire tests (go_messages, the golden
   bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
 - Server unit tests (2026-11-11, with TEST mat): 478/478 (GoAlongTests 6 + 2 new). The I1a test
   `HubLogicTests.A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (protocol 47 and 48) is
@@ -69,8 +69,8 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 - Server integration tests (2026-11-11, 49301c82, mysqld 3653): 137 passed, 4 skipped, 0 failed (`build/go/itest3.log`).
   Their artifacts must lie two levels below `server/DW4Online` (`--artifacts-path bin/goit`): two tests find
   `Directory.Build.props` and `deploy/` from the test binary (with `build/go/srvart-it` they failed for that alone).
-- det.sh on a DEV=OFF copy (`build/go/off/dw4_go_off_a.exe`, HEAD 53cb3afb's tree): run1 and run2 4004f056 / audio 396cb219
-  (`build/go/off/det_a.log`).
+- det.sh on a DEV=OFF copy: 53cb3afb (`dw4_go_off_a.exe`), 6493bb74 (`_b`) and 2026-11-11 at 947df0e3 (`_c`, with the mat
+  rule and TEST mat): run1 and run2 4004f056 / audio 396cb219 every time (`build/go/off/det_c.log`).
 - W31 runs: see the "Scenario runs" section.
 
 ## Left
