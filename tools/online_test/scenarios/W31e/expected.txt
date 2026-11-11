@@ -1,8 +1,9 @@
-# W31e (19.24): two offers at once; going along with one closes the other for that member (it is in a dungeon then).
+# W31e (19.24): two offers at once; going along with one closes the other for that member (it is in a dungeon then:
+# both close for it, reason 4 gone, at its GO barrier, before the join).
 b: online-script: step .* log: b has two offers
 b: online-script: step .* log: b goes along with c
-b: online-script: step .* log: b joined c in dng205b1
 b: online-trace: offer closed id=\d+ reason=4
+b: online-script: step .* log: b joined c in dng205b1
 b: online-script: step .* log: a's offer closed for b
 relay: offer_open .*dungeon=dng20[45]
 relay: offer_open .*dungeon=dng20[45]
