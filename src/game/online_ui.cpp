@@ -648,9 +648,9 @@ void keyboard_popup(OnlineUiState::Keyboard& k) {
         done = true;
     // (The keyboard's own keys while it is the device in use: it has no
     // Capitals key, Shift types them.)
-    const auto* prompts = ButtonPrompts::active();
+    const auto* prompts = ButtonPrompts::active_prompts();
     if (prompts && prompts->family() == PadFamily::keyboard) prompt_text_disabled("{OK} Type     {DEL} Delete     {BACK} Done");
-    else prompt_text_disabled("{A} Type     {X} Delete     {Y} Capitals     {B} Done");
+    else prompt_text_disabled("{OK} Type     {DEL} Delete     {OPT} Capitals     {BACK} Done");
     if (done) {
         k.open = false;
         k.target = nullptr;
@@ -869,7 +869,7 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     // What the buttons do (controller first).
     const bool code = lobby.screen() == Screen::registered || lobby.screen() == Screen::recovered;
     const char* back_text = code ? "" : first ? (lobby.in_world() ? "     {BACK} Close" : "     {BACK} Title menu") : "     {BACK} Back";
-    const auto* prompts = ButtonPrompts::active();
+    const auto* prompts = ButtonPrompts::active_prompts();
     if (prompts && prompts->family() == PadFamily::keyboard)
         prompt_text_disabled(std::string("{OK} Select") + back_text + "     (the arrows move; or the mouse)");
     else

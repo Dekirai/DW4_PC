@@ -317,33 +317,38 @@ struct Style {
 Style style_of(PadFamily family) {
     Style s{};
     s.face_rim = hex(0, 0);
+    // Sticks and the D-pad stand on the game's black text boxes: light on
+    // every family (a dark stick or D-pad vanished there), as the
+    // original's light grey stick picture is.
+    const Color stick_base = hex(0x8e8e98), stick_cap = hex(0xdedee4), stick_label = hex(0x22222a);
+    const Color dpad = hex(0xd2d2da), dpad_mark = hex(0x2a2a32);
     switch (family) {
     case PadFamily::xbox_one:
         s.face = hex(0x34343c); s.face_rim = hex(0xc0c0cc, 0.7f); s.letter = hex(0xf2f2f4); s.letters_coloured = true;
         s.shoulder = hex(0x2c2c33); s.shoulder_label = hex(0xf0f0f2);
         s.middle = hex(0x2c2c33); s.middle_symbol = hex(0xf0f0f2);
-        s.stick = hex(0x1c1c22); s.stick_cap = hex(0x3a3a42); s.stick_label = hex(0xe8e8ec);
-        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
     case PadFamily::xbox360:
         s.face = hex(0x26262c); s.letter = hex(0xffffff); s.fill_coloured = true; s.face_rim = hex(0xffffff, 0.35f);
         s.shoulder = hex(0xc9c9cf); s.shoulder_label = hex(0x26262c);
         s.middle = hex(0xc9c9cf); s.middle_symbol = hex(0x26262c);
-        s.stick = hex(0x1c1c22); s.stick_cap = hex(0x4a4a52); s.stick_label = hex(0xf0f0f2);
-        s.dpad = hex(0x3c3c44); s.dpad_mark = hex(0xffffff);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
     case PadFamily::ps4:
         s.face = hex(0x2e2e38); s.face_rim = hex(0xb0b0bc, 0.6f); s.letter = hex(0xf0f0f4);
         s.shoulder = hex(0x2a2a32); s.shoulder_label = hex(0xf0f0f4);
         s.middle = hex(0x2a2a32); s.middle_symbol = hex(0xf0f0f4);
-        s.stick = hex(0x16161c); s.stick_cap = hex(0x34343c); s.stick_label = hex(0xe8e8ec);
-        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
     case PadFamily::ps5:
         s.face = hex(0x24242c); s.face_rim = hex(0xe6e6ee, 0.9f); s.letter = hex(0xeeeef4);
         s.shoulder = hex(0xe9e9ef); s.shoulder_label = hex(0x24242c);
         s.middle = hex(0x24242c); s.middle_symbol = hex(0xeeeef4);
-        s.stick = hex(0x16161c); s.stick_cap = hex(0x2e2e36); s.stick_label = hex(0xeeeef4);
+        s.stick = stick_base; s.stick_cap = hex(0xeeeef4); s.stick_label = stick_label;
         s.dpad = hex(0xe4e4ea); s.dpad_mark = hex(0x24242c);
         break;
     case PadFamily::switch_pro:
@@ -353,29 +358,29 @@ Style style_of(PadFamily family) {
         s.letter = hex(0xf4f4f6);
         s.shoulder = hex(0x2c2c32); s.shoulder_label = hex(0xf4f4f6);
         s.middle = hex(0x2c2c32); s.middle_symbol = hex(0xf4f4f6);
-        s.stick = hex(0x16161a); s.stick_cap = hex(0x36363e); s.stick_label = hex(0xeeeef2);
-        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
     case PadFamily::wiiu_pro:
         s.face = hex(0xdcdce2); s.face_rim = hex(0xffffff, 0.6f); s.letter = hex(0x2a2a30);
         s.shoulder = hex(0xdcdce2); s.shoulder_label = hex(0x2a2a30);
         s.middle = hex(0xdcdce2); s.middle_symbol = hex(0x2a2a30);
-        s.stick = hex(0x24242a); s.stick_cap = hex(0xb4b4bc); s.stick_label = hex(0x2a2a30);
-        s.dpad = hex(0xc8c8d0); s.dpad_mark = hex(0x2a2a30);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
     case PadFamily::gamecube:
         s.face = hex(0xbcbcc4); s.letter = hex(0x34343c);
         s.shoulder = hex(0xc4c4cc); s.shoulder_label = hex(0x34343c);
         s.middle = hex(0xb4b4bc); s.middle_symbol = hex(0x34343c);
-        s.stick = hex(0x5a5a64); s.stick_cap = hex(0xb4b4bc); s.stick_label = hex(0x34343c);
-        s.dpad = hex(0xa8a8b2); s.dpad_mark = hex(0xf4f4f6);
+        s.stick = hex(0x8e8e98); s.stick_cap = hex(0xd0d0d6); s.stick_label = hex(0x34343c);
+        s.dpad = hex(0xc4c4cc); s.dpad_mark = hex(0x34343c);
         break;
     default: // generic
         s.face = hex(0x4a4a54); s.letter = hex(0xf4f4f6);
         s.shoulder = hex(0x4a4a54); s.shoulder_label = hex(0xf4f4f6);
         s.middle = hex(0x4a4a54); s.middle_symbol = hex(0xf4f4f6);
-        s.stick = hex(0x24242a); s.stick_cap = hex(0x56565f); s.stick_label = hex(0xeeeef2);
-        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
     }
     return s;
@@ -457,9 +462,11 @@ void shoulder(Canvas& c, const Box& b, const std::string& label, bool trigger, C
     draw_text(c, label, b.cx(), b.cy(), s * (trigger ? 0.34f : 0.3f), hw * 1.7f, text);
 }
 
+// A stick from above: its light base (round, or the GameCube's octagonal
+// gate) and a lighter cap as large as a face button, the letter dark on it.
 void stick_icon(Canvas& c, const Box& b, const Style& st, const std::string& label, bool octagon, Color cap) {
     const float s = b.s(), cx = b.cx(), cy = b.cy();
-    const float r = s * 0.46f;
+    const float r = s * 0.47f;
     if (octagon) {
         std::vector<Vec2> gate;
         for (int i = 0; i < 8; ++i) {
@@ -472,15 +479,15 @@ void stick_icon(Canvas& c, const Box& b, const Style& st, const std::string& lab
         circle(c, cx, cy, r + s * 0.04f, kOutline);
         circle(c, cx, cy, r, st.stick);
     }
-    circle(c, cx, cy, r * 0.7f, kOutline);
-    circle(c, cx, cy, r * 0.64f, cap);
-    ring(c, cx, cy, r * 0.5f, s * 0.018f, hex(0xffffff, 0.22f));
-    if (!label.empty()) draw_text(c, label, cx, cy, r * 0.62f, r * 1.1f, st.stick_label);
+    circle(c, cx, cy, r * 0.8f, hex(0x2a2a32, 0.85f));
+    circle(c, cx, cy, r * 0.74f, cap);
+    ring(c, cx, cy, r * 0.6f, s * 0.016f, hex(0x000000, 0.18f));
+    if (!label.empty()) draw_text(c, label, cx, cy, r * 0.82f, r * 1.25f, st.stick_label, 1.35f);
 }
 
 void dpad_icon(Canvas& c, const Box& b, const Style& st, Face face) {
     const float s = b.s(), cx = b.cx(), cy = b.cy();
-    const float arm = s * 0.46f, hw = s * 0.16f, rad = s * 0.05f, o = s * 0.045f;
+    const float arm = s * 0.47f, hw = s * 0.19f, rad = s * 0.06f, o = s * 0.045f;
     c.fill(cx - arm - o, cy - arm - o, cx + arm + o, cy + arm + o, kOutline,
            [&](float x, float y) { return sd_cross(x, y, cx, cy, arm, hw, rad) - o; });
     c.fill(cx - arm, cy - arm, cx + arm, cy + arm, st.dpad, [&](float x, float y) { return sd_cross(x, y, cx, cy, arm, hw, rad); });
@@ -496,7 +503,7 @@ void dpad_icon(Canvas& c, const Box& b, const Style& st, Face face) {
     const std::array<Face, 4> faces{Face::dpad_up, Face::dpad_down, Face::dpad_left, Face::dpad_right};
     for (std::size_t i = 0; i < 4; ++i) {
         const bool lit = face == faces[i];
-        if (face == Face::dpad || lit) arrow(dirs[i].first, dirs[i].second, lit ? hex(0xffd84a) : st.dpad_mark, s * (lit ? 0.12f : 0.075f));
+        if (face == Face::dpad || lit) arrow(dirs[i].first, dirs[i].second, lit ? hex(0xe0a000) : st.dpad_mark, s * (lit ? 0.12f : 0.08f));
     }
 }
 
@@ -526,10 +533,13 @@ void key_cap(Canvas& c, const Box& b, const std::string& label, bool arrow_glyph
         line(c, {cx + k, cy + k * 0.35f}, {cx - k * 0.55f, cy + k * 0.35f}, stroke, ink);
         polygon(c, {{cx - k * 1.05f, cy + k * 0.35f}, {cx - k * 0.45f, cy - k * 0.2f}, {cx - k * 0.45f, cy + k * 0.9f}}, ink);
     } else if (label == "BKSP") {
-        // An arrow to the left.
-        const float k = s * 0.19f;
-        line(c, {cx + k, cy}, {cx - k * 0.4f, cy}, stroke, ink);
-        polygon(c, {{cx - k * 1.0f, cy}, {cx - k * 0.35f, cy - k * 0.55f}, {cx - k * 0.35f, cy + k * 0.55f}}, ink);
+        // The erase-to-the-left sign: a dark tag pointing left with a light
+        // cross in it (an arrow alone reads like the arrow key).
+        const float k = s * 0.24f, h = s * 0.19f;
+        polygon(c, {{cx - k * 1.15f, cy}, {cx - k * 0.45f, cy - h}, {cx + k, cy - h}, {cx + k, cy + h}, {cx - k * 0.45f, cy + h}}, ink, s * 0.02f);
+        const float x = cx + k * 0.22f, d = h * 0.48f;
+        line(c, {x - d, cy - d}, {x + d, cy + d}, stroke * 0.85f, hex(0xeeeef3));
+        line(c, {x + d, cy - d}, {x - d, cy + d}, stroke * 0.85f, hex(0xeeeef3));
     } else if (label == "SPACE") {
         // The space bracket.
         const float k = std::min(hw * 0.6f, s * 0.3f);
@@ -551,24 +561,42 @@ void key_cap(Canvas& c, const Box& b, const std::string& label, bool arrow_glyph
 
 bool arrow_label(const std::string& label) { return label == "^" || label == "v" || label == "<" || label == ">"; }
 
-// The keyboard's stick, D-pad and C-stick: four small caps (up above
-// left, down, right).
+// The keyboard's stick, D-pad and C-stick: one key cap as large as a single
+// key's with the four keys' labels on it, up above left, down and right
+// (W over A S D, the arrows, 8 over 4 2 6), big enough to read in a line of
+// text; separate small caps were dots there.
 void key_cluster(Canvas& c, const Box& b, const std::array<std::string, 4>& keys) {
-    const float s = b.s(), cx = b.cx(), cy = b.cy();
-    const float k = s * 0.335f, gap = s * 0.0f;
-    const std::array<Vec2, 4> at{{{cx, cy - k * 0.5f - gap}, {cx, cy + k * 0.5f}, {cx - k - gap, cy + k * 0.5f}, {cx + k + gap, cy + k * 0.5f}}};
+    const float s = b.s(), cx = b.cx(), cy = b.cy() - s * 0.03f;
+    const float hw = s * 0.47f, hh = s * 0.43f;
+    const float rad = s * 0.13f, o = s * 0.045f, drop = s * 0.07f;
+    box(c, cx, cy + drop * 0.5f, hw + o, hh + drop * 0.5f + o, rad + o, kOutline);
+    box(c, cx, cy + drop, hw, hh, rad, hex(0x8c8c98));
+    box(c, cx, cy, hw, hh, rad, hex(0xeeeef3));
+    const Color ink = hex(0x22222a);
+    const float row_up = cy - hh * 0.46f, row_down = cy + hh * 0.42f, step = hw * 0.62f;
+    // (up, down, left, right)
+    const std::array<Vec2, 4> at{{{cx, row_up}, {cx, row_down}, {cx - step, row_down}, {cx + step, row_down}}};
+    const std::array<Vec2, 4> dir{{{0, -1}, {0, 1}, {-1, 0}, {1, 0}}};
     for (std::size_t i = 0; i < 4; ++i) {
-        if (keys[i].empty()) continue; // (an unbound direction: no cap)
-        std::string label = keys[i].empty() ? std::string() : key_cap_label(keys[i]);
-        if (label.size() > 1 && !arrow_label(label) && !sign_label(label)) label = label.substr(0, 1);
-        const Box cell{at[i].x - k * 0.5f, at[i].y - k * 0.5f, at[i].x + k * 0.5f, at[i].y + k * 0.5f};
-        key_cap(c, cell, label, arrow_label(label));
+        if (keys[i].empty()) continue; // (an unbound direction: nothing there)
+        std::string label = key_cap_label(keys[i]);
+        if (arrow_label(label)) {
+            // The arrow keys: filled triangles pointing their way.
+            const float k = s * 0.12f, dx = dir[i].x, dy = dir[i].y, px = -dy, py = dx;
+            const float x = at[i].x, y = at[i].y;
+            polygon(c, {{x + dx * k, y + dy * k}, {x - dx * k * 0.7f + px * k, y - dy * k * 0.7f + py * k}, {x - dx * k * 0.7f - px * k, y - dy * k * 0.7f - py * k}},
+                    ink);
+            continue;
+        }
+        if (label.size() > 1 && !sign_label(label)) label = label.substr(0, 1);
+        if (sign_label(label)) label = label.substr(0, 1); // (a sign key in a cluster: its first letter)
+        draw_text(c, label, at[i].x, at[i].y, s * 0.33f, step * 0.95f, ink, 1.5f);
     }
 }
 
-// `wide`: a slot the width of a word; `words`: big enough for the names
-// printed on pills (OPTIONS, START: the title), else their symbols.
-void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wide, bool words = false) {
+// `wide`: a slot the width of a word (key caps and the DualShock 4's
+// OPTIONS pill grow into it).
+void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wide) {
     if (family == PadFamily::keyboard) {
         if (pf.face == Face::dpad || pf.face == Face::left_stick || pf.face == Face::right_stick) {
             const float s = b.s();
@@ -644,7 +672,8 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
     case Face::paddle_l2: shoulder(c, b, "P4", false, st.shoulder, st.shoulder_label); return;
     case Face::menu: case Face::view: case Face::start_360: case Face::back_360: case Face::plus: case Face::minus:
     case Face::home: case Face::misc: case Face::c_button: {
-        const float rm = pf.face == Face::c_button ? r * 0.86f : r * 0.78f;
+        // As large as a face button (smaller ones read as a dot beside A / B).
+        const float rm = r;
         round_button(c, cx, cy, rm, st.middle, st.face_rim);
         const Color sym = st.middle_symbol;
         const float half = rm * 0.1f;
@@ -695,19 +724,35 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
             ring(c, cx, cy, s * 0.15f, s * 0.035f, sym);
             return;
         }
-        const bool long_pill = wide && pf.face == Face::options;
-        const float hw = long_pill ? std::min(b.w() * 0.46f, s * (words ? 1.5f : 0.9f)) : s * 0.44f, hh = long_pill ? s * 0.36f : s * 0.26f;
+        // The DualShock 4's Options and Share buttons are told apart by the
+        // words printed by them (its pills carry the words); the DualSense's
+        // by their signs (Options three lines, Create a burst of three
+        // strokes). The same pill in a word's slot, a glyph's and the title.
+        const bool ds4_words = family == PadFamily::ps4 && (pf.face == Face::options || pf.face == Face::share);
+        const char* word = pf.face == Face::options ? "OPTIONS" : "SHARE";
+        float hw = s * 0.44f, hh = s * 0.26f;
+        if (ds4_words) {
+            hh = wide ? s * 0.36f : s * 0.3f;
+            const float text = hh * 0.82f;
+            hw = std::min((text_units(word) + 1.2f) * text / 6.0f * 0.5f + hh * 0.75f, (wide ? b.w() * 0.49f : s * 0.49f));
+        } else if (wide) {
+            hw = s * 0.62f, hh = s * 0.36f;
+        }
         pill(c, cx, cy, hw, hh, st.middle, st.face_rim);
-        if (pf.face == Face::options) {
-            if (long_pill && words) draw_text(c, "OPTIONS", cx, cy, hh * 0.8f, hw * 1.75f, sym);
-            else lines3(c, cx, cy, hh * 1.3f, hh * 0.46f, hh * 0.11f, sym);
+        if (ds4_words) {
+            draw_text(c, word, cx, cy, hh * 0.82f, (hw - hh * 0.45f) * 2.0f, sym, 1.25f);
+        } else if (pf.face == Face::options) {
+            lines3(c, cx, cy, hh * 1.3f, hh * 0.46f, hh * 0.11f, sym);
         } else if (pf.face == Face::share) {
             line(c, {cx, cy + hh * 0.5f}, {cx, cy - hh * 0.5f}, hh * 0.1f, sym);
             line(c, {cx - hh * 0.4f, cy - hh * 0.1f}, {cx, cy - hh * 0.5f}, hh * 0.1f, sym);
             line(c, {cx + hh * 0.4f, cy - hh * 0.1f}, {cx, cy - hh * 0.5f}, hh * 0.1f, sym);
         } else if (pf.face == Face::create) {
-            for (int i = -1; i <= 1; ++i)
-                line(c, {cx + float(i) * hh * 0.5f, cy - hh * 0.45f}, {cx + float(i) * hh * 0.5f, cy + hh * 0.45f}, hh * 0.1f, sym);
+            // A burst: three strokes fanning up from below the middle.
+            const float k = hh * 0.62f;
+            line(c, {cx, cy + k * 0.15f}, {cx, cy - k}, hh * 0.1f, sym);
+            line(c, {cx - k * 0.32f, cy + k * 0.3f}, {cx - k * 0.95f, cy - k * 0.6f}, hh * 0.1f, sym);
+            line(c, {cx + k * 0.32f, cy + k * 0.3f}, {cx + k * 0.95f, cy - k * 0.6f}, hh * 0.1f, sym);
         } else {
             circle(c, cx, cy, hh * 0.3f, sym); // mute
         }
@@ -723,9 +768,11 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
         return;
     }
     case Face::c_stick: {
+        // The GameCube's yellow C-stick in its yellow gate.
         Style yellow = st;
+        yellow.stick = hex(0xc9a21a);
         yellow.stick_label = hex(0x5a4300);
-        stick_icon(c, b, yellow, "C", true, hex(0xf2c21b));
+        stick_icon(c, b, yellow, "C", true, hex(0xf6cc2a));
         return;
     }
     case Face::dpad: case Face::dpad_up: case Face::dpad_down: case Face::dpad_left: case Face::dpad_right:
@@ -779,9 +826,9 @@ std::string key_cap_label(const std::string& key_name) {
     return name;
 }
 
-void draw_prompt(ArtImage& image, float x0, float y0, float x1, float y1, PadFamily family, const PromptFace& face, bool wide, bool words) {
+void draw_prompt(ArtImage& image, float x0, float y0, float x1, float y1, PadFamily family, const PromptFace& face, bool wide) {
     Canvas canvas(image.width, image.height);
-    draw_face(canvas, Box{x0, y0, x1, y1}, family, face, wide, words);
+    draw_face(canvas, Box{x0, y0, x1, y1}, family, face, wide);
     const ArtImage drawn = canvas.image();
     // Over what the image holds.
     for (std::size_t i = 0; i < drawn.rgba.size(); i += 4) {
@@ -813,18 +860,89 @@ PromptAtlas build_prompt_atlas(PadFamily family, const Settings& settings) {
     atlas.start_word = {PromptAtlas::kGutter / 2, rows * kPitchY + PromptAtlas::kGutter / 2, kWordWidth, PromptAtlas::kCellHeight};
     draw_face(canvas, icon_box(atlas.start_word, 1), family, prompt_face(family, settings, PromptControl::start), true);
     atlas.image = canvas.image();
+    // The columns the START picture takes (and two pixels on each side).
+    const auto& word = atlas.start_word;
+    int ink0 = word.x + word.width, ink1 = word.x - 1;
+    for (int y = word.y; y < word.y + word.height; ++y)
+        for (int x = word.x; x < word.x + word.width; ++x)
+            if (atlas.image.rgba[(std::size_t(y) * std::size_t(width) + std::size_t(x)) * 4 + 3] > 8) ink0 = std::min(ink0, x), ink1 = std::max(ink1, x);
+    if (ink1 < ink0) ink0 = ink1 = word.x + word.width / 2; // (nothing drawn: a sliver)
+    ink0 = std::max(word.x, ink0 - 2);
+    ink1 = std::min(word.x + word.width - 1, ink1 + 2);
+    atlas.start_word_ink = {ink0, word.y, ink1 - ink0 + 1, word.height};
     return atlas;
 }
 
-bool title_press_start(const ArtImage& original, int scale, bool nearest, PadFamily family, const Settings& settings, ArtImage& out) {
-    if (original.width != 256 || original.height != 128 || scale < 1 || original.rgba.size() != 256u * 128u * 4u) return false;
-    // The original, `scale` times (as the texture would be magnified).
-    out = ArtImage(original.width * scale, original.height * scale);
+std::uint64_t PromptAtlasCache::signature(const Settings& settings) {
+    std::uint64_t hash = 0x5eed;
+    const auto mix = [&](std::uint64_t value) { hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2); };
+    for (const auto& inputs : settings.pad)
+        for (const auto& input : inputs) mix((std::uint64_t(input.kind) << 32) | std::uint32_t(input.code));
+    for (const auto& keys : settings.keys)
+        for (const auto code : keys) mix(std::uint64_t(code));
+    mix(std::uint64_t(settings.nintendo_layout));
+    mix(std::uint64_t(settings.gamecube_layout));
+    mix(std::uint64_t(settings.menu_buttons));
+    return hash ? hash : 1;
+}
+
+void PromptAtlasCache::set_settings(const Settings& settings) {
+    settings_ = &settings;
+    signature_ = signature(settings);
+}
+
+bool PromptAtlasCache::current(PadFamily family) const {
+    return family < PadFamily::count && signature_ != 0 && drawn_for_[std::size_t(family)] == signature_;
+}
+
+const PromptAtlas& PromptAtlasCache::atlas(PadFamily family) {
+    const auto f = std::size_t(family < PadFamily::count ? family : PadFamily::generic);
+    if (!current(PadFamily(f))) {
+        static const Settings defaults;
+        atlases_[f] = build_prompt_atlas(PadFamily(f), settings_ ? *settings_ : defaults);
+        drawn_for_[f] = signature_;
+        ++generation_[f];
+        ++draws_;
+    }
+    return atlases_[f];
+}
+
+bool title_press_start(const ArtImage& original, int min_width, bool nearest, PadFamily family, const Settings& settings, ArtImage& out) {
+    const int in_w = original.width, in_h = original.height;
+    if (in_w < 256 || in_h * 2 != in_w || original.rgba.size() != std::size_t(in_w) * std::size_t(in_h) * 4u) return false;
+    // The word START in the original's texels (stored rows 99..124, columns
+    // 88..166; the rows above are empty up to "Game Start / Option", which
+    // TitleEntry reads and this leaves alone), in this texture's.
+    constexpr int kX0 = 84, kX1 = 171, kY0 = 96, kY1 = 128;
+    const float in_scale = float(in_w) / 256.0f;
+    const auto alpha_at = [&](int x, int y) { return original.rgba[(std::size_t(y) * std::size_t(in_w) + std::size_t(x)) * 4 + 3]; };
+    {
+        // The word stands alone there: ink inside, none across its left and
+        // right borders (a texture pack that moved or restyled it is left
+        // as it is).
+        const int x0 = int(std::lround(kX0 * in_scale)), x1 = int(std::lround(kX1 * in_scale));
+        const int y0 = int(std::lround(kY0 * in_scale)), y1 = std::min(in_h, int(std::lround(kY1 * in_scale)));
+        const int border = std::max(1, int(std::lround(2 * in_scale)));
+        std::size_t inside = 0, edge = 0, edge_ink = 0;
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) inside += alpha_at(x, y) > 128;
+            for (int k = 0; k < border; ++k)
+                for (const int x : {x0 - 1 - k, x1 + k}) {
+                    ++edge;
+                    edge_ink += alpha_at(std::clamp(x, 0, in_w - 1), y) > 64;
+                }
+        }
+        if (inside < std::size_t((x1 - x0) * (y1 - y0)) / 20 || edge_ink * 10 > edge) return false;
+    }
+    // The texture, a whole number of times its size up to `min_width` (as it
+    // would be magnified).
+    const int scale = std::max(1, (std::max(min_width, in_w) + in_w - 1) / in_w);
+    out = ArtImage(in_w * scale, in_h * scale);
     for (int y = 0; y < out.height; ++y)
         for (int x = 0; x < out.width; ++x) {
             std::uint8_t* o = &out.rgba[(std::size_t(y) * std::size_t(out.width) + std::size_t(x)) * 4];
-            if (nearest) {
-                const std::uint8_t* p = &original.rgba[(std::size_t(y / scale) * 256u + std::size_t(x / scale)) * 4];
+            if (nearest || scale == 1) {
+                const std::uint8_t* p = &original.rgba[(std::size_t(y / scale) * std::size_t(in_w) + std::size_t(x / scale)) * 4];
                 std::memcpy(o, p, 4);
                 continue;
             }
@@ -834,9 +952,9 @@ bool title_press_start(const ArtImage& original, int scale, bool nearest, PadFam
             float acc[4]{};
             float weight_alpha = 0;
             for (int k = 0; k < 4; ++k) {
-                const int px = std::clamp(ix + (k & 1), 0, 255), py = std::clamp(iy + (k >> 1), 0, 127);
+                const int px = std::clamp(ix + (k & 1), 0, in_w - 1), py = std::clamp(iy + (k >> 1), 0, in_h - 1);
                 const float w = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
-                const std::uint8_t* p = &original.rgba[(std::size_t(py) * 256u + std::size_t(px)) * 4];
+                const std::uint8_t* p = &original.rgba[(std::size_t(py) * std::size_t(in_w) + std::size_t(px)) * 4];
                 const float a = float(p[3]) * w;
                 for (int c = 0; c < 3; ++c) acc[c] += float(p[c]) * a;
                 acc[3] += a;
@@ -845,22 +963,22 @@ bool title_press_start(const ArtImage& original, int scale, bool nearest, PadFam
             for (int c = 0; c < 3; ++c) o[c] = std::uint8_t(std::lround(weight_alpha > 0 ? acc[c] / weight_alpha : 0.0f));
             o[3] = std::uint8_t(std::lround(acc[3]));
         }
-    // The word START (stored rows 99..124, columns 88..166; the rows above
-    // are empty up to "Game Start / Option", which TitleEntry reads and this
-    // leaves alone): cleared, the START picture drawn upright into a copy
-    // and stored upside down like the texture.
-    constexpr int kX0 = 84, kX1 = 171, kY0 = 96, kY1 = 128;
-    for (int y = kY0 * scale; y < kY1 * scale; ++y)
-        for (int x = kX0 * scale; x < kX1 * scale; ++x) out.rgba[(std::size_t(y) * std::size_t(out.width) + std::size_t(x)) * 4 + 3] = 0;
-    const int w = (kX1 - kX0) * scale, h = (kY1 - kY0) * scale;
+    // The word cleared, the START picture drawn upright into a copy and
+    // stored upside down like the texture.
+    const float out_scale = float(out.width) / 256.0f;
+    const int ox0 = int(std::lround(kX0 * out_scale)), ox1 = int(std::lround(kX1 * out_scale));
+    const int oy0 = int(std::lround(kY0 * out_scale)), oy1 = std::min(out.height, int(std::lround(kY1 * out_scale)));
+    for (int y = oy0; y < oy1; ++y)
+        for (int x = ox0; x < ox1; ++x) out.rgba[(std::size_t(y) * std::size_t(out.width) + std::size_t(x)) * 4 + 3] = 0;
+    const int w = ox1 - ox0, h = oy1 - oy0;
     ArtImage word(w, h);
     // (The word's ink is 26 rows: the picture keeps that height.)
     const float margin = float(h) * 0.06f;
-    draw_prompt(word, 0, margin, float(w), float(h) - margin, family, prompt_face(family, settings, PromptControl::start), true, true);
+    draw_prompt(word, 0, margin, float(w), float(h) - margin, family, prompt_face(family, settings, PromptControl::start), true);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
             const std::uint8_t* p = &word.rgba[(std::size_t(h - 1 - y) * std::size_t(w) + std::size_t(x)) * 4];
-            std::memcpy(&out.rgba[(std::size_t(kY0 * scale + y) * std::size_t(out.width) + std::size_t(kX0 * scale + x)) * 4], p, 4);
+            std::memcpy(&out.rgba[(std::size_t(oy0 + y) * std::size_t(out.width) + std::size_t(ox0 + x)) * 4], p, 4);
         }
     return true;
 }

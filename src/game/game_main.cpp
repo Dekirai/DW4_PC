@@ -1182,9 +1182,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.audio = audio;
         view.audio_dump_path = audio_dump_path;
         view.audio_mix = audio_mix;
-        // The controller prompts (button_prompts.hpp): every family's
-        // pictures, the game's button glyphs and the port's texts follow
-        // player 1's last device. Test runs show the original pictures
+        // The controller prompts (button_prompts.hpp): the game's button
+        // glyphs follow each player's device (the character select's lines
+        // are the players' own, every other line player 1's), the port's
+        // texts player 1's last device. Test runs show the original pictures
         // unless DW4_PROMPTS=<family id> (dualsense, xbox_one, keyboard ...).
         std::optional<dw4::game::ButtonPrompts> button_prompts;
         if (draw) {
@@ -1193,20 +1194,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
             renderer->set_prompts(&*button_prompts);
             view.prompts = &*button_prompts;
             dw4::game::set_ui_view(&view);
+            button_prompts->set_line_lookup([&engine](const dw4::engine::GeometryData* geometry) {
+                dw4::game::PromptSource::Line line;
+                if (const auto* text = engine.get<dw4::engine::TextCtlManager>())
+                    if (const auto found = text->line_of(geometry)) {
+                        line.player = dw4::game::line_player(found->layer, found->name);
+                        line.align = found->align;
+                    }
+                return line;
+            });
         }
         if (const char* forced = std::getenv("DW4_PROMPTS"); forced && options.smoke_frames)
-            view.forced_prompts = dw4::game::family_from_id(forced);
+            for (std::string_view list = forced; !list.empty();) {
+                const auto comma = list.find(',');
+                if (const auto family = dw4::game::family_from_id(list.substr(0, comma))) view.forced_prompts.push_back(*family);
+                list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+            }
         // A GameCube adapter in Wii U mode through WinUSB (gc_adapter.hpp):
         // not in test runs (no controller of this PC takes part in them).
         std::optional<dw4::game::GcAdapter> gc_adapter;
         if (draw && !options.smoke_frames) {
-            gc_adapter.emplace();
+            gc_adapter.emplace(settings.gc_adapter);
             view.gc_adapter = &*gc_adapter;
         }
+        bool switch2_noted = false; // (the Switch 2 Pro notice, once a session)
         auto update_prompts = [&] {
             if (!button_prompts) return;
             button_prompts->update(settings);
-            button_prompts->set_family(view.prompt_family());
+            button_prompts->set_families({view.prompt_family(0), view.prompt_family(1), view.prompt_family(2), view.prompt_family(3)});
             // (The font loads with the first stage: its glyph cells, again
             // whenever the engine holds another font image.)
             if (const auto* text = engine.get<dw4::engine::TextCtlManager>())
@@ -3462,6 +3477,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (probe_report) ghost_cost_max = 0; // (this pass's figure draw alone, read after present_scene)
 #endif
                 update_prompts();
+                // A Switch 2 Pro Controller this build's SDL cannot open
+                // (gc_adapter.hpp): said once rather than nothing happening.
+                if (gc_adapter && !switch2_noted && gc_adapter->switch2_pro()) {
+                    switch2_noted = true;
+                    toasts.push_back({"Controllers", "Switch 2 Pro Controller found: this build cannot read it yet (F1 > Controls).",
+                                      std::chrono::steady_clock::now() + std::chrono::seconds(10)});
+                }
                 const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend, &remote_view);
 #ifdef DW4_GHOST_PROBE
                 const double probe_draw_ms = probe_report ? ghost_cost_max : 0.0;

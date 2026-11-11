@@ -1,12 +1,13 @@
 #pragma once
 
-// The controller prompts on screen (docs/ROUND_PADS_NOTES.md): one picture
-// atlas per family (button_art.hpp) as OpenGL textures, the active family
-// for the game's own pictures (GlRenderer's PromptSource: the font's button
-// glyphs, the word START, the title's PRESS START) and the port's ImGui
-// texts, where "{A}", "{START}", "{MENU}" ... stand for the pictures.
+// The controller prompts on screen (docs/ROUND_PADS_NOTES.md): the picture
+// atlases (button_art.hpp) of the families on screen as OpenGL textures, each
+// player's family for the game's own pictures (GlRenderer's PromptSource:
+// the font's button glyphs, the word START, the title's PRESS START) and
+// player 1's for the port's ImGui texts, where "{A}", "{START}", "{MENU}"
+// ... stand for the pictures.
 //
-// Presentation only: switching the family swaps a texture binding in the
+// Presentation only: switching a family swaps a texture binding in the
 // next frame; nothing reaches the engine.
 #include "button_art.hpp"
 #include "gl_renderer.hpp"
@@ -16,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,47 +33,55 @@ public:
     ButtonPrompts(const ButtonPrompts&) = delete;
     ButtonPrompts& operator=(const ButtonPrompts&) = delete;
 
-    // Every family's atlas for these settings (a current OpenGL context;
-    // again when the bindings or layouts change: update() notices).
+    // The settings the pictures are drawn for (a binding or layout change
+    // marks every family's atlas stale; nothing is drawn here).
     void update(const Settings& settings);
-    // The family the pictures show (the game's own GameCube pictures stay
-    // for a GameCube pad on its original layout).
-    void set_family(PadFamily family) { family_ = family; }
-    PadFamily family() const { return family_; }
+    // The families the players' pictures show (players 0..3; the game's own
+    // GameCube pictures stay for a GameCube pad on its original layout), and
+    // the atlases they need drawn and uploaded (a current OpenGL context):
+    // only the families on screen are drawn, once per binding change.
+    void set_families(const std::array<PadFamily, 4>& families);
+    PadFamily family(int player = 0) const { return families_[std::size_t(player & 3)]; }
     const Settings* settings() const { return settings_; }
-    // The family's atlas texture and a control's picture in it (u0, v0,
-    // u1, v1, rows top first).
+    // A family's atlas texture (0 until it was on screen) and a control's
+    // picture in it (u0, v0, u1, v1, rows top first).
     unsigned texture(PadFamily family) const { return textures_[std::size_t(family)]; }
     std::array<float, 4> icon_uv(PromptControl control) const;
-    bool ready() const { return built_; }
+    bool ready() const { return texture(families_[0]) != 0; }
+    // How a text line finds its line (TextCtlManager::line_of: its player
+    // and alignment); none: every line is player 1's and left aligned.
+    void set_line_lookup(std::function<PromptSource::Line(const engine::GeometryData*)> lookup) { line_lookup_ = std::move(lookup); }
+    // Atlases drawn so far (the F1 menu's rebinding draws only those on screen).
+    std::size_t draws() const { return cache_.draws(); }
 
     // PromptSource (GlRenderer).
-    unsigned atlas_texture() const override;
+    bool active() const override;
+    unsigned atlas_texture(int player) const override;
     std::array<float, 4> atlas_cell(int control) const override;
-    std::array<float, 4> atlas_word() const override;
-    std::uint64_t art_key() const override;
+    Word atlas_word(int player) const override;
+    std::uint64_t art_key(int player) const override;
+    Line line_info(const engine::GeometryData* geometry) const override;
     bool title_variant(const std::vector<std::uint8_t>& rgba, int width, int height, bool nearest, std::vector<std::uint8_t>& out,
                        int& out_width, int& out_height) const override;
 
     // The instance the ImGui helpers below draw with (one per process).
-    static ButtonPrompts* active();
+    static ButtonPrompts* active_prompts();
     static void set_active(ButtonPrompts* prompts);
 
 private:
-    std::uint64_t signature(const Settings& settings) const;
+    PromptAtlasCache cache_;
     std::array<unsigned, kPadFamilyCount> textures_{};
-    PromptAtlas layout_; // (the cells; the same for every family)
-    PadFamily family_ = PadFamily::gamecube;
+    std::array<std::uint64_t, kPadFamilyCount> uploaded_{}; // the cache generation each texture holds
+    std::array<PromptAtlas, kPadFamilyCount> cells_{};      // the cells (no picture) of each uploaded atlas
+    std::array<PadFamily, 4> families_{PadFamily::gamecube, PadFamily::gamecube, PadFamily::gamecube, PadFamily::gamecube};
     const Settings* settings_ = nullptr;
-    std::uint64_t signature_ = 0;
-    std::uint64_t generation_ = 0;
-    bool built_ = false;
+    std::function<PromptSource::Line(const engine::GeometryData*)> line_lookup_;
 };
 
 // ---- ImGui: texts with prompt pictures
 // "{A} Select   {B} Back": the tokens are pad_family.hpp's prompt control
 // tokens (A B X Y START L R Z STICK CSTICK DPAD MENU OK BACK DEL) in braces;
-// each is drawn as the active family's picture of that control, a little
+// each is drawn as player 1's family's picture of that control, a little
 // taller than the text. Without prompts (no window) the token's name shows.
 // `wrap`: at the window's content width. `color`: 0 for the text colour.
 void prompt_text(std::string_view text, bool wrap = false, std::uint32_t color = 0);
@@ -85,9 +95,6 @@ void prompt_icon(PromptControl control, float size);
 // One picture into a draw list (for custom drawn rows).
 void prompt_icon(ImDrawList* draw, PromptControl control, float x, float y, float size);
 
-// The game font's button glyphs (bectext.igb's font00.png: the GameCube
-// button pictures the texts address with these characters), its letters
-// S T A R and the START glyph, for GlRenderer::set_prompt_glyphs.
-PromptGlyphs prompt_glyphs(const engine::FontImage& font);
+// (prompt_glyphs: prompt_layout.hpp.)
 
 } // namespace dw4::game

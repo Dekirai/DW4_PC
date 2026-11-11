@@ -4,13 +4,17 @@
 // device), every real backend off so no controller of this PC takes part,
 // no window. Checks the classification of what SDL reports, the prompt
 // tracker driven by SDL's own events (last device with real input on
-// player 1's slot wins, stick drift does not switch) and the fallback when
-// a pad is unplugged.
+// player 1's slot wins, stick drift and trigger noise do not switch), the
+// fallback when a pad is unplugged, the Wii remotes SDL's Wii driver makes
+// pads of (no player slot), a pad's input and the menus' keys through the
+// host's own code (pad_host.hpp, as host_view.cpp runs it).
 #include "../src/game/gc_adapter.hpp"
 #include "../src/game/pad_family.hpp"
+#include "../src/game/pad_host.hpp"
 
 #include <SDL3/SDL.h>
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -61,37 +65,27 @@ SDL_JoystickID attach(const Device& device) {
     return id;
 }
 
-// The host's part of host_event (host_view.cpp): open added pads, classify
-// them, follow the real input; returns how many events came.
+// The host's controller part of host_event: the game's own pad_slots_event
+// (pad_host.hpp) on SDL's events; returns how many events came.
 struct Host {
     std::vector<SDL_Gamepad*> pads;
     PromptTracker tracker;
+    Settings settings;
     int pump() {
         SDL_UpdateJoysticks();
         int count = 0;
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ++count;
-            if (const auto kind = real_input(event); kind == InputKind::keyboard) tracker.key_input();
-            else if (kind == InputKind::pad)
-                tracker.pad_input(event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? event.gbutton.which : event.gaxis.which);
-            if (event.type == SDL_EVENT_GAMEPAD_ADDED)
-                if (auto* pad = SDL_OpenGamepad(event.gdevice.which)) {
-                    pads.push_back(pad);
-                    const auto identity = pad_identity(pad);
-                    tracker.pad_added(event.gdevice.which, classify(identity), identity.name);
-                }
-            if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
-                for (auto it = pads.begin(); it != pads.end(); ++it)
-                    if (SDL_GetGamepadID(*it) == event.gdevice.which) {
-                        SDL_CloseGamepad(*it);
-                        pads.erase(it);
-                        break;
-                    }
-                tracker.pad_removed(event.gdevice.which);
-            }
+            pad_slots_event(pads, tracker, event);
         }
         return count;
+    }
+    // A pad's input as read_live_input takes it.
+    dw4::HostPadInput input(std::size_t slot) { return pad_input(settings, family_of(tracker, pads.at(slot)), pads.at(slot)); }
+    MenuKeys menu(std::size_t slot) {
+        const PadFamily family = family_of(tracker, pads.at(slot));
+        return menu_keys(settings, family, read_gamepad(pads.at(slot)), family != PadFamily::gamecube || trigger_clicks(pads.at(slot)));
     }
     SDL_Joystick* joystick(SDL_JoystickID id) {
         for (auto* pad : pads)
@@ -169,6 +163,18 @@ void last_input_wins() {
     check(host.tracker.player_family(0) == PadFamily::ps5, "a pushed stick switches");
     SDL_SetJoystickVirtualAxis(host.joystick(ps5), SDL_GAMEPAD_AXIS_LEFTX, 0);
     host.pump();
+    // A trigger resting a little in (noise, a worn spring) does not switch;
+    // a pulled one does. (SDL's virtual triggers run -32768..32767 raw.)
+    SDL_PushEvent(&key);
+    host.pump();
+    SDL_SetJoystickVirtualAxis(host.joystick(ps5), SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, std::int16_t(8000 * 2 - 32768));
+    host.pump();
+    check(host.tracker.player_family(0) == PadFamily::keyboard, "trigger noise does not switch");
+    SDL_SetJoystickVirtualAxis(host.joystick(ps5), SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, std::int16_t(30000 * 2 - 32768));
+    host.pump();
+    check(host.tracker.player_family(0) == PadFamily::ps5, "a pulled trigger switches");
+    SDL_SetJoystickVirtualAxis(host.joystick(ps5), SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
+    host.pump();
     // Unplugging player 1's pad: the next pad becomes player 1 and the
     // prompts follow it.
     SDL_DetachVirtualJoystick(ps5);
@@ -215,6 +221,9 @@ void gamecube_adapter() {
               state.buttons[SDL_GAMEPAD_BUTTON_MISC3] && !state.buttons[SDL_GAMEPAD_BUTTON_SOUTH],
           "adapter buttons in SDL's GameCube layout");
     check(state.axes[SDL_GAMEPAD_AXIS_LEFTX] > 32000 && state.axes[SDL_GAMEPAD_AXIS_RIGHTY] > 32000, "adapter sticks (SDL's y down)");
+    GcPortState up = ports[0];
+    up.stick_x = 128, up.stick_y = 128 + 80; // main stick up (the GameCube's y points up)
+    check(gc_virtual_state(up, rest).axes[SDL_GAMEPAD_AXIS_LEFTY] < -32000, "adapter main stick up is SDL's y up");
     check(state.axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] > 30000 && state.axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] == 0, "adapter triggers");
     // As a virtual controller with the adapter's ids (what GcAdapter::update makes).
     Host host;
@@ -230,10 +239,77 @@ void gamecube_adapter() {
     }
     host.pump();
     check(host.tracker.player_family(0) == PadFamily::gamecube, "the adapter's input switches the prompts");
-    const auto in = gamecube_input(read_gamepad(host.pads.front()), true);
+    const auto in = host.input(0);
     check(in.buttons == (dw4::pad_button::b | dw4::pad_button::up | dw4::pad_button::z | dw4::pad_button::l), "adapter port 1:1 into the game");
     check(in.stick.x > 0.9f && in.c_stick.y < -0.9f, "adapter sticks into the game");
+    // The main stick pushed up walks up in the game (the y the adapter
+    // reports up, SDL down, the game up again).
+    const auto up_state = gc_virtual_state(up, rest);
+    SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_LEFTX, up_state.axes[SDL_GAMEPAD_AXIS_LEFTX]);
+    SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_LEFTY, up_state.axes[SDL_GAMEPAD_AXIS_LEFTY]);
+    host.pump();
+    const auto walk = host.input(0);
+    check(walk.stick.y > 0.9f && std::fabs(walk.stick.x) < 0.1f, "adapter main stick up: the game's stick up");
+    // The GameCube's L at the click (MISC3), the menus' L2 and its A / B.
+    const auto menu = host.menu(0);
+    check(menu.face_right && !menu.face_down && menu.l2 > 0.9f, "adapter port in the menus: B goes back, L at its click");
     SDL_DetachVirtualJoystick(id);
+    host.pump();
+}
+
+// SDL's Wii driver makes gamepads of Wii remotes too (a DolphinBar's four
+// slots, a Wii Remote Plus with its extensions): they take no player slot
+// and never push the real pads back; the Wii U Pro Controller does.
+void wii_remotes() {
+    Host host;
+    // (A DolphinBar's remotes: 057e:0306. SDL names a virtual 057e:0330 by
+    // its own table, the Wii U Pro Controller; the Wii Remote Plus's names
+    // and GUIDs are pad_family_tests' part.)
+    const SDL_JoystickID remote = attach({"Nintendo Wii Remote", 0x057e, 0x0306, PadFamily::generic});
+    const SDL_JoystickID plus = attach({"Nintendo Wii Remote with Nunchuk", 0x057e, 0x0306, PadFamily::generic});
+    host.pump();
+    check(host.pads.empty(), "Wii remotes take no slot");
+    const SDL_JoystickID dualsense = attach(kDevices[0]);
+    const SDL_JoystickID wiiu = attach({"Nintendo Wii U Pro Controller", 0x057e, 0x0330, PadFamily::wiiu_pro});
+    host.pump();
+    check(host.pads.size() == 2 && host.tracker.player_family(0) == PadFamily::ps5 && host.tracker.player_family(1) == PadFamily::wiiu_pro,
+          "the DualSense is player 1 and the Wii U Pro player 2, the remotes nobody");
+    for (const auto id : {remote, plus, dualsense, wiiu}) SDL_DetachVirtualJoystick(id);
+    host.pump();
+    check(host.pads.empty(), "all gone");
+}
+
+// A pad's input and the menus' keys through the host's own code: a Switch
+// pad by label plays its A as the game's A; the menus take the pad's own A
+// (menu_buttons=layout) whatever the game's bindings, or the bindings.
+void host_input() {
+    Host host;
+    const SDL_JoystickID sw = attach(kDevices[8]); // Switch Pro
+    const SDL_JoystickID xbox = attach(kDevices[7]);
+    host.pump();
+    check(host.pads.size() == 2, "two pads");
+    SDL_SetJoystickVirtualButton(host.joystick(sw), SDL_GAMEPAD_BUTTON_EAST, true); // the button printed A
+    host.pump();
+    check(host.input(0).buttons == dw4::pad_button::a, "Switch by label: A is the game's A");
+    check(host.menu(0).face_down && !host.menu(0).face_right, "Switch by label: A confirms in the menus");
+    SDL_SetJoystickVirtualButton(host.joystick(sw), SDL_GAMEPAD_BUTTON_EAST, false);
+    // The owner's a=b binding on an Xbox pad: the game's A on B (EAST); the
+    // menus keep A (SOUTH) confirming unless they follow the bindings.
+    host.settings.pad[std::size_t(dw4::game::PadKey::a)] = {{{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_EAST}}};
+    host.settings.pad[std::size_t(dw4::game::PadKey::b)] = {{{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_SOUTH}}};
+    SDL_SetJoystickVirtualButton(host.joystick(xbox), SDL_GAMEPAD_BUTTON_SOUTH, true);
+    host.pump();
+    check(host.input(1).buttons == dw4::pad_button::b, "a=b: Xbox A is the game's B");
+    check(host.menu(1).face_down, "menus by layout: Xbox A confirms");
+    host.settings.menu_buttons = MenuButtons::bindings;
+    check(host.menu(1).face_right && !host.menu(1).face_down, "menus by bindings: Xbox A (the game's B) goes back");
+    SDL_SetJoystickVirtualButton(host.joystick(xbox), SDL_GAMEPAD_BUTTON_SOUTH, false);
+    // The stick: SDL's y down is the menus' and the game's up.
+    SDL_SetJoystickVirtualAxis(host.joystick(xbox), SDL_GAMEPAD_AXIS_LEFTY, -32000);
+    host.pump();
+    host.settings.menu_buttons = MenuButtons::layout;
+    check(host.menu(1).left_y > 0.9f && host.input(1).stick.y > 0.9f, "stick up in the menus and the game");
+    for (const auto id : {sw, xbox}) SDL_DetachVirtualJoystick(id);
     host.pump();
 }
 
@@ -258,6 +334,8 @@ int main() {
         classification_through_sdl();
         last_input_wins();
         gamecube_adapter();
+        wii_remotes();
+        host_input();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         result = 1;

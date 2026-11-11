@@ -82,7 +82,7 @@ bool host_key(SDL_Scancode code) {
 }
 
 constexpr std::array<const char*, kPromptControlCount> kTokens{
-    "A", "B", "X", "Y", "START", "L", "R", "Z", "STICK", "CSTICK", "DPAD", "MENU", "OK", "BACK", "DEL"};
+    "A", "B", "X", "Y", "START", "L", "R", "Z", "STICK", "CSTICK", "DPAD", "MENU", "OK", "BACK", "DEL", "OPT"};
 
 } // namespace
 
@@ -114,6 +114,13 @@ PadIdentity pad_identity(SDL_Gamepad* pad) {
     identity.vendor = SDL_GetGamepadVendor(pad);
     identity.product = SDL_GetGamepadProduct(pad);
     if (const char* name = SDL_GetGamepadName(pad)) identity.name = name;
+    // SDL's Wii driver keeps the extension it read in its GUID's last byte
+    // (UpdateDeviceIdentity in SDL_hidapi_wii.c; 'h' marks a HIDAPI GUID).
+    if (identity.vendor == kVendorNintendo && (identity.product == kProductWiiRemote || identity.product == kProductWiiUPro))
+        if (SDL_Joystick* joystick = SDL_GetGamepadJoystick(pad)) {
+            const SDL_GUID guid = SDL_GetJoystickGUID(joystick);
+            if (guid.data[14] == 'h') identity.wii_extension = guid.data[15];
+        }
     return identity;
 }
 
@@ -123,9 +130,11 @@ PadFamily classify(const PadIdentity& id) {
     if (id.vendor == kVendorNintendo && id.product == kProductSwitch2Pro) return PadFamily::switch2_pro;
     if (contains_nocase(id.name, "Switch 2 Pro")) return PadFamily::switch2_pro;
     // SDL's Wii driver gives the Wii U Pro Controller no type (STANDARD) and
-    // Xbox labels; its name and ids tell it.
+    // Xbox labels; only the extension it reads (its GUID) and the name it
+    // sets after that tell it (057e:0330 is also every Wii Remote Plus, with
+    // or without a Nunchuk or Classic Controller).
+    if (id.wii_extension >= 0) return id.wii_extension == kWiiExtensionWiiUPro ? PadFamily::wiiu_pro : PadFamily::generic;
     if (contains_nocase(id.name, "Wii U Pro")) return PadFamily::wiiu_pro;
-    if (id.vendor == kVendorNintendo && id.product == kProductWiiUPro) return PadFamily::wiiu_pro;
     if (id.type == SDL_GAMEPAD_TYPE_GAMECUBE || gamecube_ids(id.vendor, id.product) || contains_nocase(id.name, "GameCube"))
         return PadFamily::gamecube;
     switch (id.type) {
@@ -144,6 +153,35 @@ PadFamily classify(const PadIdentity& id) {
     if (id.vendor == kVendorSony) return PadFamily::ps4;
     if (id.vendor == kVendorMicrosoft) return PadFamily::xbox_one;
     return PadFamily::generic;
+}
+
+bool player_pad(const PadIdentity& id) {
+    // SDL's Wii driver opens every Wii remote it finds (a DolphinBar's four
+    // slots, a paired remote, a Wii Remote Plus with its extensions) as a
+    // gamepad; of them only the Wii U Pro Controller is a player's pad.
+    if (id.wii_extension >= 0) return id.wii_extension == kWiiExtensionWiiUPro;
+    if (id.vendor == kVendorNintendo && (id.product == kProductWiiRemote || id.product == kProductWiiUPro))
+        return contains_nocase(id.name, "Wii U Pro");
+    return true;
+}
+
+bool wii_driver_wanted(WiiDriver setting, bool wii_u_ids_present) {
+    switch (setting) {
+    case WiiDriver::on: return true;
+    case WiiDriver::off: return false;
+    case WiiDriver::automatic: return wii_u_ids_present;
+    }
+    return false;
+}
+
+int line_player(std::string_view layer, std::string_view name) {
+    // The character select's lines (CHRSELFONT01 ... 16) are named
+    // font<player><line>: font000 player 1's, font103 player 2's ...
+    if (layer.rfind("CHRSELFONT", 0) != 0 || name.size() != 7 || name.rfind("font", 0) != 0) return 0;
+    for (const char c : name.substr(4))
+        if (c < '0' || c > '9') return 0;
+    const int player = name[4] - '0';
+    return player < 4 ? player : 0;
 }
 
 GamepadState binding_state(const GamepadState& state, PadFamily family, NintendoLayout nintendo, bool clicks) {
@@ -330,14 +368,14 @@ std::optional<PromptControl> prompt_control_from_token(std::string_view token) {
 
 PromptFace prompt_face(PadFamily family, const Settings& settings, PromptControl control) {
     PromptFace result;
-    // The game button a port action stands for (host_view.cpp feeds ImGui
-    // from these bindings).
+    // The game button a port action stands for (with menu_buttons=bindings
+    // host_view.cpp feeds ImGui from these bindings).
     PadKey key = PadKey::a;
     switch (control) {
     case PromptControl::a: case PromptControl::confirm: key = PadKey::a; break;
     case PromptControl::b: case PromptControl::back: key = PadKey::b; break;
     case PromptControl::x: case PromptControl::erase: key = PadKey::x; break;
-    case PromptControl::y: key = PadKey::y; break;
+    case PromptControl::y: case PromptControl::option: key = PadKey::y; break;
     case PromptControl::start: key = PadKey::start; break;
     case PromptControl::l: key = PadKey::l; break;
     case PromptControl::r: key = PadKey::r; break;
@@ -360,6 +398,7 @@ PromptFace prompt_face(PadFamily family, const Settings& settings, PromptControl
         case PromptControl::confirm: result.key = "Return"; return result;
         case PromptControl::back: result.key = "Escape"; return result;
         case PromptControl::erase: result.key = "Backspace"; return result;
+        case PromptControl::option: result.key = "Left Shift"; return result;
         case PromptControl::stick:
         case PromptControl::c_stick:
         case PromptControl::dpad: {
@@ -376,7 +415,7 @@ PromptFace prompt_face(PadFamily family, const Settings& settings, PromptControl
         case PromptControl::a: case PromptControl::confirm: result.face = Face::letter_a; break;
         case PromptControl::b: case PromptControl::back: result.face = Face::letter_b; break;
         case PromptControl::x: case PromptControl::erase: result.face = Face::letter_x; break;
-        case PromptControl::y: result.face = Face::letter_y; break;
+        case PromptControl::y: case PromptControl::option: result.face = Face::letter_y; break;
         case PromptControl::start: result.face = Face::start_gc; break;
         case PromptControl::l: result.face = Face::l; break;
         case PromptControl::r: result.face = Face::r; break;
@@ -387,6 +426,17 @@ PromptFace prompt_face(PadFamily family, const Settings& settings, PromptControl
         case PromptControl::menu: result.key = "F1"; break; // (no View button: the keyboard's F1)
         case PromptControl::count: break;
         }
+        return result;
+    }
+    if (settings.menu_buttons == MenuButtons::layout && (control == PromptControl::confirm || control == PromptControl::back ||
+                                                         control == PromptControl::erase || control == PromptControl::option)) {
+        // The menus' own buttons (menu_keys): the binding space's bottom,
+        // right, left and top face buttons whatever the game's bindings.
+        const int button = control == PromptControl::confirm ? SDL_GAMEPAD_BUTTON_SOUTH
+                           : control == PromptControl::back  ? SDL_GAMEPAD_BUTTON_EAST
+                           : control == PromptControl::erase ? SDL_GAMEPAD_BUTTON_WEST
+                                                             : SDL_GAMEPAD_BUTTON_NORTH;
+        result.face = face_of(family, settings.nintendo_layout, PadInput{PadInput::Kind::button, button});
         return result;
     }
     switch (control) {

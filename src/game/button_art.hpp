@@ -42,27 +42,65 @@ struct PromptAtlas {
     ArtImage image;
     std::array<Cell, kPromptControlCount> cells{};
     Cell start_word{};
+    // The START picture inside start_word: the cell's rows, the columns its
+    // ink takes and a little margin (a round button is as wide as it is
+    // tall, a pill or key cap wider). The word START in a text becomes this
+    // wide (prompt_layout.hpp).
+    Cell start_word_ink{};
     // The square picture of a control's cell (the ImGui prompts use it).
     Cell icon(PromptControl control) const;
+    // start_word_ink's width over the cell's height.
+    float word_aspect() const { return start_word_ink.height > 0 ? float(start_word_ink.width) / float(start_word_ink.height) : 0.0f; }
 };
 
 // The atlas of a family with these bindings (the keyboard's key names, the
 // pad's bound buttons). Same input, same pixels.
 PromptAtlas build_prompt_atlas(PadFamily family, const Settings& settings);
 
-// One prompt into a rectangle of an image (pixels, top-left origin). `wide`:
-// a slot the width of a word (key caps grow into it, round buttons stay
-// round and centred); `words`: large enough for the names printed on a pill
-// (OPTIONS, START), else the pill's symbol.
-void draw_prompt(ArtImage& image, float x0, float y0, float x1, float y1, PadFamily family, const PromptFace& face, bool wide = false,
-                 bool words = false);
+// The families' atlases for one set of settings, drawn when first asked for:
+// a change of the bindings or layouts marks every family stale, and only the
+// families on screen are drawn again (about 7 ms each).
+class PromptAtlasCache {
+public:
+    // The settings the atlases are drawn for (kept by reference: they must
+    // outlive the cache); a change of their bindings or layouts (signature)
+    // marks every family stale.
+    void set_settings(const Settings& settings);
+    // A family's atlas, drawn first when stale (the others stay as they are).
+    const PromptAtlas& atlas(PadFamily family);
+    // The family's atlas is drawn for the current settings.
+    bool current(PadFamily family) const;
+    // Changes whenever the family's atlas is drawn again.
+    std::uint64_t generation(PadFamily family) const { return generation_[std::size_t(family)]; }
+    // The picture of a drawn atlas is dropped (its cells stay; uploaded).
+    void drop_image(PadFamily family) { atlases_[std::size_t(family)].image = {}; }
+    // Atlases drawn so far.
+    std::size_t draws() const { return draws_; }
+    static std::uint64_t signature(const Settings& settings);
 
-// The title's "PRESS START" texture (mojigc.png, 256 x 128, stored upside
-// down) with the word START replaced by the family's START picture, `scale`
-// times the size (the original's other rows scaled alike: nearest or
-// bilinear, as the texture is sampled). Null without the expected layout.
+private:
+    const Settings* settings_ = nullptr;
+    std::uint64_t signature_ = 0;
+    std::array<PromptAtlas, kPadFamilyCount> atlases_{};
+    std::array<std::uint64_t, kPadFamilyCount> drawn_for_{}; // the signature each was drawn for (0: never)
+    std::array<std::uint64_t, kPadFamilyCount> generation_{};
+    std::size_t draws_ = 0;
+};
+
+// One prompt into a rectangle of an image (pixels, top-left origin). `wide`:
+// a slot the width of a word (key caps and the DualShock 4's OPTIONS pill
+// grow into it, round buttons stay round and centred).
+void draw_prompt(ArtImage& image, float x0, float y0, float x1, float y1, PadFamily family, const PromptFace& face, bool wide = false);
+
+// The title's "PRESS START" texture (mojigc.png: 256 x 128, stored upside
+// down, or a texture pack's replacement of it in the same 2:1 layout) with
+// the word START replaced by the family's START picture, at least
+// `min_width` texels wide (the original's other rows scaled alike: nearest
+// or bilinear, as the texture is sampled). False without the expected
+// layout: a replacement whose START does not stand alone where the
+// original's does (ink across the word's borders, none inside) stays as it is.
 inline constexpr std::uint64_t kTitlePressStartHash = 0xac566f5a15c2a226ull; // TexturePack::hash of the USA mojigc.png
-bool title_press_start(const ArtImage& original, int scale, bool nearest, PadFamily family, const Settings& settings, ArtImage& out);
+bool title_press_start(const ArtImage& original, int min_width, bool nearest, PadFamily family, const Settings& settings, ArtImage& out);
 
 // A key's short cap label ("Return" -> "ENTER", "Keypad 8" -> "8",
 // "Left Shift" -> "SHIFT"); arrows come back as "^", "v", "<", ">".

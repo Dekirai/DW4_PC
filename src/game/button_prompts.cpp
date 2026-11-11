@@ -15,17 +15,13 @@ namespace {
 
 ButtonPrompts* g_active = nullptr;
 
-std::uint64_t mix(std::uint64_t hash, std::uint64_t value) {
-    hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-    return hash;
-}
-
 // The text a token stands for without pictures (logs, no window).
 const char* plain_name(PromptControl control) {
     switch (control) {
     case PromptControl::confirm: return "A";
     case PromptControl::back: return "B";
     case PromptControl::erase: return "X";
+    case PromptControl::option: return "Y";
     case PromptControl::menu: return "View";
     case PromptControl::stick: return "Stick";
     case PromptControl::c_stick: return "C-stick";
@@ -77,7 +73,7 @@ std::vector<Segment> segments(std::string_view text, bool words) {
 ImTextureID texture_id(unsigned texture) { return ImTextureID(static_cast<std::uintptr_t>(texture)); }
 
 void draw_icon(ImDrawList* draw, PromptControl control, float x, float y, float size, ImU32 tint) {
-    auto* prompts = ButtonPrompts::active();
+    auto* prompts = ButtonPrompts::active_prompts();
     if (!prompts || !prompts->ready()) return;
     const auto uv = prompts->icon_uv(control);
     draw->AddImage(ImTextureRef(texture_id(prompts->texture(prompts->family()))), ImVec2(x, y), ImVec2(x + size, y + size), ImVec2(uv[0], uv[1]),
@@ -85,7 +81,7 @@ void draw_icon(ImDrawList* draw, PromptControl control, float x, float y, float 
 }
 
 bool pictures() {
-    auto* prompts = ButtonPrompts::active();
+    auto* prompts = ButtonPrompts::active_prompts();
     return prompts && prompts->ready();
 }
 
@@ -99,31 +95,24 @@ ButtonPrompts::~ButtonPrompts() {
     if (g_active == this) g_active = nullptr;
 }
 
-ButtonPrompts* ButtonPrompts::active() { return g_active; }
+ButtonPrompts* ButtonPrompts::active_prompts() { return g_active; }
 void ButtonPrompts::set_active(ButtonPrompts* prompts) { g_active = prompts; }
-
-std::uint64_t ButtonPrompts::signature(const Settings& settings) const {
-    std::uint64_t hash = 0x5eed;
-    for (const auto& inputs : settings.pad)
-        for (const auto& input : inputs) hash = mix(hash, (std::uint64_t(input.kind) << 32) | std::uint32_t(input.code));
-    for (const auto& keys : settings.keys)
-        for (const auto code : keys) hash = mix(hash, std::uint64_t(code));
-    hash = mix(hash, std::uint64_t(settings.nintendo_layout));
-    hash = mix(hash, std::uint64_t(settings.gamecube_layout));
-    return hash;
-}
 
 void ButtonPrompts::update(const Settings& settings) {
     settings_ = &settings;
-    const std::uint64_t now = signature(settings);
-    if (built_ && now == signature_) return;
-    signature_ = now;
-    ++generation_;
+    cache_.set_settings(settings);
+}
+
+void ButtonPrompts::set_families(const std::array<PadFamily, 4>& families) {
+    families_ = families;
+    if (!settings_) return;
     using GenerateMipmap = void(APIENTRY*)(GLenum);
     static const auto generate_mipmap = reinterpret_cast<GenerateMipmap>(SDL_GL_GetProcAddress("glGenerateMipmap"));
-    for (std::size_t f = 0; f < kPadFamilyCount; ++f) {
-        const PromptAtlas atlas = build_prompt_atlas(PadFamily(f), settings);
-        if (f == 0) layout_ = atlas;
+    for (const PadFamily family : families_) {
+        const auto f = std::size_t(family);
+        // Drawn for these bindings and uploaded: nothing to do (the usual frame).
+        if (cache_.current(family) && uploaded_[f] == cache_.generation(family)) continue;
+        const PromptAtlas& atlas = cache_.atlas(family);
         if (!textures_[f]) glGenTextures(1, &textures_[f]);
         glBindTexture(GL_TEXTURE_2D, textures_[f]);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -135,53 +124,72 @@ void ButtonPrompts::update(const Settings& settings) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generate_mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        uploaded_[f] = cache_.generation(family);
+        cells_[f] = atlas;
+        cells_[f].image = {}; // (only the cells are kept)
+        cache_.drop_image(family);
     }
-    layout_.image = {}; // (only the cells are kept)
-    built_ = true;
 }
 
-std::array<float, 4> ButtonPrompts::icon_uv(PromptControl control) const {
-    const auto cell = layout_.icon(control);
+namespace {
+// The atlas's size in texels (the same for every family).
+std::array<float, 2> atlas_size() {
     const int w = PromptAtlas::kColumns * (PromptAtlas::kCellWidth + PromptAtlas::kGutter);
     const int h = ((int(kPromptControlCount) + PromptAtlas::kColumns - 1) / PromptAtlas::kColumns + 1) *
                   (PromptAtlas::kCellHeight + PromptAtlas::kGutter);
-    return {float(cell.x) / float(w), float(cell.y) / float(h), float(cell.x + cell.width) / float(w), float(cell.y + cell.height) / float(h)};
+    return {float(w), float(h)};
+}
+std::array<float, 4> uv_of(const PromptAtlas::Cell& cell) {
+    const auto [w, h] = atlas_size();
+    return {float(cell.x) / w, float(cell.y) / h, float(cell.x + cell.width) / w, float(cell.y + cell.height) / h};
+}
+} // namespace
+
+std::array<float, 4> ButtonPrompts::icon_uv(PromptControl control) const { return uv_of(cells_[std::size_t(families_[0])].icon(control)); }
+
+bool ButtonPrompts::active() const {
+    for (int player = 0; player < 4; ++player)
+        if (atlas_texture(player)) return true;
+    return false;
 }
 
-unsigned ButtonPrompts::atlas_texture() const {
-    if (!built_ || !settings_) return 0;
+unsigned ButtonPrompts::atlas_texture(int player) const {
+    if (!settings_) return 0;
+    const PadFamily family = families_[std::size_t(player & 3)];
     // A GameCube pad on its original layout: the game's own pictures.
-    if (family_ == PadFamily::gamecube && settings_->gamecube_layout == GameCubeLayout::original) return 0;
-    return textures_[std::size_t(family_)];
+    if (family == PadFamily::gamecube && settings_->gamecube_layout == GameCubeLayout::original) return 0;
+    return textures_[std::size_t(family)];
 }
 
 std::array<float, 4> ButtonPrompts::atlas_cell(int control) const {
-    const int w = PromptAtlas::kColumns * (PromptAtlas::kCellWidth + PromptAtlas::kGutter);
-    const int h = ((int(kPromptControlCount) + PromptAtlas::kColumns - 1) / PromptAtlas::kColumns + 1) *
-                  (PromptAtlas::kCellHeight + PromptAtlas::kGutter);
     if (control < 0 || control >= int(kPromptControlCount)) return {0, 0, 0, 0};
-    const auto& cell = layout_.cells[std::size_t(control)];
-    return {float(cell.x) / float(w), float(cell.y) / float(h), float(cell.x + cell.width) / float(w), float(cell.y + cell.height) / float(h)};
+    // (Every family's atlas has the same cells.)
+    return uv_of(cells_[std::size_t(families_[0])].cells[std::size_t(control)]);
 }
 
-std::array<float, 4> ButtonPrompts::atlas_word() const {
-    const int w = PromptAtlas::kColumns * (PromptAtlas::kCellWidth + PromptAtlas::kGutter);
-    const int h = ((int(kPromptControlCount) + PromptAtlas::kColumns - 1) / PromptAtlas::kColumns + 1) *
-                  (PromptAtlas::kCellHeight + PromptAtlas::kGutter);
-    const auto& cell = layout_.start_word;
-    return {float(cell.x) / float(w), float(cell.y) / float(h), float(cell.x + cell.width) / float(w), float(cell.y + cell.height) / float(h)};
+PromptSource::Word ButtonPrompts::atlas_word(int player) const {
+    const auto& atlas = cells_[std::size_t(families_[std::size_t(player & 3)])];
+    return {uv_of(atlas.start_word_ink), atlas.word_aspect()};
 }
 
-std::uint64_t ButtonPrompts::art_key() const { return (generation_ << 8) | std::uint64_t(family_); }
+std::uint64_t ButtonPrompts::art_key(int player) const {
+    const PadFamily family = families_[std::size_t(player & 3)];
+    return (uploaded_[std::size_t(family)] << 8) | std::uint64_t(family);
+}
+
+PromptSource::Line ButtonPrompts::line_info(const engine::GeometryData* geometry) const {
+    return line_lookup_ ? line_lookup_(geometry) : Line{};
+}
 
 bool ButtonPrompts::title_variant(const std::vector<std::uint8_t>& rgba, int width, int height, bool nearest, std::vector<std::uint8_t>& out,
                                   int& out_width, int& out_height) const {
-    if (!settings_ || atlas_texture() == 0) return false;
+    if (!settings_ || atlas_texture(0) == 0) return false;
     ArtImage original(width, height);
     if (rgba.size() != original.rgba.size()) return false;
     original.rgba = rgba;
     ArtImage variant;
-    if (!title_press_start(original, 4, nearest, family_, *settings_, variant)) return false;
+    // (2048 texels wide: sharp up to 4K.)
+    if (!title_press_start(original, 2048, nearest, families_[0], *settings_, variant)) return false;
     out = std::move(variant.rgba);
     out_width = variant.width;
     out_height = variant.height;
@@ -254,43 +262,6 @@ void prompt_icon(PromptControl control, float size) {
 
 void prompt_icon(ImDrawList* draw, PromptControl control, float x, float y, float size) {
     draw_icon(draw, control, x, y, size, IM_COL32_WHITE);
-}
-
-PromptGlyphs prompt_glyphs(const engine::FontImage& font) {
-    PromptGlyphs glyphs;
-    if (!font.binding || !font.binding->image) return glyphs;
-    glyphs.document = font.binding->image.document();
-    glyphs.reference = font.binding->image.reference();
-    auto cell = [&](std::uint32_t code, int control) -> std::optional<PromptGlyphCell> {
-        const auto found = font.glyphs.find(code);
-        if (found == font.glyphs.end()) return std::nullopt;
-        const auto& g = found->second;
-        return PromptGlyphCell{g.u0, g.v0, g.u1, g.v1, control};
-    };
-    // The button glyphs (SJIS 81DA..81E6, 889F, 88A1 through the 802FB59C
-    // table, ui.cpp): A, B small and large, X, Y, START, L, R, Z, the D-pad,
-    // the control stick and the C-stick.
-    const std::pair<std::uint32_t, PromptControl> buttons[] = {
-        {0x226A, PromptControl::a},     {0x226B, PromptControl::b},     {0x2220, PromptControl::b},
-        {0x2252, PromptControl::x},     {0x2312, PromptControl::y},     {0x22A5, PromptControl::start},
-        {0x221A, PromptControl::l},     {0x4E9C, PromptControl::r},     {0x2235, PromptControl::z},
-        {0x2261, PromptControl::dpad},  {0x2207, PromptControl::stick}, {0x5A03, PromptControl::c_stick},
-    };
-    for (const auto& [code, control] : buttons)
-        if (const auto c = cell(code, int(control))) glyphs.buttons.push_back(*c);
-    const char letters[4] = {'S', 'T', 'A', 'R'};
-    bool word = true;
-    for (std::size_t i = 0; i < 4; ++i) {
-        const auto c = cell(std::uint32_t(letters[i]), -1);
-        word = word && c.has_value();
-        if (c) glyphs.letters[i] = *c;
-    }
-    if (const auto c = cell(0x22A5, int(PromptControl::start))) glyphs.start_glyph = *c;
-    if (const auto c = cell(0x20, -1)) glyphs.space = *c;
-    // (Without the letters no word is matched: a cell of zero size matches nothing.)
-    if (!word) glyphs.letters = {};
-    glyphs.valid = glyphs.buttons.size() == std::size(buttons);
-    return glyphs;
 }
 
 } // namespace dw4::game

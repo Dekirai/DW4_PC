@@ -189,6 +189,14 @@ const FontImage* TextCtlManager::font(std::string_view name) const {
     return found == fonts_.end() ? nullptr : found->second.get();
 }
 
+std::optional<TextCtlManager::LineView> TextCtlManager::line_of(const GeometryData* geometry) const {
+    if (!geometry) return std::nullopt;
+    for (const auto& line : lines_)
+        if (const Node* node = find_geometry(line.node); node && node->runtime_geometry.get() == geometry)
+            return LineView{line.layer, line.name, line.align};
+    return std::nullopt;
+}
+
 void TextCtlManager::clear_stage(Engine&) {
     rams_.clear();
     lines_.clear();

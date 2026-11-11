@@ -75,15 +75,16 @@ unchanged; det.sh, the save state suite and r25c as before).
 | Xbox 360 | done (SDL type) | done, START / BACK | play test, wireless receiver |
 | Xbox One / Series | done (SDL type) | done, Menu / View | play test |
 | Switch Pro | done (057e:2009) | done, by label (default) or position | play test |
-| Switch 2 Pro | done (057e:2069) | done | SDL needs libusb to open it (not in the build; owner's decision), then a play test |
-| Wii U Pro | done (name, 057e:0330; SDL's Wii driver enabled) | done | Bluetooth pairing on Windows and a play test |
+| Switch 2 Pro | done (057e:2069); found but not openable: the F1 menu and a notice say so | done | SDL needs libusb to open it (not in the build; owner's decision), then a play test |
+| Wii U Pro | done (SDL's Wii driver: its name and GUID; the driver on while 057e:0330 is connected; Wii remotes take no slot) | done | Bluetooth pairing on Windows and a play test |
 | GameCube (Mayflash PC mode) | done (SDL type, 0079:1843 / 1844) | game's own pictures; port UI GameCube pictures | trigger clicks, the adapter's reported id |
 | GameCube (Wii U mode, WUP-028) | done (own WinUSB reader, virtual SDL pads) | as above | the whole USB path with Zadig's WinUSB driver |
 | Keyboard | done | key caps of the bound keys | - |
 
-Open: per-player pictures in local co-op with mixed controllers (the
-character select's per-quadrant prompts follow player 1), libusb for the
-Switch 2 Pro, Data Overflow's own hint texts (paused).
+Each player's prompts follow his own pad in the character select (its lines
+are the players' own); the port's menus take the controller's own A / B
+(F1 can make them follow the bindings). Open: libusb for the Switch 2 Pro,
+Data Overflow's own hint texts (paused).
 
 ## Requested extensions
 

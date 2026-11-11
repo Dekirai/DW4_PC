@@ -56,9 +56,26 @@ struct PadIdentity {
     SDL_GamepadType type = SDL_GAMEPAD_TYPE_UNKNOWN;
     std::uint16_t vendor = 0, product = 0;
     std::string name;
+    // SDL's Wii driver (a HIDAPI GUID of 057e:0306 / 0330): the extension
+    // type its GUID carries (kWiiExtensionWiiUPro the Wii U Pro Controller,
+    // 128 none, 129 a Nunchuk, 130 a Classic Controller); -1 for other pads.
+    int wii_extension = -1;
 };
+inline constexpr int kWiiExtensionWiiUPro = 131; // SDL_hidapi_nintendo.h k_eWiiExtensionControllerType_WiiUPro
 PadIdentity pad_identity(SDL_Gamepad* pad);
 PadFamily classify(const PadIdentity& identity);
+// Whether a pad takes a player slot: everything SDL opens as a gamepad but
+// the Wii remotes SDL's Wii driver makes gamepads of (a DolphinBar's slots,
+// a Wii Remote Plus, also with a Nunchuk or Classic Controller): 057e:0306
+// and 057e:0330 only when SDL names it the Wii U Pro Controller.
+bool player_pad(const PadIdentity& identity);
+// Whether SDL's Wii driver runs (settings.ini wii_driver; automatic: while
+// a 057e:0330 HID device is connected).
+bool wii_driver_wanted(WiiDriver setting, bool wii_u_ids_present);
+// The player a text line's pictures belong to (0..3): the character
+// select's lines (CHRSELFONTnn) are named font<player><line>; every other
+// line is player 1's (0).
+int line_player(std::string_view layer, std::string_view name);
 
 // USB ids the classification names (SDL's usb_ids.h).
 inline constexpr std::uint16_t kVendorNintendo = 0x057e, kVendorSony = 0x054c, kVendorMicrosoft = 0x045e, kVendorDragonRise = 0x0079;
@@ -120,13 +137,17 @@ std::string pad_input_label(PadFamily family, const Settings& settings, const Pa
 enum class PromptControl : std::uint8_t {
     a, b, x, y, start, l, r, z, stick, c_stick, dpad,
     menu,    // the F1 menu: View / Back / Share / Minus, F1 on the keyboard
-    confirm, // the port's menus: activate (the game's A binding; Enter)
-    back,    // the port's menus: back (the game's B binding; Esc)
-    erase,   // the on-screen keyboard's delete (the game's X binding; Backspace)
+    // The port's menus (settings.ini menu_buttons: the pad's own A / B / X,
+    // or the game's A / B / X bindings; Enter / Esc / Backspace on the
+    // keyboard): activate, back, the on-screen keyboard's delete.
+    confirm,
+    back,
+    erase,
+    option, // the menus' top face button (Y / Triangle: the on-screen keyboard's capitals; Shift on the keyboard)
     count
 };
 inline constexpr std::size_t kPromptControlCount = std::size_t(PromptControl::count);
-const char* prompt_control_token(PromptControl control); // "A", "B", ..., "START", "MENU", "OK", "BACK", "DEL"
+const char* prompt_control_token(PromptControl control); // "A", "B", ..., "START", "MENU", "OK", "BACK", "DEL", "OPT"
 std::optional<PromptControl> prompt_control_from_token(std::string_view token);
 
 // What a prompt for `control` draws for a pad family: the face of the first

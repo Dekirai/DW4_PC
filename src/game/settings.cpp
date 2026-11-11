@@ -298,7 +298,17 @@ Settings Settings::parse(IniFile document) {
     settings.gamecube_layout =
         ini.get_or("gamepad", "gamecube_layout", "original") == "bindings" ? GameCubeLayout::bindings : GameCubeLayout::original;
     settings.prompts = ini.get_or("gamepad", "prompts", settings.prompts);
-    settings.wii_driver = ini.get_bool("gamepad", "wii_driver", settings.wii_driver);
+    {
+        // ("true" / "false" from an earlier build of this round read as on / off.)
+        std::string wii = ini.get_or("gamepad", "wii_driver", "auto");
+        for (auto& c : wii) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (wii == "on" || wii == "1" || wii == "true" || wii == "yes") settings.wii_driver = WiiDriver::on;
+        else if (wii == "off" || wii == "0" || wii == "false" || wii == "no") settings.wii_driver = WiiDriver::off;
+        else settings.wii_driver = WiiDriver::automatic;
+    }
+    settings.menu_buttons =
+        ini.get_or("gamepad", "menu_buttons", "layout") == "bindings" ? MenuButtons::bindings : MenuButtons::layout;
+    settings.gc_adapter = ini.get_bool("gamepad", "gc_adapter", settings.gc_adapter);
     settings.texture_pack = ini.get_or("mods", "textures", "");
     settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);
     {
@@ -385,7 +395,9 @@ void Settings::store() {
     ini_.set("gamepad", "nintendo_layout", nintendo_layout == NintendoLayout::by_position ? "position" : "label");
     ini_.set("gamepad", "gamecube_layout", gamecube_layout == GameCubeLayout::bindings ? "bindings" : "original");
     ini_.set("gamepad", "prompts", prompts);
-    ini_.set_bool("gamepad", "wii_driver", wii_driver);
+    ini_.set("gamepad", "wii_driver", wii_driver == WiiDriver::on ? "on" : wii_driver == WiiDriver::off ? "off" : "auto");
+    ini_.set("gamepad", "menu_buttons", menu_buttons == MenuButtons::bindings ? "bindings" : "layout");
+    ini_.set_bool("gamepad", "gc_adapter", gc_adapter);
     if (!texture_pack.empty()) ini_.set("mods", "textures", texture_pack.string());
     ini_.set_bool("mods", "dump_textures", dump_textures);
     {
