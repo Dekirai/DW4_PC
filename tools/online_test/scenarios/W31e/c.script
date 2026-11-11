@@ -1,6 +1,7 @@
-# W31e, c (k10): joins a in stag0201, goes on to stag0202 (matz00) and into dng205b1 (stag0202's matz01) at about the time
-# a goes into dng204b1. (Run b1: the mummies of stag0201 felled c on its way to matz00; it heals from the L panel at 350
-# HP now, twice on the way to stag0202 and once in it.)
+# W31e, c (k10): joins a in stag0201, goes on to stag0202 (matz00) and, as soon as a's offer shows (a went into
+# dng204b1), into dng205b1 (stag0202's matz01, by the development step depart: c plays stag0202 alone).
+# (Run b1: the mummies of stag0201 felled c on its way to matz00, so it heals from the L panel at 350 HP now; run c1:
+# stag0202's enemies felled it on its way to matz01 with two heals.)
 campaign until stage=stagml11,control
 idle until epoch>=@120
 explore mate00 until onme:mate00
@@ -13,10 +14,8 @@ explore matz00 yes until stage=stag0202,control or hp<=350 fail epoch>=@600
 disk 1 until hp>=700 or frames>=900
 explore matz00 yes until stage=stag0202,control fail epoch>=@600
 log c in stag0202
-idle until epoch>=@640
-explore matz01 yes until stage=dng205b1,control or hp<=350 fail epoch>=@900
-disk 1 until hp>=700 or frames>=900
-explore matz01 yes until stage=dng205b1,control fail epoch>=@900
+idle until offers>=1 fail epoch>=@900
+depart dng205b1 0 until stage=dng205b1,control fail epoch>=@960
 log c in dng205b1
 idle until present=2,sealed>=600 fail epoch>=@1400
 log b joined c

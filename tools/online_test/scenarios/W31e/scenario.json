@@ -1,5 +1,5 @@
 {
-  "desc": "go along, two dungeons (19.30.8, W31e): a goes into dng204b1 (stag0201's matz01) and c into dng205b1 (stag0202's matz01) close together: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then",
+  "desc": "go along, two dungeons (19.30.8, W31e): a goes into dng204b1 (stag0201's matz01) and c into dng205b1 (stag0202's matz01, by the development step depart) right after it: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
