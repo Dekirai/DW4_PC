@@ -284,9 +284,12 @@ public partial class HubLogicTests
         var oks = h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count;
         h.Barrier("b", "dng204b1");
         Assert.Equal(oks, h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count); // held
+        var waits = h.P("b").All(Msg.BarrierWait, BarrierWaitMsg.Parse).Count;
         h.Advance(3000);
         h.Hub.Housekeep(h.Now);
         Assert.Equal(oks, h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count);
+        // (The wait is said again while held: the client's five-second fallback counts from the relay's last word.)
+        Assert.True(h.P("b").All(Msg.BarrierWait, BarrierWaitMsg.Parse).Count > waits);
         h.Advance(2500);
         h.Hub.Housekeep(h.Now);
         var ok = h.Decision("b");

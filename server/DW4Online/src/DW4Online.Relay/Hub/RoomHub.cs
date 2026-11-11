@@ -1451,6 +1451,9 @@ public sealed partial class RoomHub
                         g.Hold = HoldKind.None;
                         Decide(g, now);
                     }
+                    // (Every second, as a JOIN's hold: the client's five-second fallback counts from the relay's last word; W31c2's
+                    // run c1 went on alone as an unregistered NEW after five seconds.)
+                    else if (Ms(now - g.LastWaitSent) >= 1000) SendWait(g, WaitReason.NotJoinable, [], 0, 0, now);
                     break;
                 case HoldKind.Boss:
                     if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||
