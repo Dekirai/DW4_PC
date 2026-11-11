@@ -859,7 +859,13 @@ players) and changes who is asked, who is frozen and who leaves:
   in this update (it stepped on). A run without such a member does nothing; the
   slot-0 fallback of MATgetPlayerNo (`mat_ctrl.cpp:164-167`) is never used.
   A member who stays on the mat after answering *No* is not asked again until
-  it steps off and on.
+  it steps off and on. A player that *appears* on the mat has not stepped on
+  (round I1b, go lane): its bit counts only when it was live in the previous
+  update too (`MatCtrlManager::running_mat`), so a stage start, a JOIN's spawn
+  at the slot's player point or a raise on a mat asks nobody (W31d: the fourth
+  member's point at dng204b1's entrance lies on matz01, the way back; its
+  prompt, left open, kept the stage group from the membership-safe step the
+  next JOIN waited for).
 - **Freeze and drawing.** Only the owner's player is off control; enemies run
   on. The prompt's half fade (`i_fadewn01 SQ_BHLFOUT30`) and window
   (`i_zzstchgwb`) are drawn only on the owner's machine (draw filter, round

@@ -1523,7 +1523,9 @@ public:
     };
     std::vector<MatBox> mat_boxes() const;
     // Seamless co-op (the funcStageChange port): the mat whose script runs
-    // now, its player bits of this update and the live players.
+    // now, its player bits of this update and the live players that were
+    // live in the previous update too (a player that appears on the mat has
+    // not stepped on).
     struct RunningMat {
         std::string name;
         std::uint32_t current{}, previous{}, live{};
@@ -1555,6 +1557,9 @@ private:
     // a RAM's first update (0x80303530). MATisAllPlayer and MATgetPlayerNo
     // only count these.
     std::uint32_t live_{};
+    // live_ at the start of this update (running_mat; derived from live_,
+    // which the tick state holds, so not saved itself).
+    std::uint32_t settled_{};
 };
 
 // SAVEUTILITY (beSaveUtil, commands 80323D20, update 80323538): the memory

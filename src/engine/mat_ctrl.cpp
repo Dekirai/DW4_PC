@@ -51,7 +51,11 @@ std::vector<MatCtrlManager::MatBox> MatCtrlManager::mat_boxes() const {
 
 std::optional<MatCtrlManager::RunningMat> MatCtrlManager::running_mat() const {
     if (!context_) return std::nullopt;
-    return RunningMat{context_->name, context_->current & 0xFu, context_->previous & 0xFu, live_};
+    // (live: the players that were live in the previous update too. One that
+    // appears on a mat - a stage start, a join's spawn, a raise - has not
+    // stepped on: W31d's fourth member spawned on dng204b1's way back and its
+    // prompt, left open, held the stage group's next JOIN for good.)
+    return RunningMat{context_->name, context_->current & 0xFu, context_->previous & 0xFu, live_ & settled_};
 }
 
 std::uint32_t MatCtrlManager::players_on(std::string_view name) const {
@@ -83,6 +87,7 @@ bool MatCtrlManager::command(Engine& engine, Ram& base, std::string_view command
 
 void MatCtrlManager::update(Engine& engine) {
     auto* models = engine.get<ModelCtrlManager>();
+    settled_ = live_; // (the previous update's live players, running_mat)
     for (auto& owned : rams_) {
         auto& ram = *owned;
         if (!ram.running) continue;
