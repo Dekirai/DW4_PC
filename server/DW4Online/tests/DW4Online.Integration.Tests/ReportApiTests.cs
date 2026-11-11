@@ -20,7 +20,7 @@ public class ReportApiTests
     [DbFact]
     public async Task A_player_reports_another_with_a_fixed_reason_once_a_day_per_player_and_within_the_daily_limit()
     {
-        await using var host = await TestHost.StartAsync(new() { ["Reports:PerDay"] = "2" });
+        await using var host = await TestHost.StartAsync(new() { ["Reports:PerDay"] = "2", ["RateLimits:ReportsPerMinute"] = "1000" });
         var (token, _, kimId) = await host.RegisterAsync("Kim");
         var (_, _, leeId) = await host.RegisterAsync("Lee");
         await host.RegisterAsync("Max");
@@ -39,14 +39,22 @@ public class ReportApiTests
         Assert.Equal(("sent", "Report sent. Thank you."), (body.GetProperty("result").GetString(), body.GetProperty("message").GetString()));
         Assert.Equal("invalid_reason", await (await ReportAsync(kim, "Lee", "spam")).ProblemCode());
         Assert.Equal("invalid_reason", await (await kim.PostAsJsonAsync("/api/v1/reports", new { username = "Lee" })).ProblemCode());
-        Assert.Equal("own_account", await (await ReportAsync(kim, "Kim", "name")).ProblemCode());
-        Assert.Equal("player_not_found", await (await ReportAsync(kim, "Nobody", "name")).ProblemCode());
+        var own = await ReportAsync(kim, "Kim", "name");
+        Assert.Equal((HttpStatusCode.UnprocessableEntity, "own_account"), (own.StatusCode, await own.ProblemCode()));
+        var nobody = await ReportAsync(kim, "Nobody", "name");
+        Assert.Equal((HttpStatusCode.NotFound, "player_not_found"), (nobody.StatusCode, await nobody.ProblemCode()));
         // A repeat about Lee answers "sent" and adds nothing; Max is the second of two a day; Ann the third: 429.
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Lee", "cheating")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Max", "name")).StatusCode);
         var limit = await ReportAsync(kim, "Ann", "other");
         Assert.Equal(HttpStatusCode.TooManyRequests, limit.StatusCode);
         Assert.Equal("report_limit", await limit.ProblemCode());
+        // At the limit the service answers without the table for ReportService.LimitKnownMinutes: a repeat about Lee (which the
+        // table would answer "sent") is "limit" now; ten minutes later the table speaks again.
+        Assert.Equal("report_limit", await (await ReportAsync(kim, "Lee", "griefing")).ProblemCode());
+        host.Clock.Advance(TimeSpan.FromMinutes(DW4Online.Domain.Services.ReportService.LimitKnownMinutes + 1));
+        Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Lee", "griefing")).StatusCode);
+        Assert.Equal("report_limit", await (await ReportAsync(kim, "Ann", "other")).ProblemCode());
         Assert.Equal(HttpStatusCode.Unauthorized, (await ReportAsync(host.Client(), "Lee", "griefing")).StatusCode);
 
         await using var sql = await host.SqlAsync();
@@ -92,6 +100,12 @@ public class ReportApiTests
         Assert.Equal(3, (await (await mod.GetAsync("/api/v1/admin/reports?state=all")).Json()).GetProperty("total").GetInt32());
         Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync($"/api/v1/admin/reports/{id}/reopen", null)).StatusCode);
         Assert.Equal("report_open", await (await mod.PostAsync($"/api/v1/admin/reports/{id}/reopen", null)).ProblemCode());
+        // A report about the moderator himself: another moderator handles it (403 own_report, nothing audited).
+        Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Moddy", "other")).StatusCode);
+        var aboutMod = (await (await mod.GetAsync("/api/v1/admin/reports")).Json()).GetProperty("reports")[0];
+        Assert.Equal("Moddy", aboutMod.GetProperty("reported").GetString());
+        var ownDone = await mod.PostAsync($"/api/v1/admin/reports/{aboutMod.GetProperty("id").GetInt64()}/done", null);
+        Assert.Equal((HttpStatusCode.Forbidden, "own_report"), (ownDone.StatusCode, await ownDone.ProblemCode()));
 
         await using var check = await host.SqlAsync();
         var audits = (await check.QueryAsync<(string Event, long Account, string Detail)>(
@@ -129,5 +143,12 @@ public class ReportApiTests
         Assert.Contains("done (Boss", account.Html);
         Assert.Contains($"Report {id} is open again.",
             (await boss.PostAsync("/admin/reports?handler=Reopen", new() { ["Id"] = id.ToString() }, "/admin/reports?State=done")).Html);
+        // A report about Boss himself: no Done for him; a forged post is refused.
+        Assert.Equal(HttpStatusCode.OK, (await ReportAsync(host.Client(kimToken), "Boss", "name")).StatusCode);
+        var mine = await sqlId.ExecuteScalarAsync<long>("SELECT CAST(MAX(id) AS SIGNED) FROM player_reports");
+        Assert.Contains("About you: another moderator handles it.", (await boss.GetAsync("/admin/reports")).Html);
+        Assert.Contains("another moderator handles it",
+            (await boss.PostAsync("/admin/reports?handler=Done", new() { ["Id"] = mine.ToString() }, "/admin/reports")).Html);
+        Assert.Equal("open", await sqlId.ExecuteScalarAsync<string>("SELECT state FROM player_reports WHERE id = @mine", new { mine }));
     }
 }

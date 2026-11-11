@@ -156,7 +156,8 @@ public class WorldRelayTests
         Assert.Equal(CloseReason.Account, close.Reason);
     }
 
-    /// <summary>Round I1b: REPORT over the relay is stored by the report service (source game) and answered with WORLD_NOTICE 14.</summary>
+    /// <summary>Round I1b: REPORT over the relay is stored by the report service (source game) and answered with WORLD_NOTICE 14; a
+    /// member the reporter was never told about (review 2026-11-11) and the own id are "not available" without a name.</summary>
     [DbFact]
     public async Task A_report_over_the_relay_is_stored_and_answered_and_the_own_id_is_not_available()
     {
@@ -168,10 +169,26 @@ public class WorldRelayTests
         await using var lee = await WorldMember.ConnectAsync(port, Ticket(host, leeId));
         static bool IsReport(byte[] p) => WorldNoticeMsg.Parse(p).Kind == WorldNoticeKind.Report;
         await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 1, 0).Frame());
+        var stranger = WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport));
+        Assert.Equal((lee.Welcome.Member, "", (uint)ReportResult.NotAvailable), (stranger.Member, stranger.Name, stranger.Argument));
+        // Lee hosts stag0101, Kim joins: Kim's client is told about Lee (the Instance page's card).
+        await lee.SendAsync(new BarrierMsg(lee.Inst, lee.Visit, 0, "stag0101", 0, 1, 1, 5, [1]).Frame());
+        var okLee = BarrierOkMsg.Parse(await lee.NextAsync(Msg.BarrierOk));
+        lee.Enter(okLee);
+        await lee.SendAsync(new SnapshotMsg(lee.Inst, lee.Visit, 4, 0, [1, 2, 3, 4]).Frame());
+        await lee.SendAsync(new SnapHashMsg(lee.Inst, lee.Visit, 0xAA).Frame());
+        await lee.SendAsync(new LogMsg(lee.Inst, lee.Visit, 0, Enumerable.Range(0, 60).Select(_ => new Pad(0, 0, 0, 0, 0)).ToArray()).Frame());
+        await lee.SendAsync(new StateMsg(lee.Inst, lee.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe | StateMsg.LoadEnded, 5, StateReason.None).Frame());
+        await Task.Delay(100);
+        await kim.SendAsync(new BarrierMsg(kim.Inst, kim.Visit, 0, "stag0101", 0, 1, 1, 5, [2]).Frame());
+        Assert.Equal(BarrierDecision.Join, BarrierOkMsg.Parse(await kim.NextAsync(Msg.BarrierOk)).Decision);
+        await Task.Delay(500);
+        await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 1, 0).Frame());
         var answer = WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport));
         Assert.Equal((lee.Welcome.Member, "RelayLee", (uint)ReportResult.Sent), (answer.Member, answer.Name, answer.Argument));
         await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 2, 0).Frame()); // a repeat: sent, no second row
         Assert.Equal((uint)ReportResult.Sent, WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport)).Argument);
+        await Task.Delay(6100); // (REPORT's bucket: three at once, then ten a minute)
         await kim.SendAsync(new ReportMsg(kim.Welcome.Member, 3, 0).Frame());
         Assert.Equal((uint)ReportResult.NotAvailable, WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport)).Argument);
         await using var sql = await host.SqlAsync();

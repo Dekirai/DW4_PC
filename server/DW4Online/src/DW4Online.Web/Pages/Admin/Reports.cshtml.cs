@@ -22,6 +22,8 @@ public sealed class ReportsModel(ReportService reports, WorldService world, Time
     /// <summary>The reported players who are in the world now: their live instance (wid) for the link to /admin/instances.</summary>
     public IReadOnlyDictionary<long, uint> LiveInstance { get; private set; } = new Dictionary<long, uint>();
     public DateTime Now { get; private set; }
+    /// <summary>The signed-in staff member (a report about him gets no Done / Reopen here: another moderator handles it).</summary>
+    public long Me { get; private set; }
     public string? Message { get; private set; }
     public string? Error { get; private set; }
 
@@ -50,6 +52,7 @@ public sealed class ReportsModel(ReportService reports, WorldService world, Time
         ModelState.Clear();
         State = State is ReportStates.Done or "all" ? State : ReportStates.Open;
         Now = time.GetUtcNow().UtcDateTime;
+        Me = HttpContext.WebSession()?.AccountId ?? 0;
         Reports = await reports.ListAsync(State == "all" ? null : State, PageNumber, ct);
         var live = new Dictionary<long, uint>();
         foreach (var i in world.AdminInstances())

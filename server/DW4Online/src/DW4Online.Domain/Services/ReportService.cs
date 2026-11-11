@@ -20,8 +20,9 @@ public sealed record ReportPage(IReadOnlyList<ReportRow> Reports, int Total, int
 /// <see cref="ReportOptions.PerDay"/> reports in 24 hours (counted in the table: 429 report_limit); a second report about the
 /// same player within <see cref="ReportOptions.RepeatHours"/> answers "sent" and adds no row. The instance both shared is
 /// the relay's live one, else the newest of the instance history within <see cref="ReportOptions.SharedInstanceHours"/>.
-/// Staff list them and mark them done (audited report_handled) or open again (report_reopened). Writes of one reporter
-/// are serialized (the daily count and the repeat check cannot race).
+/// A reporter at his limit is answered "limit" without a query for <see cref="LimitKnownMinutes"/> (also a repeat then).
+/// Staff list them and mark them done (audited report_handled) or open again (report_reopened), never one about their own
+/// account (403 own_report). Writes of one reporter are serialized (the daily count and the repeat check cannot race).
 /// </summary>
 public sealed class ReportService(
     IAccountRepository accounts,
@@ -32,6 +33,11 @@ public sealed class ReportService(
 {
     private const int LockStripes = 16;
     private readonly SemaphoreSlim[] _locks = Enumerable.Range(0, LockStripes).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+    /// <summary>Reporters at their daily limit, until when they are answered "limit" without a query (round I1b review: a flood of
+    /// REPORTs or POSTs past the limit costs the database nothing). Re-checked in the table after <see cref="LimitKnownMinutes"/>.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTime> _limited = new();
+    public const int LimitKnownMinutes = 10;
+    private const string LimitMessage = "You can't send more reports today.";
 
     public ReportOptions Options => options;
 
@@ -55,6 +61,11 @@ public sealed class ReportService(
         if (!ReportReasons.IsValid(reason))
             return DomainError.Invalid("invalid_reason", "Choose a reason: griefing, cheating, name or other.");
         if (reporter == reported) return DomainError.Invalid("own_account", "You can't report yourself.");
+        if (_limited.TryGetValue(reporter, out var until))
+        {
+            if (time.GetUtcNow().UtcDateTime < until) return DomainError.TooMany("report_limit", LimitMessage, 3600);
+            _limited.TryRemove(new KeyValuePair<long, DateTime>(reporter, until));
+        }
         var target = await accounts.GetAsync(reported, ct);
         if (target is null || target.Status == AccountStatus.Deleted)
             return DomainError.NotFound("player_not_found", "No player has this exact name.");
@@ -67,7 +78,10 @@ public sealed class ReportService(
                 return new ReportOutcome(ReportOutcome.Sent, ReportOutcome.SentMessage, null);
             var day = now.AddDays(-1);
             if (await reports.CountByReporterAsync(reporter, day, ct) >= Math.Max(1, options.PerDay))
-                return DomainError.TooMany("report_limit", "You can't send more reports today.", 3600);
+            {
+                _limited[reporter] = now.AddMinutes(LimitKnownMinutes);
+                return DomainError.TooMany("report_limit", LimitMessage, 3600);
+            }
             instanceId ??= await reports.SharedInstanceAsync(reporter, reported, now.AddHours(-Math.Max(0, options.SharedInstanceHours)), ct);
             var id = await reports.InsertAsync(new ReportInsert(reporter, reported, reason!, source, instanceId, now), ct);
             if (id is null) return DomainError.NotFound("player_not_found", "No player has this exact name.");
@@ -94,11 +108,16 @@ public sealed class ReportService(
 
     public Task<IReadOnlyList<ReportRow>> AboutAsync(long reported, CancellationToken ct = default) => reports.AboutAsync(reported, 50, ct);
 
-    /// <summary>Staff mark a report done (audited report_handled).</summary>
+    /// <summary>A report about the staff member's own account is handled by another moderator (19.16 "staff abuse").</summary>
+    private static DomainError OwnReport() =>
+        DomainError.Forbidden("own_report", "This report is about your own account: another moderator handles it.");
+
+    /// <summary>Staff mark a report done (audited report_handled); never one about themselves (403 own_report).</summary>
     public async Task<Result<bool>> DoneAsync(long id, long staff, byte[]? ip, CancellationToken ct = default)
     {
         var row = await reports.GetAsync(id, ct);
         if (row is null) return DomainError.NotFound("report_not_found", "No report has this number.");
+        if (row.ReportedAccountId == staff) return OwnReport();
         var now = time.GetUtcNow().UtcDateTime;
         if (!await reports.MarkDoneAsync(id, staff, now, ct)) return DomainError.Conflict("report_done", "This report is done already.");
         await audit.WriteAsync("report_handled", row.ReportedAccountId, staff, ip,
@@ -106,11 +125,12 @@ public sealed class ReportService(
         return true;
     }
 
-    /// <summary>Staff open a done report again (audited report_reopened).</summary>
+    /// <summary>Staff open a done report again (audited report_reopened); never one about themselves (403 own_report).</summary>
     public async Task<Result<bool>> ReopenAsync(long id, long staff, byte[]? ip, CancellationToken ct = default)
     {
         var row = await reports.GetAsync(id, ct);
         if (row is null) return DomainError.NotFound("report_not_found", "No report has this number.");
+        if (row.ReportedAccountId == staff) return OwnReport();
         if (!await reports.ReopenAsync(id, ct)) return DomainError.Conflict("report_open", "This report is open already.");
         await audit.WriteAsync("report_reopened", row.ReportedAccountId, staff, ip, new { reportId = id, reportedId = row.ReportedAccountId },
             time.GetUtcNow().UtcDateTime, ct);

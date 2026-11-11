@@ -78,7 +78,11 @@ else
                         }
                     </td>
                     <td>
-                        @if (r.State == "open")
+                        @if (r.ReportedAccountId == Model.Me)
+                        {
+                            <span class="muted small">About you: another moderator handles it.</span>
+                        }
+                        else if (r.State == "open")
                         {
                             <form method="post" asp-page-handler="Done" asp-route-State="@Model.State" asp-route-p="@Model.PageNumber" class="inline">
                                 <input type="hidden" name="Id" value="@r.Id" />
