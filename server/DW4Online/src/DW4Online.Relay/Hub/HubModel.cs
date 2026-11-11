@@ -311,6 +311,9 @@ public sealed class ArrivalGroup
     public long PromptOptionsAt { get; set; }
     /// <summary>Round I1b: the host names of the rows this arrival was offered (a refreshed prompt names a chosen instance that ended).</summary>
     public Dictionary<uint, string> PromptHosts { get; } = [];
+    /// <summary>Round I1b: when the held prompt last took a CHOICE (at most one a second) and the newest one waiting for its turn.</summary>
+    public long LastChoiceAt { get; set; }
+    public DW4Online.Relay.Protocol.ChoiceMsg? PendingChoice { get; set; }
     /// <summary>The kind of arrival this decision is for its members (BARRIER_OK's arrival byte).</summary>
     public ArrivalKind Arrival { get; set; }
     /// <summary>The arriving members with their slot in the arriving engine and their carry.</summary>

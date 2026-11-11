@@ -1199,12 +1199,15 @@ public sealed partial class RoomHub
         }
         // Announced groups on their way to the same stage with the same context: hold for those that fit, the earliest
         // announced first (before, five arrivals at once left the first one alone: the base held only when every
-        // announced member fit). Groups another base already waits for are that base's.
-        var announced = _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
-                                                   Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
-                                                   h.Context == g.Context && x.Instance is not null && x.Connected &&
-                                                   (w is not null ? x.World == w : x.World is null && !x.Prompt.Chose && MaySeeHost(g.Members[0].Member, g, x)) &&
-                                                   !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
+        // announced member fit). Groups another base already waits for are that base's. A fresh group that chose a row in the
+        // prompt is no base (19.7.6: automatic only where the base starts a new instance): its choice decides at once (round
+        // I1b's review: it held for a stranger's HEADING, and the co-arrival's NEW dropped the chosen join).
+        List<HubMember> announced = w is null && g.PromptChoice is { Choice: ChoiceKind.Join } ? [] :
+            _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
+                                       Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
+                                       h.Context == g.Context && x.Instance is not null && x.Connected &&
+                                       (w is not null ? x.World == w : x.World is null && !x.Prompt.Chose && MaySeeHost(g.Members[0].Member, g, x)) &&
+                                       !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
         var awaited = new List<HubMember>();
         var room = Capacity - g.Members.Count;
         foreach (var group in announced.GroupBy(x => x.Instance!).OrderBy(grp => grp.Min(x => x.Heading!.At)).ThenBy(grp => grp.Min(x => x.Index)))
@@ -1406,7 +1409,10 @@ public sealed partial class RoomHub
                             Ms(g.HoldUntil - now) / 1000.0, 0, now);
                     break;
                 case HoldKind.Prompt:
-                    RefreshPrompt(g, now);
+                    // (A CHOICE the held prompt's throttle kept waits for its turn, World/Prompt.cs.)
+                    if (g.PendingChoice is { } pending && g.Members.Count > 0 && Ms(now - g.LastChoiceAt) >= ChoiceSpacingMs)
+                        TakeHeldChoice(g, g.Members[0].Member, pending, now);
+                    else RefreshPrompt(g, now);
                     break;
                 case HoldKind.Boss:
                     if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||
@@ -1502,6 +1508,22 @@ public sealed partial class RoomHub
     {
         _holds.Remove(holder);
         holder.Hold = HoldKind.None;
+        if (holder.Fresh && holder.PromptChoice is { Choice: ChoiceKind.Join })
+        {
+            // (Round I1b: a member that chose a row holds for nobody, Decide. Should one hold all the same, its choice decides and
+            // the groups that came to it decide on their own: a co-arrival's NEW never replaces a chosen join.)
+            Count("co_arrival_base_chose_row");
+            var others = holder.CoArrivals.ToList();
+            holder.CoArrivals.Clear();
+            holder.Awaited.Clear();
+            if (!DecideChoice(holder, now)) FreshJoinOrNew(holder, now);
+            foreach (var c in others)
+            {
+                foreach (var a in c.Members) a.Member.Arrival = c;
+                Decide(c, now);
+            }
+            return;
+        }
         New(holder, now, BarrierNotice.None, []);
     }
 

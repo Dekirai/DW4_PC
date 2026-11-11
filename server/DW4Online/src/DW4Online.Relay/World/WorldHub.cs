@@ -883,17 +883,21 @@ public sealed partial class RoomHub
             var hostFriend = members.Any(x => x.Friends.Contains(w.HostAccount));
             var friendsInside = w.Members.Count(x => members.Any(y => y.Friends.Contains(x.AccountId)));
             var ping = w.Members.Select(x => x.Rtt.Median).DefaultIfEmpty(0).Max();
-            if (w.FreeSeats < size)
+            var isFull = w.FreeSeats < size;
+            var group = isFull ? null : atStage.Where(x => x.FreeSlots >= size).OrderByDescending(x => x.Count).FirstOrDefault();
+            // The context first (19.8.8: the prompt matches only equal session contexts): a full instance of another context (a quest)
+            // is no row either (round I1b's review: it opened a prompt with a single greyed row for a quest player).
+            var contextGroup = isFull ? atStage.OrderByDescending(x => x.Count).FirstOrDefault() : group;
+            if (contextGroup is not null ? !HubRules.ContextMatches(contextGroup, g.Context) : w.Context != g.Context)
+            {
+                if (atStage.Count > 0) otherContext.Add(w);
+                continue;
+            }
+            if (isFull)
             {
                 if (atStage.Count > 0) full.Add(w);
                 // (Round I1b: the prompt lists it greyed, *Full*, 19.7.2.)
                 if (_world.ArrivalPrompt) rows.Add(new CandidateRow(w, null, RowState.Greyed, here, hostFriend, friendsInside, ping, "full"));
-                continue;
-            }
-            var group = atStage.Where(x => x.FreeSlots >= size).OrderByDescending(x => x.Count).FirstOrDefault();
-            if (group is not null ? !HubRules.ContextMatches(group, g.Context) : w.Context != g.Context)
-            {
-                if (atStage.Count > 0) otherContext.Add(w);
                 continue;
             }
             RowState state;

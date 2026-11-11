@@ -57,13 +57,20 @@ namespace DW4Online.Relay.Hub
         /// is the default <see cref="HomePoint"/>.</summary>
         private const byte HomeLastPoint = 4;
 
+        /// <summary>PLAN's throttle (19.7.4: one a second). The client spaces its PLANs a second apart by its own clock; the relay takes
+        /// them 900 ms apart by their arrival, so the network's jitter never drops a regular second try (round I1b's review).</summary>
+        private const double PlanSpacingMs = 900.0;
+
+        /// <summary>A held barrier takes at most one CHOICE a second (each re-checks the candidates under the lock).</summary>
+        private const double ChoiceSpacingMs = 1000.0;
+
         // PLAN (the gate form) ---------------------------------------------------------------------------------------------
 
         /// <summary>A member at home holds its confirming press and asks what the departure would find (19.7.4).</summary>
         private void OnPlan(HubMember m, PlanMsg msg, long now)
         {
             var p = m.Prompt;
-            if (p.LastPlanAt != 0 && Ms(now - p.LastPlanAt) < 1000.0)
+            if (p.LastPlanAt != 0 && Ms(now - p.LastPlanAt) < PlanSpacingMs)
             {
                 // (At most one a second, like BROWSE: the client's press goes out after World:PlanWaitMs without an answer.)
                 Count("plan_throttled");
@@ -129,13 +136,12 @@ namespace DW4Online.Relay.Hub
         /// now, 19.7.7).</summary>
         private void OnPromptChoice(HubMember m, ChoiceMsg msg, long now)
         {
-            Note("choice", m.Instance, ("member", m.Id), ("plan", msg.Plan), ("choice", msg.Choice.ToString().ToLowerInvariant()), ("wid", msg.Wid),
-                ("visibility", Visibilities.Text(msg.Visibility)), ("inst", msg.Inst), ("visit", msg.Visit));
+            // (Every CHOICE the relay does not take is only counted: no OPTIONS, no world log line, nothing that tells the sender more
+            // than the rows it was offered; round I1b's review.)
             if (msg.Choice is ChoiceKind.Travel or ChoiceKind.Return)
             {
                 // (Round I3 / I4: no travel rows and no return hold yet.)
                 Count("choice_refused");
-                Note("choice_refused", null, ("member", m.Id), ("wid", msg.Wid), ("why", "not_offered"));
                 return;
             }
             if (msg.Plan != 0)
@@ -148,6 +154,20 @@ namespace DW4Online.Relay.Hub
                     Count("choice_ignored");
                     return;
                 }
+                if (p.Choice is not null)
+                {
+                    // (One answer per plan: the client's held press went out with the first.)
+                    Count("choice_repeated");
+                    return;
+                }
+                if (msg.Choice == ChoiceKind.Join && !p.Hosts.ContainsKey(msg.Wid))
+                {
+                    // (Only a row this plan offered: any other instance stays unknown to the member, 19.7.2's "a blocked player never
+                    // learns of it". Its BARRIER is then decided without an answer: the loading-screen form.)
+                    Count("choice_unoffered");
+                    return;
+                }
+                NoteChoice(m, msg);
                 p.Choice = msg;
                 if (msg.Choice == ChoiceKind.New) RememberChoice(m, msg.Visibility);
                 return;
@@ -157,12 +177,39 @@ namespace DW4Online.Relay.Hub
                 Count("choice_ignored");
                 return;
             }
+            if (msg.Choice == ChoiceKind.Join && !g.PromptHosts.ContainsKey(msg.Wid))
+            {
+                // (Only a row the held prompt offered; the barrier keeps waiting.)
+                Count("choice_unoffered");
+                return;
+            }
+            if (g.LastChoiceAt != 0 && Ms(now - g.LastChoiceAt) < ChoiceSpacingMs)
+            {
+                // (At most one answer a second at a held barrier: each re-checks the candidates under the lock. The newest waits for
+                // its turn, CheckHolds, so a quick second answer to a refreshed prompt is never lost.)
+                Count("choice_throttled");
+                g.PendingChoice = msg;
+                return;
+            }
+            TakeHeldChoice(g, m, msg, now);
+        }
+
+        /// <summary>A held barrier's answer is taken (19.7.7): decided now, checked again against the candidates.</summary>
+        private void TakeHeldChoice(ArrivalGroup g, HubMember m, ChoiceMsg msg, long now)
+        {
+            NoteChoice(m, msg);
+            g.LastChoiceAt = now;
+            g.PendingChoice = null;
             _holds.Remove(g);
             g.Hold = HoldKind.None;
             g.PromptChoice = msg;
             if (msg.Choice == ChoiceKind.New) RememberChoice(m, msg.Visibility);
             if (!DecideChoice(g, now)) FreshJoinOrNew(g, now);
         }
+
+        private void NoteChoice(HubMember m, ChoiceMsg msg) =>
+            Note("choice", m.Instance, ("member", m.Id), ("plan", msg.Plan), ("choice", msg.Choice.ToString().ToLowerInvariant()), ("wid", msg.Wid),
+                ("visibility", Visibilities.Text(msg.Visibility)), ("inst", msg.Inst), ("visit", msg.Visit));
 
         /// <summary>*New instance* with a visibility: the member's remembered default from now on (Q9), written off the lock.</summary>
         private void RememberChoice(HubMember m, Visibility v)
@@ -222,12 +269,16 @@ namespace DW4Online.Relay.Hub
                     var row = rows.FirstOrDefault(r => r.World.Wid == c.Wid);
                     if (row is null || !row.Choosable)
                     {
-                        // (Full, ended or no longer open meanwhile: the barrier waits with a refreshed prompt, 19.7.7.)
+                        // (Full, ended or no longer open meanwhile: the barrier waits with a refreshed prompt, 19.7.7. The line names only
+                        // a host the member was offered (the CHOICE named an offered row, OnPromptChoice); a row still listed but greyed
+                        // for another reason (host reconnecting, too long to catch up, story not here yet) gets no line: its own greyed
+                        // word says why.)
                         var w0 = _worlds.GetValueOrDefault(c.Wid);
-                        var notice = w0 is null || w0.Ending ? OptionsMsg.NoticeEnded : row?.Why == "full" ? OptionsMsg.NoticeFull : OptionsMsg.NoticeClosed;
+                        var notice = row is not null ? (row.Why == "full" ? OptionsMsg.NoticeFull : (byte)0) :
+                            w0 is null || w0.Ending ? OptionsMsg.NoticeEnded : OptionsMsg.NoticeClosed;
                         Count("choice_refused");
                         Note("choice_refused", g.From, ("member", m.Id), ("wid", c.Wid), ("why", row?.Why is { Length: > 0 } why ? why : "gone"));
-                        HoldPrompt(g, rows, notice, w0?.Host.Name ?? g.PromptHosts.GetValueOrDefault(c.Wid) ?? "", now);
+                        HoldPrompt(g, rows, notice, notice == 0 ? "" : g.PromptHosts.GetValueOrDefault(c.Wid) ?? "", now);
                         return true;
                     }
                     var w = row.World;
@@ -269,7 +320,8 @@ namespace DW4Online.Relay.Hub
             var frame = options.Frame();
             g.PromptOptions = RefreshKey(options);
             g.PromptOptionsAt = now;
-            g.PromptHosts.Clear();
+            // (Every row ever offered to this arrival stays answerable: a CHOICE that crossed a refresh is decided, and a row gone
+            // meanwhile gets its line.)
             foreach (var r in options.Rows) g.PromptHosts[r.Wid] = r.HostName;
             foreach (var a in g.Members) a.Member.Peer?.Send(frame);
             Count("prompt_holds");
