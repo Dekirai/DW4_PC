@@ -153,6 +153,8 @@ namespace DW4Online.Relay.Hub
                     // its menu closed otherwise or World:PlanWaitMs ran out. An unknown plan: nothing open.)
                     if (p.Plan == msg.Plan)
                     {
+                        // (Logged: one per plan at most, and PLAN's throttle bounds the plans.)
+                        NoteChoice(m, msg);
                         p.Clear();
                         Count("plan_closed");
                     }
