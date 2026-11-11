@@ -125,6 +125,8 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_NO_ERROR_BOX", "DW4_OPEN_MENU", "DW4_PRESENCE_ART_ALL", "DW4_PROFILE", "DW4_RENDER",
         "DW4_SCENE_REPORT", "DW4_SEEK_DIRECT", "DW4_SMOKE_STAGES", "DW4_STAGE_STATES",
         "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
+        // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
+        "DW4_PROMPTS",
         // the online client's own switches (src/game/online: development server, pin and password, the
         // calibration, the rate override, its trace, the test driver's position interval)
         "DW4_ONLINE_CALIBRATION", "DW4_ONLINE_PASSWORD", "DW4_ONLINE_PIN", "DW4_ONLINE_RATE", "DW4_ONLINE_SERVER",
