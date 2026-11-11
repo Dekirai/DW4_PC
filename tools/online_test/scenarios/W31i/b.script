@@ -1,3 +1,4 @@
+# (Both heal from the L panel at 350 HP on the way to matz00: stag0201's mummies felled W31e's c in run b1.)
 # W31i, b (k10): in stag0201 with c; goes along 30 s after the notice: the relay stamps the GO with its test hook (World:
 # TestGoHook busy_sender:600: b's stage group busy for 600 ticks from the GO's tick, the stand-in for an exit prompt left
 # open there): the GO expires after 300 ticks on both engines ("Couldn't go along: a scene here took too long.", the
@@ -15,6 +16,10 @@ goalong until go=stamped or go=going
 log b's GO is stamped
 idle until go=none fail frames>=1200,stage=dng204b1
 log b's GO expired
+explore matz00 yes 2 until stage=stag0202 or hp<=350 fail epoch>=@1100
+disk 1 until hp>=700 or frames>=900
+explore matz00 yes 2 until stage=stag0202 or hp<=350 fail epoch>=@1100
+disk 1 until hp>=700 or frames>=900
 explore matz00 yes 2 until stage=stag0202 fail epoch>=@1100
 log b and c in stag0202
 goalong until go=waiting or go=stamped or go=going fail frames>=1800
