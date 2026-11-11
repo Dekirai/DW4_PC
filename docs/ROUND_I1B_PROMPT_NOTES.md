@@ -102,11 +102,13 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- Nothing of the lane: built and green at 001f786b (exe c). The lane's scenarios and W9, W19, W22, W29, W30, W30x passed on
-  exe c (r4-r6); the rest of round I1a's W set (W3-W8, W11, W12, W18, W24-W28, W32, W1x) on exe b in r3 (exe c adds only
-  the loading-screen form's back point, which none of them takes).
-- For the integration: the contract entries "prompt 16:30", "prompt 17:00" and "prompt 2026-11-11 14:25" (the merge hints
-  and the unit test's uptime finding).
+- Nothing of the lane after the review fixes (see "Review fixes" and the runs below).
+- For the integration: the contract entries "prompt 16:30", "prompt 17:00", "prompt 2026-11-11 14:25" and "prompt 2026-11-11
+  16:20" (merge hints: Decide's `announced` with the go lane's `g.Go`, DecideChoice's TakeSeat bool / SendRemovedHome for the
+  moderation lane, Matching.Order is I1a code, the load gate's hubs); W10's prompt check (moderation 15:20).
+- A real-client scenario of the return mat's gate form (mate02): needs the go lane's `testhook mat` and the moderation lane's
+  `setflag` (a powered Security Gate); the census measured it headless.
+- Open for the user: two players leaving together who both choose *New instance* (SEAMLESS.md 19.32).
 
 ## Runs
 
@@ -146,6 +148,17 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - r6 (exe c, `build/i1bp/scen_r6.log`): the lane's own W1 W2 W2b W30b W30c again on the final exe (r2 / r3 ran them on exe b,
   which lacks only the back point): **W1, W2, W2b, W30b, W30c passed**.
 
+- **Review fixes** (2026-11-11, code at b01cc47b; the C++ of c5582b00 = exe d `build/i1bp/scen/dw4_i1bp_dev_d.exe`, DEV=OFF
+  copy `build/i1bp/off/dw4_i1bp_off_c5582b00.exe`): server unit 494/494 (`build/i1bp/unit6.log`), integration 142 passed / 3
+  skipped (mysqld 3651, `build/i1bp/it4.log`, at c5582b00), ctest 57/57 (`build/i1bp/ctest5.log`), det.sh 4004f056 /
+  396cb219 twice (`build/i1bp/off/det_c5582b00.log`), r25c 10/10 reached, 1,748,011 frames, every save the same story
+  (`build/i1bp/off/r25c_c5582b00.log`, main's work/campaign/runs/seg/seg_r25c_i1bp_c5582b00), the save state suite 17/17
+  identical after loading (`build/i1bp/st/st_c5582b00.log`). Load gate with the prompt: SEAMLESS.md 19.17.4
+  (`build/i1bp/gate/*.json`, `*.log`).
+- r7 (exe d, server at bb6c7ad9, `build/i1bp/scen_r7.log`): **W1, W11 (with decision 41's new prompt checks), W11b, W2b, W30b
+  passed**; W2 and W30c failed only on `relay: choice .*choice=back` (the gate form's B was no longer logged after the first
+  fix; b01cc47b logs it again).
+
 ## How to run the tests
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\i1bp\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; FETCHCONTENT from the
@@ -160,3 +173,11 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
   the r25c cards of the main repo, mysqld 3651, ports 58000-58199; add `--no-build` after the first run). Run folders:
   `tools/online_test/.work/run_*`.
 - The census: `build/i1bp/rel/dw4_world_probe.exe DATA census` (DW4_PROBE_DEBUG=1 prints the menus and demo works).
+- The load gate with the prompt: `"$DOTNET" build -c Release server/DW4Online/tests/DW4Online.FakeClient -o build/i1bp/gate/fc`,
+  then in `build/i1bp/gate` with `DOTNET_gcServer=1`: `"$DOTNET" fc/DW4Online.FakeClient.dll loadgate --cells base,joins,prompt
+  --seconds 30 --out X.json` (`--no-prompt` for I1a's join), `... joins --out Y.json`; summary
+  `python lg_sum.py X.json` (a scratch script: hold_all, joins, plans, the plan / choice / join holds).
+- The regression (DEV=OFF copy `build/i1bp/off/dw4_i1bp_off_<head>.exe`): r25c from the main repo,
+  `EXE=<copy> NAME=seg_r25c_i1bp_<head> nice -n 15 bash work/campaign/segments.sh r25c 2` (runs in main's
+  work/campaign/runs/seg/NAME); the save state suite from the own copy `build/i1bp/st` (`EXE=<copy> bash build/i1bp/st/st_all.sh`).
+- The server's tests need no scenario running (a scenario's server locks DW4Online.Server/bin's Relay.dll).
