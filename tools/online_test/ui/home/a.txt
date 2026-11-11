@@ -1,5 +1,7 @@
 # The world's home screen (round I1a; was the room scenario): log in, the home screen, Online > Settings (the default
-# visibility Friends, camera mode 1), Play: the world session; the online title; leaving the world.
+# visibility Friends, camera mode 1), Play: the world session; the online title; leaving the world. After Play the
+# screens stay on the playing screen (the F1 Online tab's Instance page) until B or its Play closes them, as in areas
+# (fix-019's run r2b: the script had waited for them to close by themselves).
 wait-title
 to-menu
 pad DOWN DOWN A
@@ -18,7 +20,9 @@ wait 10
 shot settings
 play
 wait-session
-sleep 2
+expect-screens open
+key pad-b
+sleep 1
 expect-screens closed
 sleep 4
 wait 10

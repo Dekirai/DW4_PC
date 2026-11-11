@@ -10,7 +10,9 @@ wait 10
 shot home_guest
 play
 wait-session
-sleep 2
+expect-screens open
+key pad-b
+sleep 1
 expect-screens closed
 menu online
 wait-instance home

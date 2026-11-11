@@ -1,5 +1,5 @@
 {
-  "desc": "the S2 done-when: a and b register in the screens, both play in the world (each at home on its own story), both make new characters (campaign bot), save in the save room and at stage changes (b's records keep its own empty story, so a save that moved only the room story on is unchanged), b leaves the world after its save room, a after playing on in stag0101 (the leaving saves); the server returns both records",
+  "desc": "the S2 done-when: a and b register in the screens, both play in the world (each at home on its own story), both make new characters (campaign bot), save in the save room and at stage changes (each record holds its own story: phase 2 for both, fix-019; before the world b was a room guest with an empty own story), b leaves the world after its save room, a after playing on in stag0101 (the leaving saves); the server returns both records",
   "timeout": 1500,
   "checkpoints": "p2",
   "clients": [
@@ -8,6 +8,6 @@
   ],
   "characters": {
     "a": {"phase": 2, "leave_upload": true},
-    "b": {"own_story": "none", "leave_upload": false}
+    "b": {"phase": 2, "leave_upload": false}
   }
 }

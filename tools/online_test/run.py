@@ -1934,7 +1934,8 @@ def guest_card_problems(name, folder, notes):
 def check_characters(sc, api, env, out, problems, notes):
     """scenario.json "characters" (SEAMLESS.md 9 and the S2 done-when): per client, its online character as the client
     logged it ("online-character: ..." lines) and as the server holds it. Every client entered without a character (a new
-    game), its first stage change created revision 1, the save room uploaded (card_written), the run's last save is the
+    game), its first stage change created revision 1, the save room uploaded (card_written) or found nothing new since the
+    last upload, the run's last save is the
     automatic save when it left the room (an upload with "leave_upload": true; otherwise also "unchanged since" the last
     uploaded revision), nothing was refused; GET /online-character (logged in through the API) returns the last uploaded
     revision, and its record equals the client's card cache (online_card.dat, nothing pending) outside the story
@@ -1954,14 +1955,14 @@ def check_characters(sc, api, env, out, problems, notes):
         reasons = [r for r, _ in saves]
         if not saves or saves[0] != ("stage change", 1):
             problems.append("%s: the first stage change did not create the online character as revision 1" % name)
-        # A guest (own_story "none"; round G-core, 8.8) keeps its own story in every record: a save room save that moved
-        # only the room story on is unchanged since its last upload (before the room-owner fix of the title's screens the
-        # guest played as the owner and that save uploaded the room story's change).
-        guest_unchanged = want.get("own_story") == "none" and any(re.match(r"save \(save room\) unchanged since revision \d+$", l) for l in ch)
-        if "save room" not in reasons and not guest_unchanged:
+        # A save room save that found nothing new since the last upload is fine: in the world (round I1a) the stage change
+        # into the save room uploads the character a moment before its save (fix-019's run r2b of ui newchars: "save (save
+        # room) unchanged since revision 3" for both); round G-core's guest (own_story "none", 8.8) the same way.
+        room_unchanged = any(re.match(r"save \(save room\) unchanged since revision \d+$", l) for l in ch)
+        if "save room" not in reasons and not room_unchanged:
             problems.append("%s: no upload from the save room" % name)
-        if guest_unchanged and "save room" not in reasons:
-            notes.append("%s (a guest): its save room save was unchanged since its last upload (its own story, nothing else moved)" % name)
+        if room_unchanged and "save room" not in reasons:
+            notes.append("%s: its save room save was unchanged since its last upload (nothing moved since)" % name)
         # The automatic save when leaving: the last save line of the run. It uploads what changed since the last upload
         # ("leave_upload": true asks for that) and finds nothing to do when the server holds the character as it is.
         leave = [l for l in ch if l.startswith(("save (", "saved (", "upload ("))][-1:]
