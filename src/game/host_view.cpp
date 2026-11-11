@@ -727,9 +727,10 @@ void settings_controllers_section(HostView& view) {
                 settings.prompts = choice == 0 ? "auto" : family_id(kChoices[choice - 1]);
                 view.settings_changed = true;
             }
-            ImGui::SameLine();
-            ImGui::TextDisabled("(now %s)", family_name(view.prompt_family()));
             ImGui::TextDisabled("Automatic: the pictures of the controller (or keyboard) player 1 used last.");
+            // What the game's button pictures show now.
+            prompt_text_disabled(std::string("Now: ") + family_name(view.prompt_family()) +
+                                 "   {A} {B} {X} {Y} {START} {L} {R} {Z} {STICK} {CSTICK} {DPAD}");
         }
         {
             int layout = settings.nintendo_layout == NintendoLayout::by_position ? 1 : 0;
@@ -746,8 +747,7 @@ void settings_controllers_section(HostView& view) {
                 view.settings_changed = true;
             }
             if (ImGui::Checkbox("Wii U Pro Controller support", &settings.wii_driver)) view.settings_changed = true;
-            ImGui::SameLine();
-            ImGui::TextDisabled("(applies at the next start; off for a Wii remote bar)");
+            ImGui::TextDisabled("(applies at the next start; turn it off when a Wii remote bar misbehaves)");
         }
         ImGui::Spacing();
         ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");

@@ -3596,13 +3596,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                     "Applies from the next stage change.");
                             ImGui::PopTextWrapPos();
                         }
-                        // Display, audio, name tags / Discord / achievements, keyboard and
-                        // controllers (host_view.hpp: a Data Overflow run's F1 shows them too).
+                        // Display, audio, name tags / Discord / achievements
+                        // (host_view.hpp: a Data Overflow run's F1 shows them too;
+                        // the controls have their own tab).
                         dw4::game::settings_display_section(view);
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
-                        dw4::game::settings_keyboard_section(view);
-                        dw4::game::settings_controllers_section(view);
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
@@ -3655,6 +3654,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::TextDisabled("Save (memory card slot A): %s", player_store.describe(0).c_str());
                         ImGui::TextDisabled("(the Saves tab shows slot B, the backups and imports GameCube saves)");
                         ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
+                        ImGui::EndTabItem();
+                    }
+                    // Controls: the detected controllers, the button prompts,
+                    // the Nintendo / GameCube layouts and the bindings.
+                    if (ImGui::BeginTabItem("Controls", nullptr, tab_flags("Controls"))) {
+                        dw4::game::settings_controllers_section(view);
+                        dw4::game::settings_keyboard_section(view);
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Gameplay", nullptr, tab_flags("Gameplay"))) {

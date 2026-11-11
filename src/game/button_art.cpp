@@ -323,7 +323,7 @@ Style style_of(PadFamily family) {
         s.shoulder = hex(0x2c2c33); s.shoulder_label = hex(0xf0f0f2);
         s.middle = hex(0x2c2c33); s.middle_symbol = hex(0xf0f0f2);
         s.stick = hex(0x1c1c22); s.stick_cap = hex(0x3a3a42); s.stick_label = hex(0xe8e8ec);
-        s.dpad = hex(0x34343c); s.dpad_mark = hex(0xf4f4f6);
+        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
         break;
     case PadFamily::xbox360:
         s.face = hex(0x26262c); s.letter = hex(0xffffff); s.fill_coloured = true; s.face_rim = hex(0xffffff, 0.35f);
@@ -337,7 +337,7 @@ Style style_of(PadFamily family) {
         s.shoulder = hex(0x2a2a32); s.shoulder_label = hex(0xf0f0f4);
         s.middle = hex(0x2a2a32); s.middle_symbol = hex(0xf0f0f4);
         s.stick = hex(0x16161c); s.stick_cap = hex(0x34343c); s.stick_label = hex(0xe8e8ec);
-        s.dpad = hex(0x2e2e36); s.dpad_mark = hex(0xf4f4f6);
+        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
         break;
     case PadFamily::ps5:
         s.face = hex(0x24242c); s.face_rim = hex(0xe6e6ee, 0.9f); s.letter = hex(0xeeeef4);
@@ -354,7 +354,7 @@ Style style_of(PadFamily family) {
         s.shoulder = hex(0x2c2c32); s.shoulder_label = hex(0xf4f4f6);
         s.middle = hex(0x2c2c32); s.middle_symbol = hex(0xf4f4f6);
         s.stick = hex(0x16161a); s.stick_cap = hex(0x36363e); s.stick_label = hex(0xeeeef2);
-        s.dpad = hex(0x30303a); s.dpad_mark = hex(0xf4f4f6);
+        s.dpad = hex(0x4a4a54); s.dpad_mark = hex(0xf4f4f6);
         break;
     case PadFamily::wiiu_pro:
         s.face = hex(0xdcdce2); s.face_rim = hex(0xffffff, 0.6f); s.letter = hex(0x2a2a30);
@@ -558,6 +558,7 @@ void key_cluster(Canvas& c, const Box& b, const std::array<std::string, 4>& keys
     const float k = s * 0.335f, gap = s * 0.0f;
     const std::array<Vec2, 4> at{{{cx, cy - k * 0.5f - gap}, {cx, cy + k * 0.5f}, {cx - k - gap, cy + k * 0.5f}, {cx + k + gap, cy + k * 0.5f}}};
     for (std::size_t i = 0; i < 4; ++i) {
+        if (keys[i].empty()) continue; // (an unbound direction: no cap)
         std::string label = keys[i].empty() ? std::string() : key_cap_label(keys[i]);
         if (label.size() > 1 && !arrow_label(label) && !sign_label(label)) label = label.substr(0, 1);
         const Box cell{at[i].x - k * 0.5f, at[i].y - k * 0.5f, at[i].x + k * 0.5f, at[i].y + k * 0.5f};
