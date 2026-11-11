@@ -346,6 +346,8 @@ private:
     std::uint16_t gate_plan_ = 0;       // the plan id of the held press (0 while its PLAN waits for the throttle)
     double gate_since_ = 0;             // when the press was held
     engine::DepartureChoice gate_target_;
+    std::optional<engine::DepartureChoice> last_departure_; // the named departure the own press last started (also without
+    double last_departure_at_ = 0;                           // the gate form): *Back to the lobby*'s point next to its mat
     std::uint16_t next_plan_ = 1;
     double plan_sent_at_ = -100;        // PLAN's throttle: one a second
     std::uint16_t departure_plan_ = 0;  // the plan id the next BARRIER from home names

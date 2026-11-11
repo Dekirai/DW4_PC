@@ -1222,6 +1222,10 @@ void mats_probe(const std::string& stage) {
         for (const auto& box : mats->mat_boxes())
             std::printf("  %-8s x %.0f..%.0f  y %.0f..%.0f  z %.0f..%.0f\n", box.name.c_str(), box.min.x, box.max.x, box.min.y, box.max.y, box.min.z,
                         box.max.z);
+    // The stage's generate points (player 0 of each group; round I1b: the hub point next to a departure's mat, 19.7.5).
+    if (const auto* points = engine.get<PlayerPointManager>())
+        for (int group = 0; group < 16; ++group)
+            if (const auto m = points->point_matrix(group, 0)) std::printf("  point %2d  x %.0f  y %.0f  z %.0f\n", group, (*m)(3, 0), (*m)(3, 1), (*m)(3, 2));
 }
 
 

@@ -90,6 +90,7 @@ public:
     bool gate_menu = false;
     std::string gate_target = "stag0101";
     int gate_point = 0;
+    int gate_back_point = 1; // (the lobby's point next to the gate, as the engine's census names it; -1 none)
     int gate_confirms = 0, gate_cancels = 0;
     std::uint32_t gate_previous = 0;
     std::optional<dw4::engine::DepartureChoice> pending_departure_choice() const override {
@@ -101,6 +102,7 @@ public:
         d.menu = "i_zzstchgcur";
         d.items = 4;
         d.reader = identity_;
+        d.back_point = gate_back_point;
         return d;
     }
 

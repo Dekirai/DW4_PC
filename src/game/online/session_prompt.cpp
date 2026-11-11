@@ -25,6 +25,7 @@
 #include "session.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cinttypes>
 
 namespace dw4::game::online {
@@ -76,8 +77,14 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
     const bool a_held = (local.buttons & pad_button::a) != 0;
     switch (gate_phase_) {
     case GatePhase::idle:
-        if (a_held && !engine_a_ && config_.gate_form && hub_ && hello_done_ && transport_ && member_id_ != 0) {
-            if (const auto target = engine_.pending_departure_choice(); target && target->reader == slot_) {
+        if (a_held && !engine_a_ && hub_ && hello_done_ && transport_ && member_id_ != 0) {
+            const auto target = engine_.pending_departure_choice();
+            if (target && target->reader == slot_) {
+                // (Remembered for *Back to the lobby*: the point next to the mat the departure started from, 19.7.5.)
+                last_departure_ = *target;
+                last_departure_at_ = now;
+            }
+            if (target && target->reader == slot_ && config_.gate_form) {
                 // (The confirming press of a departure from home: held, PLAN, OPTIONS awaited.)
                 gate_target_ = *target;
                 gate_phase_ = GatePhase::waiting;
@@ -113,6 +120,7 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
         out = neutral(local);
         out.buttons = pad_button::b; // (the gate's own cancel closes the destination menu)
         gate_phase_ = GatePhase::idle;
+        last_departure_.reset(); // (no departure came of that press)
         break;
     }
     if ((gate_phase_ == GatePhase::waiting || gate_phase_ == GatePhase::open) && !engine_.pending_departure_choice()) {
@@ -120,6 +128,7 @@ PadSample Session::gate_filter(const PadSample& local, double now) {
         trace("prompt hold dropped (the menu closed)");
         if (prompt_ && prompt_->form == PromptForm::gate) close_prompt("menu closed");
         gate_phase_ = GatePhase::idle;
+        last_departure_.reset();
     }
     engine_a_ = (out.buttons & pad_button::a) != 0;
     return out;
@@ -260,7 +269,6 @@ void Session::prompt_input(std::uint32_t buttons, double now) {
 }
 
 void Session::answer_prompt(bool back, double now) {
-    (void)now;
     if (!prompt_) return;
     const auto v = *prompt_;
     w::PromptChoice c;
@@ -271,6 +279,12 @@ void Session::answer_prompt(bool back, double now) {
     }
     if (back) {
         c.choice = w::ChoiceKind::back;
+        // The loading-screen form's *Back to the lobby*: next to the mat this departure started from when the census named it
+        // (the press within the last minute, to this stage), else the relay's default (stagML11 point 3).
+        if (v.form == PromptForm::loading && last_departure_ && last_departure_->back_point >= 0 && now - last_departure_at_ < 60.0 &&
+            std::equal(last_departure_->stage.begin(), last_departure_->stage.end(), v.stage.begin(), v.stage.end(),
+                       [](char x, char y) { return std::tolower((unsigned char)x) == std::tolower((unsigned char)y); }))
+            c.back_point = std::uint8_t(last_departure_->back_point);
     } else if (v.new_instance()) {
         c.choice = w::ChoiceKind::new_instance;
         c.visibility = v.visibility;
@@ -279,8 +293,8 @@ void Session::answer_prompt(bool back, double now) {
         c.wid = v.rows[v.cursor].wid;
     }
     send(w::Type::choice, w::encode(c));
-    trace("prompt answer choice=%s wid=%u visibility=%s form=%s", back ? "back" : c.choice == w::ChoiceKind::join ? "join" : "new", c.wid,
-          visibility_word(c.visibility), v.form == PromptForm::gate ? "gate" : "loading");
+    trace("prompt answer choice=%s wid=%u visibility=%s form=%s back_point=%d", back ? "back" : c.choice == w::ChoiceKind::join ? "join" : "new",
+          c.wid, visibility_word(c.visibility), v.form == PromptForm::gate ? "gate" : "loading", c.back_point == 0xFF ? -1 : int(c.back_point));
     chosen_join_ = !back && c.choice == w::ChoiceKind::join;
     chosen_host_ = chosen_join_ ? v.rows[v.cursor].host_name : std::string();
     if (v.form == PromptForm::gate) {

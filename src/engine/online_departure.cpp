@@ -73,6 +73,11 @@ std::optional<DepartureChoice> Engine::pending_departure_choice(int own_slot) co
                 choice.purpose = menu.name == "i_zzstchgcur" ? DepartureChoice::Purpose::gate
                                  : menu.name == "i_zzstchgwn" ? DepartureChoice::Purpose::return_mat
                                                               : DepartureChoice::Purpose::other;
+                // (The lobby's point next to the mat, for *Back to the lobby*: online_departure.hpp.)
+                if (stage_name_ == "stagml11")
+                    choice.back_point = choice.purpose == DepartureChoice::Purpose::gate         ? 1
+                                        : choice.purpose == DepartureChoice::Purpose::return_mat ? 3
+                                                                                                 : -1;
                 return choice;
             }
         }

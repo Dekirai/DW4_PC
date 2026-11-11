@@ -1237,7 +1237,24 @@ void prompt_loading_form() {
         check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == 0,
               "CHOICE back at the held barrier");
         check(world.run_until(5, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "back in the lobby");
-        check(a.engine.redirected_point && *a.engine.redirected_point == 3, "at the gate (stagML11 point 3)");
+        check(world.hub.choices[0].back_point == 1 && a.engine.redirected_point && *a.engine.redirected_point == 1,
+              "next to the gate (the census's point, stagML11 point 1)");
+    }
+    {
+        // A departure the census names no point for: B leaves the point to the relay (stagML11 point 3).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) {
+            c.gate_form = false;
+            c.auto_choice = AutoChoice::back;
+        });
+        a.engine.gate_back_point = -1;
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(8, [&] { return !world.hub.choices.empty(); }), "B at the held barrier");
+        check(world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].back_point == 0xFF, "no back point named");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "back in the lobby");
+        check(a.engine.redirected_point && *a.engine.redirected_point == 3, "at the relay's default (stagML11 point 3)");
     }
     {
         // A on New instance at a held barrier: CHOICE new; the relay's NEW.

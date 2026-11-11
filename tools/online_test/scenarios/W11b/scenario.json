@@ -1,5 +1,5 @@
 {
-  "desc": "the loading-screen form (19.7.5) and its B: a's departure the gate form cannot hold (DW4_ONLINE_TEST_GATE_FORM=0: the census names every hub departure, the lobby gate with the quest starts and the return mat, so a departure it cannot name is made by the hook), while c's instance runs at the target: the relay holds a's barrier with the prompt; B (autochoice back) is Back to the lobby: the DISSOLVE redirect to stagML11 point 3, a on its own story",
+  "desc": "the loading-screen form (19.7.5) and its B: a's departure the gate form cannot hold (DW4_ONLINE_TEST_GATE_FORM=0: the census names every hub departure, the lobby gate with the quest starts and the return mat, so a departure it cannot name is made by the hook), while c's instance runs at the target: the relay holds a's barrier with the prompt; B (autochoice back) is Back to the lobby: the DISSOLVE redirect to stagML11 point 1 next to the gate (the census names it), a on its own story",
   "world": true,
   "autochoice": "first",
   "seed_story": true,

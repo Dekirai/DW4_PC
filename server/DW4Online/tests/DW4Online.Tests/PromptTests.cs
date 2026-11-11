@@ -152,6 +152,25 @@ public partial class HubLogicTests
         Assert.Single(W(h, "a").Seats);
     }
 
+    [Theory]
+    [InlineData((byte)1, (byte)1)] // (the client's census: next to the gate)
+    [InlineData((byte)3, (byte)3)] // (next to the return mat)
+    [InlineData((byte)9, (byte)3)] // (no point of the lobby: the default)
+    public void Back_to_the_lobby_takes_the_point_the_clients_census_names_next_to_the_mat(byte back, byte expected)
+    {
+        var h = PromptHarness();
+        Admit(h, "a", Player(100, "a"));
+        Admit(h, "b", Player(101, "b"));
+        HostJoinable(h, "a", "stag0101");
+        BarrierWith(h, "b", "stagML11");
+        var home = h.Mem("b").Instance!;
+        BarrierPlan(h, "b", "stag0101", 0);
+        Assert.Equal(HoldKind.Prompt, h.Mem("b").Arrival!.Hold);
+        Choose(h, "b", 0, ChoiceKind.Back, inst: home.Id, visit: home.Visit, back: back);
+        var ok = h.Decision("b");
+        Assert.Equal((BarrierDecision.Dissolve, "stagML11", expected), (ok.Decision, ok.World.RedirectStage, ok.World.RedirectPoint));
+    }
+
     [Fact]
     public void The_held_prompt_answers_join_new_with_its_visibility_and_is_refreshed_once_a_second_on_a_change()
     {

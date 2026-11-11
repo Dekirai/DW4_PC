@@ -9816,6 +9816,13 @@ cursor on the same instance (or on *New instance*).
   `World:PlanWaitMs`), a departure posted outside a menu (the development
   build's `depart` action) and the test hook `DW4_ONLINE_TEST_GATE_FORM=0`
   (W11b). Log: `build/i1bp/meas/census_r3.log` (worktree `i1b-prompt`).
+  The lobby's point next to each departure (19.7.5's *Back to the lobby*),
+  from `dw4_world_probe DATA mats stagml11` (the mats and the generate
+  points): the gate (mate00, x -5..15, z -105..-85) has point 1 at (0, -40)
+  nearest, the return mat (mate02, x 145..165, z 45..65) point 3 at
+  (210, 120) (points 2 (60, 20) and 4 (250, 70) are farther; point 0 and
+  every undefined one are (60, -30)); the accessor names them
+  (`DepartureChoice::back_point`).
 - **The hold.** When the own player's press would confirm such a choice,
   the client keeps that press out of the pad stream (the engine sees neutral
   pads), sends PLAN and waits for OPTIONS (one round trip, well under 100 ms
@@ -13900,6 +13907,12 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   an instance (a straggler that lost its instance) keeps I1a's automatic
   join. A starting instance at the stage still takes the arrival without a
   prompt (OPTIONS flag 2 for a PLAN).
+- ***Back to the lobby*'s point** (19.7.5): the client remembers the named
+  departure its own press last started (also with the gate form off) and
+  sends its census point in CHOICE *back* (1 next to the gate, 3 next to the
+  return mat); a departure the census does not name (the development
+  build's `depart`), or a press more than a minute before, leaves 0xFF, the
+  relay's stagML11 point 3. The relay takes only the lobby's points 0-4.
 - **Full instances are listed** (greyed *Full*), so a row that filled is
   seen; `World:ArrivalPrompt` false keeps I1a's automatic join of the first
   row (the in-process load gate and the older hub tests use it; the

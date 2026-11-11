@@ -1,7 +1,7 @@
 # W11b, a (k2): A on the lobby gate's first line (stag0101) without the gate form: the press goes to the game at once and
 # the departure runs; the relay holds a's barrier for the loading-screen prompt (c's row). B (DW4_ONLINE_TEST_GATE_FORM=0,
-# autochoice back): Back to the lobby, a reload of the lobby at the gate (stagML11 point 3) on a's own story; nothing of the
-# field was played (key 4, which c's story has and a's lacks, never set in a's engine).
+# autochoice back): Back to the lobby, a reload of the lobby next to the gate (stagML11 point 1, the census names it) on
+# a's own story; nothing of the field was played (key 4, which c's story has and a's lacks, never set in a's engine).
 campaign until stage=stagml11,control
 idle until frames>=120 fail key:4=1
 log own story at home

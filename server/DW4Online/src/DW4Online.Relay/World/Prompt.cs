@@ -53,6 +53,10 @@ namespace DW4Online.Relay.Hub
     /// </summary>
     public sealed partial class RoomHub
     {
+        /// <summary>stagML11's last generate point (points 0-4, `dw4_world_probe DATA mats stagml11`): a CHOICE *back*'s point beyond it
+        /// is the default <see cref="HomePoint"/>.</summary>
+        private const byte HomeLastPoint = 4;
+
         // PLAN (the gate form) ---------------------------------------------------------------------------------------------
 
         /// <summary>A member at home holds its confirming press and asks what the departure would find (19.7.4).</summary>
@@ -207,7 +211,9 @@ namespace DW4Online.Relay.Hub
                         g.PromptChoice = null;
                         return false;
                     }
-                    var point = c.BackPoint == ChoiceMsg.DefaultBackPoint ? HomePoint : c.BackPoint;
+                    // (The client's census names the lobby's point next to the mat it left: 1 at the gate, 3 at the return mat; any
+                    // other value than the lobby's points 0-4 is the default.)
+                    var point = c.BackPoint <= HomeLastPoint ? c.BackPoint : HomePoint;
                     Note("prompt_back", g.From, ("member", m.Id), ("stage", HomeStage.ToLowerInvariant()), ("point", point));
                     Dissolve(g, now, redirectHome: true, backPoint: point);
                     return true;

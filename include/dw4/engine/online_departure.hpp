@@ -20,6 +20,12 @@
 // console's stagML02): no arrival, no prompt. Both named departures get the
 // gate form; data/online/stage_graph.json has no static edge from a hub
 // stage into a field (the census test).
+//
+// The hub point next to each departure (19.7.5: *Back to the lobby* puts the
+// player there, off the mat), measured with `dw4_world_probe DATA mats
+// stagml11` (mats and generate points): mate00 x -5..15 z -105..-85, point 1
+// at (0, -40) the nearest; mate02 x 145..165 z 45..65, point 3 at (210, 120)
+// the nearest (point 2 (60, 20), point 4 (250, 70) farther).
 #include <cstdint>
 #include <string>
 
@@ -34,6 +40,7 @@ struct DepartureChoice {
     int cursor = 0;      // its cursor (the DMcase the press starts)
     int items = 0;       // its lines
     int reader = 0;      // the slot whose pad the menu reads (Engine::pad_reader_slot)
+    int back_point = -1; // the hub stage's point next to the departure's mat (stagML11: 1 gate, 3 return mat); -1 none
     bool operator==(const DepartureChoice&) const = default;
 };
 
