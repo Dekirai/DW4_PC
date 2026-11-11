@@ -32,6 +32,9 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 | 7 | Integration test: the host's block through `POST /blocks` removes his guest (WORLD_NOTICE removed, the bar, audit `instance_remove` with block) | eaeee787 |
 | 8 | The staff list names the instance a report came from (19.20): `GET /admin/reports` rows gain `instanceHost`, `instanceStage`, `instanceStarted`; the website's *Admin > Reports* and the account page show "#id, host's, area, started"; the relay test reports from inside the instance | 81000b02 |
 | 9 | UI scenario `card` works the card with the controller (A on Report, the reasons, A on Griefing; right to Remove, the question, A); the UI script's `card` shows the nav cursor as A on the row does (ImGui activates only with a visible cursor); run.py's `run_ui` seeds a client's online story from its card (`"seed_story": true`, else the pad script's gate does not work on an empty story) | 978efd19 |
+| 10 | Review 2026-11-11, finding 1: a removed member never takes a seat again (`TakeSeat` refuses under the bar or an owed HOME; `SendRemovedHome` at the removal of a waiting arrival, in `Decide`, at every `CheckHolds` pass and in `Join`: DISSOLVE home with the redirect, the rest decides on; the join's fallback without a seat asks HOME at once); finding 2: REPORT resolves only members the reporter was told about (`HubMember.Introduced`), any other id is "not available" without a name; finding 3: REPORT's bucket 3 + 10/min | 81d1e247 |
+| 11 | Findings 3 and 6: the report service answers a reached daily limit without a query for 10 minutes; 403 `own_report` for staff handling a report about themselves (API and website) | 0f4bf17c |
+| 12 | Findings 4, 5, 7: README (422 `own_account`, the staff list's instance fields, 403 `own_report`); the card's question without a number, the card's texts in 19.5.6; scenario W10d (removal while the JOIN waits) with the relay's test option `World:TestJoinHoldMs` and the online script's `members=N`; 19.24 names W10d | 5891f581 |
 
 ## Test results
 
@@ -71,6 +74,30 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
   reported / question / removed and b's home_after_removal (run folder `tools/online_test/.work/run_20261107_174119`).
 - r5 (exe d = 978efd19, `build/mod/scen_r5.log`, run folder `tools/online_test/.work/run_20261107_174801`): **W10 (483 s),
   W10b (197 s) and W10c (383 s) passed** on the final client, 3 of 3.
+
+## Review 2026-11-11 (the I1b review's findings) and what was done
+
+1. should_fix, RoomHub: a removal was undone when the relay seated the removed member again (the JOIN hold, a barrier that
+   gathers and ends in a JOIN, the join's fallback). Fixed (81d1e247): `Unseatable` / `TakeSeat` guard, `SendRemovedHome`
+   in `Remove`, `Decide`, `CheckHolds`, `Join`, `FallbackNew` without a seat plus `RetryHome`. Tests (fail without the fix
+   except the running-join one, which guards the HOME): `A_fresh_arrival_removed_while_its_join_waits_...`,
+   `A_member_removed_while_its_stage_group_gathers_at_a_barrier_...`, `A_member_removed_while_its_join_runs_...` (two), and
+   W10d with real clients.
+2. should_fix, REPORT as a name / presence oracle. Fixed (81d1e247): only members the reporter's connection was told about
+   (MEMBER_INFO) resolve, from the reporter's own record (`HubMember.Introduced`), so the answer does not depend on where the
+   member is; every other id is "not available" without a name. Test
+   `A_report_resolves_only_members_the_reporter_was_told_about_...`; the relay integration test meets the player first.
+3. minor, REPORT's bucket 6x REST's. Fixed: 3 at once then 10 a minute (81d1e247), and the service answers a reached limit
+   without a query for 10 minutes (0f4bf17c).
+4. minor, README 400 vs 422 and the staff list's fields. Fixed (5891f581, contract 15:20); the API test checks the status.
+5. minor, the card's texts not in 19.5.6, "10 minutes" fixed in the client. Fixed (5891f581): "They can't rejoin it for a
+   while." and a 19.5.6 row for the card.
+6. minor, staff handle reports about themselves. Fixed (0f4bf17c): 403 `own_report`, the website hides Done / Reopen.
+7. minor, W10's prompt check and a race scenario. W10d added (5891f581); the prompt's `options` check belongs to the I1b
+   integration (the prompt lane is not on this branch): noted in the contract (15:20).
+8. minor, the flaky `A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (base bfc3b0a5). Not this
+   lane's code: the prompt lane found its cause (`RoomHub.BecomeMember` stamps `Stopwatch.GetTimestamp()` instead of the
+   hub's `now`, contract "prompt 14:25"); the integration fixes it once; a full run that fails only there is repeated once.
 
 ## Findings for the integration (not this lane's code)
 
