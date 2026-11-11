@@ -158,6 +158,10 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - r7 (exe d, server at bb6c7ad9, `build/i1bp/scen_r7.log`): **W1, W11 (with decision 41's new prompt checks), W11b, W2b, W30b
   passed**; W2 and W30c failed only on `relay: choice .*choice=back` (the gate form's B was no longer logged after the first
   fix; b01cc47b logs it again).
+- r8 (exe d, server at b01cc47b, `build/i1bp/scen_r8.log`): **W2, W30c passed**. r9 (the same, `build/i1bp/scen_r9.log`):
+  round I1a's **W4, W4b, W4bx, W30 passed** (co-arrival, the starting instance, the guest's NEW through the prompt).
+  So the lane's W1, W2, W2b, W11, W11b, W30b, W30c pass on the review fixes; I1a's other W scenarios last passed on exe c
+  (r3-r5), before the review fixes.
 
 ## How to run the tests
 
