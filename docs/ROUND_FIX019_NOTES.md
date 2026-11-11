@@ -20,6 +20,7 @@ Own resources: mysqld 3671, ports 59000-59199, build dirs `build/f19/*` (gitigno
 | 7 | the lost test | `OnlineStoryTests.A_restore_of_a_revision_that_is_not_kept_leaves_the_owners_instance_running` back from feat-i1a-web dcd6f3ae | integration tests with mysqld 3671: 141 passed, 1 skipped (the opt-in certificate-store test), `build/f19/it2.log` |
 | 1, 2 (scenarios) | the scenarios whose rules changed | W30, W30x, W6: a and b friends (`api_checks` at 1 s / 2 s: b's request, a's accept, status 200); W29: the fake guests befriend a (run.py `fake_guests.friend_of`); W18: a's instance Public (the playing moderator joins with the Staff tag); W5: the moderator c also takes the gate while a's Private instance runs and gets his own (three instances, no staff_join) | runs below |
 | 9 (tool) | the load gate's GC trace | `tests/DW4Online.FakeClient/GcTrace.cs`: the collections (runtime events: generation, reason, kind, the EE pause) and the process's stalls over 20 ms (a highest-priority 1 ms watcher), per cell in `gc_trace` (over sockets the relay process's) | results below |
+| 8 | the regression | r2 below: RGJ1, S22a, the UI set and --fake pass (three harness fixes, 9a870834); S22b fails on an engine defect (below) | `build/f19/scen_r2*.log` |
 | 10 | documents | README.md's online section for the world; server README (rooms retired 410, migrations through 0013, the world relay, the website, the admin run); DEPLOY.md 9.1 / 9.2 (0.1.6 carried 0012, the server's way 0.1.4 -> 0.1.6 -> 0.1.7 -> 0.1.8 -> 0.1.9) and 10; SEAMLESS 19.7.1, 19.7.2, 19.7.6, 19.6.6, 19.8.5, 19.14, 19.19, 19.25, 19.30.3, 19.32; ROUND_I1A_INT_NOTES (below); `src/game/game_main.cpp`: the comment before `view.gain` at 12 spaces | - |
 | 11 | version | `server/DW4Online/Directory.Build.props` 0.1.9. Client code: unchanged (only the comment of finding 10), so 0.1.9 needs no new client | - |
 
@@ -35,11 +36,30 @@ det.sh (DEV=OFF copy `build/f19/off/dw4_f19_off_a.exe`, the C++ of every later c
   (244), W26 (323), W27 (383), W28 (319), W29 (434: both fakes befriended a, fg1 a guest's NEW, fg2 joined it), W30 (403:
   the friend requests 200 / 200, b's guest's NEW), W30x (counter-proof, 403), W4 (181), W4b (202), W5 (226: three
   instances, c alone at stag0101 while a's Private instance ran, no staff_join), W6 (283).
+- r2 (finding 8, the same exe, the server of 3c146cf5 / 9a870834): `scen_r2a.log` RGJ1 S22a S22b, `scen_r2b.log` the UI
+  set, `scen_r2c.log` --fake, `scen_r2d.log` RGJ1 S22b again (the S22b copy with `DW4_TRACE_TICKSTATE_DUMP`, untracked,
+  removed after), `scen_r2e.log` ui home and newchars again:
+  - **--fake 9 of 9**; **S22a passed**; **RGJ1** failed once on its expectations' order only (the world's guest toast comes
+    after the JOIN's decision), reordered (9a870834), then **passed**; **UI 10 of 10** after two harness fixes (home: the
+    playing screen stays open after Play until B, as areas does it; newchars: the rooms' guest checks replaced by the
+    world's, both players at home on their own stories, a save room save that found nothing new is fine; 9a870834).
+  - **S22b fails** (twice, r2a and r2d): everything it expects holds, but the relay logs `statehash_mismatch` and
+    `checkpoint_suspect` after b's classic join (inst 7 visit 3, ticks 4200 / 4800). The tick state diff
+    (`tools/online/tickstate_diff.py`, dumps in `build/f19/dump_s22b`): beAction2's `ActionManager::random_wait_min_`
+    (80535A60, the random WAITCHECK minimum) is 120.0 on a and c and 0.0 on b. It starts at 0, a WAITCHECK 'R' with 'S'
+    sets it during stag0101 (all three engines 120 by tick 10200), a normal stage change keeps it (the original's global),
+    but `StageSnapshot` (the classic join's state, a save state, a fallback) does not carry it: a restored engine has 0.
+    An engine defect older than I1a, also in single player (a loaded save state); the RNG stays in step (both branches
+    draw once), the waits differ. The fix is the field in the snapshot (kSnapshotVersion 44, the tick state's version with
+    it), which old and new clients cannot mix: a client release with a protocol rise (I1b's). Not done in this server-only
+    round; recorded in ROUND_I1A_INT_NOTES and here.
 
 ## Left
 
-- 8: RGJ1, S22a, S22b, ui, --fake on a DEV=ON build (r2, running); 9: the load gate; ROUND_I1A_INT_NOTES with r2.
+- 9: the load gate (running).
 - At the end: unit and integration tests on the final tree.
+- Open beyond this round (not fixed: a client release with a protocol rise): S22b's `statehash_mismatch` after a classic
+  join, `ActionManager::random_wait_min_` missing from the load snapshot (below).
 
 ## How to run
 

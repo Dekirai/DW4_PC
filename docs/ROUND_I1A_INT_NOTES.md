@@ -3,7 +3,11 @@
 Branch `int-i1a` from main d0e005b0 (worktree `DW4_PC-wt/int-i1a`). It merges the three lanes of round I1a "the world
 without rooms" (SEAMLESS.md 19.25 "Round I1a", its Done-when; 19.30 round 72) and makes the Done-when hold on the
 merged tree. Lane notes: `docs/ROUND_I1A_WEB_NOTES.md`, `docs/ROUND_I1A_RELAY_NOTES.md`, `docs/ROUND_I1A_CLIENT_NOTES.md`;
-the lanes' contract (outside the repo): `DW4_PC-wt/i1a-contract.md`. Never merged into main from here.
+the lanes' contract (outside the repo): `DW4_PC-wt/i1a-contract.md`. Never merged into main from here: the release branch
+`rel-0.1.7` took this branch's state and main's Data Overflow O1b (3ad4621e, merged into main as **DW4Online 0.1.7**: ctest
+62/62, det.sh 4004f056 / audio 396cb219); 0.1.8 (9fcd0681) added only the X-Forwarded-Prefix change and is live. The
+review of 0.1.7 (round fix-019, `docs/ROUND_FIX019_NOTES.md`, DW4Online 0.1.9) re-ran what this round left open (r3's three
+failures, `ui`, `--fake`; below).
 
 Own resources: mysqld 3641 (`server/DW4Online/.local` for the integration tests, gitignored; the scenario harness starts
 its own on the same port from `tools/online_test/.work`, so never both at once), ports 57600-57799, build dirs
@@ -88,7 +92,38 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
 - **The W set of I1a's Done-when passes**: W1, W3, W4, W4b, W5, W6, W7, W7b, W7c, W7d, W7e, W8, W9, W11, W12, W18, W19,
   W22, W24, W25, W26, W27, W28, W29, W30, W30b (I1a part), W32, and the counter-proofs W1x and W30x fail as they must
   (rounds r2a-r2g above; the scenarios whose files changed after their pass: none).
-- r3 (exe g, `build/int/scen_r3.log`): the ported regression, every other game scenario (37), running.
+- r3 (exe g, `build/int/scen_r3.log`, run folder `run_20261107_141607`): the ported regression, every other game scenario:
+  **34 of 37 passed** (A1, J1, J5, JB, JR, JS, JS2, L1, L1s, L2, L3, M1, M2, P1, P2, P3, RG7, S1, S11a, S11b, S14p, S14z,
+  S16, S17a, S17b, S18, S18b, S19a, S19b, S19c, S2, S21, S3, S5). Failed: RGJ1 (only the rooms' toast line left in its
+  expectations: bfc3b0a5), S22a and S22b (round J's checkpoint joins ended their catch-up before the target could leave or
+  fork: both now run their server without checkpoint joins, 83647150). Not run again here; the UI scenarios and `--fake`
+  were not run in this round.
+- **fix-019's r2** (the review of 0.1.7, finding 8; DEV=ON build of fix-019's C++ (main's plus a comment), its server
+  0.1.9, `--parallel 1`, worktree `DW4_PC-wt/fix019`: `build/f19/scen_r2a.log` .. `scen_r2e.log`):
+  - RGJ1: failed once on the order of its expectations only (the world's toast "You're a guest in <host>'s story." comes
+    with the instance's INSTANCE_INFO after the JOIN's decision, not at the Game Start; the room story's hold of 8 s, the
+    checkpoint join, READY from it and 4,020 sealed ticks with equal fingerprints held): expected.txt reordered (9a870834),
+    then **passed** (r2d).
+  - S22a: **passed** (the classic join's target left during the catch-up: the fallback to NEW in a's instance).
+  - S22b: **fails, twice** (r2a and r2d, the second with `DW4_TRACE_TICKSTATE_DUMP`): everything it checks holds (b follows
+    the instance id through c's fork, its JOIN applies on a's side, a and b equal for 10,680 ticks of fingerprints), but
+    the relay logs `statehash_mismatch` (and `checkpoint_suspect`) at the first state hashes after b's classic join (inst 7
+    visit 3, ticks 4200 and 4800). `tools/online/tickstate_diff.py` on the dumps: the only difference is beAction2's
+    `ActionManager::random_wait_min_` (80535A60, the minimum of the random WAITCHECKs: a 120.0, b 0.0). Every engine has
+    0 at stag0101's start and 120 later in it (a WAITCHECK 'R' with 'S' sets it); a normal stage change keeps it (the
+    original's global; a and c have 120 in stag0102 from their first hash), but the load snapshot (`StageSnapshot`, the
+    state of a classic join, a save state, the fallback) does not carry it, so an engine restored from one has 0. A real
+    engine defect, older than round I1a: a classic joiner's random waits after it differ (the RNG stays in step: either
+    branch draws once), and the same holds for any restored save state. Not fixed in fix-019 (a server release): the fix
+    is the field in `StageSnapshot` (kSnapshotVersion 44, so the tick state's version too), which old and new clients cannot
+    mix, so it needs a client release with a protocol rise (I1b's, 19.25). Checkpoint joins (round J's default) carry the
+    field in the tick state and are not affected.
+  - The UI scenarios (`run.py ui`): 8 of 10 first (accounts, areas, cheats, gate, leave, navigation, offline, unreachable);
+    home waited for the screens to close by themselves after Play (the playing screen stays until B or its Play, as areas
+    does it) and newchars kept the rooms' guest checks (in the world both are at home on their own stories: b's record holds
+    its own phase 2, and a save room save may find nothing new after the stage change into the save room uploaded the
+    character): both fixed in the harness (9a870834); both then **passed** (r2e: 10 of 10 over r2b and r2e).
+  - `--fake`: **9 of 9 passed** (S1, S2, S3, S5, S16, S17a, S17b, S22a, S22b).
 
 ### Findings for later (not changed here)
 
@@ -106,10 +141,9 @@ its own on the same port from `tools/online_test/.work`, so never both at once),
 
 ## Left
 
-- Round r2a's results; then r2b: W1x W3 W4 W4b W5 W7 W7c W8 W11 W12 W18 W19 W22 W25 W26 W28 W30 W30x; then the ported
-  regression (the other game scenarios, `--fake`, `ui`).
-- At the end on the final tree: ctest, det.sh, r25c, the save state suite again (C++ changed after 8b3c332a: the online
-  script's depart and disk actions, the probe).
+- Nothing of this round: r2a-r2g and r3 ran (above), the release took the final tree (ctest 62/62, det.sh). What the
+  review of 0.1.7 found and fixed is round fix-019's (`docs/ROUND_FIX019_NOTES.md`); open from it: S22b's
+  `random_wait_min_` (the load snapshot's missing field, above) for the next client release.
 
 ## How to run
 
