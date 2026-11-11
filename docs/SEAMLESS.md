@@ -12575,11 +12575,24 @@ client's request (`World:TestHooks`), and a GO barrier held for a time
 (`World:TestGoBarrierHoldMs`). W31c's hooked race runs as W31c2, W31h's
 second run as W31h2; W31d runs with four members (b falls by the hook, d's
 GO falls with it, c takes both along); W31f uses the Gate Disk (above).
-W31's host crosses dng204b1 with the campaign bot's errand: the online
-script's explore, which only strikes the enemies that come near, fell there
-twice. Measured in W31 (run r2): the press to the stamp 10.0 s (dng204b1's
-load and entry scene), the stamp to control 3.4 s (the GO's departure 2.8 s
-to the park, the barrier, the checkpoint join), as 19.30.7 estimated.
+W31's host reaches dng204b1's matz02 by a fourth hook, TEST *mat* (the
+member's player put onto a named mat on every engine of its stage group;
+the online script's explore and the campaign bot's errand both fell in
+B1 at k10); W31e's c goes into dng205b1 by the development step `depart`
+(stag0202's enemies felled it), and every walk through stag0201 heals from
+the L panel. Measured in W31 (run r2): the press to the stamp 10.0 s
+(dng204b1's load and entry scene), the stamp to control 3.4 s (the GO's
+departure 2.8 s to the park, the barrier, the checkpoint join), as 19.30.7
+estimated (run d1: 10.9 s and 3.3 s).
+*Runs of 2026-11-11 (c1, d1, e1; the notes list each).* Three findings
+fixed on the way, besides the scenario scripts: a player that *appears* on
+a mat has not stepped on (5.2: W31d's fourth member spawned on dng204b1's
+way back, and its prompt, left open, kept the next JOIN from applying); a
+HEADING of the same departure again keeps the asked members (the engine
+announces a departure once more when the port's fork leaves the member
+alone in its copy; W31b's b got the notice); the online script also runs
+while a barrier is held (its conditions and *goback*, with the wall-clock
+condition `waited`), and the test hold says BARRIER_WAIT every second.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
