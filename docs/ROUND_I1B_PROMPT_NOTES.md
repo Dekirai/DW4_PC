@@ -46,6 +46,39 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
   departure its own press last started (also with the gate form off) and sends that point in CHOICE *back*; an unnamed
   departure or a press more than a minute before sends 0xFF (the relay's stagML11 point 3). The relay takes points 0-4 only.
 
+## Review fixes (2026-11-11, after the reviewer's findings)
+
+- **Blocker: a chosen row lost to a stranger's co-arrival** (RoomHub.Decide): a fresh group whose gate-form CHOICE was a row
+  held for a stranger's HEADING (the base check looked only at the others' choices) and FinishCoArrival made it a NEW. Now
+  such a group holds for nobody (`announced` empty), and FinishCoArrival never replaces a chosen join (counted
+  `co_arrival_base_chose_row`, unreachable). Tests `A_member_that_chose_a_row_holds_for_no_stranger_and_joins_the_row_it_chose`,
+  `A_base_holds_for_no_member_that_chose_and_takes_none_as_its_co_arrival` (PromptReviewTests.cs).
+- **CHOICE only for offered rows** (Prompt.cs OnPromptChoice): a join of a wid the plan / the held prompt never offered is
+  counted (`choice_unoffered`) and ignored (no OPTIONS, no log line); one answer per plan (`choice_repeated`); a held barrier
+  takes one CHOICE a second (`choice_throttled`, the newest kept in `ArrivalGroup.PendingChoice`, taken in CheckHolds);
+  the refused choice's line names only an offered host; `PromptHosts` accumulates (never cleared). Only taken choices log.
+- **Notice by the row's reason**: full -> "full now", gone -> ended / no longer open, still listed but greyed for another reason
+  (host reconnecting, too long, story not here) -> no line.
+- **Full rows after the context check** (WorldHub.Candidates): a quest player saw full story instances.
+- **Order** (Matching.Order, I1a code): a stage group in a scene / loading ranks with the joinable rows in steps 1-3, after
+  the rows joinable now in step 4; only boss fights and greyed rows go last.
+- **PLAN's throttle** 900 ms by arrival (the client spaces PLANs 1 s by its clock). Gate-form B / a withdrawn plan counts
+  `plan_closed`.
+- **Client**: the plan is withdrawn (CHOICE back with the plan) when the menu closes otherwise or PlanWaitMs runs out;
+  "Joining <host>..." only for a row with players here (`chosen_here_`); state 6 reads "Other quest"; the keyboard hint has no
+  "X: Details".
+- **Load gate** (FakeClient LoadGate.cs): its hubs run the prompt as shipped (`LoadGate.ArrivalPrompt`, `--no-prompt` for
+  I1a); joins go through the gate form (PLAN, CHOICE, BARRIER with the plan); new cell `prompt` (joins cell + 5 PLANs a second
+  from the lobby's gate, overlays open 3 s, every second join through the loading-screen form). Test
+  `LoadGateTests.A_small_prompt_cell_joins_through_both_forms_and_measures_plan_and_choice`. Measured: SEAMLESS.md 19.17.4.
+- **Prompt variants of the I1a rule tests** (PromptVisibilityTests.cs): private / friends / staff, blocks either way and a
+  playing moderator, the removal bar, the data hash, the host reconnecting, the boss lock (Wait / Go alone).
+- **W11** expects no prompt, PLAN, OPTIONS or held barrier for a's move into dng101b1 (decision 41).
+- SEAMLESS.md: 19.7.3 (the loading rows), 19.7.4 (PLAN 900 ms), 19.24 (W30c in stag0202), 19.32 (the fixes, the gate form's
+  "full now" at the BARRIER, the return mat without a real-client scenario, the open question below).
+- **Open for the user** (finding 9, decision 21): two players leaving together who both choose *New instance* land in two
+  instances (each is a base, neither the other's co-arrival). Built as 19.7.6's literal reading until the user answers.
+
 ## Tests
 
 - Server unit: `PromptTests.cs` (PLAN nothing / rows / starting, W1's preselection, decision 40's order and the cursor of
