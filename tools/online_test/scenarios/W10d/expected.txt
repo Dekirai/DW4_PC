@@ -5,10 +5,12 @@ a: online-script: step .* log: b waits for its join in a's instance
 a: online-script: remove \S+b member \d+ sent
 a: online-script: step .* log: b is gone
 a: online-script: step .* log: a still hosts
-b: online-script: step .* log: b waits for its join
+b: online-trace: mode solo -> parked
 b: online: .*You were removed from .*'s instance\.
-b: online-script: step .* log: b home after the removal in the wait
-b: online-script: step .* log: own story at home
+b: stage change -> stagml11
+b: online-trace: decision 1 .*stage=stag0101
+b: online: New instance
+b: online-script: step .* log: b in stag0101 in its own instance
 b: online-script: step .* log: b on its own story there
 relay: instance_start .*stage=stag0101
 relay: instance_join .*how=join
@@ -17,6 +19,7 @@ relay: remove .*reason=host
 relay: instance_leave .*reason=removed
 relay: removed_home .*hold=join
 relay: redirect .*stage=stagml11
+relay: instance_start .*stage=stag0101
 !relay: join_decided
 !relay: seat_refused
 !a: online-script: FAIL
