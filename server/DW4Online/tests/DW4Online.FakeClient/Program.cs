@@ -20,7 +20,8 @@ using DW4Online.Relay.Protocol;
 //           [--sockets --port 56810] [--protocol 48]
 //           round I1a's load gate (SEAMLESS.md 19.17.4): on one in-process hub (LoadGate.cs), or with --sockets against a
 //           real relay in a child process on loopback, one port per cell from --port (LoadGateNet.cs; not the joins cell).
-//           Fails (exit 1) when a cell's run is invalid (frames the hub refused or dropped).
+//           Fails (exit 1) when a cell's run is invalid (frames the hub refused or dropped). Every cell reports gc_trace: the
+//           collections with their pauses and the process's stalls over 20 ms (GcTrace; over sockets the relay process's).
 //   loadgate-relay --port P --key HEX   the relay process of loadgate --sockets (commands on stdin)
 //   joins   [--minutes 1,10,25] [--out FILE.json] [--protocol 48]   the lock's holds of one classic join per log length, on an idle hub
 var args2 = args.Skip(1).ToArray();
@@ -172,7 +173,11 @@ switch (args.FirstOrDefault())
         {
             if (only.Length > 0 && !only.Split(',').Contains(cell.Name)) continue;
             if (sockets && cell.JoinsPerMinute > 0) continue;
+            // (fix-019: in-process, the collections and stalls of this process over the cell's run, its warm-up included, GcTrace;
+            // over sockets the relay's child process reports its own.)
+            using var gcTrace = sockets ? null : new GcTrace();
             var r = sockets ? await LoadGateNet.RunAsync(cell, port++, seconds, threads, Console.WriteLine) : LoadGate.Run(cell, seconds, threads, Console.WriteLine);
+            if (gcTrace is not null) r["gc_trace"] = gcTrace.Report();
             Console.WriteLine(LoadGate.Json(r));
             results.Add(r);
             if (Opt("--out") is { Length: > 0 } partial) await File.WriteAllTextAsync(partial, LoadGate.Json(results));

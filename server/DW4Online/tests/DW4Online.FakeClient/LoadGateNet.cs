@@ -53,6 +53,8 @@ public static class LoadGateNet
         await relay.StartAsync(stop.Token);
         Console.WriteLine($"LISTENING {await relay.Started}");
         var proc = Process.GetCurrentProcess();
+        // (fix-019: the relay process's collections and stalls in the window, GcTrace.)
+        using var gcTrace = new GcTrace();
         var browse = 0.0;
         var browsing = new Thread(() =>
         {
@@ -97,6 +99,7 @@ public static class LoadGateNet
                             counters0 = new Dictionary<string, long>(hub.Counters);
                         }
                     at0 = Stopwatch.GetTimestamp();
+                    gcTrace.Mark();
                     Console.WriteLine("MARKED");
                     break;
                 case "report":
@@ -141,6 +144,7 @@ public static class LoadGateNet
                             r["instances"] = hub.Instances.GroupBy(i => i.Mode.ToString()).ToDictionary(g => g.Key, g => g.Count());
                             r["connected"] = hub.Members.Count(m => m.Connected);
                         }
+                    r["gc_trace"] = gcTrace.Report();
                     Console.WriteLine("REPORT " + JsonSerializer.Serialize(r));
                     break;
                 }
