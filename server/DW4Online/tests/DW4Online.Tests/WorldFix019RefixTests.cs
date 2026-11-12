@@ -14,7 +14,7 @@ namespace DW4Online.Tests;
 public partial class HubLogicTests
 {
     [Fact]
-    public void A_fresh_arrival_removed_during_its_join_hold_decides_again_alone_and_never_takes_its_seat_back()
+    public void A_fresh_arrival_removed_during_its_join_hold_goes_home_and_never_takes_its_seat_back()
     {
         // a hosts at stag0101 in an entry scene (not joinable yet); b, c, d, e come from home and wait for their automatic JOIN. (b's
         // default is Private: the instance it gets after its removal is no starting instance the others would co-arrive in.)
@@ -35,13 +35,13 @@ public partial class HubLogicTests
         h.Barrier("b", "stag0101");
         Assert.True(w.Seats.ContainsKey(b));
         Assert.False(h.P("b").Has(Msg.BarrierOk));
-        // a removes b while it waits: b decides again on its own at once, where the bar counts (an instance of its own), and owes no HOME.
+        // a removes b while it waits: b goes home from its barrier at once (round I1b, SendRemovedHome: a DISSOLVE into the lobby on its
+        // own story; fix-019's refix had it decide again alone, an instance of its own) and owes no HOME.
         h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, b.Id).Frame());
         Assert.False(w.Seats.ContainsKey(b));
         var own = h.Decision("b");
-        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (own.Decision, own.World.Arrival));
-        Assert.NotEqual(w.Wid, own.World.Wid);
-        Assert.NotSame(w, b.World);
+        Assert.Equal((BarrierDecision.Dissolve, b.Id, "stagml11"), (own.Decision, own.World.OwnerMember, own.World.RedirectStage.ToLowerInvariant()));
+        Assert.Null(b.World);
         Assert.Null(b.HomeWish);
         Assert.Null(b.Arrival);
         // c, d, e take the three free seats while a's scene runs; then a's stage group turns joinable: the JOINs never make a fifth
@@ -66,7 +66,7 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void A_member_removed_at_its_barrier_joins_without_a_seat_and_its_story_and_context_are_a_guests()
+    public void A_member_removed_at_its_barrier_goes_home_from_it_and_never_joins_without_a_seat()
     {
         // a hosts and moves on to stag0102; his friend b enters his instance at stag0101 as a guest (a stage group of its own).
         var h = new Harness(new InstanceOptions { StoryMinVisitSeconds = 1 });
@@ -96,18 +96,24 @@ public partial class HubLogicTests
         Assert.Equal(WaitReason.NotJoinable, h.P("b").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
         h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, b.Id).Frame());
         Assert.False(w.Seats.ContainsKey(b));
-        // The scene ends: b's JOIN goes on without a seat (before the refix it took the seat back past the bar).
+        // At once (round I1b, SendRemovedHome): b goes home from that barrier, a DISSOLVE into the lobby on its own story (fix-019's
+        // refix let its JOIN go on without a seat until its owed HOME; before the refix the JOIN took the seat back past the bar).
+        var home = h.Decision("b");
+        Assert.Equal((BarrierDecision.Dissolve, StoryMode.Replace, b.Id, "stagml11"),
+            (home.Decision, home.World.StoryMode, home.World.OwnerMember, home.World.RedirectStage.ToLowerInvariant()));
         h.Joinable("a");
-        Assert.Equal((BarrierDecision.Join, h.Inst("a")), (h.Decision("b").Decision, h.Decision("b").NewInst));
+        h.Hub.Housekeep(h.Now);
+        Assert.Single(h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse), o => o.Decision == BarrierDecision.Dissolve);
+        Assert.DoesNotContain(h.P("b").All(Msg.BarrierOk, BarrierOkMsg.Parse), o => o.Decision == BarrierDecision.Join);
         Assert.False(w.Seats.ContainsKey(b));
         Assert.Null(b.World);
         Assert.Single(history.OfType<HistoryJoined>(), j => j.World == w && j.Account == b.AccountId);
         Assert.Single(h.P("a").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Joined && n.Member == b.Id);
-        // Its engine holds a's story while it catches up: no STORY of it reaches a keeper, and the achievements read it as a's guest.
-        var ctx = h.Hub.PlayContext(b.AccountId, h.Now)!;
-        Assert.Equal((w.Wid, false, w.Settings.Difficulty), (ctx.Wid, ctx.IsHost, ctx.Difficulty));
         Assert.True(w.Bars.ContainsKey(b.AccountId));
-        Assert.NotNull(b.HomeWish); // (its HOME is asked again once it plays in a's stage group, RetryHome)
+        Assert.Null(b.HomeWish);
+        // Its own story and home context from then on: the achievements read it at home.
+        var ctx = h.Hub.PlayContext(b.AccountId, h.Now)!;
+        Assert.Equal((0u, true), (ctx.Wid, ctx.IsHost));
     }
 
     [Fact]

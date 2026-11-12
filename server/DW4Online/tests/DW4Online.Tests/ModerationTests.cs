@@ -20,7 +20,7 @@ public partial class HubLogicTests
     {
         var h = new Harness();
         Admit(h, "a", Player(100, "a") with { Story = StoryAt(4) });
-        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2) });
+        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2), Friends = [100] });
         BarrierWith(h, "a", "stag0202");
         h.Snapshot("a");
         BarrierWith(h, "a", "dng205b1");
@@ -253,8 +253,8 @@ public partial class HubLogicTests
     {
         var h = new Harness();
         Admit(h, "a", Player(100, "a") with { Story = StoryAt(4) });
-        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2) });
-        Admit(h, "c", Player(102, "c") with { Story = StoryAt(2) });
+        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2), Friends = [100] });
+        Admit(h, "c", Player(102, "c") with { Story = StoryAt(2), Friends = [100] });
         BarrierWith(h, "a", "stag0202");
         h.Snapshot("a");
         BarrierWith(h, "a", "dng205b1");
@@ -358,11 +358,12 @@ public partial class HubLogicTests
     {
         var (h, w, _) = JoiningGuest();
         h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
-        // a walks on before b's READY: b's fallback is a new stage group of a's instance (its engine holds a's story), but no seat
-        // (before the review's fix TakeSeat seated it again) and its owed HOME at once (JOIN_REQ home: it leads alone).
+        // a walks on before b's READY: b's fallback is a stage group of nobody's instance (fix-019's FallbackHome: BARRIER_OK wid 0, no
+        // story; its engine still holds a's), no seat (before the lane's review fix TakeSeat seated it again) and its owed HOME at once
+        // (JOIN_REQ home: it leads alone).
         h.Barrier("a", "stag0102", tick: 119);
         var fallback = h.Decision("b");
-        Assert.Equal((BarrierDecision.New, w.Wid), (fallback.Decision, fallback.World.Wid));
+        Assert.Equal((BarrierDecision.New, 0u), (fallback.Decision, fallback.World.Wid));
         Assert.False(w.Seats.ContainsKey(h.Mem("b")));
         Assert.Null(h.Mem("b").World);
         Assert.Contains(h.P("b").All(Msg.JoinReq, JoinReqMsg.Parse), r => r.Kind == JoinReqKind.Home);
@@ -380,8 +381,8 @@ public partial class HubLogicTests
     {
         var h = new Harness();
         Admit(h, "a", Player(100, "a") with { Story = StoryAt(4) });
-        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2) });
-        Admit(h, "c", Player(102, "c") with { Story = StoryAt(2) });
+        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2), Friends = [100] });
+        Admit(h, "c", Player(102, "c") with { Story = StoryAt(2), Friends = [100] });
         BarrierWith(h, "a", "stag0202");
         h.Snapshot("a");
         BarrierWith(h, "a", "dng205b1");

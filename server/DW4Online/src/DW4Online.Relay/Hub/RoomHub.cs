@@ -1779,23 +1779,24 @@ public sealed partial class RoomHub
     /// <summary>
     /// JOIN (SEAMLESS.md 3.4 step 3, 6.6): slots are reserved, the members catch up as observers, READY stamps the JOIN. A JOIN takes
     /// no seat (fix-019's refix; before, a member without one took it here, past a removal bar and the four seats): a fresh arrival
-    /// took its seats when it chose the instance, and one of its members that lost its seat since decides again on its own
-    /// (<see cref="DecideAlone"/>); a member of the instance removed at its barrier goes home from that barrier
-    /// (<see cref="SendRemovedHome"/>, round I1b; fix-019 let it join without a seat and sent it home by its owed HOME).
+    /// took its seats when it chose the instance; a member removed from the instance goes home from its barrier
+    /// (<see cref="SendRemovedHome"/>, round I1b; fix-019 let a fresh one decide again alone and a member of the instance join
+    /// without a seat until its owed HOME), and one that lost its seat any other way decides again on its own
+    /// (<see cref="DecideAlone"/>).
     /// </summary>
     private void Join(ArrivalGroup g, HubInstance target, long now)
     {
         _holds.Remove(g);
         g.Hold = HoldKind.None;
+        // (The last check before the join: a member removed from the instance never joins it, 19.6.6; it goes home from its barrier,
+        // round I1b.)
+        if (SendRemovedHome(g, target.World, now)) return;
         if (g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting && target.World is { } chosen)
             foreach (var lost in g.Members.Select(a => a.Member).Where(x => !chosen.Seats.ContainsKey(x)).ToList())
             {
                 Count("join_seat_lost");
                 if (DecideAlone(g, lost, now)) return;
             }
-        // (The last check before the join: a member of the instance removed from it at its barrier never joins it, 19.6.6; it goes
-        // home from that barrier, round I1b.)
-        if (SendRemovedHome(g, target.World, now)) return;
         var free = Enumerable.Range(0, Wire.MaxSlots).Select(s => target.Slots[s] is null && target.Reserved[s] is null).ToArray();
         foreach (var a in g.Members)
         {

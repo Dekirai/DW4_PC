@@ -874,19 +874,11 @@ public sealed partial class RoomHub
         target.Peer?.Send(Notice(target, WorldNoticeKind.Removed, w.Host, 0, ""));
         HomeMember(target, reason, now);
         FreeSeat(w, target, "removed", now);
-        // A fresh arrival that waits for its automatic JOIN of this instance (a JOIN or boss hold, its seat taken at the choice; its
-        // engine never entered) leaves the wait and decides again on its own, where the bar counts (fix-019's refix, DecideAlone).
-        if (target.Arrival is { } g && g.World == w && g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting
-            && g.Members.Any(a => a.Member == target))
-        {
-            Count("removed_while_held");
-            Note("removed_while_held", null, ("wid", w.Wid), ("member", target.Id), ("hold", g.Hold.ToString()));
-            DecideAlone(g, target, now);
-        }
-        // Any other arrival that waits (a member of the instance at a barrier: its JOIN, a boss fight; a co-arrival of a holding base)
-        // takes the member home now, not when the wait ends (round I1b); one still gathering at its barrier goes home at that
-        // barrier's decision (Decide), a running join gets its HOME in the stage group.
-        else if (target.Arrival is { } held && _holds.Contains(held)) SendRemovedHome(held, held.World ?? w, now);
+        // An arrival that waits (its JOIN, a boss fight, co-arrivals) takes the member home now, not when the wait ends; one still
+        // gathering at its barrier goes home at that barrier's decision (Decide), a running join gets its HOME in the stage group.
+        // (Round I1b: also a fresh arrival that waits for its JOIN of this instance goes home from its barrier; fix-019's refix let
+        // it decide again alone, DecideAlone, which stays the JOIN's guard for a seat lost any other way.)
+        if (target.Arrival is { } held && _holds.Contains(held)) SendRemovedHome(held, held.World ?? w, now);
     }
 
     /// <summary>Admin End (POST /admin/instances/{wid}/end): END staff. False: no such instance in this run (<paramref name="run"/>: the
