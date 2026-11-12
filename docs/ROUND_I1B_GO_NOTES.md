@@ -60,23 +60,28 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 
 ## Tests and results
 
-- ctest 57/57 (2026-11-11 at 2deadf82, `build/go/ctest5.log`); online script tests 351 checks (947df0e3); session tests 397 checks (`go_along_session`); wire tests (go_messages, the golden
-  bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
-- Server unit tests (2026-11-11, with TEST mat): 478/478 (GoAlongTests 6 + 2 new). The I1a test
+- The code (C++ and C#) is unchanged since 947df0e3; later commits change scenario scripts and docs only.
+- ctest 57/57 (2026-11-12 at 6be4b788, `build/go/ctest6.log`; before: 2026-11-11 at 2deadf82, `ctest5.log`); online script
+  tests 351 checks (2026-11-12 at 093a8f0c: every scenario script parses); session tests 397 checks (`go_along_session`);
+  wire tests (go_messages, the golden bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
+- Server unit tests (2026-11-11 20:13, with TEST mat, `build/go/utest6.log`): 478/478 (GoAlongTests 6 + 2 new). The I1a test
   `HubLogicTests.A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (protocol 47 and 48) is
   intermittent: it failed four runs in a row at about 14:20 (desync_votes 1, no resync of b), on a `git archive` of int-i1a
   bfc3b0a5's server as well, and passed every run from 14:50 on, there too. Not this lane's; for the integration.
-- Server integration tests (2026-11-11, 49301c82, mysqld 3653): 137 passed, 4 skipped, 0 failed (`build/go/itest3.log`).
+- Server integration tests (2026-11-11 22:00 at 6be4b788, mysqld 3653): 137 passed, 4 skipped, 0 failed (`build/go/itest4.log`;
+  before at 49301c82, `itest3.log`, the same).
   Their artifacts must lie two levels below `server/DW4Online` (`--artifacts-path bin/goit`): two tests find
   `Directory.Build.props` and `deploy/` from the test binary (with `build/go/srvart-it` they failed for that alone).
 - det.sh on a DEV=OFF copy: 53cb3afb (`dw4_go_off_a.exe`), 6493bb74 (`_b`) and 2026-11-11 at 947df0e3 (`_c`, with the mat
   rule and TEST mat): run1 and run2 4004f056 / audio 396cb219 every time (`build/go/off/det_c.log`).
-- W31 runs: see the "Scenario runs" section.
+- W31 runs: every scenario of the lane passed at the final code (exe f = 947df0e3's code, the same bytes as a DEV build at
+  093a8f0c): W31b, W31c, W31d2, W31e, W31f, W31h, W31h2 in e1 (scripts of aa5a0c16, unchanged since), W31, W31c2, W31d,
+  W31g in f1 and W31i in f2 (scripts of 093a8f0c). See the "Scenario runs" section.
 
 ## Left
 
-1. Scenario runs of every W31 scenario at HEAD (batch c1 of 2026-11-11: see "Scenario runs").
-3. The release (DW4Online 0.1.7 with I1a and I1b) is the integration's.
+Nothing of the lane. The release (DW4Online 0.1.7 with I1a and I1b) and the round's other Done-when items (the I1a
+scenarios with `DW4_ONLINE_AUTOCHOICE=first`, the regression) are the integration's.
 
 ## How to run the tests
 
@@ -199,3 +204,13 @@ echo "mysqld shut down $(date)" >> $LOG
   (5652487b). W31h (goback worked: B on the held loading screen took b home) and W31h2 (the held barrier joined after the
   40 s scene): the world log notes test_go_hook before go_stamped, and go_join (the barrier's decision) before hold_join ->
   expected order (9b5559a5, aa5a0c16).
+- **e1** (2026-11-11 20:12, aa5a0c16, exe f, `build/go/scen_e1.log`, run folder `run_20261111_201252`): W31b, W31c, W31d2,
+  W31e, W31f, W31h, W31h2 passed (7 of 7).
+- **f1** (2026-11-12 14:28, 6be4b788, exe f, `build/go/scen_f1.log`, run folder `run_20261112_142844`; the scenarios whose
+  scripts changed after d1): W31, W31c2, W31d, W31g passed. W31i: b's GO expired as designed (300 ticks, the notice), but
+  c fell to stag0201's mummies on its third walk to matz00 (two heals), and b, the owner of matz00's prompt, waited for two
+  on the mat for good -> b and c reach matz00 by TEST mat (`World:TestHooks` in W31i's server; b waits 600 frames after the
+  expiry first, so the hook's busy stage group is over) (093a8f0c).
+- **f2** (2026-11-12 15:25, 093a8f0c, exe f, `build/go/scen_f2.log`, run folder `run_20261112_152521`): W31i passed (b's
+  second request, sent right after its arrival in stag0202, waited 6.8 s for its new stage group, the barrier 2.9 s after
+  the stamp, the join).
