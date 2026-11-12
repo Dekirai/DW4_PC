@@ -212,6 +212,19 @@ textures with draws (the exception, `font00.png`, has its glyph atlas), about
 22 s. All 37 hashes the renderer dumped on the scripted route to dng101b1
 are among them.
 
+## Upscaled packs (tools/remaster)
+
+`tools/remaster` (Python; see its README) builds 4x replacement PNGs from an
+export: per texture it fills colours under alpha 0, pads the axes the
+manifest's `tiles` / `uv_edges` name cyclically, cuts atlas cells out one by
+one, upscales RGB and alpha separately (a super-resolution model per texture
+class, Lanczos, or an edge reconstruction for lettering), thresholds
+cut-outs at the material's alpha reference and checks the colours against
+the source. Its contact sheets and `game_compare.py` (hidden runs with and
+without the pack at the same frames) are the means to judge a pack. Packs
+stay presentation only: `work/dref/checks/det.sh` gives the same fingerprint
+and audio digests with `DW4_TEXTURE_PACK` set as without.
+
 ## Reproduce the checks
 
 Build the project, then run synthetic tests with no original data:
