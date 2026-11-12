@@ -21,30 +21,33 @@ The native application builds these pinned dependencies using CMake:
 | [pl_mpeg](https://github.com/phoboslab/pl_mpeg) | `c871f2be022ece7ef4f64230b4fb8e1fb9eb6023` | MIT (SPDX in pl_mpeg.h), `licenses/pl_mpeg-MIT.txt` |
 | [stb](https://github.com/nothings/stb) (stb_image, stb_image_write) | `2c980bb59875b0d32144a71867fbdebb2f77cd20` | MIT or public domain (LICENSE), installed as `licenses/stb.txt` |
 | [Zstandard](https://github.com/facebook/zstd) (decoder sources) | `v1.5.6` | BSD-3-Clause (LICENSE), installed as `licenses/zstd.txt` |
-| [libusb](https://github.com/libusb/libusb) | release `v1.0.30`, archive `libusb-1.0.30.tar.bz2`, SHA-256 `fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf` | LGPL-2.1-or-later (COPYING), a separate `libusb-1.0.dll` with `libusb-1.0-COPYING.txt` beside it, `licenses/libusb.txt` and its source `licenses/libusb-1.0.30.tar.bz2` |
 
 stb reads and writes the PNG files of texture packs and texture dumps.
 Zstandard decodes RVZ disc images when they are converted to a plain image.
 pl_mpeg decodes the MPEG-1 video of the opening movie; the program stream
 demuxer and the movie's ADX sound use the project's own parsers.
 
-libusb is the only dependency under the LGPL, and it stays a separate,
-dynamically loaded library: the build compiles the unmodified Windows sources
-of the official release archive above (signed by the libusb release manager,
-the signature was checked when the pin was set) into `libusb-1.0.dll` with
-the project's own small CMake target (the sources, `msvc/config.h`, the
-export list and the version resource of the libusb project's own MSVC DLL
-project; the static C runtime). The game is not linked to it: SDL loads it by
-name at run time (`SDL_HIDAPI_LIBUSB_SHARED`) and only for the controllers it
-reaches through libusb (the Switch 2 Pro Controller), so the DLL can be
-replaced by any compatible `libusb-1.0.dll` or removed (the game then runs
-without those controllers). Its complete license text is installed beside it
-as `libusb-1.0-COPYING.txt` and as `licenses/libusb.txt`. The corresponding
-source is the release archive named above, unchanged: `cmake --install` puts
-that archive (checked against the SHA-256 above) into the package as
-`licenses/libusb-1.0.30.tar.bz2`, so it travels with the DLL; the build files
-that make the DLL are in this repository's `CMakeLists.txt`. Copyright (C) the
-libusb authors (AUTHORS in the archive).
+Switch 2 Pro Controller adaptation: `src/game/switch2_pro.cpp` adapts the
+protocol of SDL 3.4.16's `src/joystick/hidapi/SDL_hidapi_switch2.c` (at the SDL
+pin above; "Code and logic contributed by Valve Corporation under the SDL zlib
+license"): the start commands, the flash reads of the stick calibration and
+their arithmetic, the player light command and patterns, and the layout of
+input report 0x05. Copyright (C) 1997-2026 Sam Lantinga; the zlib notice is
+retained at the top of that file and SDL's license is installed as
+`licenses/SDL.txt`. Altered for this port (the file says how): Windows' HID and
+WinUSB APIs in place of libusb, the commands as data with their replies
+checked and logged, a plausibility check of the calibration, the port's own
+state machine and threads. The layout of input report 0x09 follows the
+measurement published by the [procon2-mac](https://github.com/caqlayan/procon2-mac)
+project (MIT); no code of it is included. The USB descriptors, report ids and
+the Microsoft OS descriptor of the controller were cross-checked with
+[ndeadly/switch2_controller_research](https://github.com/ndeadly/switch2_controller_research)
+(a research reference, not included).
+
+Earlier builds (round "libusb", `docs/ROUND_LIBUSB_NOTES.md`) shipped libusb
+1.0.30 (LGPL-2.1-or-later) as a separate `libusb-1.0.dll` for this controller.
+It is no longer built, shipped or loaded: SDL is configured without libusb
+and told never to load one.
 `cmake --install` includes the dependency license files. Binary packages must
 retain them. The core parsers and command-line tools have no external libraries.
 

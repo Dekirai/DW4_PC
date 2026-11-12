@@ -109,9 +109,8 @@ working method and next steps in [PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md)
 ## Build on Windows
 
 Requirements: Visual Studio with *Desktop development with C++* (MSVC, CMake,
-Ninja). SDL3, Dear ImGui, pl_mpeg, stb, Zstandard and libusb are fetched by
-CMake at pinned commits and checksums (libusb from its official release
-archive, built into the separate `libusb-1.0.dll`).
+Ninja). SDL3, Dear ImGui, pl_mpeg, stb and Zstandard are fetched by CMake at
+pinned commits and checksums.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Jobs 4
@@ -120,10 +119,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Jobs 4
 This configures `build\Release`, builds everything and runs the tests.
 `-CoreOnly` skips the SDL/OpenGL runtime; `-Package` installs into
 `dist\DW4_PC`: one self-contained `DW4_PC.exe` (static C++ runtime, only system
-DLLs) with `libusb-1.0.dll` and its license beside it (the Switch 2 Pro
-Controller; the game runs without it; its unchanged source archive
-`libusb-1.0.30.tar.bz2` is in `licenses`), the tools, licenses and docs, ready
-to copy anywhere. Builds never start the game.
+DLLs), the tools, licenses and docs, ready to copy anywhere. Builds never start
+the game.
 
 ## Run with your own game data
 
@@ -900,38 +897,41 @@ All pictures are drawn by the program itself (no console logos).
 | Wii U Pro Controller | Bluetooth: Windows Settings > Bluetooth > Add device, press the red SYNC button, no PIN. *Wii U Pro support* (F1 > Controls) is automatic: SDL's Wii driver runs only while such a controller (057e:0330) is connected, so a Wii remote bar such as Mayflash's DolphinBar never reaches it; Wii remotes never take a player's place |
 | Original GameCube controller, adapter in PC mode (Mayflash, EVORETRO) | Set the adapter's switch to PC; no driver. Every port is its own controller |
 | Original GameCube controller, adapter in Wii U mode (Nintendo's WUP-028, Mayflash on Wii U) | Install the WinUSB driver on "WUP-028" with Zadig, as for Dolphin; the game finds the adapter when it is plugged in and every connected port is a controller. It lets go of the adapter while the game is in the background (Dolphin can use it then); F1 > Controls says when the driver is missing or another program holds it |
-| Switch 2 Pro Controller | USB-C cable only (SDL does not read it over Bluetooth). Needs `libusb-1.0.dll` next to the game's .exe (it comes with the game). Should need nothing to install: the controller's descriptors ask Windows for the WinUSB driver on its interface 1 (not yet verified with the device on Windows; if Windows does not, F1 > Controls says so and how to fix it). Read by labels like the Switch Pro; C, GL and GR do nothing until bound in F1 > Controls. Steps below |
+| Switch 2 Pro Controller | USB-C cable only (it does not play over Bluetooth). Nothing to install: Windows runs it with its own drivers (its HID driver for the buttons, the WinUSB driver Windows loads by itself on the part through which the game starts it). Read by labels like the Switch Pro; ZL and ZR are digital on this controller; C, GL and GR do nothing until bound in F1 > Controls. Steps below |
 
-**Switch 2 Pro Controller, step by step.** (1) Keep `libusb-1.0.dll` and
-`libusb-1.0-COPYING.txt` beside the game's .exe. (2) Connect the controller
-with a USB-C data cable (a charge-only cable shows nothing) and start the
-game; it becomes a player's controller with the Switch 2 Pro pictures within
-a second or two. (3) If F1 > Controls instead says what is wrong, do that:
-*libusb-1.0.dll is missing* - put it back and restart; *Windows blocks it*
-(no driver on its interface 1, or WinUSB there without the device interface
-GUID libusb needs) - install WinUSB on that interface only:
-[Zadig](https://zadig.akeo.ie), Options > List All Devices, pick the entry
-whose USB ID reads `057E 2069 01` (the `01` is interface 1; never the entry
-ending in `00`, the HID part Windows keeps), WinUSB, *Install Driver*, then
-unplug and plug in the controller; *could not open it* - another program
-holds it (Steam with its Switch controller support, an emulator): close it
-and plug the controller in again; *Windows lists no interface 1* - a driver
-was put on the whole controller: uninstall that device with its driver in
-Device Manager and plug the controller in again. Over Bluetooth it does not
-play; reports say Windows does not even list it as a controller then, so the
-game may say nothing (it says *connect it with a USB cable* only when Windows
-lists it as a Bluetooth input device). Plugging it in while the game runs can
-make the picture hold for a moment while SDL starts the controller.
-How it works: SDL drives this controller only through libusb (its interface 1
-carries the start commands), so the game ships libusb as the separate
-`libusb-1.0.dll` (LGPL-2.1) that SDL loads at run time; libusb is used for
-nothing else than the few controllers that need it (every other controller
-keeps Windows' own drivers), and without the DLL the game starts and every
-other controller works (deleting it turns the feature off). The GameCube
-adapter in Wii U mode stays the game's own WinUSB reader's (SDL is told to
-leave it), so Dolphin can still take it while the game is in the background.
-`saves\controllers.log` beside the game records each start's controllers,
-libusb and what Windows lists (send it in when a controller does not work).
+**Switch 2 Pro Controller, step by step.** (1) Connect the controller with a
+USB-C data cable (a charge-only cable shows nothing) and start the game, or
+plug it in while the game runs; it becomes a player's controller with the
+Switch 2 Pro pictures within a second or two, and its player lights show the
+player. F1 > Controls shows a line for it: *playing, 250 reports/s* when it
+works. (2) If F1 > Controls instead says what is wrong, do that: *another
+program is using it* - Steam with its Switch controller support, an emulator
+or a second copy of the game holds it: close that program (the game tries
+again every two seconds); *its input device cannot be opened* or *a driver
+installed on it is in the way* - a driver was put on the controller by hand
+(Zadig: WinUSB or libusbK on one of its parts): Device Manager > View >
+Devices by connection, find the controller, uninstall that part with
+*Attempt to remove the driver for this device* ticked and plug the controller
+in again, Windows sets its own drivers up again; *Windows has no driver on
+its interface 1* - unplug it and plug it in again or use another USB port
+(only if that does not help: [Zadig](https://zadig.akeo.ie), Options > List
+All Devices, the entry whose USB ID reads `057E 2069 01`, WinUSB; never the
+entry ending in `00`: that part must keep Windows' own HID driver, the game
+reads the buttons through it); *it did not start* - unplug it and plug it in
+again, and send the log if it stays. Over Bluetooth it does not play; Windows
+does not list it as a controller then, so the game may say nothing (it says
+*connect it with a USB cable* only when Windows lists it as a Bluetooth input
+device). How it works: the game reads the controller itself, the way Steam
+does on Windows: the buttons through Windows' HID driver on its interface 0,
+the start commands (taken from SDL's own Switch 2 driver) through WinUSB on
+its interface 1; each connected controller becomes an SDL pad with the
+controller's ids, so the pictures, the bindings and the player slots treat
+it like any other. It keeps reading while the game is in the background (the
+game ignores its buttons there, as every controller's). Earlier builds shipped
+a `libusb-1.0.dll` (and `libusb-1.0-COPYING.txt`) for this controller; nothing
+uses them any more, they can be deleted. `saves\controllers.log` beside the game records each start's
+controllers, what Windows lists and every step of the Switch 2 Pro
+Controller's start (send it in when a controller does not work).
 
 A GameCube controller plays 1:1 (its A is the game's A, L and R count at the
 trigger's click, the C-stick is the C-stick) and the game keeps its own
@@ -948,7 +948,9 @@ A / Cross confirms, B / Circle goes back, whatever the game's bindings (a
 Nintendo pad as its Nintendo layout reads it); `menu_buttons=bindings` makes
 them follow the game's A and B bindings instead. Details:
 [docs/ROUND_PADS_NOTES.md](docs/ROUND_PADS_NOTES.md),
-[docs/ROUND_LIBUSB_NOTES.md](docs/ROUND_LIBUSB_NOTES.md).
+[docs/ROUND_SW2WIN_NOTES.md](docs/ROUND_SW2WIN_NOTES.md) (the Switch 2 Pro
+Controller; [docs/ROUND_LIBUSB_NOTES.md](docs/ROUND_LIBUSB_NOTES.md) the
+earlier libusb round).
 
 F1 opens the menu: the Settings tab (an Original / Modernized preset, the
 loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing,

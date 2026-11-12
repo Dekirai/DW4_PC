@@ -1,5 +1,14 @@
 # Round "libusb": the Switch 2 Pro Controller over USB
 
+> **Superseded by round "sw2win"** ([ROUND_SW2WIN_NOTES.md](ROUND_SW2WIN_NOTES.md)):
+> the owner's hand test of main `52d504d9` showed Windows with the drivers the
+> controller asks for (HidUsb on interface 0, WinUSB with its device interface
+> GUID on interface 1) and SDL's one libusb open failing at plug-in. The port
+> now reads the controller itself through Windows' HID and WinUSB APIs, and
+> libusb is gone from the build, the package and the game (SDL is configured
+> without it and told never to load a `libusb-1.0.dll`). This file records the
+> libusb round as it was.
+
 Requested by the owner after round "pads" (docs/ROUND_PADS_NOTES.md): the
 Switch 2 Pro Controller (057e:2069) becomes playable over a USB cable. The
 owner approved libusb (LGPL-2.1) as a separately shipped `libusb-1.0.dll`

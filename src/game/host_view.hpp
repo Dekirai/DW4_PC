@@ -43,6 +43,7 @@ namespace dw4::game {
 class ButtonPrompts;
 class GcAdapter;
 class GhostFigures;
+class Switch2Reader;
 namespace online {
 struct RemoteSample;
 }
@@ -150,10 +151,12 @@ struct HostView {
     std::uint32_t hid_changes = 0;
     bool wii_u_ids = false;
     bool wii_hint = false;
-    // libusb-1.0.dll as found at start-up (pad_usb.hpp), the Switch 2 Pro
-    // Controller's notice (F1 > Controls; game_main shows it once in play),
-    // and saves/controllers.log (null in test runs).
-    LibusbInfo libusb;
+    // The Switch 2 Pro Controller reader (switch2_pro.hpp; null in test runs
+    // unless DW4_TEST_SWITCH2=1) and every controller it has, its notice (F1
+    // > Controls; game_main shows it once in play), and
+    // saves/controllers.log (null in test runs).
+    Switch2Reader* switch2_reader = nullptr;
+    std::vector<Switch2Status> switch2_devices;
     Switch2Watch switch2;
     ControllerLog* controller_log = nullptr;
     UsbFindings findings;          // (the adapter reader's latest look at the device list)
@@ -267,6 +270,9 @@ void set_ui_view(HostView* view);
 // input focus, so Dolphin can take the adapter while this game is in the
 // background).
 void update_controllers(HostView& view);
+// (Its part without the Switch 2 Pro Controller: SDL's Wii driver and the
+// GameCube adapter; not in test runs.)
+void update_sdl_and_adapter(HostView& view);
 // A new ImGui frame (`test_gamepad`: a UI test run's controller keys count
 // as a controller's).
 void new_ui_frame(bool test_gamepad);
@@ -298,9 +304,9 @@ void settings_keyboard_section(HostView& view);
 void settings_controllers_section(HostView& view);
 // The SDL hints for the controller families, before SDL_Init: SDL's Wii
 // driver only with wii_driver=on (automatic turns it on later, while a Wii
-// U Pro Controller's ids are connected: update_controllers); libusb for the
-// Switch 2 Pro Controller outside test runs, never for the GameCube adapter
-// (pad_usb.hpp controller_hint_values).
-void controller_hints(const Settings& settings, bool test_run);
+// U Pro Controller's ids are connected: update_controllers); no libusb, and
+// the Switch 2 Pro Controller left to the port's reader (pad_usb.hpp
+// controller_hint_values).
+void controller_hints(const Settings& settings);
 
 } // namespace dw4::game

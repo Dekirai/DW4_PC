@@ -1,9 +1,7 @@
 #include "pad_usb.hpp"
 
 #include <SDL3/SDL_hints.h>
-#include <SDL3/SDL_loadso.h>
 
-#include <array>
 #include <cstring>
 #include <ctime>
 
@@ -20,28 +18,6 @@
 namespace dw4::game {
 
 namespace {
-// SDL_libusb.c's LOAD_LIBUSB_SYMBOL list (SDL 3.4.16), in its order.
-constexpr std::array<const char*, 35> kSdlLibusbFunctions{
-    "init", "exit", "get_device_list", "free_device_list", "get_device_descriptor", "get_active_config_descriptor",
-    "get_config_descriptor", "free_config_descriptor", "get_bus_number", "get_port_numbers", "get_device_address", "open", "close",
-    "get_device", "claim_interface", "release_interface", "kernel_driver_active", "detach_kernel_driver", "attach_kernel_driver",
-    "set_auto_detach_kernel_driver", "set_interface_alt_setting", "alloc_transfer", "submit_transfer", "cancel_transfer", "free_transfer",
-    "control_transfer", "interrupt_transfer", "bulk_transfer", "handle_events", "handle_events_completed", "interrupt_event_handler",
-    "has_capability", "hotplug_register_callback", "hotplug_deregister_callback", "error_name",
-};
-
-// libusb.h's struct libusb_version (libusb_get_version, since 1.0.10).
-struct LibusbVersion {
-    std::uint16_t major, minor, micro, nano;
-    const char* rc;
-    const char* describe;
-};
-#ifdef _WIN32
-using GetVersion = const LibusbVersion*(__stdcall*)();
-#else
-using GetVersion = const LibusbVersion* (*)();
-#endif
-
 // (Driver service names and hardware ids are ASCII.)
 std::string narrow(const std::wstring& text) {
     std::string out;
@@ -49,53 +25,6 @@ std::string narrow(const std::wstring& text) {
     return out;
 }
 } // namespace
-
-bool sdl_has_libusb() {
-#ifdef DW4_SDL_LIBUSB
-    return true;
-#else
-    return false;
-#endif
-}
-
-std::span<const char* const> sdl_libusb_functions() { return kSdlLibusbFunctions; }
-
-LibusbInfo probe_libusb(bool built, bool enabled, const char* dll) {
-    LibusbInfo info;
-    // (SDL_LoadObject is SDL's own loader: LoadLibrary by name on Windows.
-    // Looked for even when SDL may not use it: the log says what is there.)
-    SDL_SharedObject* handle = SDL_LoadObject(dll);
-    if (!handle) {
-        info.state = !built ? LibusbState::not_built : !enabled ? LibusbState::off : LibusbState::missing;
-        return info;
-    }
-#ifdef _WIN32
-    std::wstring path(MAX_PATH, L'\0');
-    const DWORD length = GetModuleFileNameW(reinterpret_cast<HMODULE>(handle), path.data(), DWORD(path.size()));
-    path.resize(length < path.size() ? length : 0);
-    if (!path.empty()) { // (UTF-8 for the log and ImGui)
-        const int size = WideCharToMultiByte(CP_UTF8, 0, path.c_str(), int(path.size()), nullptr, 0, nullptr, nullptr);
-        if (size > 0) {
-            info.path.resize(std::size_t(size));
-            WideCharToMultiByte(CP_UTF8, 0, path.c_str(), int(path.size()), info.path.data(), size, nullptr, nullptr);
-        }
-    }
-#endif
-    for (const char* function : kSdlLibusbFunctions)
-        if (!SDL_LoadFunction(handle, (std::string("libusb_") + function).c_str())) {
-            info.missing = std::string("libusb_") + function;
-            break;
-        }
-    if (const auto get_version = reinterpret_cast<GetVersion>(SDL_LoadFunction(handle, "libusb_get_version")))
-        if (const LibusbVersion* version = get_version())
-            info.version = std::to_string(version->major) + "." + std::to_string(version->minor) + "." + std::to_string(version->micro) + "." +
-                           std::to_string(version->nano) + (version->rc ? version->rc : "");
-    SDL_UnloadObject(handle);
-    if (!built) info.state = LibusbState::not_built;
-    else if (!info.missing.empty()) info.state = LibusbState::incompatible;
-    else info.state = enabled ? LibusbState::loaded : LibusbState::off;
-    return info;
-}
 
 bool libusb_in_process() {
 #ifdef _WIN32
@@ -105,51 +34,43 @@ bool libusb_in_process() {
 #endif
 }
 
-const char* libusb_state_name(LibusbState state) {
-    switch (state) {
-    case LibusbState::not_built: return "not built";
-    case LibusbState::off: return "off";
-    case LibusbState::missing: return "missing";
-    case LibusbState::incompatible: return "incompatible";
-    case LibusbState::loaded: return "loaded";
-    }
-    return "";
-}
-
-std::string libusb_summary(const LibusbInfo& info) {
-    std::string found = info.path.empty() ? std::string(kLibusbDll) : info.path;
-    if (!info.version.empty()) found += " " + info.version;
-    switch (info.state) {
-    case LibusbState::not_built: return "libusb: not in this build (the Switch 2 Pro Controller cannot be used)";
-    case LibusbState::off: return "libusb: off in test runs (" + (info.path.empty() ? std::string(kLibusbDll) + " not found" : found) + ")";
-    case LibusbState::missing:
-        return std::string("libusb: ") + kLibusbDll + " not found: the Switch 2 Pro Controller cannot be used, every other controller works";
-    case LibusbState::incompatible: return "libusb: " + found + " lacks " + info.missing + ": SDL cannot use it (Switch 2 Pro Controller unavailable)";
-    case LibusbState::loaded: return "libusb: " + found + " (Switch 2 Pro Controller over USB)";
-    }
+std::filesystem::path leftover_libusb_dll() {
+#ifdef _WIN32
+    std::wstring exe(MAX_PATH, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size()));
+    if (!length || length >= exe.size()) return {};
+    exe.resize(length);
+    const auto dll = std::filesystem::path(exe).parent_path() / L"libusb-1.0.dll";
+    std::error_code error;
+    return std::filesystem::is_regular_file(dll, error) ? dll : std::filesystem::path();
+#else
     return {};
+#endif
 }
 
-std::vector<SdlHint> controller_hint_values(const Settings& settings, bool test_run) {
+std::vector<SdlHint> controller_hint_values(const Settings& settings) {
     return {
         // The Wii U Pro Controller: SDL's Wii driver (SDL leaves it off: it
         // does not work behind a Mayflash DolphinBar). wii_driver=on starts
         // with it; automatic (the default) turns it on only while a Wii U
         // Pro Controller's ids are connected (update_controllers); off never.
         {SDL_HINT_JOYSTICK_HIDAPI_WII, settings.wii_driver == WiiDriver::on ? "1" : "0"},
-        // PlayStation, Switch and Switch 2 pads: SDL's defaults (on).
-        // Bluetooth PlayStation pads stay in their simple report mode until
-        // a feature needs more (nothing here does).
+        // PlayStation and Switch pads: SDL's defaults (on). Bluetooth
+        // PlayStation pads stay in their simple report mode until a feature
+        // needs more (nothing here does).
         {SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "auto"},
-        // libusb-1.0.dll for the devices SDL reaches only through it (the
-        // Switch 2 Pro Controller); never in test runs.
-        {SDL_HINT_HIDAPI_LIBUSB, test_run ? "0" : "1"},
-        // Only those devices (SDL's default on Windows, stated): every other
-        // controller keeps Windows' own drivers.
-        {SDL_HINT_HIDAPI_LIBUSB_WHITELIST, "1"},
-        // The GameCube adapter in Wii U mode stays the port's WinUSB
-        // reader's (gc_adapter.hpp): one code path opens it.
-        {SDL_HINT_HIDAPI_LIBUSB_GAMECUBE, "0"},
+        // SDL never loads a libusb-1.0.dll (this build's SDL has no libusb;
+        // also one left over beside the game from an earlier build stays
+        // unloaded): the devices SDL reaches only through libusb are the
+        // port's own readers' (gc_adapter.hpp, switch2_pro.hpp).
+        {SDL_HINT_HIDAPI_LIBUSB, "0"},
+        // The Switch 2 Pro Controller's HID input is a game controller to
+        // Windows: SDL's DirectInput, RawInput, Windows.Gaming.Input and
+        // GameInput paths would list it as a joystick that never reports
+        // (nothing of theirs starts it). They leave it to the port's reader,
+        // whose SDL virtual pad (an SDL virtual joystick is never filtered
+        // by this list) is the controller.
+        {SDL_HINT_JOYSTICK_BLACKLIST_DEVICES, "0x057e/0x2069"},
     };
 }
 
@@ -157,100 +78,124 @@ AdapterOwner gamecube_adapter_owner(bool gc_adapter_setting, bool test_run) {
     return gc_adapter_setting && !test_run ? AdapterOwner::port_reader : AdapterOwner::nobody;
 }
 
-bool sdl_switch2_pad(const PadIdentity& identity, const SDL_GUID& guid) {
-    // 'h': SDL's HIDAPI drivers (SDL_hidapijoystick.c). A RawInput or
-    // DirectInput joystick with the same ids would get no input: nothing
-    // started the controller.
-    return identity.vendor == kVendorNintendo && identity.product == kProductSwitch2Pro && guid.data[14] == 'h';
-}
-
-bool sdl_switch2_pad(SDL_Gamepad* pad) {
-    if (!pad) return false;
-    SDL_Joystick* joystick = SDL_GetGamepadJoystick(pad);
-    return joystick && sdl_switch2_pad(pad_identity(pad), SDL_GetJoystickGUID(joystick));
+AdapterOwner switch2_pro_owner(bool test_run, bool test_switch2) {
+    return !test_run || test_switch2 ? AdapterOwner::port_reader : AdapterOwner::nobody;
 }
 
 const char* switch2_notice_name(Switch2Notice notice) {
     switch (notice) {
     case Switch2Notice::none: return "none";
     case Switch2Notice::playable: return "playable";
-    case Switch2Notice::not_built: return "no libusb in this build";
-    case Switch2Notice::dll_missing: return "libusb-1.0.dll missing";
-    case Switch2Notice::dll_incompatible: return "libusb-1.0.dll unusable";
     case Switch2Notice::bluetooth: return "Bluetooth only";
+    case Switch2Notice::no_input: return "its HID input cannot be opened";
     case Switch2Notice::no_driver: return "no driver on interface 1";
-    case Switch2Notice::no_interface_guid: return "WinUSB on interface 1 without a device interface GUID";
     case Switch2Notice::other_driver: return "another driver on interface 1";
+    case Switch2Notice::no_interface_guid: return "WinUSB on interface 1 without a device interface GUID";
     case Switch2Notice::no_interface: return "no interface 1 listed";
-    case Switch2Notice::not_opened: return "not opened by SDL";
+    case Switch2Notice::busy: return "interface 1 held by another program";
+    case Switch2Notice::no_reports: return "no input reports";
     }
     return "";
 }
 
-Switch2Notice switch2_notice(const UsbFindings& windows, bool sdl_pad, LibusbState libusb) {
-    if (sdl_pad) return Switch2Notice::playable;
-    if (!windows.switch2_usb && !windows.switch2_bluetooth) return Switch2Notice::none;
-    if (libusb == LibusbState::off) return Switch2Notice::none; // (test runs)
-    if (!windows.switch2_usb) return Switch2Notice::bluetooth;
-    switch (libusb) {
-    case LibusbState::not_built: return Switch2Notice::not_built;
-    case LibusbState::missing: return Switch2Notice::dll_missing;
-    case LibusbState::incompatible: return Switch2Notice::dll_incompatible;
-    default: break;
+Switch2Notice switch2_device_notice(const Switch2Status& d) {
+    switch (d.state) {
+    case Switch2State::opening:
+    case Switch2State::starting:
+    case Switch2State::waiting:
+    case Switch2State::gone: return Switch2Notice::none;
+    case Switch2State::running: return Switch2Notice::playable;
+    case Switch2State::no_input: return Switch2Notice::no_input;
+    case Switch2State::no_reports: return Switch2Notice::no_reports;
+    case Switch2State::no_commands: {
+        const Switch2Found& f = d.found;
+        if (!f.command_node) return Switch2Notice::no_interface;
+        switch (f.command_driver) {
+        case UsbDriver::unknown: return Switch2Notice::no_interface;
+        case UsbDriver::none: return Switch2Notice::no_driver;
+        case UsbDriver::other: return Switch2Notice::other_driver;
+        case UsbDriver::winusb:
+            if (!f.command_guid || f.command_path.empty()) return Switch2Notice::no_interface_guid;
+            return d.command_open.io == Switch2Io::busy ? Switch2Notice::busy : Switch2Notice::no_reports;
+        }
+        return Switch2Notice::no_reports;
     }
-    switch (windows.switch2_vendor) {
-    case UsbDriver::unknown: return Switch2Notice::no_interface;
-    case UsbDriver::none: return Switch2Notice::no_driver;
-    case UsbDriver::other: return Switch2Notice::other_driver;
-    case UsbDriver::winusb:
-        // (libusb's Windows backend finds a composite device's WinUSB
-        // interface only through the GUID named in its registry key.)
-        return windows.switch2_vendor_guid ? Switch2Notice::not_opened : Switch2Notice::no_interface_guid;
     }
-    return Switch2Notice::not_opened;
+    return Switch2Notice::none;
 }
 
-std::string switch2_notice_text(Switch2Notice notice, const UsbFindings& windows) {
-    const std::string zadig = "Zadig (zadig.akeo.ie): Options > List All Devices, pick the entry whose USB ID ends in 057E 2069 01 (the "
-                              "controller's interface 1; never the one ending in 00), choose WinUSB and install it";
+Switch2Notice switch2_notice(const UsbFindings& windows, const std::vector<Switch2Status>& reader, bool reader_on) {
+    if (!reader_on) return Switch2Notice::none; // (test runs)
+    bool playing = false;
+    for (const auto& device : reader) {
+        const Switch2Notice notice = switch2_device_notice(device);
+        if (notice == Switch2Notice::playable) playing = true;
+        else if (notice != Switch2Notice::none) return notice;
+    }
+    if (playing) return Switch2Notice::playable;
+    if (windows.switch2_bluetooth && !windows.switch2_usb) return Switch2Notice::bluetooth;
+    return Switch2Notice::none;
+}
+
+const Switch2Status* switch2_notice_device(Switch2Notice notice, const std::vector<Switch2Status>& reader) {
+    if (notice == Switch2Notice::none || notice == Switch2Notice::playable || notice == Switch2Notice::bluetooth) return nullptr;
+    for (const auto& device : reader)
+        if (switch2_device_notice(device) == notice) return &device;
+    return nullptr;
+}
+
+std::string switch2_notice_text(Switch2Notice notice, const Switch2Status* device) {
+    const std::string send_log = " If it stays like this, send saves/controllers.log.";
+    const std::string uninstall = "Device Manager > View > Devices by connection, find the controller, right-click that entry, Uninstall "
+                                  "device with \"Attempt to remove the driver for this device\" ticked, then plug the controller in again";
     switch (notice) {
     case Switch2Notice::none:
     case Switch2Notice::playable: return {};
-    case Switch2Notice::not_built:
-        return "Switch 2 Pro Controller found, but this build has no libusb support, which the controller needs. "
-               "Use a build that comes with libusb-1.0.dll.";
-    case Switch2Notice::dll_missing:
-        return std::string("Switch 2 Pro Controller found, but ") + kLibusbDll +
-               " is missing: the game starts this controller through it. Put the libusb-1.0.dll that comes with the game back next to "
-               "the game's .exe and start the game again. Every other controller works without it.";
-    case Switch2Notice::dll_incompatible:
-        return std::string("Switch 2 Pro Controller found, but the ") + kLibusbDll +
-               " next to the game is one SDL cannot use (too old, or another program's file). Replace it with the libusb-1.0.dll that "
-               "comes with the game and start the game again.";
     case Switch2Notice::bluetooth:
-        return "Switch 2 Pro Controller found over Bluetooth. It works over a USB cable only (SDL cannot read it over Bluetooth yet): "
-               "connect it with a USB-C data cable.";
+        return "Switch 2 Pro Controller found over Bluetooth. The game reads it over a USB cable only: connect it with a USB-C data cable.";
+    case Switch2Notice::no_input: {
+        std::string text = "Switch 2 Pro Controller found on USB, but the game cannot open its input device";
+        if (device && device->input_open.error && !device->found.input_path.empty()) text += " (error " + std::to_string(device->input_open.error) + ")";
+        text += ". Windows reads the controller's buttons through its own HID driver on the controller's interface 0";
+        if (device && device->found.input_node && !device->found.input_service.empty() && device->found.input_service != "HidUsb")
+            text += ", which has the " + device->found.input_service + " driver instead";
+        text += ". If another driver was installed there (Zadig: the entry ending in 057E 2069 00), remove it: " + uninstall + "." + send_log;
+        return text;
+    }
     case Switch2Notice::no_driver:
-        return "Switch 2 Pro Controller found, but Windows blocks it: there is no driver on its interface 1, through which the game "
-               "starts it (Windows should put WinUSB there by itself; here it did not). Install WinUSB there with " +
-               zadig + ", then unplug the controller and plug it in again.";
-    case Switch2Notice::no_interface_guid:
-        return "Switch 2 Pro Controller found, but Windows blocks it: its interface 1 has WinUSB, but without the device interface "
-               "GUID through which libusb reaches it, so the game cannot start the controller. Install WinUSB there again with " +
-               zadig + " (Zadig's driver registers that GUID), then unplug the controller and plug it in again.";
+        return "Switch 2 Pro Controller found, but Windows has no driver on its interface 1, through which the game starts it. Windows "
+               "normally puts WinUSB there by itself (the controller asks for it): unplug the controller, wait a few seconds and plug it in "
+               "again, or use another USB port. Only if it stays like this: Zadig (zadig.akeo.ie), Options > List All Devices, the entry "
+               "whose USB ID ends in 057E 2069 01 (never the one ending in 00), WinUSB, Install Driver.";
     case Switch2Notice::other_driver:
-        return "Switch 2 Pro Controller found; its interface 1 has the " + narrow(windows.switch2_vendor_service) +
-               " driver instead of WinUSB, and the controller did not start through it. Replace that driver with WinUSB in " + zadig +
-               ", then unplug the controller and plug it in again.";
+        return "Switch 2 Pro Controller found, but its interface 1 has the " +
+               (device && !device->found.command_service.empty() ? device->found.command_service : std::string("another")) +
+               " driver (from Zadig or another program) instead of Windows' own WinUSB, and the game opens it only through WinUSB. Remove "
+               "that driver: " +
+               uninstall + "; Windows puts WinUSB back by itself.";
+    case Switch2Notice::no_interface_guid:
+        return "Switch 2 Pro Controller found; its interface 1 has WinUSB, but without the device interface the game opens it through (a "
+               "driver installed by hand?). Remove it: " +
+               uninstall + "; Windows sets WinUSB up again by itself." + send_log;
     case Switch2Notice::no_interface:
-        return "Switch 2 Pro Controller found on USB, but it did not start, and Windows lists no interface 1 of it (the part ending in "
-               "057E 2069 01 through which the game starts it). A driver installed on the whole controller instead of on its "
-               "interface 1 does this: in Device Manager, uninstall that device (with its driver), plug the controller in again and do "
-               "what this page says then. If it stays like this, send saves/controllers.log.";
-    case Switch2Notice::not_opened:
-        return "Switch 2 Pro Controller found (WinUSB on its interface 1), but SDL could not open it. Another program may be using it: "
-               "Steam with its Switch controller support, an emulator, or a second copy of this game. Close it, then unplug the "
-               "controller and plug it in again. If it stays like this, send saves/controllers.log.";
+        return "Switch 2 Pro Controller found on USB, but Windows lists no interface 1 of it (the part ending in 057E 2069 01 through "
+               "which the game starts it). A driver installed on the whole controller instead of on its parts does this: in Device "
+               "Manager, uninstall that device with its driver and plug the controller in again." +
+               send_log;
+    case Switch2Notice::busy:
+        return "Switch 2 Pro Controller found, but another program holds its interface 1 (Steam with its Switch controller support, an "
+               "emulator, or a second copy of this game), and the controller sends nothing until it is started. Close that program or "
+               "turn its Switch controller support off; the game tries again every two seconds.";
+    case Switch2Notice::no_reports: {
+        std::string text = "Switch 2 Pro Controller found";
+        if (device && !device->failed_step.empty())
+            text += ", but the start command \"" + device->failed_step + "\" could not be sent (" + switch2_io_text(device->failed_result) + ")";
+        else if (device && device->state == Switch2State::no_commands)
+            text += ", but its interface 1 could not be opened (" + switch2_io_text(device->command_open) + ")";
+        else
+            text += " and started, but it sends no input";
+        return text + ". Unplug it and plug it in again." + send_log;
+    }
     }
     return {};
 }
@@ -259,21 +204,47 @@ std::string switch2_toast_text(Switch2Notice notice) {
     switch (notice) {
     case Switch2Notice::none:
     case Switch2Notice::playable: return {};
-    case Switch2Notice::not_built: return "Switch 2 Pro Controller found: this build cannot read it (F1 > Controls).";
-    case Switch2Notice::dll_missing: return "Switch 2 Pro Controller found: libusb-1.0.dll is missing (F1 > Controls).";
-    case Switch2Notice::dll_incompatible: return "Switch 2 Pro Controller found: libusb-1.0.dll cannot be used (F1 > Controls).";
     case Switch2Notice::bluetooth: return "Switch 2 Pro Controller: connect it with a USB cable (F1 > Controls).";
-    case Switch2Notice::no_driver:
-    case Switch2Notice::no_interface_guid:
-    case Switch2Notice::other_driver: return "Switch 2 Pro Controller found: Windows blocks it, it needs WinUSB (F1 > Controls).";
+    case Switch2Notice::no_input: return "Switch 2 Pro Controller found, but its input device cannot be opened (F1 > Controls).";
+    case Switch2Notice::no_driver: return "Switch 2 Pro Controller found: Windows has no driver on its interface 1 yet (F1 > Controls).";
+    case Switch2Notice::other_driver:
+    case Switch2Notice::no_interface_guid: return "Switch 2 Pro Controller found: a driver installed on it is in the way (F1 > Controls).";
     case Switch2Notice::no_interface: return "Switch 2 Pro Controller found, but it did not start (F1 > Controls).";
-    case Switch2Notice::not_opened: return "Switch 2 Pro Controller found, but it could not be opened (F1 > Controls).";
+    case Switch2Notice::busy: return "Switch 2 Pro Controller found: another program is using it (F1 > Controls).";
+    case Switch2Notice::no_reports: return "Switch 2 Pro Controller found, but it did not start (F1 > Controls).";
     }
     return {};
 }
 
-Switch2Notice Switch2Watch::update(std::chrono::steady_clock::time_point now, const UsbFindings& windows, bool sdl_pad, LibusbState libusb) {
-    const Switch2Notice notice = switch2_notice(windows, sdl_pad, libusb);
+std::string switch2_status_line(const Switch2Status& d) {
+    std::string line = "Switch 2 Pro Controller";
+    if (d.number > 1) line += " " + std::to_string(d.number);
+    line += " (USB): ";
+    switch (d.state) {
+    case Switch2State::opening: line += "opening..."; break;
+    case Switch2State::starting: line += "starting..."; break;
+    case Switch2State::waiting: line += d.started ? "started, waiting for its first input report..." : "waiting for its input..."; break;
+    case Switch2State::running: {
+        char rate[64];
+        std::snprintf(rate, sizeof rate, "playing, %.0f reports/s", d.rate);
+        line += d.rate > 0 ? std::string(rate) : std::string("playing");
+        if (!d.started) line += " (started by another program)";
+        const auto left = d.left_calibration, right = d.right_calibration;
+        line += left == right ? std::string(", sticks: ") + switch2_calibration_name(left) + " calibration"
+                              : std::string(", sticks: left ") + switch2_calibration_name(left) + ", right " + switch2_calibration_name(right) +
+                                    " calibration";
+        line += "; ZL / ZR are digital";
+        break;
+    }
+    case Switch2State::no_input: line += "its input device cannot be opened"; break;
+    case Switch2State::no_commands: line += "interface 1 unavailable (" + switch2_io_text(d.command_open) + ")"; break;
+    case Switch2State::no_reports: line += "no input reports"; break;
+    case Switch2State::gone: line += "unplugged"; break;
+    }
+    return line;
+}
+
+Switch2Notice Switch2Watch::update(std::chrono::steady_clock::time_point now, Switch2Notice notice) {
     if (notice == Switch2Notice::none || notice == Switch2Notice::playable) {
         pending_ = shown_ = notice;
         return shown_;

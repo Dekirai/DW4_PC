@@ -6,6 +6,7 @@
 #include "ghost_figures.hpp"
 #include "online/presence.hpp"
 #include "pad_host.hpp"
+#include "switch2_pro.hpp"
 
 #include <SDL3/SDL_hidapi.h>
 #include <SDL3/SDL_opengl.h>
@@ -61,9 +62,9 @@ PadFamily HostView::prompt_family(std::size_t player) const {
 
 PadFamily HostView::family_of(SDL_Gamepad* pad) const { return dw4::game::family_of(pads, pad); }
 
-void controller_hints(const Settings& settings, bool test_run) {
+void controller_hints(const Settings& settings) {
     // (The reasons stand with the values: pad_usb.cpp.)
-    for (const auto& hint : controller_hint_values(settings, test_run)) SDL_SetHint(hint.name, hint.value);
+    for (const auto& hint : controller_hint_values(settings)) SDL_SetHint(hint.name, hint.value);
 }
 
 namespace {
@@ -153,7 +154,30 @@ bool host_event(HostView& view, const SDL_Event& event) {
 }
 
 void update_controllers(HostView& view) {
-    if (view.test_run || !view.draw) return;
+    if (!view.draw) return;
+    if (!view.test_run) update_sdl_and_adapter(view);
+    // The Switch 2 Pro Controller (switch2_pro.hpp; also in a test run with
+    // DW4_TEST_SWITCH2=1): its pads, the reader's log lines, each pad's
+    // player lights, and what F1 > Controls says about it.
+    if (view.switch2_reader) {
+        auto& reader = *view.switch2_reader;
+        reader.update();
+        const auto lines = reader.take_log();
+        if (view.controller_log)
+            for (const auto& line : lines) view.controller_log->write(line);
+        view.switch2_devices = reader.status();
+        for (std::size_t i = 0; i < view.gamepads.size(); ++i)
+            if (const SDL_JoystickID id = SDL_GetGamepadID(view.gamepads[i]); reader.owns(id)) reader.set_player(id, int(i));
+    }
+    const Switch2Notice notice =
+        view.switch2.update(std::chrono::steady_clock::now(), switch2_notice(view.findings, view.switch2_devices, view.switch2_reader != nullptr));
+    if (view.controller_log && notice != view.logged_notice) {
+        view.logged_notice = notice;
+        view.controller_log->write(std::string("switch 2 pro notice: ") + switch2_notice_name(notice));
+    }
+}
+
+void update_sdl_and_adapter(HostView& view) {
     // SDL's Wii driver, automatic: the device list is looked at only when
     // SDL counts a device change (a Bluetooth pairing, a plugged pad).
     if (const std::uint32_t changes = SDL_hid_device_change_count(); !view.hid_changes || changes != view.hid_changes) {
@@ -177,18 +201,15 @@ void update_controllers(HostView& view) {
         const bool focused = view.window && (SDL_GetWindowFlags(view.window) & SDL_WINDOW_INPUT_FOCUS) != 0;
         view.gc_adapter->set_enabled(view.settings.gc_adapter && focused, view.settings.gc_adapter);
         view.gc_adapter->update();
-        // The Switch 2 Pro Controller: Windows' list (the adapter reader's
-        // look at it) against what SDL opened.
-        // (Copied only after a new look: it lists nodes.)
+        // What Windows lists of the adapter and of a Switch 2 Pro Controller
+        // (the adapter reader's look: Bluetooth for the notice, every node
+        // for the log). (Copied only after a new look: it lists nodes.)
         const std::uint32_t scans = view.gc_adapter->scans();
         if (scans != view.findings_scans) {
             view.findings_scans = scans;
             view.findings = view.gc_adapter->findings();
         }
         const UsbFindings& windows = view.findings;
-        bool sdl_pad = false;
-        for (auto* pad : view.gamepads) sdl_pad = sdl_pad || sdl_switch2_pad(pad);
-        const Switch2Notice notice = view.switch2.update(std::chrono::steady_clock::now(), windows, sdl_pad, view.libusb.state);
         if (view.controller_log) {
             // (The first look, then every change.)
             if (scans != view.logged_scans && (view.logged_scans == 0 || windows != view.logged_findings)) {
@@ -197,10 +218,6 @@ void update_controllers(HostView& view) {
                 for (const auto& line : usb_findings_node_lines(windows)) view.controller_log->write(line);
             }
             view.logged_scans = scans;
-            if (notice != view.logged_notice) {
-                view.logged_notice = notice;
-                view.controller_log->write(std::string("switch 2 pro: ") + switch2_notice_name(notice));
-            }
         }
     }
 }
@@ -752,12 +769,13 @@ void settings_controllers_section(HostView& view) {
                 break;
             default: break;
             }
-            // A Switch 2 Pro Controller that does not play: why and what to do.
-            if (const std::string text = switch2_notice_text(view.switch2.current(), view.findings); !text.empty())
-                ImGui::TextWrapped("%s", text.c_str());
         }
-        // libusb-1.0.dll (the Switch 2 Pro Controller over USB).
-        ImGui::TextDisabled("%s", libusb_summary(view.libusb).c_str());
+        // The Switch 2 Pro Controller (switch2_pro.hpp): each one's state, and
+        // why one does not play and what to do.
+        for (const auto& device : view.switch2_devices) ImGui::TextDisabled("%s", switch2_status_line(device).c_str());
+        const Switch2Notice switch2_now = view.switch2.current();
+        if (const std::string text = switch2_notice_text(switch2_now, switch2_notice_device(switch2_now, view.switch2_devices)); !text.empty())
+            ImGui::TextWrapped("%s", text.c_str());
         if (view.controller_log) ImGui::TextDisabled("Controller log: %s", view.controller_log->path().string().c_str());
         // Button prompts: automatic (player 1's last device) or one family.
         {

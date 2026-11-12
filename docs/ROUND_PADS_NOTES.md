@@ -76,6 +76,9 @@ twice, the save state suite 17 / 17, r25c 10 / 10 (section 6).
   the owner approved libusb as a separate `libusb-1.0.dll` (LGPL-2.1) that
   SDL loads at run time; the Switch 2 Pro Controller plays over USB. The Wii
   U mode adapter stays the WinUSB reader's (SDL is told to leave it).
+  Replaced in round "sw2win" ([ROUND_SW2WIN_NOTES.md](ROUND_SW2WIN_NOTES.md)):
+  the port reads the Switch 2 Pro Controller itself (Windows' HID and WinUSB,
+  no driver install) and libusb is gone.
 - **Per-player pictures**: done for the lines that are a player's own (the
   character select's `font<player><line>`); every other game text, the title
   and the port's menus show player 1's family. In play, a local co-op status

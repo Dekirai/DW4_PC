@@ -1064,17 +1064,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
     const bool draw = !options.smoke_frames || !options.screenshot.empty() || std::getenv("DW4_TEXTURE_PACK") ||
                       std::getenv("DW4_DUMP_TEXTURES") || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0) ||
                       dev.presenting() || !dev.dump_dir.empty();
-    // The controller families' SDL drivers (host_view.hpp; libusb for the
-    // Switch 2 Pro Controller outside test runs: pad_usb.hpp). Test tool:
-    // DW4_TEST_LIBUSB=1 lets SDL load libusb-1.0.dll in a test run too (a
-    // hidden start that draws then reaches SDL's USB enumeration as play does).
-    const bool libusb_test = options.smoke_frames && std::getenv("DW4_TEST_LIBUSB") && std::atoi(std::getenv("DW4_TEST_LIBUSB")) != 0;
-    const bool controller_test_run = options.smoke_frames && !libusb_test;
-    dw4::game::controller_hints(settings, controller_test_run);
-    // libusb-1.0.dll beside the game: looked for as SDL will (its state goes
-    // to the console, F1 > Controls and the controller log).
-    const auto libusb = dw4::game::probe_libusb(dw4::game::sdl_has_libusb(), !controller_test_run);
-    std::cout << "controllers: " << dw4::game::libusb_summary(libusb) << '\n';
+    // The controller families' SDL drivers (host_view.hpp; no libusb: the
+    // Switch 2 Pro Controller and the GameCube adapter are the port's own
+    // readers', pad_usb.hpp). Test tool: DW4_TEST_SWITCH2=1 starts the Switch
+    // 2 Pro reader in a test run too (a hidden start that draws then looks
+    // at Windows' device list as play does).
+    const bool test_switch2 = options.smoke_frames && std::getenv("DW4_TEST_SWITCH2") && std::atoi(std::getenv("DW4_TEST_SWITCH2")) != 0;
+    dw4::game::controller_hints(settings);
+    // A libusb-1.0.dll beside the game (earlier builds shipped one): never
+    // loaded now; said so it can go.
+    const auto leftover_libusb = dw4::game::leftover_libusb_dll();
+    const std::string usb_line = "usb: no libusb (the Switch 2 Pro Controller and the GameCube adapter are read by the game itself)" +
+                                 (leftover_libusb.empty() ? std::string()
+                                                          : "; " + leftover_libusb.filename().string() +
+                                                                " beside the game is left over from an earlier version and not used (it can be deleted)");
+    std::cout << "controllers: " << usb_line << '\n';
     // saves/controllers.log (pad_usb.hpp: what to send in when a controller
     // does not work), opened before SDL starts so SDL's own messages about
     // the devices it finds are in it. Not in test runs, unless
@@ -1089,7 +1093,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             controller_log->write(std::string("DW4_PC ") + DW4_PC_VERSION + ", SDL " + std::to_string(SDL_VERSIONNUM_MAJOR(sdl_version)) + "." +
                                   std::to_string(SDL_VERSIONNUM_MINOR(sdl_version)) + "." + std::to_string(SDL_VERSIONNUM_MICRO(sdl_version)) +
                                   " (" + SDL_GetRevision() + ")");
-            controller_log->write(dw4::game::libusb_summary(libusb));
+            controller_log->write(usb_line);
             controller_log->write(std::string("settings: gc_adapter=") + (settings.gc_adapter ? "true" : "false") + ", nintendo_layout=" +
                                   (settings.nintendo_layout == dw4::game::NintendoLayout::by_label ? "label" : "position") +
                                   ", prompts=" + settings.prompts);
@@ -1209,7 +1213,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // (host_view.hpp: the story and a Data Overflow run use the same).
         dw4::game::HostView view(settings, dev);
         view.test_run = options.smoke_frames != 0;
-        view.libusb = libusb;
         view.controller_log = controller_log ? &*controller_log : nullptr;
         view.draw = draw;
         view.window = window;
@@ -1253,6 +1256,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (draw && !options.smoke_frames) {
             gc_adapter.emplace(settings.gc_adapter);
             view.gc_adapter = &*gc_adapter;
+        }
+        // The Switch 2 Pro Controller on a cable (switch2_pro.hpp: Windows'
+        // HID driver and WinUSB, no driver install): not in test runs unless
+        // DW4_TEST_SWITCH2=1.
+        std::optional<dw4::game::Switch2Reader> switch2_reader;
+        if (draw && dw4::game::switch2_pro_owner(options.smoke_frames != 0, test_switch2) == dw4::game::AdapterOwner::port_reader) {
+            switch2_reader.emplace(dw4::game::make_windows_switch2_platform());
+            view.switch2_reader = &*switch2_reader;
         }
         std::set<dw4::game::Switch2Notice> switch2_noted; // (each Switch 2 Pro notice once a session)
         auto update_prompts = [&] {
@@ -3515,10 +3526,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
 #endif
                 update_prompts();
                 // A Switch 2 Pro Controller that does not play (pad_usb.hpp:
-                // the DLL missing, Windows without WinUSB on its interface 1,
-                // Bluetooth, another program holding it): said once rather
-                // than nothing happening; F1 > Controls says what to do.
-                if (const auto notice = view.switch2.current(); gc_adapter && switch2_noted.insert(notice).second)
+                // its input or its interface 1 unavailable, Bluetooth, another
+                // program holding it): said once rather than nothing
+                // happening; F1 > Controls says what to do.
+                if (const auto notice = view.switch2.current(); switch2_reader && !options.smoke_frames && switch2_noted.insert(notice).second)
                     if (const std::string text = dw4::game::switch2_toast_text(notice); !text.empty())
                         toasts.push_back({"Controllers", text, std::chrono::steady_clock::now() + std::chrono::seconds(10)});
                 const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend, &remote_view);
@@ -4710,6 +4721,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
         view.gc_adapter = nullptr;
         gc_adapter.reset();
+        view.switch2_reader = nullptr;
+        switch2_reader.reset();
         dw4::game::set_ui_view(nullptr);
         if (button_prompts) dw4::game::ButtonPrompts::set_active(nullptr);
     }

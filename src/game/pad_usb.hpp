@@ -1,41 +1,31 @@
 #pragma once
 
-// USB access for the controllers (docs/ROUND_LIBUSB_NOTES.md): the
-// libusb-1.0.dll SDL loads at run time for the Switch 2 Pro Controller, the
-// SDL hints that decide which code opens which USB device, what F1 >
-// Controls and a notice say about a connected Switch 2 Pro Controller, and
-// the controller log (saves/controllers.log).
+// USB access for the controllers (docs/ROUND_SW2WIN_NOTES.md): the SDL hints
+// that decide which code opens which USB device, what F1 > Controls and a
+// notice say about a connected Switch 2 Pro Controller, and the controller
+// log (saves/controllers.log).
 //
 // SDL 3.4.16 reaches a few devices only through libusb (SDL_hidapi.c,
 // SDL_libusb_required: the GameCube adapter 057e:0337, the Switch 2 Pro
 // Controller 057e:2069, the Switch 2 Joy-Con and GameCube controller); its
-// Windows HID path skips them. Every other controller keeps its path
-// (Windows HID, XInput, RawInput, ...): SDL_HIDAPI_LIBUSB_WHITELIST stays
-// on. The Switch 2 Pro Controller is a composite USB device: interface 0 is
-// HID (Windows' own HID driver; libusb reads it through its HID backend),
-// interface 1 is a vendor interface with two bulk endpoints that SDL's
-// Switch 2 driver claims to start the controller (SDL_hidapi_switch2.c
-// HIDAPI_DriverSwitch2_InitUSB). libusb can claim that interface only with
-// the WinUSB driver on it and a device interface GUID in its registry key
-// (libusb's Windows backend finds composite interfaces through that GUID).
-// A descriptor dump of the controller (VIIPER) carries a Microsoft OS
-// descriptor that asks Windows for both; not yet checked with the device.
-// Otherwise Zadig installs WinUSB there (its INF writes the GUID).
+// Windows HID path skips them. The port reads two of them itself, with
+// Windows' own drivers and no libusb: the GameCube adapter in Wii U mode
+// (gc_adapter.hpp: WinUSB, which Zadig installs as for Dolphin) and the
+// Switch 2 Pro Controller (switch2_pro.hpp: Windows' HID driver on its
+// interface 0 for the input, the WinUSB driver Windows loads by itself on its
+// interface 1 for the start commands). SDL is built without libusb and told
+// never to load a libusb-1.0.dll (one left over from an earlier build included),
+// so exactly one code path opens each device, and every other controller
+// keeps its path (Windows HID, XInput, RawInput, ...).
 //
-// Without the DLL SDL notes "Couldn't load libusb" and goes on with Windows'
-// HID: the game starts and every other controller works as before.
-//
-// Ownership: SDL's GameCube driver would open the Wii U mode adapter
-// through libusb as well; the port's WinUSB reader (gc_adapter.hpp) keeps
-// it (SDL_HIDAPI_LIBUSB_GAMECUBE=0), so exactly one code path opens it, with
-// or without the DLL, and it is still let go in the background for Dolphin.
-//
-// Test runs (--smoke-test) never let SDL use libusb (no controller of this
-// PC takes part in them); they still look for the DLL and print it.
+// Test runs (--smoke-test) start neither reader (no controller of this PC
+// takes part in them); DW4_TEST_SWITCH2=1 starts the Switch 2 Pro reader in a
+// hidden test run (its look at Windows' device list, as in play).
 
 #include "gc_adapter.hpp"
 #include "pad_family.hpp"
 #include "settings.hpp"
+#include "switch2_pro.hpp"
 
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_log.h>
@@ -45,94 +35,75 @@
 #include <cstdio>
 #include <filesystem>
 #include <mutex>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace dw4::game {
 
-// The DLL SDL loads (SDL_LIBUSB_DYNAMIC of this build's SDL).
-inline constexpr const char* kLibusbDll = "libusb-1.0.dll";
-// This build's SDL was configured with libusb (CMake DW4_LIBUSB).
-bool sdl_has_libusb();
-// The functions SDL 3.4.16 loads from the DLL (SDL_libusb.c), without their
-// "libusb_" prefix; SDL uses the DLL only when every one is there.
-std::span<const char* const> sdl_libusb_functions();
-
-enum class LibusbState : std::uint8_t {
-    not_built,    // this build's SDL has no libusb
-    off,          // SDL's libusb is off (test runs)
-    missing,      // no libusb-1.0.dll where Windows looks (the game's folder first)
-    incompatible, // a libusb-1.0.dll without a function SDL needs (too old, or not libusb)
-    loaded,       // SDL can use it
-};
-struct LibusbInfo {
-    LibusbState state = LibusbState::not_built;
-    std::string path;    // where Windows found it
-    std::string version; // "1.0.30.12037"
-    std::string missing; // the first function it lacks (incompatible)
-};
-// Looks for `dll` as SDL_LoadObject does (Windows' LoadLibrary search: the
-// program's folder first), checks every function SDL loads and reads its
-// version, then lets it go again. `built`: sdl_has_libusb(); `enabled`:
-// SDL's libusb hint (off in test runs: the DLL is still looked for).
-LibusbInfo probe_libusb(bool built, bool enabled, const char* dll = kLibusbDll);
-const char* libusb_state_name(LibusbState state); // "loaded", "missing", ...
-// Whether a libusb-1.0.dll is loaded in this process now (SDL keeps it
-// while its HID layer runs).
+// ---- libusb (no longer used)
+// Whether a libusb-1.0.dll is loaded in this process now (it must not be:
+// SDL is built without libusb and told not to load one).
 bool libusb_in_process();
-// One line for the console, the log and F1 > Controls.
-std::string libusb_summary(const LibusbInfo& info);
+// A libusb-1.0.dll beside the program (left over from an earlier build, which
+// shipped one): its path, empty when there is none. Never loaded.
+std::filesystem::path leftover_libusb_dll();
 
 // The controller hints before SDL_Init (host_view.cpp controller_hints).
 struct SdlHint {
     const char* name;
     const char* value;
 };
-std::vector<SdlHint> controller_hint_values(const Settings& settings, bool test_run);
+std::vector<SdlHint> controller_hint_values(const Settings& settings);
 
 // Who opens the GameCube adapter in Wii U mode (057e:0337): the port's
 // WinUSB reader (gc_adapter.hpp) while the setting allows it outside test
-// runs; never SDL (its libusb path is told to leave the adapter and its
-// Windows HID path skips it), with or without libusb-1.0.dll.
+// runs; never SDL (its Windows HID path skips the adapter, and it has no
+// libusb).
 enum class AdapterOwner : std::uint8_t { nobody, port_reader };
 AdapterOwner gamecube_adapter_owner(bool gc_adapter_setting, bool test_run);
+// Who opens the Switch 2 Pro Controller (057e:2069): the port's reader
+// (switch2_pro.hpp) outside test runs (or with DW4_TEST_SWITCH2); never SDL.
+AdapterOwner switch2_pro_owner(bool test_run, bool test_switch2);
 
-// ---- The Switch 2 Pro Controller
-// A pad SDL's own Switch 2 driver opened (057e:2069 with SDL's HIDAPI
-// GUID): the controller plays.
-bool sdl_switch2_pad(const PadIdentity& identity, const SDL_GUID& guid);
-bool sdl_switch2_pad(SDL_Gamepad* pad);
-
+// ---- The Switch 2 Pro Controller's notice
 enum class Switch2Notice : std::uint8_t {
-    none,             // none connected (or a test run)
-    playable,         // SDL drives it: a player's pad
-    not_built,        // this build's SDL has no libusb
-    dll_missing,      // libusb-1.0.dll is missing
-    dll_incompatible, // the libusb-1.0.dll found lacks what SDL needs
-    bluetooth,        // over Bluetooth only, as an input device (SDL drives it on a cable only)
-    no_driver,        // its interface 1 has no driver (Windows did not load WinUSB)
-    no_interface_guid, // WinUSB on interface 1 without a device interface GUID: libusb cannot reach it
-    other_driver,     // its interface 1 has another driver than WinUSB, and it does not play
-    no_interface,     // on USB, but Windows lists no interface 1 of it (a driver on the whole device?)
-    not_opened,       // WinUSB with its GUID is there, yet SDL made no pad of it (another program holds it, or its start failed)
+    none,              // none connected (or the reader does not run: a test run)
+    playable,          // the reader plays it
+    bluetooth,         // over Bluetooth only, as an input device (the reader reads it on a cable)
+    no_input,          // on USB, but its HID input (interface 0) is not there or cannot be opened
+    no_driver,         // its interface 1 has no driver (Windows did not load WinUSB)
+    other_driver,      // its interface 1 has another driver than WinUSB (libusbK, libusb0, ...)
+    no_interface_guid, // WinUSB on interface 1 without a device interface GUID: nothing to open
+    no_interface,      // Windows lists no interface 1 of it (a driver on the whole controller?)
+    busy,              // another program holds interface 1, and no input report comes
+    no_reports,        // started (or a start command could not be sent), but no input report came
 };
 const char* switch2_notice_name(Switch2Notice notice);
-// What applies now: `windows` the device list (gc_adapter.hpp), `sdl_pad`
-// whether SDL opened it (sdl_switch2_pad), `libusb` the DLL's state.
-Switch2Notice switch2_notice(const UsbFindings& windows, bool sdl_pad, LibusbState libusb);
+// One controller's notice by the reader's state (none while it opens or
+// starts: the grace below covers that).
+Switch2Notice switch2_device_notice(const Switch2Status& device);
+// What applies now: `windows` the device list (gc_adapter.hpp: Bluetooth),
+// `reader` every controller the reader has (switch2_pro.hpp), `reader_on`
+// whether the reader runs. A controller that does not play wins over one
+// that does (its notice says what to do).
+Switch2Notice switch2_notice(const UsbFindings& windows, const std::vector<Switch2Status>& reader, bool reader_on);
+// The controller a notice is about (null for none / playable / bluetooth).
+const Switch2Status* switch2_notice_device(Switch2Notice notice, const std::vector<Switch2Status>& reader);
 // F1 > Controls (what is wrong and what to do; empty for none / playable)
-// and the short notice in play.
-std::string switch2_notice_text(Switch2Notice notice, const UsbFindings& windows);
+// and the short notice in play. `device`: the controller it is about.
+std::string switch2_notice_text(Switch2Notice notice, const Switch2Status* device);
 std::string switch2_toast_text(Switch2Notice notice);
+// F1 > Controls: one line per connected controller ("Switch 2 Pro
+// Controller (USB): playing, 250 reports/s, ...").
+std::string switch2_status_line(const Switch2Status& device);
 
-// SDL opens the controller a moment after Windows lists it: a notice other
-// than playable counts only once it held kSwitch2Grace.
+// The reader opens the controller a moment after Windows lists it: a notice
+// other than playable counts only once it held kSwitch2Grace.
 inline constexpr std::chrono::milliseconds kSwitch2Grace{3000};
 class Switch2Watch {
 public:
-    Switch2Notice update(std::chrono::steady_clock::time_point now, const UsbFindings& windows, bool sdl_pad, LibusbState libusb);
+    Switch2Notice update(std::chrono::steady_clock::time_point now, Switch2Notice notice);
     Switch2Notice current() const { return shown_; }
 
 private:
@@ -142,11 +113,11 @@ private:
 
 // ---- saves/controllers.log
 // What to send in when a controller does not work: the program's version,
-// SDL's, libusb-1.0.dll's state, every pad that comes and goes (name, USB
-// ids, family, SDL's backend, SDL's device path), what Windows lists of the
-// Switch 2 Pro Controller and the GameCube adapter, the notices, and SDL's
-// own input messages (devices it adds, libusb loading, the Switch 2
-// driver's warnings). Written anew at every start, outside test runs.
+// SDL's, every pad that comes and goes (name, USB ids, family, SDL's
+// backend, SDL's device path), what Windows lists of the Switch 2 Pro
+// Controller and the GameCube adapter, every step of the Switch 2 Pro
+// reader (switch2_pro.hpp), the notices, and SDL's own input messages.
+// Written anew at every start, outside test runs.
 class ControllerLog {
 public:
     ControllerLog() = default;

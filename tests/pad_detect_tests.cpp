@@ -8,7 +8,8 @@
 // fallback when a pad is unplugged, the Wii remotes SDL's Wii driver makes
 // pads of (no player slot), a pad's input and the menus' keys through the
 // host's own code (pad_host.hpp, as host_view.cpp runs it), and the Switch 2
-// Pro Controller end to end (docs/ROUND_LIBUSB_NOTES.md).
+// Pro Controller end to end (docs/ROUND_SW2WIN_NOTES.md: the port's reader
+// makes its pad with the ids and the layout of SDL's own Switch 2 driver).
 #include "../src/game/gc_adapter.hpp"
 #include "../src/game/pad_family.hpp"
 #include "../src/game/pad_host.hpp"
@@ -314,8 +315,9 @@ void host_input() {
     host.pump();
 }
 
-// The Switch 2 Pro Controller end to end as SDL's Switch 2 driver reports it
-// (SDL_hidapi_switch2.c with SDL_gamepad.c's HIDAPI mapping: positional
+// The Switch 2 Pro Controller end to end as SDL's Switch 2 driver and the
+// port's reader (switch2_pro.hpp) report it (SDL_hidapi_switch2.c with
+// SDL_gamepad.c's HIDAPI mapping: positional
 // face buttons, A on EAST; Minus BACK, Plus START, Home GUIDE, Capture
 // MISC1, C MISC2, GR RIGHT_PADDLE1, GL LEFT_PADDLE1): its family, the
 // labels, by label (the default) the printed A is the game's A, the

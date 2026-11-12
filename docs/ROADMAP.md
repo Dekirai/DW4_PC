@@ -56,7 +56,7 @@ for every device or scene.
 | MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
 | Keyboard / Mouse | Full original controls on rebindable keys (three per button), saved; key cap prompts of the bound keys | Original gameplay, freely editable saved bindings and appropriate mouse camera support |
 | Xbox / PlayStation | Full original controls on four independent slots with hotplug; rebindable buttons and triggers (F1, saved); detected family with its own prompts | Tested original gameplay mappings, independent slots, hotplug and prompts |
-| Nintendo pads | Switch Pro, Switch 2 Pro (USB, through the shipped libusb-1.0.dll), Wii U Pro: by label or by position, own prompts | Tested with the devices |
+| Nintendo pads | Switch Pro, Switch 2 Pro (USB, the port's own reader with Windows' drivers, no install), Wii U Pro: by label or by position, own prompts | Tested with the devices |
 | GameCube | 1:1 layout (trigger clicks), the game's own pictures; Mayflash PC mode through SDL, Wii U mode adapters through WinUSB | Tested with the adapters |
 | Original / Modernized | F1 preset: Original (4:3, 60 fps motion, no MSAA, intro, original balance) or Modernized (widescreen, smooth motion, 4x MSAA, skip intro); options stay individually adjustable | Original behavior baseline plus explicit optional changes |
 
@@ -75,7 +75,7 @@ unchanged; det.sh, the save state suite and r25c as before).
 | Xbox 360 | done (SDL type) | done, START / BACK | play test, wireless receiver |
 | Xbox One / Series | done (SDL type) | done, Menu / View | play test |
 | Switch Pro | done (057e:2009) | done, by label (default) or position | play test |
-| Switch 2 Pro | done (057e:2069); SDL opens it over USB through the shipped `libusb-1.0.dll` (round "libusb", [ROUND_LIBUSB_NOTES.md](ROUND_LIBUSB_NOTES.md)); without the DLL, without WinUSB (or its device interface GUID) on its interface 1, over Bluetooth (when Windows lists it as an input device) or held by another program the F1 menu and a notice say what to do | done; C, GL, GR bindable (unbound by default) | a play test over USB (and whether Windows puts WinUSB with its GUID on interface 1 by itself) |
+| Switch 2 Pro | done (057e:2069); over USB the port's own reader opens it with Windows' drivers (its HID input, WinUSB on interface 1, which Windows set up by itself on the owner's PC) and makes an SDL pad of it (round "sw2win", [ROUND_SW2WIN_NOTES.md](ROUND_SW2WIN_NOTES.md); libusb removed); another driver on it, over Bluetooth (when Windows lists it as an input device) or held by another program the F1 menu and a notice say what to do | done; C, GL, GR bindable (unbound by default) | a play test over USB with this reader (the owner's hand test) |
 | Wii U Pro | done (SDL's Wii driver: its name and GUID; the driver on while 057e:0330 is connected; Wii remotes take no slot) | done | Bluetooth pairing on Windows and a play test |
 | GameCube (Mayflash PC mode) | done (SDL type, 0079:1843 / 1844) | game's own pictures; port UI GameCube pictures | trigger clicks, the adapter's reported id |
 | GameCube (Wii U mode, WUP-028) | done (own WinUSB reader, virtual SDL pads) | as above | the whole USB path with Zadig's WinUSB driver |
