@@ -162,7 +162,8 @@ public class WorldRelayTests
     [DbFact]
     public async Task A_report_over_the_relay_is_stored_and_answered_and_the_own_id_is_not_available()
     {
-        var (host, port) = await StartAsync();
+        // (The guest enters by the automatic join, World:ArrivalPrompt off: these test clients answer no prompt.)
+        var (host, port) = await StartAsync(new() { ["Instances:StoryMinVisitSeconds"] = "1", ["World:ArrivalPrompt"] = "false" });
         await using var scope = host;
         var (_, _, kimId) = await host.RegisterAsync("RelayKim");
         var (_, _, leeId) = await host.RegisterAsync("RelayLee");
@@ -205,7 +206,8 @@ public class WorldRelayTests
     [DbFact]
     public async Task A_hosts_block_through_the_api_removes_his_guest_from_the_instance()
     {
-        var (host, port) = await StartAsync();
+        // (The guest enters by the automatic join, World:ArrivalPrompt off: these test clients answer no prompt.)
+        var (host, port) = await StartAsync(new() { ["Instances:StoryMinVisitSeconds"] = "1", ["World:ArrivalPrompt"] = "false" });
         await using var scope = host;
         var (hostToken, _, hostId) = await host.RegisterAsync("BlockHost");
         var (_, _, guestId) = await host.RegisterAsync("BlockGuest");
