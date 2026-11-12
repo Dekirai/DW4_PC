@@ -35,11 +35,19 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 | 10 | Review 2026-11-11, finding 1: a removed member never takes a seat again (`TakeSeat` refuses under the bar or an owed HOME; `SendRemovedHome` at the removal of a waiting arrival, in `Decide`, at every `CheckHolds` pass and in `Join`: DISSOLVE home with the redirect, the rest decides on; the join's fallback without a seat asks HOME at once); finding 2: REPORT resolves only members the reporter was told about (`HubMember.Introduced`), any other id is "not available" without a name; finding 3: REPORT's bucket 3 + 10/min | 81d1e247 |
 | 11 | Findings 3 and 6: the report service answers a reached daily limit without a query for 10 minutes; 403 `own_report` for staff handling a report about themselves (API and website) | 0f4bf17c |
 | 12 | Findings 4, 5, 7: README (422 `own_account`, the staff list's instance fields, 403 `own_report`); the card's question without a number, the card's texts in 19.5.6; scenario W10d (removal while the JOIN waits) with the relay's test option `World:TestJoinHoldMs` and the online script's `members=N`; 19.24 names W10d | 5891f581 |
+| 13 | Review 2026-11-12, findings 1 and 2: `SendRemovedHome` also sends removed co-arrivals of a holding base home (DISSOLVE of their own parked visit, never CO_ARRIVE); a base left without members re-decides its co-arrivals (`RedecideCoArrivals`, also in I1a's `DetachLocked`: each parks under its own name again); `New()` checks before the places of a NEW inside an instance; five unit tests | 92f6485f |
+| 14 | Review 2026-11-12, finding 3: a report about the viewing staff member comes without its reporter and the shared instance (API null, website "a player"); API and website tests; README | 6ad0cbee |
+| 15 | Review 2026-11-12, finding 4: SEAMLESS.md 19.25's moderation block on the state after both reviews; 19.6.6 (a removal while waiting at a barrier) and 19.16 (staff abuse) | 6f7f3cd3 |
 
 ## Test results
 
 | What | Result | Log |
 | --- | --- | --- |
+| **Review fixes (2026-11-12, 92f6485f / 6ad0cbee / 6f7f3cd3)** | | |
+| server unit (DW4Online.Tests) | 484/484 (the five new tests failed before the fix: `build/mod/unit4_pre.log`, the New() guard's test checked with the guard commented out) | `build/mod/unit4.log` |
+| server integration (mysqld 3652) | 143 passed, 3 skipped (the two changed ReportApiTests failed without the fix: `build/mod/it4_reports_pre.log`) | `build/mod/it4.log` |
+| ctest, det.sh | not rerun: no engine or client change since d10ad5e0 (57/57, 4004f056 / 396cb219 twice there) | - |
+| scenarios W10, W10b, W10c, W10d (exe e, the client is unchanged since 5891f581) | r8 running (started 15:20) | `build/mod/scen_r8.log` |
 | **Review fixes (2026-11-11, 588c83a7 / 020025e5)** | | |
 | server unit (DW4Online.Tests) | 479/479 | `build/mod/unit3.log` |
 | server integration (mysqld 3652) | 143 passed, 3 skipped | `build/mod/it3.log` |
@@ -108,6 +116,30 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
    lane's code: the prompt lane found its cause (`RoomHub.BecomeMember` stamps `Stopwatch.GetTimestamp()` instead of the
    hub's `now`, contract "prompt 14:25"); the integration fixes it once; a full run that fails only there is repeated once.
 
+## Review 2026-11-12 and what was done
+
+1. should_fix, WorldHub `SendRemovedHome`: removing the only member of a co-arrival base left its co-arrivals undecided
+   (no BARRIER_OK, no BARRIER_WAIT; the client's 5 s fallback). Fixed (92f6485f): the emptied base re-decides its
+   co-arrivals (`RedecideCoArrivals`). The same helper replaces I1a's loop in `DetachLocked`, which re-decided them but left
+   their `HubMember.Arrival` on the gone base: a removal then waited for the next CheckHolds pass, and the co-arrival's own
+   leave left its hold with nobody in it (a fault in CheckHolds: NEW of nobody). Tests:
+   `Removing_the_only_member_of_a_holding_base_lets_its_co_arrival_decide_on_its_own_and_play_on_in_the_instance`,
+   `The_co_arrival_of_a_base_whose_only_member_left_the_world_is_its_own_arrival_for_a_removal`,
+   `The_co_arrival_of_a_base_whose_only_member_left_the_world_may_leave_too_without_leaving_an_empty_hold`.
+2. should_fix, a co-arrival removed while its base holds co-arrived into the instance without a seat. Fixed (92f6485f):
+   `SendRemovedHome` checks the co-arrival groups too (DISSOLVE of the co-arrival's own parked visit, redirected home, own
+   story); `New()` checks before the places of a NEW inside an instance. Tests:
+   `A_co_arrival_removed_while_its_base_holds_goes_home_from_its_own_barrier_and_never_co_arrives_into_the_instance`,
+   `A_NEW_never_places_a_co_arrival_barred_from_the_instance_without_a_seat_whatever_path_led_there` (fails with the guard
+   commented out).
+3. minor, a moderator saw who reported him. Fixed (6ad0cbee): rows about the viewer have no reporter and no shared instance
+   (its host may be the reporter) on the API (null), *Admin > Reports* and the own account page ("a player"); other staff see
+   all. Tests in `ReportApiTests` (API: the six fields null for Moddy, set for Mona; website: "a player", no link to the
+   reporter on the own account page).
+4. minor, SEAMLESS.md 19.25's moderation block described the state before the first review. Fixed (6f7f3cd3): Introduced,
+   10 a minute, the card's question, the limit memory, 422, own_report and the hidden reporter, TakeSeat / SendRemovedHome
+   with the co-arrivals, W10d; 19.6.6 and 19.16 got a sentence each.
+
 ## Findings for the integration (not this lane's code)
 
 - The host gets two toasts for one guest: the instance's "<name> joined." (WORLD_NOTICE joined, 19.5.6) and the stage
@@ -130,6 +162,8 @@ ctest, online off, W10, W10b, W10c, W10d, the UI scenario `card`). For the I1b i
   (b's `options` rows never name a's wid after the removal, review finding 7, contract 15:20).
 - The prompt / go lanes' new holds and seat paths: `CheckHolds` checks every hold kind for removed members first; a new path
   that seats without `TakeSeat` or joins without `Join` should call `SendRemovedHome` (contract 15:20).
+- `DetachLocked` (I1a code) now calls `RedecideCoArrivals`; the prompt lane's FinishCoArrival guard and decision 43 should
+  let co-arrivals decide through it (contract moderation 2026-11-12 15:25).
 - The base flake `A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges` (review finding 8, cause in
   the contract's prompt 14:25 entry: `BecomeMember`'s real-time stamp).
 - The finding above (the double join toast), if the integration wants it fixed in I1b.
