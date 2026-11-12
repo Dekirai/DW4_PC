@@ -47,7 +47,7 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 | server unit (DW4Online.Tests) | 484/484 (the five new tests failed before the fix: `build/mod/unit4_pre.log`, the New() guard's test checked with the guard commented out) | `build/mod/unit4.log` |
 | server integration (mysqld 3652) | 143 passed, 3 skipped (the two changed ReportApiTests failed without the fix: `build/mod/it4_reports_pre.log`) | `build/mod/it4.log` |
 | ctest, det.sh | not rerun: no engine or client change since d10ad5e0 (57/57, 4004f056 / 396cb219 twice there) | - |
-| scenarios W10, W10b, W10c, W10d (exe e, the client is unchanged since 5891f581) | r8 running (started 15:20) | `build/mod/scen_r8.log` |
+| scenarios W10, W10b, W10c, W10d (exe e, the client is unchanged since 5891f581) | 4 of 4 passed (r8: 483 s, 182 s, 382 s, 423 s), run `tools/online_test/.work/run_20261112_152104` | `build/mod/scen_r8.log` |
 | **Review fixes (2026-11-11, 588c83a7 / 020025e5)** | | |
 | server unit (DW4Online.Tests) | 479/479 | `build/mod/unit3.log` |
 | server integration (mysqld 3652) | 143 passed, 3 skipped | `build/mod/it3.log` |
@@ -152,7 +152,7 @@ refused *owner*), the detachment of a solo-led stage group after `Instances:Join
 
 ## Left
 
-Nothing of the lane: every item of the task and every review finding is built and green (server unit and integration,
+Nothing of the lane: every item of the task and every finding of both reviews (2026-11-11, 2026-11-12) is built and green (server unit and integration,
 ctest, online off, W10, W10b, W10c, W10d, the UI scenario `card`). For the I1b integration:
 - Merge with the lanes prompt and go: the conflicts the contract names (online_ui.cpp's `playing()`: the go-along box above
   the page, the card below the member table; the wire type registries; WorldHub/RoomHub hook places). With the prompt
