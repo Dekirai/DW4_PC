@@ -68,19 +68,20 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void A_base_holds_for_no_member_that_chose_and_takes_none_as_its_co_arrival()
+    public void A_base_holds_for_no_member_that_chose_a_row_but_for_a_new_instance_chooser()
     {
-        // k's instance plays in dng101b1: a gate PLAN to stag0101 lists it (nobody here: the cursor on New instance). lee chooses New
-        // instance; x and y head for stag0101 without a plan. x's base holds only for y; lee's barrier is never x's co-arrival.
+        // k's instance plays in dng101b1: a gate PLAN to stag0101 lists it (nobody here: the cursor on New instance). lee chooses k's
+        // row; x and y head for stag0101 without a plan. x's base holds only for y; lee's barrier is never x's co-arrival.
         var h = PromptHarness();
-        Admit(h, "k", Player(100, "k"));
+        Admit(h, "k", Player(100, "k") with { Story = StoryAt(4) }); // (Goblin Pass's gate opened: a guest may enter at stag0101)
         Admit(h, "lee", Player(101, "lee"));
         Admit(h, "x", Player(102, "x"));
         Admit(h, "y", Player(103, "y"));
         HostJoinable(h, "k", "dng101b1");
+        var wk = W(h, "k");
         Plan(h, "lee", 1, "stag0101");
         Assert.Equal(OptionsMsg.NewInstance, LastOptions(h, "lee").Preselected);
-        Choose(h, "lee", 1, ChoiceKind.New, visibility: Visibility.Friends);
+        Choose(h, "lee", 1, ChoiceKind.Join, wk.Wid);
         foreach (var n in new[] { "lee", "x", "y" }) Heading(h, n, "stag0101");
         h.Advance(300);
         h.Barrier("x", "stag0101");
@@ -89,11 +90,37 @@ public partial class HubLogicTests
         Assert.Equal([h.Mem("y")], x.Awaited);
         BarrierPlan(h, "lee", "stag0101", 1);
         var ok = h.Decision("lee");
-        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, Visibility.Friends), (ok.Decision, ok.World.Arrival, ok.World.Visibility));
+        Assert.Equal((BarrierDecision.New, ArrivalKind.GuestNew, wk.Wid), (ok.Decision, ok.World.Arrival, ok.World.Wid));
         Assert.Empty(x.CoArrivals);
         h.Barrier("y", "stag0101");
         Assert.Same(W(h, "x"), W(h, "y"));
         Assert.NotSame(W(h, "x"), W(h, "lee"));
+
+        // Decision 43 (2026-11-11): lee chooses *New instance* instead: x's base holds for him as well and takes him as its co-arrival;
+        // the three land in x's instance (x's visibility; lee's Friends is only remembered).
+        var g = PromptHarness();
+        Admit(g, "k", Player(100, "k"));
+        Admit(g, "lee", Player(101, "lee"));
+        Admit(g, "x", Player(102, "x"));
+        Admit(g, "y", Player(103, "y"));
+        HostJoinable(g, "k", "dng101b1");
+        Plan(g, "lee", 1, "stag0101");
+        Choose(g, "lee", 1, ChoiceKind.New, visibility: Visibility.Friends);
+        foreach (var n in new[] { "lee", "x", "y" }) Heading(g, n, "stag0101");
+        g.Advance(300);
+        g.Barrier("x", "stag0101");
+        var gx = g.Mem("x").Arrival!;
+        Assert.Equal(HoldKind.CoArrival, gx.Hold);
+        Assert.Equal([g.Mem("lee"), g.Mem("y")], gx.Awaited.OrderBy(m => m.Id));
+        BarrierPlan(g, "lee", "stag0101", 1);
+        Assert.False(g.P("lee").Has(Msg.BarrierOk));
+        g.Barrier("y", "stag0101");
+        var okX = g.Decision("x");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, Visibility.Public, 2), (okX.Decision, okX.World.Arrival, okX.World.Visibility, okX.CoArrivals.Count));
+        Assert.Equal(BarrierDecision.CoArrive, g.Decision("lee").Decision);
+        Assert.Same(W(g, "x"), W(g, "lee"));
+        Assert.Same(W(g, "x"), W(g, "y"));
+        Assert.Equal(Visibility.Friends, g.Mem("lee").DefaultVisibility);
     }
 
     [Fact]
@@ -111,7 +138,7 @@ public partial class HubLogicTests
         Plan(h, "b", 7, "stag0101");
         Assert.Equal(OptionsMsg.Nothing, LastOptions(h, "b").Flags);
         Choose(h, "b", 7, ChoiceKind.Join, wa.Wid);
-        Assert.False(h.Mem("b").Prompt.Chose);
+        Assert.False(h.Mem("b").Prompt.ChoseRow);
         Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("choice_unoffered"));
         BarrierPlan(h, "b", "stag0101", 7);
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (h.Decision("b").Decision, h.Decision("b").World.Arrival));

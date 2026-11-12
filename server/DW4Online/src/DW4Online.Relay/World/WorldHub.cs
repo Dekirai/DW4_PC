@@ -941,9 +941,15 @@ public sealed partial class RoomHub
     private void FreshJoinOrNew(ArrivalGroup g, long now)
     {
         // The choice *New instance* (plan 0xFFFF) holds whatever came before this decision (a co-arrival hold nobody joined, a
-        // redecision after its target ended).
+        // redecision after its target ended): no row joined. Like the prompt's New instance (decision 43) it lands with the others
+        // leaving with it: a starting instance it may see takes it as a co-arrival.
         if (g.PlanNew)
         {
+            if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
+            {
+                TakeStarting(g, start, now);
+                return;
+            }
             New(g, now, BarrierNotice.None, []);
             return;
         }

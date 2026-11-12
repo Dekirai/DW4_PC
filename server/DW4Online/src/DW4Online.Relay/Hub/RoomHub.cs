@@ -1184,9 +1184,11 @@ public sealed partial class RoomHub
         else TakePlanChoice(g); // (round I1b: the gate form's answer of the plan the BARRIER named)
         // A base that holds for announced groups takes this one as a co-arrival (one it does not wait for only where the
         // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
-        // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead).
+        // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead). A group that chose a
+        // row in the prompt joins its row; one that chose *New instance* (or plan 0xFFFF) lands with the others leaving with it
+        // (decision 43, 2026-11-11: two players who leave together and both choose New instance land together).
         var holder = _holds.FirstOrDefault(h => h.Hold == HoldKind.CoArrival && h != g && SameStage(h.Stage, g.Stage) && h.Context == g.Context &&
-                                                h.World == w && (w is not null || (!g.PlanNew && g.PromptChoice is null && MaySeeBase(h, g))) &&
+                                                h.World == w && (w is not null || (g.PromptChoice is not { Choice: ChoiceKind.Join } && MaySeeBase(h, g))) &&
                                                 h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity);
         if (holder is not null)
         {
@@ -1206,7 +1208,7 @@ public sealed partial class RoomHub
             _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
                                        Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
                                        h.Context == g.Context && x.Instance is not null && x.Connected &&
-                                       (w is not null ? x.World == w : x.World is null && !x.Prompt.Chose && MaySeeHost(g.Members[0].Member, g, x)) &&
+                                       (w is not null ? x.World == w : x.World is null && !x.Prompt.ChoseRow && MaySeeHost(g.Members[0].Member, g, x)) &&
                                        !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
         var awaited = new List<HubMember>();
         var room = Capacity - g.Members.Count;
@@ -1523,6 +1525,15 @@ public sealed partial class RoomHub
                 Decide(c, now);
             }
             return;
+        }
+        if (holder.Fresh && holder.PromptChoice is { Choice: ChoiceKind.New } chosen)
+        {
+            // (Decision 43: a *New instance* chooser's base makes the new instance with the chosen visibility; the others leaving with
+            // it, New instance choosers among them, come as its co-arrivals.)
+            var host = holder.Members[0].Member;
+            host.DefaultVisibility = chosen.Visibility;
+            Note("prompt_new", holder.From, ("member", host.Id), ("visibility", Visibilities.Text(chosen.Visibility)), ("starting", 0),
+                ("coarrivals", holder.CoArrivals.Sum(x => x.Members.Count)));
         }
         New(holder, now, BarrierNotice.None, []);
     }

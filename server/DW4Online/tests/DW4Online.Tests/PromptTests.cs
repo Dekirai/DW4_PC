@@ -71,7 +71,7 @@ public partial class HubLogicTests
         Assert.Equal("a", Assert.Single(row.Members).Name);
         // A on the row: CHOICE goes before the held press; the BARRIER names the plan.
         Choose(h, "b", 3, ChoiceKind.Join, w.Wid);
-        Assert.True(h.Mem("b").Prompt.Chose);
+        Assert.True(h.Mem("b").Prompt.ChoseRow);
         BarrierPlan(h, "b", "stag0101", 3);
         var ok = h.Decision("b");
         Assert.Equal((BarrierDecision.Join, ArrivalKind.AutoJoin, StoryMode.Replace, w.Wid), (ok.Decision, ok.World.Arrival, ok.World.StoryMode, ok.World.Wid));

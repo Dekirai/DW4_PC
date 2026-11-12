@@ -28,9 +28,9 @@ namespace DW4Online.Relay.World
         /// <summary>The host names of the rows offered (the refreshed prompt names a chosen instance that ended meanwhile).</summary>
         public Dictionary<uint, string> Hosts { get; set; } = [];
 
-        /// <summary>The member chose in the gate form (a row or *New instance*): no automatic co-arrival base waits for it, and it joins
-        /// no foreign base (19.7.6: "did not choose otherwise in a prompt").</summary>
-        public bool Chose => Plan != 0 && Choice is not null;
+        /// <summary>The member chose a row in the gate form: no automatic co-arrival base waits for it, and it joins no foreign base
+        /// (19.7.6). A *New instance* chooser groups with the others leaving with it (decision 43).</summary>
+        public bool ChoseRow => Plan != 0 && Choice is { Choice: ChoiceKind.Join };
 
         public void Clear()
         {
@@ -253,9 +253,18 @@ namespace DW4Online.Relay.Hub
             switch (c.Choice)
             {
                 case ChoiceKind.New:
-                    Note("prompt_new", g.From, ("member", m.Id), ("visibility", Visibilities.Text(c.Visibility)));
                     // (The member's default is the chosen visibility now: CreateWorld takes it.)
                     m.DefaultVisibility = c.Visibility;
+                    // Decision 43: *New instance* choosers who leave together land together. One whose base went a moment earlier
+                    // finds the base's starting instance (19.7.6) and joins it as its co-arrival, as an arrival without a choice
+                    // does, if it may see it, has seats and was never offered to it (a row it saw and passed over stays passed over).
+                    if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
+                    {
+                        Note("prompt_new", g.From, ("member", m.Id), ("visibility", Visibilities.Text(c.Visibility)), ("starting", start.World.Wid));
+                        TakeStarting(g, start, now);
+                        return true;
+                    }
+                    Note("prompt_new", g.From, ("member", m.Id), ("visibility", Visibilities.Text(c.Visibility)), ("starting", 0));
                     New(g, now, BarrierNotice.None, []);
                     return true;
                 case ChoiceKind.Back:
@@ -310,6 +319,25 @@ namespace DW4Online.Relay.Hub
                     g.PromptChoice = null;
                     return false;
             }
+        }
+
+        /// <summary>Decision 43: a starting instance at the arrival's stage (19.7.6) that the arrival may see and fits, and that was never
+        /// offered to it (the base of the others leaving with it went a moment earlier); null: none.</summary>
+        private CandidateRow? StartingNotOffered(ArrivalGroup g, long now) =>
+            Candidates(g, now).FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !g.PromptHosts.ContainsKey(r.World.Wid));
+
+        /// <summary>A *New instance* chooser joins a starting instance as its co-arrival (decision 43): a JOIN at the entrance with 3.4's
+        /// hold, as an arrival without a choice does (19.7.6), with the co-arrival's toast.</summary>
+        private void TakeStarting(ArrivalGroup g, CandidateRow row, long now)
+        {
+            var w = row.World;
+            g.Arrival = ArrivalKind.Starting;
+            g.World = w;
+            Note("candidates", null, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("stage", g.Stage), ("rows", new[] { $"{w.Wid}:{row.State}:{row.Here}" }),
+                ("chosen", w.Wid), ("by", "new_together"));
+            Count("new_choice_starting");
+            foreach (var a in g.Members) TakeSeat(w, a.Member, now, "join");
+            JoinTarget(g, row.Group!, now);
         }
 
         // The prompt hold (the loading-screen form) ---------------------------------------------------------------------
