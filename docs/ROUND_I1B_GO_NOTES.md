@@ -58,9 +58,52 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
   the join after the scene), W31i (TestGoHook busy_sender:600; the expiry, then a request right after an arrival).
   No `requires` any more.
 
+## Review of 2026-11-12 (fix round)
+
+The reviewer's eleven findings (blocker 1, should_fix 3, minor 7), each checked; commits 6deab5ad (relay), 15161cbe (client),
+ab170b5f (a closed offer's 120 s from its close), 908b2df0 (docs, scenarios). Every new test fails on the old code (server:
+a scratch copy of HEAD~ with the new API stubbed, 6 of 6 new tests failed; client: each fix taken back alone, 6 builds, each
+failed its check), and passes now.
+
+1. (blocker) B on a held GO barrier dissolved the whole arrival group (the host too, so the instance ended): fixed, only the
+   member that pressed it goes home; the host's ends the instance for everyone at the barrier (GoBackToLobby). Tests:
+   `Back_to_the_lobby_from_a_held_go_barrier_takes_only_the_member_that_pressed_it_home` (host + guest, the host's own B, guest +
+   guest), `Back_to_the_lobby_of_a_guest_leaves_a_defeated_host_the_side_rule_took_along_waiting`.
+2. (should_fix) a Cancel crossing the stamp cleared the request: fixed differently from the review's text, because 0 also was the
+   client's report of a GO that did nothing at its step (defeated: before its expiry) and the relay cannot tell them apart: 0 is
+   now only the Cancel, -1 the client's report (contract). A Cancel withdraws while nothing is sealed (JOIN_REQ go out: the
+   JOIN_AT seals the lead alone; a GO still in PendingEvents leaves them), else the request stays (WithdrawLate, flag 16, the
+   client shows "Going along..."). Tests: `A_cancel_before_the_gos_tick_is_sealed_withdraws_it_one_after_it_keeps_the_go_and_its_barrier_rules`,
+   `A_cancel_while_the_join_req_go_is_out_withdraws_it_and_the_join_at_seals_the_lead_alone`; session: the crossing cancel.
+3. (should_fix) the GO path ignored the session context: fixed with the GO's own rule (GoContextFits): the review's plain
+   `ContextMatches(target, sender)` would refuse every GO to B2 (dng204b1's start.lua sets COUNTER 2 = 204 at its load, so B2
+   arrived with a context the field never had). At the GO barrier a changed context is decided as any arrival (NEW with
+   OtherContext), provisional, for the user. Test: `A_go_never_joins_a_floor_whose_play_changed_the_context_but_a_floors_own_load_is_no_change`.
+4. (should_fix) the host's single B ended the instance without a question, with a text outside 19.5.6: fixed (go_back_press;
+   "B: Back to the lobby", then "End the instance for everyone?   A: Yes   B: No", the hint added to 19.5.6 for the user's OK).
+5. (minor) events behind a GO in one step were not checked after it: fixed (apply_events; the fake engine is not
+   membership-safe with a fork pending or a GO departing). Session check: the INTENT never applies in the leavers' copy.
+6. (minor) "went on to" missing, a waited notice said "went into": fixed (go_offer_stage_, notice_stage).
+7. (minor) Named never aged: fixed (GoOffer.LeftAt; a member never named is news; a closed offer counts from its close as
+   19.30.5 says). Test: `A_re_entry_is_silent_only_within_two_minutes_of_the_members_own_leave_and_never_with_a_member_never_named`.
+8. (minor) 19.25 called 3.4 s "as estimated": corrected; the measured time against 19.30.6 / 19.24's two seconds is open for
+   the user (19.25), not changed.
+9. (minor) test gaps: unit tests for two members in one GO barrier and the context added (1, 3); min_shared_ticks set to about
+   half the passing runs' (W31 5000, W31b 3000, W31c / W31c2 1500, W31d 15000, W31d2 20000, W31e 15000, W31f 1200, W31g
+   12000, W31h / W31h2 25000, W31i 4000); W31d expects its two sealed stamps (how=sealed). Not done (rejected as too costly for
+   a minor point; noted in 19.25): a UI scenario of the box (two clients in the world plus the UI script), and replacing
+   W31h's / W31i's busy hook by a real scene / exit prompt (the hooks are the stand-ins 19.24 allows).
+10. (minor) merge risk with the prompt lane's harness: cannot be changed on this branch (no `ArrivalPrompt` here); the exact
+    merge step is in the contract (go 2026-11-12 17:05).
+11. (minor) A: Cancel on a stamped row: fixed (RoomLive::GoRow::cancellable); go_join logs the wid; the contract now names the
+    world log as built (go_barrier without a decision, go_stamped tick 0 for join_req).
+
 ## Tests and results
 
-- The code (C++ and C#) is unchanged since 947df0e3; later commits change scenario scripts and docs only.
+- Code changed on 2026-11-12 (review fixes, 6deab5ad / 15161cbe / ab170b5f); the results below the review's lines are older.
+- 2026-11-12 after the fixes: server unit 484/484 (`build/go/utest7.log` at 6deab5ad; the reopen case added at ab170b5f, HubLogicTests
+  148/148), session tests 455 checks (`build/go/sess_r1.log`), ctest 57/57 (`build/go/ctest7.log`, Release DEV=OFF at 15161cbe),
+  det.sh on `build/go/off/dw4_go_off_d.exe`: run1 and run2 4004f056 / audio 396cb219 (`build/go/off/det_d.log`).
 - ctest 57/57 (2026-11-12 at 6be4b788, `build/go/ctest6.log`; before: 2026-11-11 at 2deadf82, `ctest5.log`); online script
   tests 351 checks (2026-11-12 at 093a8f0c: every scenario script parses); session tests 397 checks (`go_along_session`);
   wire tests (go_messages, the golden bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
@@ -80,7 +123,7 @@ JOIN_REQ kind 3, INTENT kind 4, STATE flag 16, HEADING + asked, WORLD_NOTICE 13 
 
 ## Left
 
-Nothing of the lane. The release (DW4Online 0.1.7 with I1a and I1b) and the round's other Done-when items (the I1a
+The W31 set on the fixed client (run g1, see "Scenario runs") and the integration tests after it. Else nothing of the lane. The release (DW4Online 0.1.7 with I1a and I1b) and the round's other Done-when items (the I1a
 scenarios with `DW4_ONLINE_AUTOCHOICE=first`, the regression) are the integration's.
 
 ## How to run the tests
