@@ -156,6 +156,8 @@ struct HostView {
     LibusbInfo libusb;
     Switch2Watch switch2;
     ControllerLog* controller_log = nullptr;
+    UsbFindings findings;          // (the adapter reader's latest look at the device list)
+    std::uint32_t findings_scans = 0;
     UsbFindings logged_findings;   // (the device list as last written to the log)
     std::uint32_t logged_scans = 0;
     Switch2Notice logged_notice = Switch2Notice::none;

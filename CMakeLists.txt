@@ -330,9 +330,13 @@ if(DW4_BUILD_APP)
   # by the libusb release manager), built here from its Windows sources.
   option(DW4_LIBUSB "Build libusb-1.0.dll and let SDL load it (Switch 2 Pro Controller over USB)" ON)
   if(DW4_LIBUSB AND WIN32 AND MSVC)
+    set(DW4_LIBUSB_ARCHIVE_NAME libusb-1.0.30.tar.bz2)
+    set(DW4_LIBUSB_ARCHIVE_URL https://github.com/libusb/libusb/releases/download/v1.0.30/${DW4_LIBUSB_ARCHIVE_NAME})
+    set(DW4_LIBUSB_ARCHIVE_SHA256 fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf)
     # A disconnected local build (FETCHCONTENT_FULLY_DISCONNECTED with the
     # sources given per dependency) finds the release's sources beside SDL's
-    # (<deps>/libusb_src-src) when they are not named.
+    # (<deps>/libusb_src-src) when they are not named, or uses the ones this
+    # build folder was populated with before (<FETCHCONTENT_BASE_DIR>/libusb_src-src).
     if(FETCHCONTENT_FULLY_DISCONNECTED AND NOT FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC)
       if(FETCHCONTENT_SOURCE_DIR_SDL3)
         get_filename_component(DW4_DEPS_DIR ${FETCHCONTENT_SOURCE_DIR_SDL3} DIRECTORY)
@@ -340,16 +344,52 @@ if(DW4_BUILD_APP)
           set(FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC ${DW4_DEPS_DIR}/libusb_src-src)
         endif()
       endif()
-      if(NOT FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC)
+      if(NOT FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC AND NOT EXISTS ${FETCHCONTENT_BASE_DIR}/libusb_src-src/libusb/libusb.h)
         message(FATAL_ERROR "libusb: a disconnected build needs FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC (the libusb 1.0.30 release's "
                             "sources), or -DDW4_LIBUSB=OFF for a build without the Switch 2 Pro Controller")
       endif()
     endif()
     FetchContent_Declare(libusb_src
-      URL https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2
-      URL_HASH SHA256=fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf
+      URL ${DW4_LIBUSB_ARCHIVE_URL}
+      URL_HASH SHA256=${DW4_LIBUSB_ARCHIVE_SHA256}
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_MakeAvailable(libusb_src) # (no CMake project: the sources only)
+    # The DLL's corresponding source (LGPL-2.1 section 4): the release archive
+    # itself, unchanged, goes into the player package beside the DLL's
+    # license (licenses/libusb-1.0.30.tar.bz2). Taken from where FetchContent
+    # downloaded it, from beside the sources (a local deps folder) or from
+    # this build folder, checked against the pin; otherwise downloaded once
+    # from the same URL. Without it the build still works, but installing
+    # (the player package) stops.
+    get_filename_component(DW4_LIBUSB_SRC_PARENT ${libusb_src_SOURCE_DIR} DIRECTORY)
+    set(DW4_LIBUSB_ARCHIVE "")
+    foreach(DW4_LIBUSB_CANDIDATE ${FETCHCONTENT_BASE_DIR}/libusb_src-subbuild/libusb_src-populate-prefix/src/${DW4_LIBUSB_ARCHIVE_NAME}
+                                 ${DW4_LIBUSB_SRC_PARENT}/${DW4_LIBUSB_ARCHIVE_NAME} ${CMAKE_BINARY_DIR}/libusb-source/${DW4_LIBUSB_ARCHIVE_NAME})
+      if(EXISTS ${DW4_LIBUSB_CANDIDATE})
+        file(SHA256 ${DW4_LIBUSB_CANDIDATE} DW4_LIBUSB_CANDIDATE_SHA256)
+        if(DW4_LIBUSB_CANDIDATE_SHA256 STREQUAL DW4_LIBUSB_ARCHIVE_SHA256)
+          set(DW4_LIBUSB_ARCHIVE ${DW4_LIBUSB_CANDIDATE})
+          break()
+        endif()
+        message(WARNING "libusb: ${DW4_LIBUSB_CANDIDATE} is not the pinned release archive (SHA-256 ${DW4_LIBUSB_CANDIDATE_SHA256}); not used")
+      endif()
+    endforeach()
+    if(NOT DW4_LIBUSB_ARCHIVE AND NOT FETCHCONTENT_FULLY_DISCONNECTED)
+      set(DW4_LIBUSB_CANDIDATE ${CMAKE_BINARY_DIR}/libusb-source/${DW4_LIBUSB_ARCHIVE_NAME})
+      file(DOWNLOAD ${DW4_LIBUSB_ARCHIVE_URL} ${DW4_LIBUSB_CANDIDATE} EXPECTED_HASH SHA256=${DW4_LIBUSB_ARCHIVE_SHA256}
+           STATUS DW4_LIBUSB_DOWNLOAD)
+      list(GET DW4_LIBUSB_DOWNLOAD 0 DW4_LIBUSB_DOWNLOAD_CODE)
+      if(DW4_LIBUSB_DOWNLOAD_CODE EQUAL 0)
+        set(DW4_LIBUSB_ARCHIVE ${DW4_LIBUSB_CANDIDATE})
+      else()
+        file(REMOVE ${DW4_LIBUSB_CANDIDATE})
+      endif()
+    endif()
+    if(NOT DW4_LIBUSB_ARCHIVE)
+      message(WARNING "libusb: the release archive ${DW4_LIBUSB_ARCHIVE_NAME} (libusb-1.0.dll's corresponding source) was not "
+                      "found: the build works, but cmake --install stops until it is beside the sources or in "
+                      "${CMAKE_BINARY_DIR}/libusb-source")
+    endif()
     # SDL's own detection (cmake/sdlchecks.cmake CheckHIDAPI) wants libusb.h
     # and an import library whose DLL name it reads with dumpbin; it then
     # defines HAVE_LIBUSB and SDL_LIBUSB_DYNAMIC "libusb-1.0.dll" and links
@@ -515,10 +555,16 @@ if(DW4_BUILD_APP)
   install(FILES ${stb_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME stb.txt)
   install(FILES ${zstd_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME zstd.txt)
   if(DW4_SDL_LIBUSB)
-    # libusb-1.0.dll beside DW4_PC.exe with its license (LGPL-2.1).
+    # libusb-1.0.dll beside DW4_PC.exe with its license (LGPL-2.1) and its
+    # corresponding source, the unchanged release archive.
     install(FILES $<TARGET_FILE:libusb_dll> DESTINATION .)
     install(FILES ${libusb_src_SOURCE_DIR}/COPYING DESTINATION . RENAME libusb-1.0-COPYING.txt)
     install(FILES ${libusb_src_SOURCE_DIR}/COPYING DESTINATION licenses RENAME libusb.txt)
+    if(DW4_LIBUSB_ARCHIVE)
+      install(FILES ${DW4_LIBUSB_ARCHIVE} DESTINATION licenses)
+    else()
+      install(CODE "message(FATAL_ERROR \"libusb: ${DW4_LIBUSB_ARCHIVE_NAME}, the corresponding source of libusb-1.0.dll, was not found at configure time: put the release archive (SHA-256 ${DW4_LIBUSB_ARCHIVE_SHA256}) into ${CMAKE_BINARY_DIR}/libusb-source and configure again\")")
+    endif()
   endif()
 endif()
 install(TARGETS dw4_inspect dw4_catalog RUNTIME DESTINATION .)

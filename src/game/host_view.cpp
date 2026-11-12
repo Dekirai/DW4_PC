@@ -179,8 +179,13 @@ void update_controllers(HostView& view) {
         view.gc_adapter->update();
         // The Switch 2 Pro Controller: Windows' list (the adapter reader's
         // look at it) against what SDL opened.
+        // (Copied only after a new look: it lists nodes.)
         const std::uint32_t scans = view.gc_adapter->scans();
-        const UsbFindings windows = view.gc_adapter->findings();
+        if (scans != view.findings_scans) {
+            view.findings_scans = scans;
+            view.findings = view.gc_adapter->findings();
+        }
+        const UsbFindings& windows = view.findings;
         bool sdl_pad = false;
         for (auto* pad : view.gamepads) sdl_pad = sdl_pad || sdl_switch2_pad(pad);
         const Switch2Notice notice = view.switch2.update(std::chrono::steady_clock::now(), windows, sdl_pad, view.libusb.state);
@@ -189,6 +194,7 @@ void update_controllers(HostView& view) {
             if (scans != view.logged_scans && (view.logged_scans == 0 || windows != view.logged_findings)) {
                 view.logged_findings = windows;
                 view.controller_log->write(usb_findings_line(windows));
+                for (const auto& line : usb_findings_node_lines(windows)) view.controller_log->write(line);
             }
             view.logged_scans = scans;
             if (notice != view.logged_notice) {
@@ -747,7 +753,7 @@ void settings_controllers_section(HostView& view) {
             default: break;
             }
             // A Switch 2 Pro Controller that does not play: why and what to do.
-            if (const std::string text = switch2_notice_text(view.switch2.current(), view.gc_adapter->findings()); !text.empty())
+            if (const std::string text = switch2_notice_text(view.switch2.current(), view.findings); !text.empty())
                 ImGui::TextWrapped("%s", text.c_str());
         }
         // libusb-1.0.dll (the Switch 2 Pro Controller over USB).

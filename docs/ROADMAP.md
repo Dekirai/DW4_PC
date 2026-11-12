@@ -75,7 +75,7 @@ unchanged; det.sh, the save state suite and r25c as before).
 | Xbox 360 | done (SDL type) | done, START / BACK | play test, wireless receiver |
 | Xbox One / Series | done (SDL type) | done, Menu / View | play test |
 | Switch Pro | done (057e:2009) | done, by label (default) or position | play test |
-| Switch 2 Pro | done (057e:2069); SDL opens it over USB through the shipped `libusb-1.0.dll` (round "libusb", [ROUND_LIBUSB_NOTES.md](ROUND_LIBUSB_NOTES.md)); without the DLL, without WinUSB on its interface 1, over Bluetooth or held by another program the F1 menu and a notice say what to do | done; C, GL, GR bindable (unbound by default) | a play test over USB (and whether Windows puts WinUSB on interface 1 by itself) |
+| Switch 2 Pro | done (057e:2069); SDL opens it over USB through the shipped `libusb-1.0.dll` (round "libusb", [ROUND_LIBUSB_NOTES.md](ROUND_LIBUSB_NOTES.md)); without the DLL, without WinUSB (or its device interface GUID) on its interface 1, over Bluetooth (when Windows lists it as an input device) or held by another program the F1 menu and a notice say what to do | done; C, GL, GR bindable (unbound by default) | a play test over USB (and whether Windows puts WinUSB with its GUID on interface 1 by itself) |
 | Wii U Pro | done (SDL's Wii driver: its name and GUID; the driver on while 057e:0330 is connected; Wii remotes take no slot) | done | Bluetooth pairing on Windows and a play test |
 | GameCube (Mayflash PC mode) | done (SDL type, 0079:1843 / 1844) | game's own pictures; port UI GameCube pictures | trigger clicks, the adapter's reported id |
 | GameCube (Wii U mode, WUP-028) | done (own WinUSB reader, virtual SDL pads) | as above | the whole USB path with Zadig's WinUSB driver |

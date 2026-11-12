@@ -672,6 +672,8 @@ void device_ids() {
     check(ids(L"HID\\VID_057e&PID_2069&MI_00")->vendor == 0x057e && ids(L"HID\\VID_057e&PID_2069&MI_00")->product == 0x2069, "HID id");
     const auto bt = ids(L"HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&0330");
     check(bt && bt->vendor == 0x057e && bt->product == 0x0330, "Bluetooth id");
+    const auto le = ids(L"HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069_REV&0001&Col01");
+    check(le && le->vendor == 0x057e && le->product == 0x2069, "Bluetooth LE id");
     check(!ids(L"ACPI\\PNP0A08") && !ids(L"USB\\VID_12&PID_34"), "no ids");
     std::vector<DeviceRecord> devices{{{L"USB\\VID_046D&PID_C52B"}, false}};
     auto found = usb_findings(devices);

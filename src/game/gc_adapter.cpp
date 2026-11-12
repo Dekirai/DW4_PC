@@ -108,17 +108,22 @@ std::wstring upper(std::wstring_view text) {
 
 std::optional<UsbIds> hardware_id_usb_ids(std::wstring_view hardware_id) {
     const std::wstring id = upper(hardware_id);
-    // USB and HID: VID_xxxx&PID_xxxx. Bluetooth HID: VID&0002xxxx_PID&xxxx
-    // (the 0002 is the Bluetooth vendor id source).
+    // USB and HID: VID_xxxx&PID_xxxx.
     if (const auto at = id.find(L"VID_"); at != std::wstring::npos) {
         const auto vendor = hex4(std::wstring_view(id).substr(at + 4));
         const auto pid = id.find(L"PID_", at);
         if (vendor && pid != std::wstring::npos)
             if (const auto product = hex4(std::wstring_view(id).substr(pid + 4))) return UsbIds{*vendor, *product};
     }
-    if (const auto at = id.find(L"VID&"); at != std::wstring::npos && at + 12 <= id.size()) {
-        const auto vendor = hex4(std::wstring_view(id).substr(at + 8));
-        const auto pid = id.find(L"PID&", at);
+    // Bluetooth: VID&<source><vendor>_PID&xxxx, the vendor id source in four
+    // digits (classic Bluetooth: VID&0002057E) or two (Bluetooth LE:
+    // VID&02057E); 2 is a USB vendor id. The vendor is the last four digits.
+    if (const auto at = id.find(L"VID&"); at != std::wstring::npos) {
+        std::size_t digits = 0;
+        while (at + 4 + digits < id.size() && digits < 9 && std::iswxdigit(id[at + 4 + digits])) ++digits;
+        if (digits != 6 && digits != 8) return std::nullopt;
+        const auto vendor = hex4(std::wstring_view(id).substr(at + 4 + digits - 4));
+        const auto pid = id.find(L"PID&", at + 4 + digits);
         if (vendor && pid != std::wstring::npos)
             if (const auto product = hex4(std::wstring_view(id).substr(pid + 4))) return UsbIds{*vendor, *product};
     }
@@ -144,6 +149,11 @@ bool hardware_id_usb(std::wstring_view hardware_id) {
     return id.rfind(L"USB\\", 0) == 0 || id.rfind(L"HID\\VID_", 0) == 0;
 }
 
+bool hardware_id_bluetooth_hid(std::wstring_view hardware_id) {
+    const std::wstring id = upper(hardware_id);
+    return id.rfind(L"HID\\", 0) == 0 && !hardware_id_usb(id) && id.find(L"VID&") != std::wstring::npos;
+}
+
 UsbDriver usb_driver(std::wstring_view service) {
     if (service.empty()) return UsbDriver::none;
     return upper(service) == L"WINUSB" ? UsbDriver::winusb : UsbDriver::other;
@@ -152,7 +162,7 @@ UsbDriver usb_driver(std::wstring_view service) {
 UsbFindings usb_findings(const std::vector<DeviceRecord>& devices) {
     UsbFindings found;
     for (const auto& device : devices) {
-        bool adapter = false, switch2 = false, usb = false, vendor_interface = false;
+        bool adapter = false, switch2 = false, usb = false, bluetooth_hid = false, vendor_interface = false;
         for (const auto& hardware_id : device.hardware_ids) {
             const auto ids = hardware_id_usb_ids(hardware_id);
             if (!ids || ids->vendor != kNintendo) continue;
@@ -160,6 +170,7 @@ UsbFindings usb_findings(const std::vector<DeviceRecord>& devices) {
             if (ids->product != kSwitch2Pro) continue;
             switch2 = true;
             usb = usb || hardware_id_usb(hardware_id);
+            bluetooth_hid = bluetooth_hid || hardware_id_bluetooth_hid(hardware_id);
             // (The USB node USB\VID_057E&PID_2069&...&MI_01, not a HID child.)
             vendor_interface = vendor_interface || (upper(hardware_id).rfind(L"USB\\", 0) == 0 && hardware_id_interface(hardware_id) == 1);
         }
@@ -168,12 +179,20 @@ UsbFindings usb_findings(const std::vector<DeviceRecord>& devices) {
             found.adapter_winusb = found.adapter_winusb || device.interface_guid;
         }
         if (switch2) {
-            found.switch2_pro = true;
-            (usb ? found.switch2_usb : found.switch2_bluetooth) = true;
+            // A cable, a Bluetooth input device, or only a Bluetooth pairing
+            // (BTHENUM / BTHLE nodes stay while it is off: no notice).
+            if (usb) found.switch2_usb = true;
+            else if (bluetooth_hid) found.switch2_bluetooth = true;
+            else found.switch2_paired = true;
+            found.switch2_pro = found.switch2_usb || found.switch2_bluetooth;
             if (vendor_interface) {
                 found.switch2_vendor = usb_driver(device.service);
                 found.switch2_vendor_service = device.service;
+                found.switch2_vendor_guid = device.interface_guid;
             }
+            constexpr std::size_t kMaxNodes = 16;
+            if (found.switch2_nodes.size() < kMaxNodes && !device.hardware_ids.empty())
+                found.switch2_nodes.push_back(device.hardware_ids.front() + L" [" + device.service + L"]");
         }
     }
     return found;

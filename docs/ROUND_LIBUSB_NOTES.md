@@ -24,16 +24,37 @@ beside the game. Branch `feat-libusb`, built on main `9612167d`.
   (Windows' own HID driver; libusb reads it through its HID backend, nothing
   to change), interface 1 a vendor interface (class 0xFF) with the bulk
   endpoints 0x02 OUT and 0x82 IN. libusb on Windows claims an interface only
-  with the WinUSB driver on it (or libusbK / libusb0). A descriptor dump of
-  the controller (as the USB device emulator VIIPER, which proxies real
-  devices, reproduces it) carries a Microsoft OS 1.0 descriptor with the
-  compatible id `WINUSB` for interface 1, so Windows loads WinUSB there by
-  itself; wired use on Windows works without an install for Steam (November
-  2025) and for SDL builds with libusb (SDL forum). Not checked with the
-  device on this PC: that is the owner's hand test, and the game says when
-  interface 1 has no driver (Windows' device list, section 5) with the
-  remedy: Zadig, the entry with USB ID `057E 2069 01`, WinUSB; never the
-  `00` interface or the whole device.
+  with the WinUSB driver on it (or libusbK / libusb0), and an interface of a
+  composite device only when that interface's node names a device interface
+  GUID in its registry key (`DeviceInterfaceGUIDs` / `DeviceInterfaceGUID`):
+  libusb 1.0.30 `os/windows_winusb.c` collects those GUIDs in its GEN pass
+  (`get_guid`), and only the EXT passes that enumerate them call
+  `set_composite_interface`; without a GUID interface 1 stays unsupported
+  and `libusb_claim_interface(1)` fails, so SDL makes no pad.
+  A descriptor dump of the controller as the USB device emulator VIIPER
+  reproduces it (`device/ns2pro/descriptor.go`) carries Microsoft OS
+  descriptors with the compatible id `WINUSB` and a device interface GUID
+  for interface 1, so Windows **should** load WinUSB there by itself with a
+  GUID libusb can use; reports of wired use on Windows without an install
+  (Steam, November 2025) agree. **Not verified with the device**: whether the
+  real controller's descriptors match VIIPER's is the owner's hand test. The
+  game says what Windows has (section 3): no driver on interface 1, WinUSB
+  there without a GUID, another driver, no interface 1 node at all, each with
+  its remedy (Zadig, the entry with USB ID `057E 2069 01`, WinUSB: Zadig's
+  INF writes a GUID; never the `00` interface or the whole device). (The SDL
+  forum thread cited in the first version of these notes is about macOS,
+  where none of this applies; it is no evidence for Windows.)
+- **Switch 2 Pro Controller over Bluetooth.** SDL 3.4.16 does not drive
+  Switch 2 controllers over Bluetooth ("not supported over Bluetooth"). The
+  controller uses Bluetooth LE, and per reports it offers Windows no input
+  device that way. The game counts it as connected over Bluetooth only by an
+  HID node of it (`HID\{...}_VID&0002057E_PID&2069` classic,
+  `HID\{...}_Dev_VID&02057E_PID&2069` LE): Windows has those while a device
+  is connected as an input device, whereas its pairing nodes (`BTHENUM`,
+  `BTHLE`, `BTHLEDevice`) stay listed while it is paired, also when it is off,
+  and would show the notice at every start. A pairing alone goes to the log
+  only, with every node's hardware id and driver (what Windows lists for it
+  on the owner's PC is not known yet).
 - **GameCube adapter, Wii U mode (WUP-028).** Unchanged: the WinUSB driver
   on it with Zadig, as for Dolphin (the port's reader opens it through the
   device interface GUID of Zadig's INF; SDL's libusb path would need WinUSB
@@ -63,11 +84,25 @@ beside the game. Branch `feat-libusb`, built on main `9612167d`.
   it and `libusb-1.0-COPYING.txt` beside `dw4_game.exe`; `cmake --install`
   (`scripts\build.ps1 -Package`) beside `DW4_PC.exe`, the license also as
   `licenses/libusb.txt`.
+- The DLL's corresponding source (LGPL-2.1 section 4): `cmake --install`
+  puts the unchanged release archive into the package as
+  `licenses/libusb-1.0.30.tar.bz2` (656 KB), so the source travels with the
+  DLL. Configure takes it from FetchContent's download
+  (`_deps/libusb_src-subbuild/libusb_src-populate-prefix/src`), from beside
+  the sources (`<deps>/libusb-1.0.30.tar.bz2`) or from
+  `<build>/libusb-source`, each checked against the pinned SHA-256, and
+  otherwise downloads it once from the same URL (connected builds only).
+  Without it the build and the tests still work, but `cmake --install` stops
+  with a message saying where to put it.
 - Local disconnected builds (`FETCHCONTENT_FULLY_DISCONNECTED`): the sources
   are at `build/Release/_deps/libusb_src-src` of the main checkout (the
   archive beside them); a build that names SDL's sources but not libusb's
-  finds them there, so the existing build folders keep configuring.
-  `-DDW4_LIBUSB=OFF` builds without libusb (the notices then say so).
+  finds them there, so the existing build folders keep configuring, and a
+  build folder populated before (`<FETCHCONTENT_BASE_DIR>/libusb_src-src`)
+  keeps its own. Otherwise a disconnected build needs
+  `FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC` (a fresh clone without network cannot
+  get libusb). `-DDW4_LIBUSB=OFF` builds without libusb (the notices then say
+  so).
 
 ## 3. The game
 
@@ -84,21 +119,26 @@ beside the game. Branch `feat-libusb`, built on main `9612167d`.
   state (loaded / missing / incompatible / off / not built) goes to the
   console (`controllers: libusb: ...`), F1 > Controls and the controller log.
 - The Switch 2 Pro Controller's notice: Windows' device list (the adapter
-  reader's look, `gc_adapter.cpp`, now also on a cable or over Bluetooth and
-  the driver service of interface 1's node `USB\VID_057E&PID_2069&MI_01`)
-  against what SDL opened (a pad 057e:2069 with SDL's HIDAPI GUID: its
-  Switch 2 driver started it). Playable; libusb-1.0.dll missing / unusable /
-  not in this build; over Bluetooth only; no driver on interface 1 ("Windows
-  blocks it": the Zadig steps); another driver there; WinUSB there but not
-  opened (another program holds it: Steam, an emulator). A notice counts
-  after three seconds (SDL opens the controller a moment after Windows lists
-  it); F1 > Controls shows its text, play shows a short notice once.
+  reader's look, `gc_adapter.cpp`, now also on a cable or over Bluetooth as
+  an input device, and the driver service and device interface GUID of
+  interface 1's node `USB\VID_057E&PID_2069&MI_01`) against what SDL opened
+  (a pad 057e:2069 with SDL's HIDAPI GUID: its Switch 2 driver started it).
+  Playable; libusb-1.0.dll missing / unusable / not in this build; over
+  Bluetooth only; no driver on interface 1 ("Windows blocks it": the Zadig
+  steps); WinUSB there without a device interface GUID (also "Windows blocks
+  it": Zadig again, its INF writes one); another driver there; no interface 1
+  node at all (a driver on the whole controller: uninstall it in Device
+  Manager); WinUSB with its GUID there but not opened (another program holds
+  it: Steam, an emulator). A notice counts after three seconds (SDL opens the
+  controller a moment after Windows lists it); F1 > Controls shows its text,
+  play shows a short notice once.
 - `saves/controllers.log` (beside the game, new at every start, not in test
   runs; `DW4_CONTROLLER_LOG=<file>` in one): the version, SDL's version,
   libusb's state, whether SDL has libusb-1.0.dll in use after it started,
   every pad that comes and goes (name, ids, family, SDL backend, device
-  path), what Windows lists of the Switch 2 Pro Controller and the adapter,
-  the notices, and SDL's own input messages (devices it adds, "Couldn't load
+  path), what Windows lists of the Switch 2 Pro Controller (every node with
+  its hardware id and driver: `windows node: ...`) and the adapter, the
+  notices, and SDL's own input messages (devices it adds, "Couldn't load
   libusb", the Switch 2 driver's flash warnings; they no longer reach the
   console, errors still do).
 
@@ -149,7 +189,7 @@ uses none.)
 | Hidden start with the DLL (`DW4_TEST_LIBUSB=1`, a screenshot run: SDL's gamepad subsystem with libusb) | feat-libusb | exit 0; `controllers: libusb: ...libusb-1.0.dll 1.0.30.12037 (Switch 2 Pro Controller over USB)`; the log: SDL has it in use |
 | Hidden start without the DLL | feat-libusb | exit 0; `controllers: libusb: libusb-1.0.dll not found: the Switch 2 Pro Controller cannot be used, every other controller works`; the log: SDL's "Couldn't load libusb" |
 | Test runs without `DW4_TEST_LIBUSB` | feat-libusb | `controllers: libusb: off in test runs (...libusb-1.0.dll 1.0.30.12037)`, and `(libusb-1.0.dll not found)` without the DLL; exit 0 |
-| Player package (`cmake --install`, as `build.ps1 -Package`) | feat-libusb | `libusb-1.0.dll` and `libusb-1.0-COPYING.txt` beside `DW4_PC.exe`, `licenses/libusb.txt` |
+| Player package (`cmake --install`, as `build.ps1 -Package`) | feat-libusb | `libusb-1.0.dll` and `libusb-1.0-COPYING.txt` beside `DW4_PC.exe`, `licenses/libusb.txt` (and, since the review fixes, `licenses/libusb-1.0.30.tar.bz2`, section 8) |
 | Configure variants | feat-libusb | a disconnected build without `FETCHCONTENT_SOURCE_DIR_LIBUSB_SRC` finds the sources beside SDL's (SDL: `HAVE_LIBUSB`, `SDL_LIBUSB_DYNAMIC "libusb-1.0.dll"`); `-DDW4_LIBUSB=OFF`: SDL without libusb, `pad_usb` (`--not-built`) passes |
 | r25c | - | not run: no input code changed beyond the hints and the driver setup (the binding spaces, the slots and the game's pad are untouched) |
 
@@ -161,18 +201,60 @@ changed.
 
 - **The hand tests** (owner): DualSense / DualShock 4 (USB, Bluetooth),
   Switch Pro, Switch 2 Pro over USB; in particular whether Windows puts
-  WinUSB on the Switch 2 Pro's interface 1 by itself (F1 > Controls and
-  `saves/controllers.log` say).
+  WinUSB with a device interface GUID on the Switch 2 Pro's interface 1 by
+  itself (F1 > Controls and `saves/controllers.log` say: the log's `windows:`
+  line names interface 1's driver and whether it has a GUID).
 - **Steam**: with Steam's Switch controller support on, Steam may hold the
   Switch 2 Pro Controller's interface 1 (WinUSB opens a device once): the
   notice says "could not open it"; close Steam or turn that support off.
-- **Bluetooth**: SDL 3.4.16 has no Switch 2 Bluetooth support.
-- **LGPL**: the package carries the DLL, its license and (THIRD_PARTY_NOTICES)
-  the exact upstream source archive with its checksum and the build files;
-  shipping that archive inside a release package as well would make the
-  source offer self-contained (the owner's call).
+- **Bluetooth**: SDL 3.4.16 has no Switch 2 Bluetooth support. What Windows
+  lists for a Switch 2 Pro Controller paired over Bluetooth is unknown; the
+  game names it only when Windows lists it as a Bluetooth input device, and
+  the log lists every node it has (`windows node: ...`).
+- **Plugging in during play**: SDL starts the Switch 2 Pro Controller on the
+  main thread when it finds it (`HIDAPI_JoystickDetect` ->
+  `HIDAPI_DriverSwitch2_InitUSB`: seven flash reads and ten bulk commands,
+  each with a timeout of 100 ms to 1 s), and every device change now also
+  runs a libusb enumeration of all USB devices (about 13 ms here; SDL's own
+  and the Wii U Pro check's `SDL_hid_enumerate`). Plugging it in mid-game can
+  hold the picture for a moment; not measured with the device.
+- **Other Switch 2 controllers**: libusb also lets SDL reach the Switch 2
+  Joy-Con (057e:2066 / 2067) and the Nintendo Switch Online GameCube
+  controller (057e:2073), which were not usable before; untested, no
+  prompts or notices of their own.
 - **Merging**: the main checkout's existing build folders find libusb's
-  sources beside SDL's (section 2); `work/port-research/build_*.cmd` need no
-  change. The online client folder on the Desktop needs `libusb-1.0.dll` and
-  `libusb-1.0-COPYING.txt` copied beside its `dw4_game.exe` with the next
-  client build.
+  sources and the release archive beside SDL's (section 2);
+  `work/port-research/build_*.cmd` need no change. The online client folder
+  on the Desktop needs `libusb-1.0.dll`, `libusb-1.0-COPYING.txt` and the
+  source archive (`licenses/libusb-1.0.30.tar.bz2`) with the next client
+  build.
+
+## 8. Review fixes
+
+| Finding | Fix | Check |
+| --- | --- | --- |
+| The Bluetooth notice could never appear: only classic Bluetooth's `VID&0002057E` spelling was read, the controller uses Bluetooth LE (`VID&02057E`), and per reports it offers Windows no input device over Bluetooth at all | `hardware_id_usb_ids` reads both spellings (the vendor is the last four of six or eight digits); "over Bluetooth" now means a Bluetooth HID node of it (connected as an input device), while pairing nodes (`BTHENUM`, `BTHLE`, `BTHLEDevice`, listed also while it is off) go to the log only, so a paired controller that is off gives no notice at every start; the log lists every node. README and the hand-test steps no longer promise the notice: over Bluetooth the game may say nothing | `pad_usb`: LE and classic ids, LE HID nodes, malformed ids, a pairing alone (no notice, the log's lines); `pad_family`: an LE id |
+| WinUSB on interface 1 without a device interface GUID went undetected and showed "another program may be using it" | `DeviceRecord.interface_guid` of interface 1's node (the same registry values libusb's `get_guid` reads) becomes `UsbFindings.switch2_vendor_guid`; WinUSB without it is the notice `no_interface_guid` ("Windows blocks it", Zadig on `057E 2069 01`, whose INF writes a GUID); "could not open it" only with WinUSB and its GUID; the log's `windows:` line says "with / without a device interface GUID" | `pad_usb`: the GUID of interface 1 only (not of interface 0 or the HID child), the notice and its text |
+| No interface 1 node (`UsbDriver::unknown`) gave "could not open it" with the false "(WinUSB on its interface 1)" | Its own notice `no_interface`: Windows lists no interface 1, a driver on the whole controller does this, uninstall it in Device Manager, send the log | `pad_usb`: the notice, the text claims no WinUSB |
+| LGPL: the source offer named only the upstream URL | The unchanged release archive goes into the package (`licenses/libusb-1.0.30.tar.bz2`), checked against the pin at configure time; without it `cmake --install` stops (the build does not) | `cmake --install` into a scratch folder: the archive (656112 bytes) beside `libusb.txt`; a configure without it: the warning, and the generated install script carries the stop |
+| A populated build folder reconfigured disconnected without `FETCHCONTENT_SOURCE_DIR_SDL3` stopped | The guard also accepts `<FETCHCONTENT_BASE_DIR>/libusb_src-src` | A disconnected configure with only `FETCHCONTENT_BASE_DIR` (its sources populated): SDL with libusb; with the archive in `<build>/libusb-source` the install script takes it |
+| The test's head comment said SDL's libusb never enumerates | Corrected: one `SDL_hid_enumerate(057e)` runs through libusb and briefly opens a connected Switch 2 controller to list it | - |
+| The docs claimed more than is known | README and section 1: WinUSB on interface 1 "should" come by itself, not verified with the device; the macOS forum thread is no evidence for Windows | - |
+| Plugging in mid-game, other Switch 2 controllers | Documented (section 7) and in the hand-test steps; no code change | - |
+
+Also: `update_controllers` copies the device list's findings only after a
+new look (they now list nodes), not every frame.
+
+Checks of the review fixes (worktree, exe copies, hidden runs at below-normal
+priority, no controller connected):
+
+| Check | Result |
+| --- | --- |
+| ctest (build/Clean) | 66 / 66; `pad_usb` 148 checks with the DLL |
+| Mutations of the new tests | 7 of 7 caught: LE ids not read, a pairing counted as connected, the GUID ignored, the GUID taken from any node, no interface 1 reported as not opened, the no-interface text claiming WinUSB, the no-GUID text blaming Steam |
+| det.sh, a copy of the exe | 4004f056 / 396cb219, twice (four runs) |
+| save state suite (a private copy of st_all.sh, same scripts and card) | 17 / 17 identical after loading with a loaded state |
+| Hidden start with the DLL (`DW4_TEST_LIBUSB=1`, screenshot run) | exit 0; libusb-1.0.dll 1.0.30.12037 in use; the screenshot identical to the first round's |
+| Hidden start without the DLL | exit 0; "libusb-1.0.dll not found ..."; SDL's "Couldn't load libusb"; the same screenshot |
+| Plain test runs | `controllers: libusb: off in test runs (...)` with and without the DLL; exit 0 |
+| Player package | `libusb-1.0.dll`, `libusb-1.0-COPYING.txt` beside `DW4_PC.exe`; `licenses/libusb.txt`, `licenses/libusb-1.0.30.tar.bz2` |

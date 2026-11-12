@@ -121,8 +121,9 @@ This configures `build\Release`, builds everything and runs the tests.
 `-CoreOnly` skips the SDL/OpenGL runtime; `-Package` installs into
 `dist\DW4_PC`: one self-contained `DW4_PC.exe` (static C++ runtime, only system
 DLLs) with `libusb-1.0.dll` and its license beside it (the Switch 2 Pro
-Controller; the game runs without it), the tools, licenses and docs, ready to
-copy anywhere. Builds never start the game.
+Controller; the game runs without it; its unchanged source archive
+`libusb-1.0.30.tar.bz2` is in `licenses`), the tools, licenses and docs, ready
+to copy anywhere. Builds never start the game.
 
 ## Run with your own game data
 
@@ -899,7 +900,7 @@ All pictures are drawn by the program itself (no console logos).
 | Wii U Pro Controller | Bluetooth: Windows Settings > Bluetooth > Add device, press the red SYNC button, no PIN. *Wii U Pro support* (F1 > Controls) is automatic: SDL's Wii driver runs only while such a controller (057e:0330) is connected, so a Wii remote bar such as Mayflash's DolphinBar never reaches it; Wii remotes never take a player's place |
 | Original GameCube controller, adapter in PC mode (Mayflash, EVORETRO) | Set the adapter's switch to PC; no driver. Every port is its own controller |
 | Original GameCube controller, adapter in Wii U mode (Nintendo's WUP-028, Mayflash on Wii U) | Install the WinUSB driver on "WUP-028" with Zadig, as for Dolphin; the game finds the adapter when it is plugged in and every connected port is a controller. It lets go of the adapter while the game is in the background (Dolphin can use it then); F1 > Controls says when the driver is missing or another program holds it |
-| Switch 2 Pro Controller | USB-C cable only (SDL does not read it over Bluetooth). Needs `libusb-1.0.dll` next to the game's .exe (it comes with the game). Normally nothing to install: the controller has Windows load the WinUSB driver on its interface 1 by itself. Read by labels like the Switch Pro; C, GL and GR do nothing until bound in F1 > Controls. Steps below |
+| Switch 2 Pro Controller | USB-C cable only (SDL does not read it over Bluetooth). Needs `libusb-1.0.dll` next to the game's .exe (it comes with the game). Should need nothing to install: the controller's descriptors ask Windows for the WinUSB driver on its interface 1 (not yet verified with the device on Windows; if Windows does not, F1 > Controls says so and how to fix it). Read by labels like the Switch Pro; C, GL and GR do nothing until bound in F1 > Controls. Steps below |
 
 **Switch 2 Pro Controller, step by step.** (1) Keep `libusb-1.0.dll` and
 `libusb-1.0-COPYING.txt` beside the game's .exe. (2) Connect the controller
@@ -907,13 +908,20 @@ with a USB-C data cable (a charge-only cable shows nothing) and start the
 game; it becomes a player's controller with the Switch 2 Pro pictures within
 a second or two. (3) If F1 > Controls instead says what is wrong, do that:
 *libusb-1.0.dll is missing* - put it back and restart; *Windows blocks it*
-(no driver on its interface 1) - install WinUSB on that interface only:
+(no driver on its interface 1, or WinUSB there without the device interface
+GUID libusb needs) - install WinUSB on that interface only:
 [Zadig](https://zadig.akeo.ie), Options > List All Devices, pick the entry
 whose USB ID reads `057E 2069 01` (the `01` is interface 1; never the entry
 ending in `00`, the HID part Windows keeps), WinUSB, *Install Driver*, then
 unplug and plug in the controller; *could not open it* - another program
 holds it (Steam with its Switch controller support, an emulator): close it
-and plug the controller in again. Over Bluetooth it is listed but not read.
+and plug the controller in again; *Windows lists no interface 1* - a driver
+was put on the whole controller: uninstall that device with its driver in
+Device Manager and plug the controller in again. Over Bluetooth it does not
+play; reports say Windows does not even list it as a controller then, so the
+game may say nothing (it says *connect it with a USB cable* only when Windows
+lists it as a Bluetooth input device). Plugging it in while the game runs can
+make the picture hold for a moment while SDL starts the controller.
 How it works: SDL drives this controller only through libusb (its interface 1
 carries the start commands), so the game ships libusb as the separate
 `libusb-1.0.dll` (LGPL-2.1) that SDL loads at run time; libusb is used for

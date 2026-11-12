@@ -21,7 +21,7 @@ The native application builds these pinned dependencies using CMake:
 | [pl_mpeg](https://github.com/phoboslab/pl_mpeg) | `c871f2be022ece7ef4f64230b4fb8e1fb9eb6023` | MIT (SPDX in pl_mpeg.h), `licenses/pl_mpeg-MIT.txt` |
 | [stb](https://github.com/nothings/stb) (stb_image, stb_image_write) | `2c980bb59875b0d32144a71867fbdebb2f77cd20` | MIT or public domain (LICENSE), installed as `licenses/stb.txt` |
 | [Zstandard](https://github.com/facebook/zstd) (decoder sources) | `v1.5.6` | BSD-3-Clause (LICENSE), installed as `licenses/zstd.txt` |
-| [libusb](https://github.com/libusb/libusb) | release `v1.0.30`, archive `libusb-1.0.30.tar.bz2`, SHA-256 `fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf` | LGPL-2.1-or-later (COPYING), a separate `libusb-1.0.dll` with `libusb-1.0-COPYING.txt` beside it and `licenses/libusb.txt` |
+| [libusb](https://github.com/libusb/libusb) | release `v1.0.30`, archive `libusb-1.0.30.tar.bz2`, SHA-256 `fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf` | LGPL-2.1-or-later (COPYING), a separate `libusb-1.0.dll` with `libusb-1.0-COPYING.txt` beside it, `licenses/libusb.txt` and its source `licenses/libusb-1.0.30.tar.bz2` |
 
 stb reads and writes the PNG files of texture packs and texture dumps.
 Zstandard decodes RVZ disc images when they are converted to a plain image.
@@ -40,8 +40,10 @@ reaches through libusb (the Switch 2 Pro Controller), so the DLL can be
 replaced by any compatible `libusb-1.0.dll` or removed (the game then runs
 without those controllers). Its complete license text is installed beside it
 as `libusb-1.0-COPYING.txt` and as `licenses/libusb.txt`. The corresponding
-source is the release archive named above, unchanged; the build files that
-make the DLL are in this repository's `CMakeLists.txt`. Copyright (C) the
+source is the release archive named above, unchanged: `cmake --install` puts
+that archive (checked against the SHA-256 above) into the package as
+`licenses/libusb-1.0.30.tar.bz2`, so it travels with the DLL; the build files
+that make the DLL are in this repository's `CMakeLists.txt`. Copyright (C) the
 libusb authors (AUTHORS in the archive).
 `cmake --install` includes the dependency license files. Binary packages must
 retain them. The core parsers and command-line tools have no external libraries.

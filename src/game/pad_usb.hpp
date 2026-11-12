@@ -16,8 +16,11 @@
 // interface 1 is a vendor interface with two bulk endpoints that SDL's
 // Switch 2 driver claims to start the controller (SDL_hidapi_switch2.c
 // HIDAPI_DriverSwitch2_InitUSB). libusb can claim that interface only with
-// the WinUSB driver on it (the controller's own Microsoft OS descriptor
-// asks Windows for WinUSB there; otherwise Zadig installs it).
+// the WinUSB driver on it and a device interface GUID in its registry key
+// (libusb's Windows backend finds composite interfaces through that GUID).
+// A descriptor dump of the controller (VIIPER) carries a Microsoft OS
+// descriptor that asks Windows for both; not yet checked with the device.
+// Otherwise Zadig installs WinUSB there (its INF writes the GUID).
 //
 // Without the DLL SDL notes "Couldn't load libusb" and goes on with Windows'
 // HID: the game starts and every other controller works as before.
@@ -108,10 +111,12 @@ enum class Switch2Notice : std::uint8_t {
     not_built,        // this build's SDL has no libusb
     dll_missing,      // libusb-1.0.dll is missing
     dll_incompatible, // the libusb-1.0.dll found lacks what SDL needs
-    bluetooth,        // over Bluetooth only (SDL drives it on a cable only)
+    bluetooth,        // over Bluetooth only, as an input device (SDL drives it on a cable only)
     no_driver,        // its interface 1 has no driver (Windows did not load WinUSB)
+    no_interface_guid, // WinUSB on interface 1 without a device interface GUID: libusb cannot reach it
     other_driver,     // its interface 1 has another driver than WinUSB, and it does not play
-    not_opened,       // WinUSB is there, yet SDL made no pad of it (another program holds it, or its start failed)
+    no_interface,     // on USB, but Windows lists no interface 1 of it (a driver on the whole device?)
+    not_opened,       // WinUSB with its GUID is there, yet SDL made no pad of it (another program holds it, or its start failed)
 };
 const char* switch2_notice_name(Switch2Notice notice);
 // What applies now: `windows` the device list (gc_adapter.hpp), `sdl_pad`
@@ -174,7 +179,9 @@ std::string pad_log_line(SDL_Gamepad* pad, PadFamily family);
 // SDL's backend of a pad by its GUID's driver signature ("HIDAPI",
 // "XInput", "RawInput", "Windows.Gaming.Input", "virtual", ...).
 const char* sdl_backend_name(const SDL_GUID& guid);
-// The device list's part for the log.
+// The device list's part for the log, and one line per Switch 2 Pro
+// Controller node Windows lists ("windows node: <hardware id> [<service>]").
 std::string usb_findings_line(const UsbFindings& findings);
+std::vector<std::string> usb_findings_node_lines(const UsbFindings& findings);
 
 } // namespace dw4::game

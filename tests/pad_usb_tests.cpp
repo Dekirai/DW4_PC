@@ -13,8 +13,11 @@
 //   dw4_pad_usb_tests --not-built  a build without libusb.
 //
 // Every mode also checks the notices (which one, after which grace), the
-// device list's Switch 2 part and the controller hints. SDL's libusb never
-// enumerates or opens a device here (no SDL_hid_enumerate / SDL_hid_open).
+// device list's Switch 2 part and the controller hints. With the DLL, one
+// SDL_hid_enumerate(057e) runs through libusb as the game's does on a device
+// change: no device is opened for input, but libusb's enumeration briefly
+// opens a connected Switch 2 controller (057e:2066 / 2067 / 2069 / 2073) to
+// list it (SDL's libusb/hid.c), harmless next to a running game or Steam.
 #include "../src/game/pad_host.hpp"
 #include "../src/game/pad_usb.hpp"
 
@@ -112,9 +115,26 @@ void device_list() {
         {{L"USB\\VID_057E&PID_2069&REV_0100&MI_01", L"USB\\VID_057E&PID_2069&MI_01"}, true, L"WinUSB"},
     };
     auto found = usb_findings(devices);
-    check(found.switch2_pro && found.switch2_usb && !found.switch2_bluetooth, "on USB");
+    check(found.switch2_pro && found.switch2_usb && !found.switch2_bluetooth && !found.switch2_paired, "on USB");
     check(found.switch2_vendor == UsbDriver::winusb && found.switch2_vendor_service == L"WinUSB", "WinUSB on interface 1");
+    check(found.switch2_vendor_guid, "interface 1 names a device interface GUID");
     check(!found.adapter, "no adapter");
+    check(found.switch2_nodes.size() == 4 && found.switch2_nodes.back() == L"USB\\VID_057E&PID_2069&REV_0100&MI_01 [WinUSB]",
+          "every node for the log");
+    const auto node_lines = usb_findings_node_lines(found);
+    check(node_lines.size() == 4 && node_lines[1] == "windows node: USB\\VID_057E&PID_2069&REV_0100&MI_00 [HidUsb]", "the log's node lines");
+    check(usb_findings_line(found).find("WinUSB with a device interface GUID") != std::string::npos, "the log's line: " + usb_findings_line(found));
+    // WinUSB on interface 1 whose registry key names no GUID: libusb's
+    // Windows backend cannot reach that interface.
+    devices.back().interface_guid = false;
+    found = usb_findings(devices);
+    check(found.switch2_vendor == UsbDriver::winusb && !found.switch2_vendor_guid, "WinUSB without a GUID");
+    check(usb_findings_line(found).find("without a device interface GUID") != std::string::npos, "the log's line: " + usb_findings_line(found));
+    // The GUID of interface 0's or the HID child's node says nothing about interface 1.
+    devices[1].interface_guid = devices[2].interface_guid = true;
+    check(!usb_findings(devices).switch2_vendor_guid, "only interface 1's GUID counts");
+    devices[1].interface_guid = devices[2].interface_guid = false;
+    devices.back().interface_guid = true;
     devices.back().service.clear();
     found = usb_findings(devices);
     check(found.switch2_vendor == UsbDriver::none, "interface 1 without a driver");
@@ -129,18 +149,50 @@ void device_list() {
     devices.erase(devices.begin());
     found = usb_findings(devices);
     check(found.switch2_usb && found.switch2_vendor == UsbDriver::unknown, "no interface 1 node: its driver unknown");
-    // Over Bluetooth only.
-    const std::vector<DeviceRecord> bluetooth{{{L"HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2069"}, false, L""}};
-    found = usb_findings(bluetooth);
-    check(found.switch2_pro && found.switch2_bluetooth && !found.switch2_usb && found.switch2_vendor == UsbDriver::unknown, "Bluetooth only");
-    check(usb_findings_line(found).find("over Bluetooth") != std::string::npos, "the log's line");
+    // Bluetooth spellings: classic Bluetooth's four-digit vendor id source,
+    // Bluetooth LE's two-digit one (VID&02057E); the vendor is the last four
+    // digits either way.
+    const auto le = hardware_id_usb_ids(L"BTHLEDevice\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069_REV&0001");
+    check(le && le->vendor == 0x057e && le->product == 0x2069, "a Bluetooth LE id");
+    const auto le_hid = hardware_id_usb_ids(L"HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069_REV&0001&Col01");
+    check(le_hid && le_hid->vendor == 0x057e && le_hid->product == 0x2069, "a Bluetooth LE HID id");
+    const auto classic = hardware_id_usb_ids(L"BTHENUM\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2009");
+    check(classic && classic->vendor == 0x057e && classic->product == 0x2009, "a classic Bluetooth id");
+    check(!hardware_id_usb_ids(L"HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02045e&UP:0001_U:0005"), "a vendor without a product");
+    check(!hardware_id_usb_ids(L"HID\\{x}_VID&057E_PID&2069") && !hardware_id_usb_ids(L"HID\\{x}_VID&002057E_PID&2069") &&
+              !hardware_id_usb_ids(L"HID\\{x}_VID&02057E_PID&20"),
+          "malformed Bluetooth ids");
+    check(hardware_id_bluetooth_hid(L"HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069") &&
+              hardware_id_bluetooth_hid(L"HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2069"),
+          "Bluetooth HID nodes");
+    check(!hardware_id_bluetooth_hid(L"HID\\VID_057E&PID_2069&MI_00") && !hardware_id_bluetooth_hid(L"BTHLEDevice\\{x}_Dev_VID&02057e_PID&2069") &&
+              !hardware_id_bluetooth_hid(L"BTHENUM\\{x}_VID&0002057e_PID&2069"),
+          "USB HID and pairing nodes are no Bluetooth HID nodes");
+    // Connected over Bluetooth as an input device (its HID node): classic and LE.
+    for (const wchar_t* id : {L"HID\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2069",
+                              L"HID\\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069_REV&0001&Col01"}) {
+        const std::vector<DeviceRecord> bluetooth{{{id}, false, L""}};
+        found = usb_findings(bluetooth);
+        check(found.switch2_pro && found.switch2_bluetooth && !found.switch2_usb && found.switch2_vendor == UsbDriver::unknown, "Bluetooth only");
+        check(usb_findings_line(found).find("over Bluetooth") != std::string::npos, "the log's line");
+    }
+    // Only a Bluetooth pairing (its BTHLE / BTHENUM nodes stay listed while
+    // the controller is off): nothing connected, no notice; the log says so.
+    const std::vector<DeviceRecord> paired{{{L"BTHLEDevice\\{00001800-0000-1000-8000-00805f9b34fb}_Dev_VID&02057e_PID&2069_REV&0001"}, false, L"UmPass"},
+                                           {{L"BTHENUM\\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002057e_PID&2069"}, false, L"HidBth"}};
+    found = usb_findings(paired);
+    check(!found.switch2_pro && !found.switch2_bluetooth && !found.switch2_usb && found.switch2_paired, "a pairing only");
+    check(switch2_notice(found, false, LibusbState::loaded) == Switch2Notice::none, "a pairing only: no notice");
+    check(usb_findings_line(found).find("Bluetooth pairing") != std::string::npos && usb_findings_node_lines(found).size() == 2,
+          "a pairing only: the log's lines");
 }
 
-UsbFindings usb_switch2(UsbDriver vendor, const wchar_t* service = L"") {
+UsbFindings usb_switch2(UsbDriver vendor, const wchar_t* service = L"", bool guid = true) {
     UsbFindings found;
     found.switch2_pro = found.switch2_usb = true;
     found.switch2_vendor = vendor;
     found.switch2_vendor_service = service;
+    found.switch2_vendor_guid = vendor == UsbDriver::winusb || vendor == UsbDriver::other ? guid : false;
     return found;
 }
 
@@ -164,8 +216,13 @@ void notices() {
     check(switch2_notice(winusb, false, L::incompatible) == N::dll_incompatible, "an unusable DLL");
     check(switch2_notice(none, false, L::loaded) == N::no_driver, "Windows without a driver on interface 1");
     check(switch2_notice(other, false, L::loaded) == N::other_driver, "another driver on interface 1");
-    check(switch2_notice(winusb, false, L::loaded) == N::not_opened, "WinUSB, but not opened");
-    check(switch2_notice(usb_switch2(UsbDriver::unknown), false, L::loaded) == N::not_opened, "no interface 1 node seen");
+    check(switch2_notice(winusb, false, L::loaded) == N::not_opened, "WinUSB with its GUID, but not opened");
+    const UsbFindings winusb_no_guid = usb_switch2(UsbDriver::winusb, L"WinUSB", false);
+    check(switch2_notice(winusb_no_guid, false, L::loaded) == N::no_interface_guid, "WinUSB without a GUID: libusb cannot reach it");
+    check(switch2_notice(winusb_no_guid, false, L::missing) == N::dll_missing, "the DLL first, then the GUID");
+    check(switch2_notice(winusb_no_guid, true, L::loaded) == N::playable, "SDL's pad plays whatever Windows lists");
+    const UsbFindings unknown = usb_switch2(UsbDriver::unknown);
+    check(switch2_notice(unknown, false, L::loaded) == N::no_interface, "no interface 1 node seen");
     // The texts: what is wrong and what to do.
     check(switch2_notice_text(N::none, nothing).empty() && switch2_notice_text(N::playable, winusb).empty(), "no text when fine");
     const std::string missing = switch2_notice_text(N::dll_missing, winusb);
@@ -178,8 +235,20 @@ void notices() {
           "the no-driver text: Zadig on interface 1 only: " + driver);
     check(switch2_notice_text(N::other_driver, other).find("libusbK") != std::string::npos, "the other driver by name");
     check(switch2_notice_text(N::bluetooth, bluetooth).find("USB") != std::string::npos, "Bluetooth: use the cable");
-    check(switch2_notice_text(N::not_opened, winusb).find("controllers.log") != std::string::npos, "not opened: send the log");
-    for (const N notice : {N::not_built, N::dll_missing, N::dll_incompatible, N::bluetooth, N::no_driver, N::other_driver, N::not_opened}) {
+    const std::string not_opened = switch2_notice_text(N::not_opened, winusb);
+    check(not_opened.find("controllers.log") != std::string::npos && not_opened.find("WinUSB on its interface 1") != std::string::npos,
+          "not opened: WinUSB is there, send the log: " + not_opened);
+    const std::string no_guid = switch2_notice_text(N::no_interface_guid, winusb_no_guid);
+    check(no_guid.find("Windows blocks it") != std::string::npos && no_guid.find("GUID") != std::string::npos &&
+              no_guid.find("057E 2069 01") != std::string::npos && no_guid.find("never the one ending in 00") != std::string::npos,
+          "the no-GUID text: Zadig on interface 1: " + no_guid);
+    check(no_guid.find("Steam") == std::string::npos, "the no-GUID text blames no other program");
+    const std::string no_interface = switch2_notice_text(N::no_interface, unknown);
+    check(no_interface.find("WinUSB on its interface 1") == std::string::npos && no_interface.find("no interface 1") != std::string::npos &&
+              no_interface.find("057E 2069 01") != std::string::npos && no_interface.find("controllers.log") != std::string::npos,
+          "the no-interface text claims no WinUSB: " + no_interface);
+    for (const N notice : {N::not_built, N::dll_missing, N::dll_incompatible, N::bluetooth, N::no_driver, N::no_interface_guid, N::other_driver,
+                           N::no_interface, N::not_opened}) {
         check(!switch2_notice_text(notice, other).empty(), std::string("F1 text for ") + switch2_notice_name(notice));
         check(switch2_toast_text(notice).find("F1 > Controls") != std::string::npos, std::string("toast for ") + switch2_notice_name(notice));
     }
