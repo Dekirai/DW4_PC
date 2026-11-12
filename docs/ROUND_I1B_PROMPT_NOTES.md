@@ -76,8 +76,34 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - **W11** expects no prompt, PLAN, OPTIONS or held barrier for a's move into dng101b1 (decision 41).
 - SEAMLESS.md: 19.7.3 (the loading rows), 19.7.4 (PLAN 900 ms), 19.24 (W30c in stag0202), 19.32 (the fixes, the gate form's
   "full now" at the BARRIER, the return mat without a real-client scenario, the open question below).
-- **Open for the user** (finding 9, decision 21): two players leaving together who both choose *New instance* land in two
-  instances (each is a base, neither the other's co-arrival). Built as 19.7.6's literal reading until the user answers.
+- (Finding 9's open question was answered by the user on 2026-11-11: decision 43, built in the second review fixes below.)
+
+## Second review fixes (2026-11-12)
+
+- **Cursor rule through a refresh** (decision 40, client `open_prompt`): `PromptView::moved` (up / down moved the cursor, or
+  Left / Right changed New instance's visibility); a refresh keeps only a moved cursor on its wid / New instance, an unmoved
+  one takes the refresh's `preselected`. Session test `prompt_gate_form` (Kim's row loses its Here: the cursor goes to New
+  instance; moved by the player: kept; back to a row when the preselection comes back). 14f2c86a.
+- **Notice line** (`PromptView::notice_host`): kept through refreshes only while no row of its host is choosable. 14f2c86a.
+- **Dead code**: `Overlay::prompt` removed; `Session::holding_press()` stays (the session tests observe it), its comment
+  fixed. 14f2c86a.
+- **Decision 43** (relay, 4cdb0f8a): Decide's holder filter `g.PromptChoice is not { Choice: ChoiceKind.Join } &&
+  MaySeeBase(h, g)` (plan 0xFFFF no longer excluded); announced `!x.Prompt.ChoseRow` (`PromptPlan.Chose` -> `ChoseRow`, a Join
+  only); FinishCoArrival writes `prompt_new ... coarrivals=N` for a New base; DecideChoice New and FreshJoinOrNew's PlanNew
+  join a starting instance the arrival may see and was not offered (`StartingNotOffered`, `TakeStarting`, counter
+  `new_choice_starting`, `candidates ... by=new_together`). Tests `PromptTogetherTests.cs` (5 cases), the review test
+  `A_base_holds_for_no_member_that_chose_a_row_but_for_a_new_instance_chooser`; scenario **W4c** (b18decc0).
+- **Harness** (77a4f6a3): `HubLogicTests.Harness` without `world:` runs World:ArrivalPrompt on and answers held prompts like
+  the FakeClient (`Peer.AutoAnswer`, `Harness.AnswerPrompts` after every Send, `Harness.Housekeep()` for
+  `h.Hub.Housekeep(h.Now)`): 43 I1a / J tests go through a held prompt (counted with a temporary instrumentation) and pass;
+  I1a's notice test keeps `ArrivalPrompt = false` and has a prompt-on twin
+  (`With_the_arrival_prompt_another_context_keeps_its_notice_and_a_long_catch_up_is_a_greyed_row`); decision 41's and the
+  guest-NEW gate test check the prompt.
+- **Docs**: SEAMLESS.md 19.1 (decision 43's row), 19.5.6 (the keyboard hint line, for the user's OK), 19.7.3 (the cursor),
+  19.7.6 / 19.7.7 (decision 43), 19.24 (W4c), 19.32 (decision 43, the second review: Arriving now not built, finding 8 open,
+  PLAN's stages kept).
+- Rejected / for the user: finding 6 (*Arriving now*: not built, 19.32), finding 8 (a no-answer base before its own prompt:
+  open for the user, 19.32), finding 9 (PLAN of any stage: kept, the return mat names any gate-disc stage, 19.32).
 
 ## Tests
 
@@ -102,13 +128,14 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 
 ## Left
 
-- Nothing of the lane after the review fixes (see "Review fixes" and the runs below).
+- Nothing of the lane after the second review fixes (see "Second review fixes" and the runs below).
 - For the integration: the contract entries "prompt 16:30", "prompt 17:00", "prompt 2026-11-11 14:25" and "prompt 2026-11-11
   16:20" (merge hints: Decide's `announced` with the go lane's `g.Go`, DecideChoice's TakeSeat bool / SendRemovedHome for the
   moderation lane, Matching.Order is I1a code, the load gate's hubs); W10's prompt check (moderation 15:20).
 - A real-client scenario of the return mat's gate form (mate02): needs the go lane's `testhook mat` and the moderation lane's
   `setflag` (a powered Security Gate); the census measured it headless.
-- Open for the user: two players leaving together who both choose *New instance* (SEAMLESS.md 19.32).
+- For the user (SEAMLESS.md 19.32): *Arriving now* (not built), a no-answer base before its own prompt (finding 8), the
+  keyboard's hint line in 19.5.6.
 
 ## Runs
 
