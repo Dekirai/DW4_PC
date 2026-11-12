@@ -172,14 +172,15 @@ when one is at hand.
   | interface 1 unavailable | keep reading (another program may have started it: it then plays, "started by another program"); open interface 1 again every two seconds | starting / running |
   | no reports | keep reading; one more start every ten seconds | running |
   | no input | look again every two seconds or when Windows' list changes | opening |
-  | unplugged | a read says the device is gone, or Windows no longer lists it | the pad goes |
+  | (a lost channel) | a read or a command fails as if unplugged (`ERROR_DEVICE_NOT_CONNECTED`, `ERROR_OPERATION_ABORTED`, ...): both channels closed, a look at Windows' list asked for | opening a second later (the pad stays, at rest); unplugged once the list no longer has it |
+  | unplugged | Windows no longer lists it (a look at the list: a device change, a lost channel, or every two seconds while it does not play) | the pad goes |
 
 - **The pad**: an SDL virtual joystick with 057e:2069, "Nintendo Switch 2
   Pro Controller", and SDL's own driver's layout (positional: B SOUTH, A
   EAST, Y WEST, X NORTH; Minus BACK, Home GUIDE, Plus START, Capture MISC1,
   C MISC2, GR RIGHT_PADDLE1, GL LEFT_PADDLE1), attached at the first report,
-  kept at rest through a stall or a restart (no player slot moves), detached
-  when unplugged. Family Switch 2 Pro by its ids, read by label as before,
+  kept at rest through a stall, a restart or a lost channel (no player slot
+  moves), detached when unplugged. Family Switch 2 Pro by its ids, read by label as before,
   the Switch 2 Pro prompts. **ZL / ZR are digital** on this controller
   (report 0x05 has them as bits; SDL makes them full or zero too). The
   sticks through SDL's arithmetic with the factory calibration (or the
@@ -215,7 +216,9 @@ switch 2 pro notice: playable
 
 Failures say which step and the system's error (`busy (error 5)`, `could
 not be sent: failed (error 31)`, `no reply`, `no input report came by
-itself`, `the controller is gone (gone (error 1167))`); a repeat is not
+itself`, `lost the controller (gone (error 1167)); opening it again in a
+second unless Windows no longer lists it`, `unplugged (Windows no longer lists
+it)`); a repeat is not
 logged again. `switch 2 pro: none on USB` after a look that found none. The
 start line names a left-over `libusb-1.0.dll`; `sdl: started; libusb-1.0.dll
 not in use` proves SDL loaded none.
@@ -227,7 +230,7 @@ three seconds of trouble, what to do:
 
 | Notice | When | What it says |
 | --- | --- | --- |
-| busy | interface 1 held by another program, no reports | close Steam (its Switch support), an emulator or a second copy; the game tries again every two seconds |
+| busy | interface 1 held by another program, no reports; or its HID input refused (access denied, a sharing violation: held by another program for itself) | close Steam (its Switch support), an emulator, a controller tool or a second copy; the game tries again every two seconds (nothing to remove) |
 | no reports | started (or a start command could not be sent), no reports | the failed step and error; unplug and plug in again; send the log |
 | no input | no HID collection or it cannot be opened | the error; if a driver was put on interface 0 (`057E 2069 00`, Zadig), uninstall it with its driver in Device Manager, plug in again |
 | another driver on interface 1 | libusbK, libusb0, ... | uninstall it with its driver, Windows puts WinUSB back by itself |
@@ -271,3 +274,67 @@ and no driver or device setting changed.
 - **Earlier builds' files**: `libusb-1.0.dll` and `libusb-1.0-COPYING.txt`
   beside an existing game folder (also the online client folder on the
   Desktop) are left over and can be deleted; nothing loads them.
+- **Windows' HID and WinUSB paths without hardware**: report 0x05 through
+  `ReadFile`, opening interface 1 through WinUSB, the replies' lengths and
+  the controller after its start are traced against the sources and the
+  descriptor (the review found no fault there), not run: no controller here.
+
+## 10. Review fixes
+
+The review of `940e6d1c` found, and this round fixed:
+
+- **A lost channel ended the controller for good.** A read or a command
+  that failed as if the controller were unplugged (`ERROR_OPERATION_ABORTED`,
+  `ERROR_BAD_COMMAND`, ...; say an HID read aborted over standby and resume
+  without a removal) ended the controller's thread. While Windows still
+  listed it the manager made no new one: it looked at the list again only
+  on SDL's device change count, or every two seconds while a controller
+  that had not ended did not play, and slept until asked otherwise. The log
+  said gone, F1 showed nothing, no notice came. Now only Windows' list says
+  that a controller is gone. A lost channel closes both channels, asks the
+  manager for a look at the list and opens them again a second later
+  (state opening; the pad stays at rest, no player slot moves, the
+  calibration is kept, the ten start commands go out again). The look (or a
+  device change, or the look every two seconds while it does not play)
+  finds an unplugged controller gone; then its pad goes. The manager now
+  wakes every two seconds and looks whenever a controller does not play.
+- **Listed again under the same instance id.** A controller the list lost
+  takes no list entry any more, also while its thread still ends: the
+  manager marks it unlisted when it tells it so, and a controller listed
+  again starts afresh at once (number 1 again, a new pad); the old pad goes
+  as soon as the list lost it, its line leaves F1. Before, an entry could
+  reach a thread that was about to end.
+- **Mutants that survived the tests** (the reviewer's, built from copies of
+  `switch2_pro.cpp`): the look every two seconds switched off, a re-listed
+  controller handed to the old one, the pad kept while the thread is busy
+  restarting (the main thread's one-second check), the flush before the start
+  removed. New checks catch each of them (below), and the new code's own.
+- **Another program holding the HID input for itself** (access denied, a
+  sharing violation): the notice is *busy* with its own text (close that
+  program, the game tries again every two seconds; nothing to remove), not
+  the *no input* text that told to uninstall a driver. F1's line names the
+  error (`its input device cannot be opened (busy (error 5))`); the log's
+  notice name is `held by another program` for both.
+- **The error codes** are one function, `switch2_io_of_error`, by number
+  (checked against winerror.h at compile time on Windows) and tested: 121,
+  258, 1460 timeout; 5, 32, 170 busy; 2, 3, 22, 55, 433, 995, 1167, 1617
+  gone; anything else failed.
+- **The hand test's face buttons**: the owner's game folder has
+  `nintendo_layout=position` with the face bindings swapped (`a=b`, `b=a`,
+  `x=y`, `y=x`), which plays by label again; a fresh folder plays by label.
+  Both are checked now with the Switch 2 Pro's virtual pad (by position B
+  is the game's A; by position with those bindings A is A).
+
+| Check | Result |
+| --- | --- |
+| ctest (build/Clean of the worktree) | 66 / 66; `switch2` 368 checks (was 309), `pad_usb` 119 (was 109) |
+| `switch2`, new | the error codes; the state machine: a read lost while listed (995): both closed and not started, a look asked for once, a second's pause, opened again, the ten start commands without the flash, playing, the calibration kept; a start command lost (22): the same; an unplugged read: opening until the list says gone; replies an earlier owner left in the pipe dropped before the start (the calibration right, no foreign reply); the reader with no device change and no look by the clock: a lost read plays on with the same pad and player slot and its look happens, an unplugged controller is found gone by the look its failed read asks for; the look every two seconds finds an HID input listed late; listed again under the same id while the old thread still hangs: a fresh controller number 1 at once, the old pad gone at once, a new pad; a slow restart (three seconds of replies): the pad at rest a second after the last report; by position: B the game's A, A its B, Y its X; by position with the face bindings swapped: A B X Y as labelled |
+| `pad_usb`, new | the HID input held (errors 5 and 32): busy, its controller, its text (the error, Steam, close that program; no uninstall, no Zadig, no interface 1), F1's line with the error; interface 1's busy text unchanged; the notice name |
+| Mutations (copies of `switch2_pro.cpp` / `pad_usb.cpp` built in a scratch folder and linked against the tests' objects; the worktree untouched) | 34 of 34 caught: the reviewer's four survivors; the new code's own (a lost channel ending the controller, no look asked for, the device thread ignoring the request, no pause, the manager not marking it unlisted, F1 showing an unlisted one, its pad kept until its thread ends, its number or its pad still counted, `started` kept after a loss); three error codes; the three notice changes; and the 14 of the round before |
+| det.sh (newgame_dng101b1, 6000 frames), a copy of the final exe | 4004f056 / 396cb219, twice (four runs) |
+| save state suite (the private copy of st_all.sh, its own run folder), the copy | 17 / 17 identical after loading with a loaded state |
+| Hidden starts of the copy (a screenshot run with `DW4_TEST_SWITCH2=1` and a controller log, and a plain test run), with main `52d504d9`'s `libusb-1.0.dll` beside it and without | exit 0 each; the DLL named as left over and unused; `sdl: started; libusb-1.0.dll not in use`; `switch 2 pro: none on USB`; the two screenshots identical |
+| SDL's configuration (both build folders) | `SDL_HIDAPI_LIBUSB OFF`, no `HAVE_LIBUSB` / `SDL_LIBUSB_DYNAMIC`; SDL's and libusb's shared sources untouched |
+
+Still no Switch 2 Pro Controller connected here; nothing installed, no
+driver or device setting changed.

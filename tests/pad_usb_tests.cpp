@@ -248,6 +248,26 @@ void notices() {
           "no HID input: remove a driver on interface 0, install nothing: " + hid_text);
     hid.found.input_service = "WinUSB";
     check(switch2_notice_text(N::no_input, &hid).find("which has the WinUSB driver instead") != std::string::npos, "interface 0's wrong driver named");
+    // Another program holds the HID input for itself (access denied, a
+    // sharing violation): close it; nothing to remove or install.
+    for (const std::uint32_t error : {5u, 32u}) {
+        auto held = device(S::no_input);
+        held.input_open = {Switch2Io::busy, error, 0};
+        check(switch2_device_notice(held) == N::busy && switch2_notice(nothing, {held}, true) == N::busy, "the HID input held: busy");
+        const std::vector<Switch2Status> one{held};
+        check(switch2_notice_device(N::busy, one) == &one[0], "the busy notice's controller");
+        const auto held_text = switch2_notice_text(N::busy, &held);
+        check(held_text.find("input device (busy (error " + std::to_string(error) + "))") != std::string::npos &&
+                  held_text.find("Steam") != std::string::npos && held_text.find("Close that program") != std::string::npos &&
+                  held_text.find("Uninstall") == std::string::npos && held_text.find("remove") == std::string::npos &&
+                  held_text.find("Zadig") == std::string::npos && held_text.find("install") == std::string::npos &&
+                  held_text.find("interface 1") == std::string::npos,
+              "the HID input held: close the other program, nothing to remove: " + held_text);
+        check(switch2_status_line(held) == "Switch 2 Pro Controller (USB): its input device cannot be opened (busy (error " + std::to_string(error) + "))",
+              "F1: the HID input held: " + switch2_status_line(held));
+    }
+    check(busy_text.find("interface 1") != std::string::npos, "interface 1 held: its own text");
+    check(std::string(switch2_notice_name(N::busy)) == "held by another program", "the log's name for both");
     const auto other = commands(UsbDriver::other, true, Switch2Io::failed);
     const auto other_text = switch2_notice_text(N::other_driver, &other);
     check(other_text.find("libusbK") != std::string::npos && other_text.find("Uninstall device") != std::string::npos &&

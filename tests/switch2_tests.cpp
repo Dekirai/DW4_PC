@@ -27,13 +27,17 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <condition_variable>
 #include <deque>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -287,12 +291,19 @@ struct FakeController {
     bool input_listed = true;
     bool replies = true;
     int fail_send = -1;                 // the n-th send (0-based) fails
+    Switch2IoResult fail_result{Switch2Io::failed, 31, 0};
+    std::optional<Switch2IoResult> read_error_once; // the next read fails so (an aborted read over standby)
     bool report_after_start = true;     // reports after 03/0D
     bool reports_by_themselves = false; // another program started it
     bool stall_until_restart = false;   // reports stop until the next 03/0D
     std::uint8_t report_id = 0x05;
     bool unplugged = false;
     bool pace = false; // (the reader's threads: a report every 2 ms, not as fast as a loop can ask)
+    milliseconds slow_receive{0}; // each reply read takes this long (a controller slow to answer)
+    // Closing the HID input waits while this holds (a device thread that has
+    // not ended yet when the controller is listed again).
+    bool hold_close = false;
+    std::condition_variable gate;
     Held held;
     std::map<std::uint32_t, std::array<std::uint8_t, 0x40>> flash;
     // What happened.
@@ -323,6 +334,10 @@ struct FakeController {
 class FakeInput final : public Switch2Input {
 public:
     explicit FakeInput(FakeController& c) : c_(c) {}
+    ~FakeInput() override {
+        std::unique_lock lock(c_.mutex);
+        c_.gate.wait(lock, [&] { return !c_.hold_close; });
+    }
     Switch2IoResult read(std::uint8_t* buffer, std::size_t size, milliseconds) override {
         bool pace = false;
         {
@@ -332,6 +347,7 @@ public:
         if (pace) std::this_thread::sleep_for(milliseconds(2));
         std::lock_guard lock(c_.mutex);
         if (c_.unplugged) return {Switch2Io::gone, 1167, 0};
+        if (c_.read_error_once) return *std::exchange(c_.read_error_once, std::nullopt);
         const bool flowing = (c_.started && c_.report_after_start && !c_.stall_until_restart) || c_.reports_by_themselves;
         if (!flowing) return {Switch2Io::timeout, 0, 0};
         c_.timer += 4;
@@ -356,7 +372,7 @@ public:
         if (c_.unplugged) return {Switch2Io::gone, 22, 0};
         const int index = int(c_.sent.size());
         c_.sent.emplace_back(data, data + size);
-        if (index == c_.fail_send) return {Switch2Io::failed, 31, 0};
+        if (index == c_.fail_send) return c_.fail_result;
         if (size >= 8 && data[0] == 0x03 && data[3] == 0x0d) {
             c_.started = true;
             c_.stall_until_restart = false;
@@ -377,6 +393,12 @@ public:
         return {Switch2Io::ok, 0, size};
     }
     Switch2IoResult receive(std::uint8_t* buffer, std::size_t size, milliseconds) override {
+        milliseconds slow{0};
+        {
+            std::lock_guard lock(c_.mutex);
+            slow = c_.slow_receive;
+        }
+        if (slow.count()) std::this_thread::sleep_for(slow);
         std::lock_guard lock(c_.mutex);
         if (c_.unplugged) return {Switch2Io::gone, 22, 0};
         if (c_.reply_bytes.empty()) return {Switch2Io::timeout, 121, 0};
@@ -441,13 +463,15 @@ public:
         std::lock_guard lock(mutex);
         plugged.push_back(&c);
     }
+    // (Off Windows' list first, then its reads fail: a look the failure asks
+    // for no longer finds it.)
     void unplug(FakeController& c) {
         {
-            std::lock_guard lock(c.mutex);
-            c.unplugged = true;
+            std::lock_guard lock(mutex);
+            plugged.erase(std::remove(plugged.begin(), plugged.end(), &c), plugged.end());
         }
-        std::lock_guard lock(mutex);
-        plugged.erase(std::remove(plugged.begin(), plugged.end(), &c), plugged.end());
+        std::lock_guard lock(c.mutex);
+        c.unplugged = true;
     }
 };
 
@@ -564,12 +588,20 @@ void machine_stall_unplug() {
         std::lock_guard lock(c.mutex);
         check(c.sent.size() == 25, "started again without the flash reads: " + std::to_string(c.sent.size()));
     }
-    // Unplugged: the next read says so.
+    // Unplugged: the next read fails; Windows' list decides that it is gone.
+    check(!machine.take_scan_request(), "no look at the list asked for while it plays");
     platform.unplug(c);
     d.steps(1);
-    check(machine.status().state == Switch2State::gone, "unplugged: gone");
-    check(has_line(d.log, "input: the controller is gone (gone (error 1167))"), "the log: gone\n" + joined(d.log));
+    check(machine.status().state == Switch2State::opening && !machine.status().commands, "a lost read: both closed, opening again");
+    check(machine.take_scan_request() && !machine.take_scan_request(), "a look at the list asked for, once");
+    check(has_line(d.log, "input: lost the controller (gone (error 1167)); opening it again in a second unless Windows no longer lists it"),
+          "the log: lost\n" + joined(d.log));
     d.steps(3);
+    check(machine.status().state == Switch2State::opening, "a second's pause before opening again");
+    machine.listed(std::nullopt);
+    check(machine.status().state == Switch2State::gone, "no longer listed: gone");
+    check(has_line(machine.take_log(), "unplugged (Windows no longer lists it)"), "the log: unplugged");
+    d.steps(30, milliseconds(100));
     check(machine.status().state == Switch2State::gone, "stays gone");
     // Gone from Windows' list instead.
     FakeController c2;
@@ -581,6 +613,74 @@ void machine_stall_unplug() {
     second.listed(std::nullopt);
     check(second.status().state == Switch2State::gone, "no longer listed: gone");
     check(has_line(second.take_log(), "unplugged (Windows no longer lists it)"), "the log: no longer listed");
+}
+
+std::size_t count_lines(const std::vector<std::string>& lines, const std::string& part) {
+    return std::size_t(std::count_if(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(part) != std::string::npos; }));
+}
+
+void machine_lost_channel() {
+    // A read fails as if the controller were unplugged (an aborted read over
+    // standby: ERROR_OPERATION_ABORTED) while Windows still lists it: both
+    // channels open again a second later and it plays on.
+    FakePlatform platform;
+    FakeController c;
+    fill_flash(c);
+    platform.plug(c);
+    Switch2Machine machine(platform, c.found());
+    Driver d{machine};
+    d.until(Switch2State::running, 10);
+    std::size_t sent = 0;
+    {
+        std::lock_guard lock(c.mutex);
+        sent = c.sent.size();
+        c.read_error_once = Switch2IoResult{Switch2Io::gone, 995, 0};
+    }
+    d.steps(1);
+    check(machine.status().state == Switch2State::opening && !machine.status().commands && !machine.fresh(d.now),
+          "lost: both channels closed, the pad at rest");
+    check(machine.take_scan_request(), "a look at the list asked for");
+    check(!machine.status().started, "not started (until its start commands go out again)");
+    check(has_line(d.log, "input: lost the controller (gone (error 995))"), "the log: lost\n" + joined(d.log));
+    d.steps(10, milliseconds(50));
+    check(machine.status().state == Switch2State::opening && count_lines(d.log, "input: opened") == 1, "a second's pause");
+    machine.listed(c.found()); // (the look: still listed, nothing new)
+    d.until(Switch2State::running, 30, milliseconds(100));
+    check(count_lines(d.log, "input: opened") == 2 && count_lines(d.log, "interface 1: opened") == 2, "both opened again\n" + joined(d.log));
+    check(has_line(d.log, "input reports again (id 0x05)") && machine.status().started, "started again, playing");
+    {
+        std::lock_guard lock(c.mutex);
+        check(c.sent.size() == sent + 10 && c.sent.back() == switch2_start_commands().back().bytes, "the ten start commands again, no flash read");
+    }
+    check(machine.calibration().left_source == Switch2CalibrationSource::factory, "the calibration kept");
+
+    // A start command fails as if unplugged: the same.
+    FakeController g;
+    g.id = "USB\\VID_057E&PID_2069\\LOSTSTART";
+    g.fail_send = 7;
+    g.fail_result = {Switch2Io::gone, 22, 0};
+    platform.plug(g);
+    Switch2Machine starting(platform, g.found());
+    Driver s{starting};
+    s.steps(3);
+    check(starting.status().state == Switch2State::opening && starting.take_scan_request(), "lost while starting: opening again");
+    check(has_line(s.log, "start: start 3/10 11/01 (unknown purpose): lost the controller (gone (error 22))"), "the log: the step\n" + joined(s.log));
+    s.until(Switch2State::running, 40, milliseconds(100));
+
+    // Replies an earlier owner left unread in interface 1's pipe are dropped
+    // before the start: every reply read is the command's own.
+    FakeController stale;
+    stale.id = "USB\\VID_057E&PID_2069\\STALE";
+    fill_flash(stale);
+    std::vector<std::uint8_t> left_over{0x03, 0x01, 0x00, 0x0d, 0x00, 0xf8, 0x00, 0x00};
+    left_over.resize(64, 0x5a);
+    stale.reply_bytes.assign(left_over.begin(), left_over.end());
+    platform.plug(stale);
+    Switch2Machine flushed(platform, stale.found());
+    Driver f{flushed};
+    f.until(Switch2State::running, 10);
+    check(has_line(f.log, "sticks: left factory, right factory calibration"), "the calibration read right\n" + joined(f.log));
+    check(!has_line(f.log, "not its reply") && !has_line(f.log, "unexpected reply"), "every reply the command's own\n" + joined(f.log));
 }
 
 void machine_other_program() {
@@ -738,8 +838,8 @@ struct Host {
 
 // Updates the reader and the host until `done` (5 s at most).
 template <typename Done>
-void settle(Switch2Reader& reader, Host& host, Done done, const std::string& what) {
-    const auto until = Clock::now() + std::chrono::seconds(5);
+void settle(Switch2Reader& reader, Host& host, Done done, const std::string& what, milliseconds limit = milliseconds(5000)) {
+    const auto until = Clock::now() + limit;
     while (Clock::now() < until) {
         reader.update();
         host.pump();
@@ -757,7 +857,8 @@ void set_held(FakeController& c, const Held& held) {
 void reader_end_to_end() {
     auto owned = std::make_unique<FakePlatform>();
     FakePlatform& platform = *owned;
-    FakeController c;
+    // (Every fake controller outlives the reader: its threads.)
+    FakeController c, again, second;
     fill_flash(c);
     c.pace = true;
     platform.plug(c);
@@ -807,6 +908,29 @@ void reader_end_to_end() {
     check(held_input(h).buttons == pb::z, "R is the game's Z");
     h = {}, h.lx = 1971 + 1654, h.ly = 2100;
     check(held_input(h).stick.x > 0.95f, "the left stick fully right (its calibration)");
+    // F1 > Controls > Nintendo layout by position: the bottom button (B) is
+    // the game's A, as on an Xbox pad; with the face bindings swapped
+    // (a=b, b=a, x=y, y=x) by position plays by label again.
+    host.settings.nintendo_layout = NintendoLayout::by_position;
+    h = {}, h.b = true;
+    check(held_input(h).buttons == pb::a, "by position: B (bottom) is the game's A");
+    h = {}, h.a = true;
+    check(held_input(h).buttons == pb::b, "by position: A (right) is the game's B");
+    h = {}, h.y = true;
+    check(held_input(h).buttons == pb::x, "by position: Y (left) is the game's X");
+    auto bind = [&](PadKey key, SDL_GamepadButton button) {
+        host.settings.pad[std::size_t(key)] = {};
+        host.settings.pad[std::size_t(key)][0] = PadInput{PadInput::Kind::button, int(button)};
+    };
+    bind(PadKey::a, SDL_GAMEPAD_BUTTON_EAST), bind(PadKey::b, SDL_GAMEPAD_BUTTON_SOUTH);
+    bind(PadKey::x, SDL_GAMEPAD_BUTTON_NORTH), bind(PadKey::y, SDL_GAMEPAD_BUTTON_WEST);
+    for (const auto& [field, game, name] : {std::tuple{&Held::a, pb::a, "A"}, std::tuple{&Held::b, pb::b, "B"}, std::tuple{&Held::x, pb::x, "X"},
+                                            std::tuple{&Held::y, pb::y, "Y"}}) {
+        h = {};
+        h.*field = true;
+        check(held_input(h).buttons == game, std::string("by position, face bindings swapped: ") + name + " is the game's " + name);
+    }
+    host.settings = Settings{};
     // Reports stall (and do not come back after a restart): the pad goes
     // to rest rather than keep the held button; they come back: it plays.
     h = {}, h.a = true;
@@ -847,7 +971,6 @@ void reader_end_to_end() {
     reader.request_scan();
     settle(reader, host, [&] { return host.pads.empty(); }, "the pad goes");
     check(reader.status().empty() || reader.status().front().state == Switch2State::gone, "the reader lets it go");
-    FakeController again;
     fill_flash(again);
     again.pace = true;
     platform.plug(again);
@@ -855,7 +978,6 @@ void reader_end_to_end() {
     settle(reader, host, [&] { return host.pads.size() == 1; }, "plugged in again");
     check(reader.status().size() == 1 && reader.status().front().number == 1, "number 1 again");
     // A second controller: a second pad, the second player.
-    FakeController second;
     second.id = "USB\\VID_057E&PID_2069\\FAKE2";
     second.pace = true;
     platform.plug(second);
@@ -942,6 +1064,186 @@ void reader_background() {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 }
 
+// The reader's lines so far (kept: settle() looks at them more than once).
+struct Lines {
+    std::vector<std::string> all;
+    bool has(Switch2Reader& reader, const std::string& part) {
+        for (auto& line : reader.take_log()) all.push_back(std::move(line));
+        return has_line(all, part);
+    }
+};
+
+constexpr milliseconds kNever{std::chrono::hours(1)}; // (no look at the list by the clock)
+
+void reader_lost_channel() {
+    // A read fails as if unplugged while Windows still lists the controller,
+    // and nothing else happens (no device change, no look by the clock): the
+    // reader looks at the list itself, the controller plays on, the pad and
+    // its player slot stay.
+    auto owned = std::make_unique<FakePlatform>();
+    FakePlatform& platform = *owned;
+    FakeController c;
+    fill_flash(c);
+    c.pace = true;
+    platform.plug(c);
+    Switch2Reader reader(std::move(owned), false, kNever);
+    Host host;
+    Lines lines;
+    settle(reader, host, [&] { return host.pads.size() == 1; }, "a pad");
+    const SDL_JoystickID id = SDL_GetGamepadID(host.pads.front());
+    Held h;
+    h.a = true;
+    set_held(c, h);
+    settle(reader, host, [&] { return SDL_GetGamepadButton(host.pads.front(), SDL_GAMEPAD_BUTTON_EAST); }, "A held");
+    const std::uint32_t scans = reader.scans();
+    {
+        std::lock_guard lock(c.mutex);
+        c.read_error_once = Switch2IoResult{Switch2Io::gone, 995, 0};
+    }
+    settle(reader, host, [&] { return lines.has(reader, "input: lost the controller (gone (error 995))"); }, "the read lost");
+    check(host.pads.size() == 1 && SDL_GetGamepadID(host.pads.front()) == id, "the pad stays while it opens again");
+    settle(reader, host, [&] { return lines.has(reader, "input reports again"); }, "playing again without being plugged in again");
+    settle(reader, host, [&] { return SDL_GetGamepadButton(host.pads.front(), SDL_GAMEPAD_BUTTON_EAST); }, "A held again");
+    check(host.pads.size() == 1 && SDL_GetGamepadID(host.pads.front()) == id && reader.joystick(1) == id, "the same pad, the same player slot");
+    check(reader.scans() > scans, "the lost read asked for a look at the list");
+    check(reader.status().size() == 1 && reader.status().front().state == Switch2State::running, "running");
+    // Unplugged for real (off the list, its reads fail), and again no device
+    // change: the look the failed read asks for finds it gone.
+    platform.unplug(c);
+    settle(reader, host, [&] { return host.pads.empty(); }, "unplugged: the pad goes");
+    settle(reader, host, [&] { return lines.has(reader, "unplugged (Windows no longer lists it)"); }, "the log: unplugged");
+}
+
+void reader_rescan() {
+    // Windows lists the HID input a moment after the controller and SDL
+    // counts no device change for it: the look every two seconds while a
+    // controller does not play finds it.
+    auto owned = std::make_unique<FakePlatform>();
+    FakePlatform& platform = *owned;
+    FakeController c;
+    c.pace = true;
+    c.input_listed = false;
+    platform.plug(c);
+    Switch2Reader reader(std::move(owned), false);
+    Host host;
+    settle(reader, host, [&] { return reader.status().size() == 1 && reader.status().front().state == Switch2State::no_input; }, "no input yet");
+    {
+        std::lock_guard lock(c.mutex);
+        c.input_listed = true;
+    }
+    settle(reader, host, [&] { return host.pads.size() == 1; }, "found by the look every two seconds", milliseconds(8000));
+    platform.unplug(c);
+    reader.request_scan();
+    settle(reader, host, [&] { return host.pads.empty(); }, "unplugged");
+}
+
+void reader_replug_same_id() {
+    // Unplugged and listed again under the same instance id before the old
+    // controller's thread has ended (and before the main thread let it go):
+    // a fresh controller, number 1, a new pad.
+    auto owned = std::make_unique<FakePlatform>();
+    FakePlatform& platform = *owned;
+    FakeController c, again; // (outlive the reader: its threads)
+    c.pace = true;
+    again.id = c.id;
+    again.pace = true;
+    platform.plug(c);
+    Switch2Reader reader(std::move(owned), false, kNever);
+    // (Lets the old thread end before the reader joins it, also when a check fails.)
+    struct Release {
+        FakeController& c;
+        void operator()() {
+            {
+                std::lock_guard lock(c.mutex);
+                c.hold_close = false;
+            }
+            c.gate.notify_all();
+        }
+        ~Release() { (*this)(); }
+    } release{c};
+    Host host;
+    settle(reader, host, [&] { return host.pads.size() == 1; }, "a pad");
+    const SDL_JoystickID first = SDL_GetGamepadID(host.pads.front());
+    {
+        std::lock_guard lock(c.mutex);
+        c.hold_close = true;
+    }
+    auto look = [&](const char* what) {
+        const std::uint32_t before = reader.scans();
+        reader.request_scan();
+        const auto until = Clock::now() + std::chrono::seconds(5);
+        while (reader.scans() == before && Clock::now() < until) std::this_thread::sleep_for(milliseconds(2));
+        check(reader.scans() > before, std::string("a look at the list: ") + what);
+    };
+    platform.unplug(c);
+    look("unplugged");
+    check(reader.status().empty() && !reader.joystick(1), "no longer listed: no controller (its thread still ending)");
+    platform.plug(again);
+    look("listed again");
+    const auto states = reader.status();
+    check(states.size() == 1 && states.front().number == 1, "listed again at once: a fresh controller, number 1");
+    // The old pad goes at once, also while the old thread still hangs.
+    settle(reader, host, [&] {
+        return std::none_of(host.pads.begin(), host.pads.end(), [&](SDL_Gamepad* p) { return SDL_GetGamepadID(p) == first; });
+    }, "the old pad goes while its thread still ends");
+    release();
+    settle(reader, host, [&] { return host.pads.size() == 1 && SDL_GetGamepadID(host.pads.front()) != first; }, "a new pad");
+    check(reader.joystick(1) == SDL_GetGamepadID(host.pads.front()), "number 1 is the new pad");
+    platform.unplug(again);
+    reader.request_scan();
+    settle(reader, host, [&] { return host.pads.empty(); }, "unplugged");
+}
+
+void reader_slow_restart() {
+    // The reports stall and the restart takes long (a controller slow to
+    // answer: its thread is busy and still says running): the pad goes to
+    // rest a second after the last report all the same.
+    auto owned = std::make_unique<FakePlatform>();
+    FakePlatform& platform = *owned;
+    FakeController c;
+    c.pace = true;
+    platform.plug(c);
+    Switch2Reader reader(std::move(owned), false, kNever);
+    Host host;
+    settle(reader, host, [&] { return host.pads.size() == 1; }, "a pad");
+    SDL_Gamepad* pad = host.pads.front();
+    Held h;
+    h.a = true;
+    set_held(c, h);
+    settle(reader, host, [&] { return SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST); }, "A held");
+    {
+        std::lock_guard lock(c.mutex);
+        c.slow_receive = milliseconds(300); // (ten start commands: three seconds)
+        c.stall_until_restart = true;
+    }
+    const auto stalled = Clock::now();
+    settle(reader, host, [&] { return !SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST); }, "at rest");
+    const auto rest = std::chrono::duration_cast<milliseconds>(Clock::now() - stalled);
+    check(rest >= Switch2Machine::kStall - milliseconds(50) && rest < Switch2Machine::kStall + milliseconds(1200),
+          "at rest a second after the last report, not when the slow restart ends: " + std::to_string(rest.count()) + " ms");
+    {
+        std::lock_guard lock(c.mutex);
+        c.slow_receive = milliseconds(0);
+    }
+    settle(reader, host, [&] { return SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST); }, "started again: A held again", milliseconds(8000));
+    set_held(c, {});
+    platform.unplug(c);
+    reader.request_scan();
+    settle(reader, host, [&] { return host.pads.empty(); }, "unplugged");
+}
+
+void error_codes() {
+    // Windows' error codes (winerror.h) as the reader takes them.
+    for (const std::uint32_t timeout : {121u, 258u, 1460u})
+        check(switch2_io_of_error(timeout) == Switch2Io::timeout, "a timeout: " + std::to_string(timeout) + " (121: WinUSB's pipe timeout)");
+    for (const std::uint32_t busy : {5u, 32u, 170u})
+        check(switch2_io_of_error(busy) == Switch2Io::busy, "another program: " + std::to_string(busy) + " (access denied, sharing violation)");
+    for (const std::uint32_t gone : {2u, 3u, 22u, 55u, 433u, 995u, 1167u, 1617u})
+        check(switch2_io_of_error(gone) == Switch2Io::gone, "as if unplugged: " + std::to_string(gone));
+    for (const std::uint32_t failed : {0u, 1u, 6u, 31u, 87u, 1784u})
+        check(switch2_io_of_error(failed) == Switch2Io::failed, "anything else: " + std::to_string(failed));
+}
+
 void windows_platform() {
     // Windows' own platform on this PC: its look at the device list opens
     // nothing (a controller that happens to be plugged in stays untouched),
@@ -987,8 +1289,10 @@ int main() {
         calibration();
         stick_arithmetic();
         reports();
+        error_codes();
         machine_start_and_read();
         machine_stall_unplug();
+        machine_lost_channel();
         machine_other_program();
         machine_driver_states();
         machine_start_failures();
@@ -1006,6 +1310,10 @@ int main() {
         reader_without_platform();
         reader_end_to_end();
         reader_background();
+        reader_lost_channel();
+        reader_rescan();
+        reader_replug_same_id();
+        reader_slow_restart();
         SDL_Quit();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

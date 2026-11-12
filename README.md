@@ -897,7 +897,7 @@ All pictures are drawn by the program itself (no console logos).
 | Wii U Pro Controller | Bluetooth: Windows Settings > Bluetooth > Add device, press the red SYNC button, no PIN. *Wii U Pro support* (F1 > Controls) is automatic: SDL's Wii driver runs only while such a controller (057e:0330) is connected, so a Wii remote bar such as Mayflash's DolphinBar never reaches it; Wii remotes never take a player's place |
 | Original GameCube controller, adapter in PC mode (Mayflash, EVORETRO) | Set the adapter's switch to PC; no driver. Every port is its own controller |
 | Original GameCube controller, adapter in Wii U mode (Nintendo's WUP-028, Mayflash on Wii U) | Install the WinUSB driver on "WUP-028" with Zadig, as for Dolphin; the game finds the adapter when it is plugged in and every connected port is a controller. It lets go of the adapter while the game is in the background (Dolphin can use it then); F1 > Controls says when the driver is missing or another program holds it |
-| Switch 2 Pro Controller | USB-C cable only (it does not play over Bluetooth). Nothing to install: Windows runs it with its own drivers (its HID driver for the buttons, the WinUSB driver Windows loads by itself on the part through which the game starts it). Read by labels like the Switch Pro; ZL and ZR are digital on this controller; C, GL and GR do nothing until bound in F1 > Controls. Steps below |
+| Switch 2 Pro Controller | USB-C cable only (it does not play over Bluetooth). Nothing to install: Windows runs it with its own drivers (its HID driver for the buttons, the WinUSB driver Windows loads by itself on the part through which the game starts it). Read like the Switch Pro (by its labels unless F1 > Controls > *Nintendo layout* says by position); ZL and ZR are digital on this controller; C, GL and GR do nothing until bound in F1 > Controls. Steps below |
 
 **Switch 2 Pro Controller, step by step.** (1) Connect the controller with a
 USB-C data cable (a charge-only cable shows nothing) and start the game, or
@@ -905,9 +905,10 @@ plug it in while the game runs; it becomes a player's controller with the
 Switch 2 Pro pictures within a second or two, and its player lights show the
 player. F1 > Controls shows a line for it: *playing, 250 reports/s* when it
 works. (2) If F1 > Controls instead says what is wrong, do that: *another
-program is using it* - Steam with its Switch controller support, an emulator
-or a second copy of the game holds it: close that program (the game tries
-again every two seconds); *its input device cannot be opened* or *a driver
+program is using it* - Steam with its Switch controller support, an emulator,
+a controller tool or a second copy of the game holds it (the part through
+which the game starts it, or its buttons for itself): close that program (the
+game tries again every two seconds); *its input device cannot be opened* or *a driver
 installed on it is in the way* - a driver was put on the controller by hand
 (Zadig: WinUSB or libusbK on one of its parts): Device Manager > View >
 Devices by connection, find the controller, uninstall that part with
@@ -927,7 +928,10 @@ the start commands (taken from SDL's own Switch 2 driver) through WinUSB on
 its interface 1; each connected controller becomes an SDL pad with the
 controller's ids, so the pictures, the bindings and the player slots treat
 it like any other. It keeps reading while the game is in the background (the
-game ignores its buttons there, as every controller's). Earlier builds shipped
+game ignores its buttons there, as every controller's). If Windows drops the
+connection for a moment without the controller being unplugged (standby, a
+USB reset), the game opens it again a second later and it plays on in the
+same player slot; only when Windows no longer lists it does its pad go. Earlier builds shipped
 a `libusb-1.0.dll` (and `libusb-1.0-COPYING.txt`) for this controller; nothing
 uses them any more, they can be deleted. `saves\controllers.log` beside the game records each start's
 controllers, what Windows lists and every step of the Switch 2 Pro

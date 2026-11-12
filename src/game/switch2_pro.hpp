@@ -161,11 +161,16 @@ Switch2PadState switch2_pad_state(const Switch2Controls& controls, const Switch2
 enum class Switch2Io : std::uint8_t {
     ok,
     timeout,
-    gone,   // the device went away (unplugged)
+    gone,   // the device seems to have gone away (unplugged; Windows' list decides)
     busy,   // another program holds it (an open only)
     failed, // anything else (`error` says what)
 };
 const char* switch2_io_name(Switch2Io io);
+// What a Windows system error code means here (ERROR_SEM_TIMEOUT, WinUSB's
+// pipe timeout: timeout; ERROR_DEVICE_NOT_CONNECTED, ERROR_OPERATION_ABORTED
+// ...: gone; ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION: busy; anything
+// else: failed). By number, so it is the same on every platform.
+Switch2Io switch2_io_of_error(std::uint32_t error);
 struct Switch2IoResult {
     Switch2Io io = Switch2Io::failed;
     std::uint32_t error = 0; // the system's error code
@@ -219,14 +224,14 @@ std::unique_ptr<Switch2Platform> make_windows_switch2_platform();
 
 // ---- One controller
 enum class Switch2State : std::uint8_t {
-    opening,     // opening its HID input, then interface 1
+    opening,     // opening its HID input, then interface 1 (after a lost channel: a second later)
     no_input,    // its HID input is not listed or cannot be opened
     starting,    // reading the calibration, sending the start commands (one step)
     waiting,     // started (or another program holds interface 1): no input report yet
     running,     // input reports arrive: a pad
     no_commands, // interface 1 cannot be opened (its driver, or another program), and no report came by itself
     no_reports,  // started, but no input report came
-    gone,        // unplugged
+    gone,        // unplugged: Windows no longer lists it
 };
 const char* switch2_state_name(Switch2State state);
 
@@ -249,6 +254,12 @@ struct Switch2Status {
 // The state machine of one controller. step() does at most one wait on the
 // device (the start sequence counts as one) and returns when to step next;
 // it decides by `now` alone, so a test drives it with its own clock.
+//
+// Only Windows' list says that a controller is gone (listed(nullopt)). A
+// read or a command that fails as if it were unplugged (an aborted read over
+// standby, a reset port) closes both channels, asks for a look at the list
+// (take_scan_request) and opens them again a second later while the list
+// still has the controller: it plays on without being plugged in again.
 class Switch2Machine {
 public:
     using Clock = std::chrono::steady_clock;
@@ -270,6 +281,9 @@ public:
     Clock::time_point last_report() const;
     // The log's lines since the last call ("switch 2 pro: ...").
     std::vector<std::string> take_log();
+    // Whether a channel was lost since the last call: the owner then looks at
+    // Windows' list (listed()) to tell an unplugged controller from a hiccup.
+    bool take_scan_request();
     // Closes both channels (the reader's stop, the end of a test).
     void close();
 
@@ -279,6 +293,7 @@ public:
     static constexpr std::chrono::milliseconds kFirstReport{1500}; // after the start
     static constexpr std::chrono::milliseconds kStall{1000};       // no report while running
     static constexpr std::chrono::milliseconds kRetry{2000};       // opening again
+    static constexpr std::chrono::milliseconds kLostPause{1000};   // a lost channel: opening again (unless unplugged)
     static constexpr int kStartTries = 3;                          // start sequences before no_reports
     static constexpr std::chrono::seconds kRateWindow{2};
 
@@ -290,10 +305,10 @@ private:
     void start(Clock::time_point now, bool read_flash, bool verbose);
     void read(Clock::time_point now);
     void report(const std::uint8_t* data, std::size_t size, Clock::time_point now);
-    void lost(const Switch2IoResult& result, const char* where);
+    void lost(const Switch2IoResult& result, const std::string& where, Clock::time_point now);
     bool exchange(const std::vector<std::uint8_t>& command, std::uint8_t* reply, std::size_t reply_size, std::size_t& got,
                   Switch2IoResult& sent);
-    void send_led();
+    void send_led(Clock::time_point now);
 
     Switch2Platform& platform_;
     std::optional<Switch2Found> listed_; // the newest list entry
@@ -308,6 +323,7 @@ private:
     std::uint8_t unknown_id_ = 0;
     bool first_logged_ = false, no_reports_logged_ = false;
     bool rate_logged_ = false;
+    bool scan_request_ = false;
     double logged_rate_ = 0;
     int player_ = -1, led_sent_ = -2;
     std::array<std::uint8_t, kSwitch2ReportBytes> buffer_{};
@@ -315,19 +331,26 @@ private:
 
 // ---- Every controller, read in the background
 // One thread looks at Windows' device list when asked (SDL's device change
-// count: update()), and every two seconds while a controller does not play;
-// one thread per controller runs its machine. The main thread's update()
-// keeps one SDL virtual gamepad per playing controller (attached at its
-// first report, detached when it is unplugged; at rest while its reports
-// stall) and hands the log's lines over. Nothing changes while the game's
-// window is in the background: SDL ignores a pad's presses then, as for
-// every other pad, and the controller stays started.
+// count: update()), when a controller lost a channel, and every two seconds
+// while a controller does not play; one thread per controller runs its
+// machine. A controller the list no longer has is gone; one listed again
+// (also under the same instance id, at once) starts afresh. The main
+// thread's update() keeps one SDL virtual gamepad per playing controller
+// (attached at its first report, kept at rest through a stall, a restart or
+// a lost channel, detached when it is unplugged) and hands the log's lines
+// over. Nothing changes while the game's window is in the background: SDL
+// ignores a pad's presses then, as for every other pad, and the controller
+// stays started.
 class Switch2Reader {
 public:
+    static constexpr std::chrono::milliseconds kRescan{2000};
     // `platform`: make_windows_switch2_platform() in the game. `sdl_changes`:
     // ask for a look at the device list when SDL counts a device change (off
-    // in tests, which call request_scan()).
-    explicit Switch2Reader(std::unique_ptr<Switch2Platform> platform, bool sdl_changes = true);
+    // in tests, which call request_scan()). `rescan`: how often the list is
+    // looked at while a controller does not play (tests set it long to see
+    // the other reasons for a look alone).
+    explicit Switch2Reader(std::unique_ptr<Switch2Platform> platform, bool sdl_changes = true,
+                           std::chrono::milliseconds rescan = kRescan);
     ~Switch2Reader();
     Switch2Reader(const Switch2Reader&) = delete;
     Switch2Reader& operator=(const Switch2Reader&) = delete;

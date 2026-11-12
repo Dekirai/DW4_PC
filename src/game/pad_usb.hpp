@@ -76,7 +76,7 @@ enum class Switch2Notice : std::uint8_t {
     other_driver,      // its interface 1 has another driver than WinUSB (libusbK, libusb0, ...)
     no_interface_guid, // WinUSB on interface 1 without a device interface GUID: nothing to open
     no_interface,      // Windows lists no interface 1 of it (a driver on the whole controller?)
-    busy,              // another program holds interface 1, and no input report comes
+    busy,              // another program holds interface 1 (and no input report comes) or the HID input
     no_reports,        // started (or a start command could not be sent), but no input report came
 };
 const char* switch2_notice_name(Switch2Notice notice);

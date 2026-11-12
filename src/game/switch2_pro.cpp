@@ -40,7 +40,9 @@
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
+#include <functional>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -280,6 +282,35 @@ std::string switch2_io_text(const Switch2IoResult& result) {
 }
 
 namespace {
+// The Windows system error codes the reader tells apart (winerror.h).
+namespace win_error {
+inline constexpr std::uint32_t file_not_found = 2, path_not_found = 3, access_denied = 5, bad_command = 22, sharing_violation = 32,
+                               dev_not_exist = 55, sem_timeout = 121, busy = 170, wait_timeout = 258, no_such_device = 433,
+                               operation_aborted = 995, device_not_connected = 1167, timeout = 1460, device_removed = 1617;
+}
+} // namespace
+
+Switch2Io switch2_io_of_error(std::uint32_t error) {
+    switch (error) {
+    case win_error::sem_timeout: // (WinUSB's PIPE_TRANSFER_TIMEOUT)
+    case win_error::wait_timeout:
+    case win_error::timeout: return Switch2Io::timeout;
+    case win_error::device_not_connected:
+    case win_error::no_such_device:
+    case win_error::file_not_found:
+    case win_error::path_not_found:
+    case win_error::dev_not_exist:
+    case win_error::device_removed:
+    case win_error::operation_aborted:
+    case win_error::bad_command: return Switch2Io::gone;
+    case win_error::access_denied:
+    case win_error::sharing_violation:
+    case win_error::busy: return Switch2Io::busy;
+    default: return Switch2Io::failed;
+    }
+}
+
+namespace {
 std::string driver_text(UsbDriver driver, const std::string& service) {
     switch (driver) {
     case UsbDriver::unknown: return "not listed";
@@ -357,6 +388,8 @@ std::vector<std::string> Switch2Machine::take_log() {
     return out;
 }
 
+bool Switch2Machine::take_scan_request() { return std::exchange(scan_request_, false); }
+
 void Switch2Machine::close() {
     input_.reset();
     commands_.reset();
@@ -386,16 +419,26 @@ void Switch2Machine::listed(const std::optional<Switch2Found>& found) {
     retry_at_ = {}; // (a waiting open tries at once)
 }
 
-void Switch2Machine::lost(const Switch2IoResult& result, const char* where) {
-    log(std::string(where) + ": the controller is gone (" + switch2_io_text(result) + ")");
+void Switch2Machine::lost(const Switch2IoResult& result, const std::string& where, Clock::time_point now) {
+    // Unplugged, or a hiccup (an aborted read over standby, a reset port):
+    // Windows' list tells them apart (listed()); until it says the
+    // controller is gone, both channels open again a second later.
+    log(where + ": lost the controller (" + switch2_io_text(result) +
+        "); opening it again in a second unless Windows no longer lists it");
     close();
-    status_.state = Switch2State::gone;
+    status_.started = false;
+    status_.state = Switch2State::opening;
+    retry_at_ = now + kLostPause;
+    scan_request_ = true;
 }
 
 Switch2Machine::Clock::time_point Switch2Machine::step(Clock::time_point now) {
     switch (status_.state) {
     case Switch2State::gone: return now + std::chrono::hours(1);
-    case Switch2State::opening: open(now); return now;
+    case Switch2State::opening:
+        if (now < retry_at_) return retry_at_; // (after a lost channel)
+        open(now);
+        return now;
     case Switch2State::no_input:
         if (now < retry_at_) return retry_at_;
         status_.state = Switch2State::opening;
@@ -503,7 +546,7 @@ void Switch2Machine::start(Clock::time_point now, bool read_flash, bool verbose)
     Switch2IoResult sent;
     auto abort = [&](const std::string& step) {
         if (sent.io == Switch2Io::gone) {
-            lost(sent, ("start: " + step).c_str());
+            lost(sent, "start: " + step, now);
             return;
         }
         status_.failed_step = step;
@@ -585,20 +628,20 @@ void Switch2Machine::start(Clock::time_point now, bool read_flash, bool verbose)
     status_.started = true;
     ++status_.starts;
     led_sent_ = -2;
-    if (player_ >= 0) send_led(); // (the host names the player once the pad is there)
-    if (status_.state == Switch2State::gone) return;
+    if (player_ >= 0) send_led(now); // (the host names the player once the pad is there)
+    if (status_.state != Switch2State::starting) return; // (lost while sending them)
     status_.state = Switch2State::waiting;
     deadline_ = now + kFirstReport;
 }
 
-void Switch2Machine::send_led() {
+void Switch2Machine::send_led(Clock::time_point now) {
     if (!commands_ || player_ < 0 || player_ == led_sent_) return;
     const auto command = switch2_player_led_command(switch2_player_pattern(player_));
     std::array<std::uint8_t, 64> reply{};
     std::size_t got = 0;
     Switch2IoResult sent;
     if (!exchange(command, reply.data(), 16, got, sent)) {
-        if (sent.io == Switch2Io::gone) return lost(sent, "player lights");
+        if (sent.io == Switch2Io::gone) return lost(sent, "player lights", now);
         log("player lights: could not be sent: " + switch2_io_text(sent));
         led_sent_ = player_; // (not again and again)
         return;
@@ -665,7 +708,7 @@ void Switch2Machine::read(Clock::time_point now) {
     if (r.io == Switch2Io::ok) {
         report(buffer_.data(), std::min(r.bytes, buffer_.size()), now);
     } else if (r.io == Switch2Io::gone) {
-        return lost(r, "input");
+        return lost(r, "input", now);
     } else if (r.io != Switch2Io::timeout) {
         log("input: read failed: " + switch2_io_text(r) + "; opening it again");
         input_.reset();
@@ -694,7 +737,7 @@ void Switch2Machine::read(Clock::time_point now) {
         break;
     case Switch2State::running:
         if (now - last_report_ < kStall) {
-            if (commands_ && player_ >= 0 && player_ != led_sent_) send_led();
+            if (commands_ && player_ >= 0 && player_ != led_sent_) send_led(now);
             break;
         }
         if (commands_) {
@@ -760,27 +803,15 @@ std::wstring upper(std::wstring text) {
     return text;
 }
 
-Switch2Io classify(DWORD error) {
-    switch (error) {
-    case ERROR_SEM_TIMEOUT:
-    case WAIT_TIMEOUT:
-    case ERROR_TIMEOUT: return Switch2Io::timeout;
-    case ERROR_DEVICE_NOT_CONNECTED:
-    case ERROR_NO_SUCH_DEVICE:
-    case ERROR_FILE_NOT_FOUND:
-    case ERROR_PATH_NOT_FOUND:
-    case ERROR_DEV_NOT_EXIST:
-    case ERROR_DEVICE_REMOVED:
-    case ERROR_OPERATION_ABORTED:
-    case ERROR_BAD_COMMAND: return Switch2Io::gone;
-    case ERROR_ACCESS_DENIED:
-    case ERROR_SHARING_VIOLATION:
-    case ERROR_BUSY: return Switch2Io::busy;
-    default: return Switch2Io::failed;
-    }
-}
+static_assert(win_error::file_not_found == ERROR_FILE_NOT_FOUND && win_error::path_not_found == ERROR_PATH_NOT_FOUND &&
+              win_error::access_denied == ERROR_ACCESS_DENIED && win_error::bad_command == ERROR_BAD_COMMAND &&
+              win_error::sharing_violation == ERROR_SHARING_VIOLATION && win_error::dev_not_exist == ERROR_DEV_NOT_EXIST &&
+              win_error::sem_timeout == ERROR_SEM_TIMEOUT && win_error::busy == ERROR_BUSY && win_error::wait_timeout == WAIT_TIMEOUT &&
+              win_error::no_such_device == ERROR_NO_SUCH_DEVICE && win_error::operation_aborted == ERROR_OPERATION_ABORTED &&
+              win_error::device_not_connected == ERROR_DEVICE_NOT_CONNECTED && win_error::timeout == ERROR_TIMEOUT &&
+              win_error::device_removed == ERROR_DEVICE_REMOVED);
 
-Switch2IoResult io_error(DWORD error) { return {classify(error), std::uint32_t(error), 0}; }
+Switch2IoResult io_error(DWORD error) { return {switch2_io_of_error(std::uint32_t(error)), std::uint32_t(error), 0}; }
 
 std::wstring device_id(DEVINST node) {
     wchar_t id[MAX_DEVICE_ID_LEN + 1]{};
@@ -1098,10 +1129,12 @@ struct Device {
     std::string id;
     int number = 1;
     std::shared_ptr<LogSink> sink;
+    std::function<void()> request_scan; // (a lost channel: is it still listed?)
     std::mutex mutex;
     std::condition_variable wake;
     bool stop = false;
     std::optional<std::optional<Switch2Found>> listed; // (a new list entry for the machine)
+    bool unlisted = false; // the manager told it Windows no longer lists it: no entry reaches it again
     int player = -1;
     bool player_changed = false;
     // Published after every step.
@@ -1144,6 +1177,7 @@ struct Device {
                 last_report = machine.last_report();
             }
             if (machine.status().state == Switch2State::gone) break;
+            if (machine.take_scan_request() && request_scan) request_scan();
             std::unique_lock lock(mutex);
             wake.wait_until(lock, wake_at, [&] { return stop || listed.has_value() || player_changed; });
         }
@@ -1173,6 +1207,7 @@ struct Device {
 struct Switch2Reader::Impl {
     std::unique_ptr<Switch2Platform> platform;
     bool sdl_changes = true;
+    std::chrono::milliseconds rescan = Switch2Reader::kRescan;
     std::shared_ptr<LogSink> sink = std::make_shared<LogSink>();
     mutable std::mutex mutex;
     std::condition_variable wake;
@@ -1186,29 +1221,49 @@ struct Switch2Reader::Impl {
     std::uint32_t hid_changes = 0;
     bool hid_changes_known = false;
 
+    void request() {
+        {
+            std::lock_guard lock(mutex);
+            scan_requested = true;
+        }
+        wake.notify_all();
+    }
+
+    // A controller that still counts (not unplugged): under `mutex`.
+    static bool live(Device& d) {
+        std::lock_guard device_lock(d.mutex);
+        return !d.released && !d.finished && !d.unlisted;
+    }
+
     int free_number() const {
         for (int n = 1;; ++n) {
             bool used = false;
-            for (const auto& d : devices) used = used || (d->number == n && !d->released);
+            for (const auto& d : devices) used = used || (d->number == n && live(*d));
             if (!used) return n;
         }
+    }
+
+    // Whether a controller does not play (a look at the list may help it).
+    bool any_not_playing() const {
+        bool waiting = false;
+        for (const auto& d : devices) {
+            std::lock_guard device_lock(d->mutex);
+            waiting = waiting || (!d->finished && !d->unlisted && d->status.state != Switch2State::running);
+        }
+        return waiting;
     }
 
     void run() {
         std::unique_lock lock(mutex);
         while (!stop) {
-            // A look at the device list when asked, and every two seconds
-            // while a controller does not play (a driver or a path that
-            // comes later, another program that lets interface 1 go).
-            bool waiting = false;
-            for (const auto& d : devices) {
-                std::lock_guard device_lock(d->mutex);
-                waiting = waiting || (!d->finished && d->status.state != Switch2State::running);
-            }
+            // A look at the device list when asked (a device change, a lost
+            // channel), and every `rescan` while a controller does not play
+            // (a driver or a path that comes later, another program that
+            // lets interface 1 go, a channel lost without a device change).
             if (!scan_requested) {
-                if (waiting) wake.wait_for(lock, std::chrono::seconds(2), [&] { return stop || scan_requested; });
-                else wake.wait(lock, [&] { return stop || scan_requested; });
+                wake.wait_for(lock, rescan, [&] { return stop || scan_requested; });
                 if (stop) break;
+                if (!scan_requested && !any_not_playing()) continue;
             }
             scan_requested = false;
             lock.unlock();
@@ -1220,10 +1275,12 @@ struct Switch2Reader::Impl {
             // Drop the controllers the main thread let go.
             devices.erase(std::remove_if(devices.begin(), devices.end(), [](const std::shared_ptr<Device>& d) { return d->released.load(); }), devices.end());
             for (const auto& entry : found) {
+                // (One the list lost, also when its thread has not ended yet,
+                // takes no entry: a controller listed again starts afresh.)
                 std::shared_ptr<Device> device;
                 for (const auto& d : devices) {
                     std::lock_guard device_lock(d->mutex);
-                    if (d->id == entry.id && !d->finished) device = d;
+                    if (d->id == entry.id && !d->finished && !d->unlisted) device = d;
                 }
                 if (device) {
                     {
@@ -1237,6 +1294,7 @@ struct Switch2Reader::Impl {
                 fresh->id = entry.id;
                 fresh->number = free_number();
                 fresh->sink = sink;
+                fresh->request_scan = [this] { request(); };
                 fresh->status.number = fresh->number;
                 fresh->status.found = entry;
                 Switch2Platform* p = platform.get();
@@ -1250,7 +1308,8 @@ struct Switch2Reader::Impl {
                 if (listed) continue;
                 {
                     std::lock_guard device_lock(d->mutex);
-                    if (d->finished) continue;
+                    if (d->finished || d->unlisted) continue;
+                    d->unlisted = true;
                     d->listed = std::optional<Switch2Found>{};
                 }
                 d->wake.notify_all();
@@ -1259,9 +1318,11 @@ struct Switch2Reader::Impl {
     }
 };
 
-Switch2Reader::Switch2Reader(std::unique_ptr<Switch2Platform> platform, bool sdl_changes) : impl_(std::make_unique<Impl>()) {
+Switch2Reader::Switch2Reader(std::unique_ptr<Switch2Platform> platform, bool sdl_changes, std::chrono::milliseconds rescan)
+    : impl_(std::make_unique<Impl>()) {
     impl_->platform = std::move(platform);
     impl_->sdl_changes = sdl_changes;
+    impl_->rescan = rescan;
     if (impl_->platform) impl_->manager = std::thread([impl = impl_.get()] { impl->run(); });
 }
 
@@ -1283,13 +1344,7 @@ Switch2Reader::~Switch2Reader() {
     impl_->devices.clear();
 }
 
-void Switch2Reader::request_scan() {
-    {
-        std::lock_guard lock(impl_->mutex);
-        impl_->scan_requested = true;
-    }
-    impl_->wake.notify_all();
-}
+void Switch2Reader::request_scan() { impl_->request(); }
 
 std::uint32_t Switch2Reader::scans() const {
     std::lock_guard lock(impl_->mutex);
@@ -1308,7 +1363,7 @@ std::vector<Switch2Status> Switch2Reader::status() const {
     std::lock_guard lock(impl_->mutex);
     for (const auto& d : impl_->devices) {
         std::lock_guard device_lock(d->mutex);
-        if (d->released) continue;
+        if (d->released || d->unlisted) continue; // (unplugged: its pad goes)
         out.push_back(d->status);
     }
     return out;
@@ -1317,7 +1372,7 @@ std::vector<Switch2Status> Switch2Reader::status() const {
 SDL_JoystickID Switch2Reader::joystick(int number) const {
     std::lock_guard lock(impl_->mutex);
     for (const auto& d : impl_->devices)
-        if (d->number == number && !d->released) return d->joystick_id;
+        if (d->number == number && Impl::live(*d)) return d->joystick_id;
     return 0;
 }
 
@@ -1362,7 +1417,7 @@ void Switch2Reader::update() {
         Switch2State state;
         std::optional<Switch2Controls> controls;
         Switch2Calibration calibration;
-        bool finished = false;
+        bool finished = false, unlisted = false;
         Clock::time_point last_report{};
         {
             std::lock_guard lock(d->mutex);
@@ -1371,11 +1426,13 @@ void Switch2Reader::update() {
             calibration = d->calibration;
             last_report = d->last_report;
             finished = d->finished;
+            unlisted = d->unlisted;
         }
-        // (At rest while its reports stall or it starts again.)
+        // (At rest while its reports stall, also while its thread is busy
+        // starting it again and still says running.)
         const bool fresh = state == Switch2State::running && controls && Clock::now() - last_report < Switch2Machine::kStall;
         if (d->released) continue;
-        const bool gone = finished || state == Switch2State::gone;
+        const bool gone = finished || unlisted || state == Switch2State::gone;
         if (gone) {
             if (d->joystick) SDL_CloseJoystick(d->joystick);
             if (d->joystick_id) SDL_DetachVirtualJoystick(d->joystick_id);

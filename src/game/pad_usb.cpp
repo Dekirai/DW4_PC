@@ -92,7 +92,7 @@ const char* switch2_notice_name(Switch2Notice notice) {
     case Switch2Notice::other_driver: return "another driver on interface 1";
     case Switch2Notice::no_interface_guid: return "WinUSB on interface 1 without a device interface GUID";
     case Switch2Notice::no_interface: return "no interface 1 listed";
-    case Switch2Notice::busy: return "interface 1 held by another program";
+    case Switch2Notice::busy: return "held by another program";
     case Switch2Notice::no_reports: return "no input reports";
     }
     return "";
@@ -105,7 +105,10 @@ Switch2Notice switch2_device_notice(const Switch2Status& d) {
     case Switch2State::waiting:
     case Switch2State::gone: return Switch2Notice::none;
     case Switch2State::running: return Switch2Notice::playable;
-    case Switch2State::no_input: return Switch2Notice::no_input;
+    case Switch2State::no_input:
+        // (Access denied or a sharing violation: another program holds the
+        // HID input exclusively; nothing to remove.)
+        return d.input_open.io == Switch2Io::busy ? Switch2Notice::busy : Switch2Notice::no_input;
     case Switch2State::no_reports: return Switch2Notice::no_reports;
     case Switch2State::no_commands: {
         const Switch2Found& f = d.found;
@@ -183,6 +186,11 @@ std::string switch2_notice_text(Switch2Notice notice, const Switch2Status* devic
                "Manager, uninstall that device with its driver and plug the controller in again." +
                send_log;
     case Switch2Notice::busy:
+        if (device && device->state == Switch2State::no_input)
+            return "Switch 2 Pro Controller found, but Windows refuses the game its input device (" + switch2_io_text(device->input_open) +
+                   "): another program holds it for itself (Steam with its Switch controller support, an emulator, a controller tool, or "
+                   "a second copy of this game). Close that program or turn its Switch controller support off; the game tries again "
+                   "every two seconds.";
         return "Switch 2 Pro Controller found, but another program holds its interface 1 (Steam with its Switch controller support, an "
                "emulator, or a second copy of this game), and the controller sends nothing until it is started. Close that program or "
                "turn its Switch controller support off; the game tries again every two seconds.";
@@ -236,7 +244,10 @@ std::string switch2_status_line(const Switch2Status& d) {
         line += "; ZL / ZR are digital";
         break;
     }
-    case Switch2State::no_input: line += "its input device cannot be opened"; break;
+    case Switch2State::no_input:
+        line += "its input device cannot be opened";
+        if (d.input_open.error) line += " (" + switch2_io_text(d.input_open) + ")";
+        break;
     case Switch2State::no_commands: line += "interface 1 unavailable (" + switch2_io_text(d.command_open) + ")"; break;
     case Switch2State::no_reports: line += "no input reports"; break;
     case Switch2State::gone: line += "unplugged"; break;
