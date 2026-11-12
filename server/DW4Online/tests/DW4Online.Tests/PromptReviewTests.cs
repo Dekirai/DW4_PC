@@ -190,17 +190,17 @@ public partial class HubLogicTests
         Assert.Equal(((byte)0, "", OptionState.HostAway, OptionsMsg.NewInstance), (o.Notice, o.NoticeName, Assert.Single(o.Rows).State, o.Preselected));
         Assert.Equal(HoldKind.Prompt, held.Hold);
         h.Advance(500);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("choice_refused"));
         h.Advance(600);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(2, h.Hub.Counters.GetValueOrDefault("choice_refused"));
         Assert.Null(held.PendingChoice);
         // A quick second answer (New instance) right after a refused one is not lost: taken a second later.
         Choose(h, "b", 0, ChoiceKind.New, inst: held.From.Id, visit: held.From.Visit);
         Assert.False(h.P("b").Has(Msg.BarrierOk));
         h.Advance(1_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (h.Decision("b").Decision, h.Decision("b").World.Arrival));
     }
 
@@ -285,7 +285,7 @@ public partial class HubLogicTests
         var sent = h.P("b").All(Msg.Options, OptionsMsg.Parse).Count;
         HostJoinable(h, "c", "stag0102"); // (a second row for b's plan, were it open)
         h.Advance(1_100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(sent, h.P("b").All(Msg.Options, OptionsMsg.Parse).Count);
     }
 

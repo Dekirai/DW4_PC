@@ -144,7 +144,7 @@ public partial class HubLogicTests
         BarrierPlan(h, "lee", "stag0101", 1);
         var wl = W(h, "lee");
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var refreshed = LastOptions(h, "max");
         Assert.Contains(refreshed.Rows, r => r.Wid == wl.Wid);
         Choose(h, "max", 1, ChoiceKind.New);

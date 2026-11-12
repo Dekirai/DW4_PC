@@ -38,7 +38,7 @@ public partial class HubLogicTests
         h.Log(host, 0, 60);
         h.Joinable(host);
         h.Advance(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public partial class HubLogicTests
         BarrierWith(h, "a", "dng205b1");
         h.Snapshot("a");
         h.Advance(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         HostJoinable(h, "c", "stag0201");
         var (wa, wc) = (W(h, "a"), W(h, "c"));
         Assert.NotSame(wa, wc); // (c was a lone arrival with a's row elsewhere: c's own, as c's prompt would have offered)
@@ -139,7 +139,7 @@ public partial class HubLogicTests
         for (var k = 0; k < 120; ++k)
         {
             h.Advance(1_000);
-            h.Hub.Housekeep(h.Now);
+            h.Housekeep();
         }
         Assert.Equal(oks, h.P("b").Frames.Count(f => f.Type == Msg.BarrierOk));
         Assert.Equal(sent, h.P("b").All(Msg.Options, OptionsMsg.Parse).Count);
@@ -188,10 +188,10 @@ public partial class HubLogicTests
         Choose(h, "c", 1, ChoiceKind.Join, W(h, "a").Wid);
         BarrierPlan(h, "c", "stag0101", 1);
         h.Advance(200);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(first, h.P("b").All(Msg.Options, OptionsMsg.Parse).Count);
         h.Advance(1_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var o = LastOptions(h, "b");
         Assert.Equal(first + 1, h.P("b").All(Msg.Options, OptionsMsg.Parse).Count);
         Assert.Equal((OptionsMsg.Refresh, (byte)2), (o.Flags, o.Rows[0].Players));

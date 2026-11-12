@@ -83,7 +83,7 @@ public partial class HubLogicTests
         Assert.Equal(StoryRefusal.Queued, ack.Refused.Single().Reason); // one flag at once for a guest, the other earned
         Assert.Equal(1, keeper.EarnedCount);
         h.Advance(31_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal((1, 1, 0), (keeper.Story.Flags[505] + 0, keeper.Story.Flags[506] + 0, keeper.EarnedCount));
         Assert.Empty(h.Hub.StoryState(101)!.Flags);
     }
