@@ -59,7 +59,8 @@ struct RoomLive {
         std::string text;                // "Kim is in Ancient Ruins B1." / the closing line
         std::string grey;                // why A does nothing now ("(defeated)", ...); "" usable
         bool closing = false;            // its 3 s closing line
-        bool own = false;                // the own request waits on this row (A: Cancel)
+        bool own = false;                // the own request is on this row
+        bool cancellable = false;        // ... and still waits (A: Cancel); stamped or going: nothing to cancel
     };
     std::vector<GoRow> go_rows;
     std::string go_line;                 // the waiting row's text ("Going along when Kim's floor is ready...")

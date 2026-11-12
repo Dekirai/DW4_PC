@@ -225,6 +225,10 @@ enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from
 // stage group (argument = hook | value << 8; a relay without World:TestHooks
 // ignores it).
 enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, go_along = 4, test = 0x7F };
+// INTENT 4 go along's argument (round I1b): the offer id; 0 the player's
+// Cancel; kGoEndedArgument the client's report that its stamped GO ended
+// without a departure (it expired after 300 ticks, or did nothing at its step).
+constexpr std::int32_t kGoEndedArgument = -1;
 // The TEST event's hooks (development builds; docs/ROUND_I1B_GO_NOTES.md):
 // defeat: the slot's player falls (0 HP, SQ_DEAD, as poison's last tick);
 // busy: the stage group is neither membership-safe nor joinable for

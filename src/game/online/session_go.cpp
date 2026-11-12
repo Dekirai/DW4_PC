@@ -99,6 +99,7 @@ bool Session::go_along(std::uint16_t offer) {
     go_offer_ = offer;
     go_target_ = o->entrants.empty() ? 0 : o->entrants.front();
     go_target_stage_ = o->stage;
+    go_offer_stage_ = o->stage;
     trace("go along asked inst=%u visit=%u offer=%u", inst_, visit_, unsigned(offer));
     log("go along: asked for offer %u (%s)", unsigned(offer), o->stage.c_str());
     return true;
@@ -109,9 +110,35 @@ bool Session::cancel_go_along() {
     if (connected()) send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, 0}));
     trace("go along cancelled inst=%u visit=%u offer=%u", inst_, visit_, unsigned(go_offer_));
     log("go along: cancelled (offer %u)", unsigned(go_offer_));
+    // (Until the relay answers: a Cancel that crossed the stamp is too late,
+    // the GO runs, and the relay's OFFER with flag 16 says so, on_offer.)
+    go_cancelled_offer_ = go_offer_;
     go_state_ = GoState::none;
     go_offer_ = 0;
     return true;
+}
+
+bool Session::go_back_press(bool a, bool b) {
+    if (mode_ != Mode::parked || go_parked_at_ < 0) {
+        go_back_asked_ = false;
+        return false;
+    }
+    if (!go_back_asked_) {
+        if (!b) return false;
+        // 19.30.7 step 4: the host's leave ends the instance for everyone, so
+        // it is asked first, as the F1 menu's *Leave instance*.
+        if (is_host()) {
+            go_back_asked_ = true;
+            return false;
+        }
+        return go_back_to_lobby();
+    }
+    if (a) {
+        go_back_asked_ = false;
+        return go_back_to_lobby();
+    }
+    if (b) go_back_asked_ = false;
+    return false;
 }
 
 void Session::close_go_notices(std::uint16_t offer) {
@@ -166,6 +193,10 @@ void Session::on_offer(const w::Offer& m, double now) {
                                                             : name + " left " + dungeon + ".";
         }
         trace("offer closed id=%u reason=%u", unsigned(m.id), unsigned(m.close));
+        if (go_cancelled_offer_ == m.id) go_cancelled_offer_ = 0;
+        // (The entrants left: a stamped GO lands in a new stage group there,
+        // "... left ... before you arrived", not "went on to".)
+        if (go_offer_ == m.id && m.close != w::OfferClose::gone && m.close != w::OfferClose::none) go_offer_stage_.clear();
         if (go_offer_ == m.id && (go_state_ == GoState::asked || go_state_ == GoState::waiting || go_state_ == GoState::boss)) {
             // (The relay's go refused names the reason; without it the request
             // ends here as well.)
@@ -196,12 +227,33 @@ void Session::on_offer(const w::Offer& m, double now) {
         o->notice_due = true;
         o->late = (m.flags & w::Offer::late) != 0;
         o->notice_at = -1;
+        o->notice_stage = m.stage;
+    }
+    constexpr std::uint8_t kRequestFlags = w::Offer::stamped | w::Offer::boss | w::Offer::waiting;
+    if (go_cancelled_offer_ == m.id) {
+        if ((m.flags & w::Offer::stamped) && go_state_ == GoState::none) {
+            // The own Cancel crossed the stamp (19.30.7): the GO is sealed and
+            // runs, the relay keeps the request: "Going along...".
+            go_offer_ = m.id;
+            go_state_ = GoState::stamped;
+            go_target_ = o->entrants.empty() ? 0 : o->entrants.front();
+            go_target_stage_ = m.stage;
+            log("go along: the cancel came after the stamp; going along (offer %u)", unsigned(m.id));
+        }
+        if (!(m.flags & kRequestFlags) || go_offer_ == m.id) go_cancelled_offer_ = 0; // (answered)
     }
     // The own request's state as the relay holds it.
     if (go_offer_ == m.id) {
+        go_offer_stage_ = m.stage;
         if (m.flags & w::Offer::stamped) go_state_ = go_state_ == GoState::going ? GoState::going : GoState::stamped;
         else if (m.flags & w::Offer::boss) go_state_ = GoState::boss;
         else if (m.flags & w::Offer::waiting) go_state_ = GoState::waiting;
+        else if (go_state_ == GoState::stamped) {
+            // The relay holds no request any more (it ended without a
+            // departure: expired, done, or the instance moved on).
+            go_state_ = GoState::none;
+            go_offer_ = 0;
+        }
     }
     trace("offer %s id=%u flags=%x entrants=%zu stage=%s", m.op == w::OfferOp::open ? "open" : "changed", unsigned(m.id), unsigned(m.flags),
           m.entrants.size(), m.stage.c_str());
@@ -237,6 +289,9 @@ void Session::tick_go(double now) {
         if (blocked) break;
         o.notice_due = false;
         o.notice_at = now;
+        // (A notice that waited while the entrants moved on names where they
+        // are now: "Kim is in Ancient Ruins B2. Go along?", 19.30.5.)
+        if (!o.notice_stage.empty() && o.stage != o.notice_stage) o.late = true;
         trace("offer notice id=%u late=%d", unsigned(o.id), o.late ? 1 : 0);
         log("go along: notice for offer %u: %s", unsigned(o.id), go_notice_text(o).c_str());
     }
@@ -291,7 +346,7 @@ void Session::apply_gos(std::vector<w::Event>& gos, bool replaying) {
             notice("Couldn't go along: you were defeated.");
             go_state_ = GoState::none;
             go_offer_ = 0;
-            if (connected()) send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, 0}));
+            if (connected()) send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, w::kGoEndedArgument}));
         }
     }
 }
@@ -303,7 +358,7 @@ void Session::go_expired(bool replaying) {
     notice("Couldn't go along: a scene here took too long.");
     go_state_ = GoState::none;
     go_offer_ = 0;
-    if (connected()) send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, 0}));
+    if (connected()) send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::go_along, w::kGoEndedArgument}));
 }
 
 bool Session::test_hook_request(w::TestHook hook, int value) {
@@ -328,6 +383,7 @@ bool Session::go_along_raw(std::uint16_t offer) {
     if (const auto* o = find_go_offer(offer)) {
         go_target_ = o->entrants.empty() ? 0 : o->entrants.front();
         go_target_stage_ = o->stage;
+        go_offer_stage_ = o->stage;
     }
     trace("go along asked inst=%u visit=%u offer=%u (raw)", inst_, visit_, unsigned(offer));
     return true;

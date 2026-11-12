@@ -1440,8 +1440,9 @@ void go_along_session() {
               "300 ticks past the stamp");
         check(a.engine.go_calls.empty() && b.engine.go_calls.empty(), "the GO never applied");
         check(has_notice(b.session->take_notices(), "Couldn't go along: a scene here took too long."), "B is told");
-        check(!world.hub.go_intents.empty() && world.hub.go_intents.back().first == "lee" && world.hub.go_intents.back().second.argument == 0,
-              "B withdraws (INTENT 4, 0)");
+        check(!world.hub.go_intents.empty() && world.hub.go_intents.back().first == "lee" &&
+                  world.hub.go_intents.back().second.argument == w::kGoEndedArgument,
+              "B reports its GO ended (INTENT 4, -1)");
         a.input = [](const fake::Client&) -> std::uint32_t { return fake::kAnswerButton; };
         world.run(1);
         a.input = nullptr;
@@ -1491,7 +1492,7 @@ void go_along_session() {
         check(c.engine.gos == 0 && d.engine.gos == 0, "the GO did nothing on either machine");
         other.run(0.3);
         check(has_notice(d.session->take_notices(), "Couldn't go along: you were defeated."), "the defeated member is told");
-        check(!other.hub.go_intents.empty() && other.hub.go_intents.back().second.argument == 0, "and withdraws");
+        check(!other.hub.go_intents.empty() && other.hub.go_intents.back().second.argument == w::kGoEndedArgument, "and reports it (-1)");
     }
     {
         // Round I1b's scenario hooks (W31d, W31i): a TEST defeat right before a GO at its tick makes the GO do nothing on
@@ -1605,6 +1606,193 @@ void go_along_session() {
         world.hub.send(2, w::Type::offer, w::encode(second), world.now);
         world.run(0.5);
         check(b.session->go_notices(world.now).empty() && b.session->go_offers().size() == 1, "no further notice for it, new entrants included");
+    }
+}
+
+// A lone member in stag0101 of instance 7: its host (`host` 9: kim, a guest
+// then; or itself) is set by every BARRIER_OK, as guest_of_nine.
+fake::Client& lone_in_instance(World& world, std::uint32_t host) {
+    world.hub.shape_ok = [host](std::uint32_t member, w::BarrierOk& ok) {
+        if (ok.decision == w::Decision::dissolve) {
+            ok.owner = member;
+            ok.story_mode = w::StoryMode::replace;
+            return;
+        }
+        ok.wid = 7;
+        ok.host = host;
+        ok.owner = host;
+        ok.box = 1;
+    };
+    auto& b = world.add("lee", 2);
+    b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo; }), "B in the field");
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+    world.run(0.5);
+    return b;
+}
+
+// Round I1b's review (2026-11-12), the client's part: the host's question on
+// the held GO screen, a Cancel that crossed the stamp, the client's own
+// report of a GO that ended without a departure (-1), the membership events
+// behind a GO, "went on to" and the late form of a notice that waited.
+void go_along_review() {
+    for (const bool host : {false, true}) {
+        // A GO's barrier held over 10 s: the guest's B goes back to the lobby
+        // at once; the host's B asks "End the instance for everyone?" first.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, host ? 2 : 9);
+        check(b.session->is_host() == host, std::string("B is ") + (host ? "the host" : "a guest"));
+        w::Offer offer{3, w::OfferOp::open, 0, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_along(3), "A goes along");
+        world.run(0.3);
+        world.hub.wait_hold = 60; // (the GO's floor turns busy in the second of the departure)
+        world.hub.ask_go(2, "dng101b1", 0, world.now);
+        check(world.run_until(10, [&] { return b.session->mode() == Mode::parked; }), "B departed and waits at its barrier");
+        world.run(11);
+        const auto held = b.session->overlay(world.now);
+        check(held.go_back && held.loading == "Waiting for kim's floor..." && held.go_back_line == "B: Back to the lobby",
+              "after 10 s: " + held.loading + " / " + held.go_back_line);
+        const int leaves = world.hub.leave_intents;
+        const bool sent = b.session->go_back_press(false, true);
+        world.run(0.3);
+        if (!host) {
+            check(sent && world.hub.leave_intents == leaves + 1, "the guest's B leaves at once");
+            continue;
+        }
+        check(!sent && world.hub.leave_intents == leaves, "the host's B only asks");
+        check(b.session->overlay(world.now).go_back_line == "End the instance for everyone?   A: Yes   B: No",
+              "the question: " + b.session->overlay(world.now).go_back_line);
+        check(!b.session->go_back_press(false, true) && b.session->overlay(world.now).go_back_line == "B: Back to the lobby",
+              "B there keeps waiting");
+        check(!b.session->go_back_press(false, true), "B asks again");
+        check(!b.session->go_back_press(false, false), "nothing pressed: nothing");
+        check(b.session->go_back_press(true, false), "A ends the instance");
+        world.run(0.3);
+        check(world.hub.leave_intents == leaves + 1, "one leave");
+    }
+    {
+        // A Cancel that crossed the stamp: the relay's OFFER with flag 16
+        // says the GO runs ("Going along..."); one it answered without flags
+        // took the cancel. A GO whose step did nothing reports -1.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, 9);
+        w::Offer offer{3, w::OfferOp::open, 0, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_along(3) && b.session->cancel_go_along(), "A, then Cancel before the relay's answer");
+        offer.op = w::OfferOp::changed;
+        offer.flags = w::Offer::stamped;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::stamped && b.session->go_line() == "Going along...",
+              "the cancel crossed the stamp: " + b.session->go_line());
+        offer.flags = 0;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::none, "the relay holds no request any more");
+        check(b.session->go_along(3) && b.session->cancel_go_along(), "A and Cancel again");
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now); // (the withdraw's answer: no flags)
+        world.run(0.3);
+        offer.flags = w::Offer::stamped;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::none, "after the withdraw's answer no stale flag takes it back");
+    }
+    {
+        // The side rule's dropped own slot: the GO did nothing, the client
+        // reports -1 (not 0, the player's Cancel).
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        a.engine.dead = b.engine.dead = std::uint8_t(1u << b.session->own_slot());
+        world.hub.stamp_go(2, "dng101b1", 0);
+        check(world.run_until(5, [&] { return !b.engine.go_calls.empty(); }), "the GO reached B");
+        world.run(0.3);
+        check(!world.hub.go_intents.empty() && world.hub.go_intents.back().second.argument == w::kGoEndedArgument, "B reports -1");
+    }
+    {
+        // An INTENT behind a GO in the same step waits for a step its engine
+        // allows (6.5): never in the leavers' copy, a step later in the
+        // stayers'.
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        auto& inst = world.hub.instances[world.hub.members[1].inst];
+        const std::uint32_t j = inst.next_seal + 8;
+        w::Event go{w::EventKind::go};
+        go.slot = std::uint8_t(world.hub.members[2].slot);
+        go.stage = "dng101b1";
+        w::Event intent{w::EventKind::intent};
+        intent.slot = std::uint8_t(world.hub.members[1].slot);
+        intent.intent_kind = std::uint8_t(w::IntentKind::go_without);
+        inst.events[j].push_back(go);
+        inst.events[j].push_back(intent);
+        check(world.run_until(5, [&] { return a.engine.gos + b.engine.gos > 0 || !a.engine.go_calls.empty(); }), "the GO applied");
+        world.run(1.0);
+        check(b.engine.gos == 1 && b.engine.intents == 0, "the leavers' copy never applies the INTENT behind the GO (" + std::to_string(b.engine.intents) + ")");
+        check(a.engine.intents == 1, "the stayers' copy applies it once its fork is reported (" + std::to_string(a.engine.intents) + ")");
+    }
+    for (const bool moved : {true, false}) {
+        // The GO's barrier becomes a new stage group: "kim went on to
+        // dng101b2." while the offer is open deeper; else "kim left dng101b1
+        // before you arrived.".
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, 9);
+        w::Offer offer{3, w::OfferOp::open, 0, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_along(3), "A goes along");
+        world.hub.ask_go(2, "dng101b1", 0, world.now);
+        offer.op = moved ? w::OfferOp::changed : w::OfferOp::closed;
+        offer.flags = moved ? w::Offer::stamped : 0;
+        offer.close = moved ? w::OfferClose::none : w::OfferClose::left;
+        offer.stage = moved ? "dng101b2" : "dng101b1";
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        b.session->take_notices();
+        check(world.run_until(15, [&] { return b.engine.stage() == "dng101b1" && b.session->mode() != Mode::parked; }), "B arrived");
+        world.run(0.5);
+        const auto notices = b.session->take_notices();
+        const std::string want = moved ? "kim went on to dng101b2." : "kim left dng101b1 before you arrived.";
+        check(has_notice(notices, want), "the arrival's line: " + want);
+    }
+    {
+        // A notice that waited (B defeated) while the entrants moved deeper
+        // shows the late form: where they are now.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, 9);
+        b.engine.dead = std::uint8_t(1u << b.session->own_slot());
+        w::Offer offer{3, w::OfferOp::open, w::Offer::notice, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.5);
+        check(b.session->go_notices(world.now).empty(), "no notice while defeated");
+        offer.op = w::OfferOp::changed;
+        offer.flags = 0;
+        offer.stage = "dng101b2";
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        b.engine.dead = 0;
+        world.run(0.5);
+        const auto shown = b.session->go_notices(world.now);
+        check(shown.size() == 1 && b.session->go_notice_text(*shown[0]) == "kim is in dng101b2. Go along?",
+              "the late form: " + (shown.empty() ? std::string("none") : b.session->go_notice_text(*shown[0])));
     }
 }
 
@@ -1874,6 +2062,8 @@ int main(int argc, char** argv) {
         leave_and_end_in_world();
         std::cout << "world: go along\n";
         go_along_session();
+        std::cout << "world: go along, the review's cases\n";
+        go_along_review();
         std::cout << "checkpoint reports\n";
         checkpoint_reports();
         std::cout << "READY after a refused READY\n";

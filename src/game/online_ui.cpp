@@ -463,7 +463,7 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         ImGui::SeparatorText("Go along");
         bool first = true;
         for (const auto& row : live->go_rows) {
-            const bool usable = !row.closing && (row.own || row.grey.empty());
+            const bool usable = !row.closing && (row.own ? row.cancellable : row.grey.empty());
             const std::string label = (row.own && !live->go_line.empty() ? live->go_line : row.text) + "##go" + std::to_string(row.id);
             if (s.focus_go && (s.focus_go_id == 0 ? first : row.id == s.focus_go_id) && !ImGui::IsWindowAppearing()) {
                 ImGui::SetKeyboardFocusHere();
@@ -471,13 +471,13 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
                 s.focus_pending = false;
             }
             if (button(label.c_str(), usable)) {
-                if (row.own) s.go_cancel_requested = true;
+                if (row.own) s.go_cancel_requested = row.cancellable;
                 else s.go_requested = row.id;
             }
             const bool focused = ImGui::IsItemFocused();
             ImGui::SameLine();
             if (row.closing) ImGui::TextDisabled(" ");
-            else if (row.own) ImGui::TextDisabled("A: Cancel");
+            else if (row.own) ImGui::TextDisabled("%s", row.cancellable ? "A: Cancel" : " "); // (stamped or going: nothing to cancel)
             else if (!row.grey.empty()) ImGui::TextDisabled("%s", row.grey.c_str());
             else ImGui::TextDisabled("A: Go along");
             if (focused && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {

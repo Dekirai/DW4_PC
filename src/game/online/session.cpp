@@ -1140,6 +1140,11 @@ bool Session::apply_events(bool replaying) {
         if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent || e.kind == w::EventKind::home ||
             e.kind == w::EventKind::go) {
             w::NotJoinable reason{};
+            // (The GOs before a membership event apply first, and the event is
+            // checked against the engine after them, 6.5: their fork and
+            // departure make the step unsafe, and the event waits; before, it
+            // was applied right after them, in the leavers' copy too.)
+            if (!held && e.kind != w::EventKind::go && !gos.empty()) apply_gos(gos, replaying);
             held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
             if (held && e.kind == w::EventKind::go && tick_ >= it->tick + engine::kGoExpiryTicks) {
                 // A GO not applied within 300 ticks after its tick expires on
@@ -1152,7 +1157,6 @@ bool Session::apply_events(bool replaying) {
                 changed = true;
                 continue;
             }
-            if (!held && e.kind != w::EventKind::go && !gos.empty()) apply_gos(gos, replaying);
             if (held) {
                 // 6.5: a LEAVE whose tick came plays the neutral, connected
                 // pad from here, and the leader's pad answers its prompts
@@ -1738,14 +1742,22 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
         mode_ = Mode::transition;
         if (go_state_ == GoState::going) {
             // The GO's barrier is decided (a JOIN at the entrance, or a new
-            // stage group there when nobody of the instance is left).
-            if (ok.decision == w::Decision::new_instance && ok.wid != 0)
-                notice(go_first_name(find_go_offer(go_offer_)) + " left " + (config_.floor_name ? config_.floor_name(ok.stage) : stage_title(ok.stage)) +
-                       " before you arrived.");
+            // stage group there when nobody of the instance is left: "Kim
+            // went on to B2." while the offer is still open deeper, else
+            // "Kim left B1 before you arrived."; a decision with its own
+            // notice, another quest there, says only that).
+            if (ok.decision == w::Decision::new_instance && ok.wid != 0 && ok.notice == w::Notice::none) {
+                const auto floor = [&](const std::string& stage) { return config_.floor_name ? config_.floor_name(stage) : stage_title(stage); };
+                const std::string name = go_first_name(find_go_offer(go_offer_));
+                if (!go_offer_stage_.empty() && go_offer_stage_ != ok.stage) notice(name + " went on to " + floor(go_offer_stage_) + ".");
+                else notice(name + " left " + floor(ok.stage) + " before you arrived.");
+            }
             go_state_ = GoState::none;
             go_offer_ = 0;
+            go_offer_stage_.clear();
         }
         go_parked_at_ = -1;
+        go_back_asked_ = false;
         return;
     }
     if (!engine_.supports_barriers() && mode_ == Mode::solo && ok.inst == inst_ && ok.visit + 1 == visit_) {
@@ -2334,6 +2346,7 @@ Overlay Session::overlay(double now) const {
     if (mode_ == Mode::parked && go_parked_at_ >= 0 && now - go_parked_at_ > 10.0) {
         o.loading = "Waiting for " + go_first_name(nullptr) + "'s floor...";
         o.go_back = true;
+        o.go_back_line = go_back_asked_ ? "End the instance for everyone?   A: Yes   B: No" : "B: Back to the lobby";
     }
     if (host_away_until_ >= 0 && wid_ != 0) {
         const int left = int(std::ceil(std::max(0.0, host_away_until_ - now)));

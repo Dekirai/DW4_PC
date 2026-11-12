@@ -145,8 +145,11 @@ struct Overlay {
     std::string status;
     // Round I1b (19.30.7): a GO's barrier held over 10 s ("Waiting for Kim's
     // floor..."): B takes the member back to the lobby (its *Leave instance*;
-    // the host's ends the instance).
+    // the host's ends the instance after his question). go_back_line is the
+    // control hint the screen adds: "B: Back to the lobby", for the host
+    // after his B "End the instance for everyone?   A: Yes   B: No".
     bool go_back = false;
+    std::string go_back_line;
 };
 
 // Round I1b (docs/SEAMLESS.md 19.30.5-19.30.6): a go-along offer as this
@@ -162,6 +165,7 @@ struct GoOffer {
     double closed_at = -1;
     bool notice_due = false;              // a notice waits (the member's scene, a demo, defeated, a barrier)
     bool late = false;                    // the notice names where the entrants are now
+    std::string notice_stage;             // the stage its notice came with (shown later after a move: the late form)
     bool closed_by_b = false;             // B in the box: no further notice for this offer
     double notice_at = -1;                // its notice shows since (-1: not shown)
     double notice_seconds = 20;
@@ -334,6 +338,11 @@ public:
     // B on the GO's held loading screen (Overlay::go_back): the member's
     // *Leave instance* from its barrier (the host's ends the instance).
     bool go_back_to_lobby();
+    // The held GO screen's buttons (presses, not holds): a guest's B goes
+    // back to the lobby; the host's B asks "End the instance for everyone?"
+    // first (Overlay::go_back_line), A there ends it, B keeps waiting
+    // (19.30.7 step 4). True when the leave was sent.
+    bool go_back_press(bool a, bool b);
     // The notices on screen now (newest first, at most three) and how long
     // the newest has been up (the half second before View focuses it).
     std::vector<const GoOffer*> go_notices(double now) const;
@@ -584,6 +593,9 @@ private:
     std::uint32_t go_target_ = 0;       // its first entrant when it was made (the texts)
     std::string go_target_stage_;       // where they were (the loading line, the refusal)
     double go_parked_at_ = -1;          // the GO's barrier parked since (-1: none)
+    bool go_back_asked_ = false;        // the host's "End the instance for everyone?" is up
+    std::uint16_t go_cancelled_offer_ = 0; // the own Cancel's offer until the relay answers it (a cancel may cross the stamp)
+    std::string go_offer_stage_;        // the own request's offer: its stage as last heard while open ("went on to")
     bool hello_seen_ = false;
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;

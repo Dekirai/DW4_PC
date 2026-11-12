@@ -96,7 +96,10 @@ public:
         return bytes;
     }
     std::uint64_t net_fingerprint() override { return mix(mix(mix(state_, frame_), present_), std::hash<std::string>{}(stage_)); }
-    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0 && test_busy <= 0; }
+    // (A fork this step, not yet reported, and a GO's departure on its way are
+    // not safe, as Engine::membership_safe's pending fork and the departure's
+    // fade: the membership events behind a GO wait, 6.5.)
+    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0 && test_busy <= 0 && !split_ && go_at_ == 0; }
     bool joinable(w::NotJoinable& reason) const override {
         if (is_hub_stage(stage_)) {
             reason = w::NotJoinable::hub;
@@ -413,7 +416,11 @@ public:
         leaving_ |= std::uint8_t(1u << slot);
         state_ = mix(state_, 0x4000 + std::uint64_t(slot));
     }
-    void intent(int slot, w::IntentKind kind, int argument) override { state_ = mix(state_, 0x3000 + slot * 16 + int(kind) + argument); }
+    int intents = 0; // INTENT events applied
+    void intent(int slot, w::IntentKind kind, int argument) override {
+        ++intents;
+        state_ = mix(state_, 0x3000 + slot * 16 + int(kind) + argument);
+    }
     void set_view_slot(int) override {}
 };
 

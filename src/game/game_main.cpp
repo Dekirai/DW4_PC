@@ -1459,6 +1459,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         };
         std::deque<Toast> toasts;
         bool go_back_b_held = false; // (round I1b: B on a GO's held loading screen, pressed once)
+        bool go_back_a_held = false; // (and A on the host's question there)
         // The account and room screens (online_ui.hpp): over the title (its
         // menu's third entry "Online" opens them), the F1 Online tab, the test
         // run's script (--online-ui).
@@ -2937,12 +2938,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
                     if (online_script.finished()) running = false;
                 }
-                // Round I1b (19.30.7): a GO's barrier held over 10 s: B takes the member back to the lobby.
+                // Round I1b (19.30.7): a GO's barrier held over 10 s: B takes the member back to the lobby; the host's B asks
+                // "End the instance for everyone?" first (A: Yes, B: No), as the F1 menu's *Leave instance*.
                 if (overlay.go_back) {
-                    line += session.is_host() ? "   B: End the instance for everyone" : "   B: Back to the lobby";
+                    line += "   " + overlay.go_back_line;
+                    const bool a = (live[0].buttons & dw4::pad_button::a) != 0;
                     const bool b = (live[0].buttons & dw4::pad_button::b) != 0;
-                    if (b && !go_back_b_held && session.go_back_to_lobby()) std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
+                    if (session.go_back_press(a && !go_back_a_held, b && !go_back_b_held))
+                        std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
+                    go_back_a_held = a;
                     go_back_b_held = b;
+                } else {
+                    go_back_a_held = go_back_b_held = false;
+                    session.go_back_press(false, false); // (the question ends with the hold)
                 }
                 if (online->leave_prompt) {
                     // After the loading or waiting line, never instead of it.
@@ -3327,6 +3335,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         row.grey = session.go_grey(offer);
                         row.closing = !offer.open;
                         row.own = session.go_offer_id() == offer.id && session.go_state() != dw4::game::online::GoState::none;
+                        {
+                            using dw4::game::online::GoState;
+                            const auto st = session.go_state();
+                            row.cancellable = row.own && (st == GoState::asked || st == GoState::waiting || st == GoState::boss);
+                        }
                         room_live.go_rows.push_back(std::move(row));
                     }
                     room_live.go_line = session.go_line();
