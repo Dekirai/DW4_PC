@@ -178,9 +178,10 @@ namespace DW4Online.Relay.Hub
                 if (!o.Entrants.Contains(x)) OfferToMember(o, x, silent ? (byte)0 : OfferMsg.Notice, now);
         }
 
-        /// <summary>A member of <paramref name="o"/> that left its dungeon within World:OfferReopenSeconds: its entry now is a re-entry.</summary>
+        /// <summary>A member of <paramref name="o"/> that left its dungeon within World:OfferReopenSeconds (of its own leave while the offer
+        /// is open; of the offer's close once it closed, 19.30.5): its entry now is a re-entry. A member it never named is none.</summary>
         private bool Reentry(GoOffer o, HubMember m, long now) =>
-            o.LeftAt.TryGetValue(m, out var left) && Ms(now - left) <= _world.OfferReopenSeconds * 1000.0;
+            o.LeftAt.TryGetValue(m, out var left) && Ms(now - (o.Open ? left : Math.Max(left, o.ClosedAt))) <= _world.OfferReopenSeconds * 1000.0;
 
         /// <summary>Members who go into the same dungeon again within World:OfferReopenSeconds after they left it, the offer that named them
         /// closed meanwhile: open again on the *Instance* pages, with no notice and no closing line for anyone (19.30.5).</summary>

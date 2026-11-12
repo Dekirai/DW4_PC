@@ -316,6 +316,26 @@ public partial class HubLogicTests
         h.Barrier("b", "dng204b2");
         Assert.Contains(Offers(h, "a").Skip(before), x => (x.Flags & OfferMsg.Notice) != 0 && x.Id == o.Id);
 
+        // Once the offer closed, the 120 s count from its close (19.30.5): b left 150 s ago, c (the last one) 50 s ago.
+        var r = GoTrio(out var or);
+        r.Snapshot("c");
+        r.Joinable("c");
+        ForkInto(r, "b", "dng204b2");
+        r.Snapshot("b");
+        r.Barrier("b", "stag0202");
+        r.Snapshot("b");
+        r.Advance(100_000);
+        r.Barrier("c", "stag0202");
+        Assert.False(or.Open);
+        r.Advance(50_000);
+        r.Hub.Housekeep(r.Now);
+        before = Offers(r, "a").Count;
+        r.Barrier("b", "dng204b2");
+        Assert.True(or.Open);
+        var reopened = Offers(r, "a").Skip(before).ToList();
+        Assert.Contains(reopened, x => x.Id == or.Id && (x.Flags & OfferMsg.Reopened) != 0);
+        Assert.All(reopened, x => Assert.Equal(0, x.Flags & OfferMsg.Notice));
+
         // c's offer closed when c came out; c comes back within 120 s together with b, whom it never named: news, with the notice.
         var k = GoTrio(out var ok);
         k.Snapshot("c");
