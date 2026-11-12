@@ -131,7 +131,11 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
 - Nothing of the lane after the second review fixes (see "Second review fixes" and the runs below).
 - For the integration: the contract entries "prompt 16:30", "prompt 17:00", "prompt 2026-11-11 14:25" and "prompt 2026-11-11
   16:20" (merge hints: Decide's `announced` with the go lane's `g.Go`, DecideChoice's TakeSeat bool / SendRemovedHome for the
-  moderation lane, Matching.Order is I1a code, the load gate's hubs); W10's prompt check (moderation 15:20).
+  moderation lane, Matching.Order is I1a code, the load gate's hubs); W10's prompt check (moderation 15:20); "prompt
+  2026-11-12 15:50" (decision 43's filters, the harness default with the prompt on: the other lanes' hub tests).
+- For the integration, not this lane's code: W7e (r11, r13: a sealed NEW whose snapshot uploader drops before uploading stays
+  unjoinable; see Runs), the session-start keep's MariaDB deadlock at two world entries (W28 in r11: no retry, the revision is
+  never kept).
 - A real-client scenario of the return mat's gate form (mate02): needs the go lane's `testhook mat` and the moderation lane's
   `setflag` (a powered Security Gate); the census measured it headless.
 - For the user (SEAMLESS.md 19.32): *Arriving now* (not built), a no-answer base before its own prompt (finding 8), the
@@ -189,6 +193,26 @@ Own resources: mysqld 3651, ports 58000-58199, build dirs `build/i1bp/*` (gitign
   round I1a's **W4, W4b, W4bx, W30 passed** (co-arrival, the starting instance, the guest's NEW through the prompt).
   So the lane's W1, W2, W2b, W11, W11b, W30b, W30c pass on the review fixes; I1a's other W scenarios last passed on exe c
   (r3-r5), before the review fixes.
+
+- **Second review** (2026-11-12; C++ of 14f2c86a = exe e `build/i1bp/scen/dw4_i1bp_dev_e.exe`, DEV=OFF copy
+  `build/i1bp/off/dw4_i1bp_off_14f2c86a.exe`; relay of 4cdb0f8a): session tests 430 checks (`build/i1bp/sess2.log`; the new
+  checks fail without the fix: `build/i1bp/sess_without_fix.log`), ctest 57/57 (`build/i1bp/ctest6.log`), server unit 499/499
+  (`build/i1bp/unit8.log`; decision 43's tests fail without the relay change), integration 142 passed / 3 skipped (mysqld 3651,
+  `build/i1bp/it5.log`), det.sh 4004f056 / 396cb219 twice (`build/i1bp/off/det_14f2c86a.log`).
+- r10 (`build/i1bp/scen_r10.log`): **W4c, W1, W2, W2b, W11, W11b, W30b, W30c passed** (8/8). W4c took decision 43's main path:
+  a's base held for b (`hold_co_arrival awaiting=[b]`), b came as its co-arrival, `prompt_new ... coarrivals=1`, one instance.
+- r11 (`build/i1bp/scen_r11.log`, I1a's set): 24/28; **A1 S14z W1x W3 W4 W4b W5 W5f W6 W7 W7b W7c W7d W8 W9 W12 W18 W24 W25 W26
+  W27 W30 W30x W32 passed**; S14p (the guest's 505 saved before run.py saw "505 set"), W28 (`World: keeping the session start
+  of account 1 failed`: a MariaDB deadlock of two KeepSessionStartAsync at the world entry, so revision 1 was never kept and the
+  restore answered 404), W4bx (b's PLAN came 60 ms before a's instance started: the loading-screen form; the expectation now
+  takes either form, 1c1b27ae), W7e (below) failed.
+- r12 (`build/i1bp/scen_r12.log`, caps): **W19, W22, W29 passed**.
+- r13 (`build/i1bp/scen_r13.log`, the second run): **S14p, W28, W4bx passed**; **W7e failed again**: a's BARRIER reached the
+  relay before the test cut (`DW4_ONLINE_TEST_CUT_AT_PARK`), so the sealed NEW of both kept a as the snapshot uploader (the
+  lowest slot); a never got its BARRIER_OK and never uploaded, b's stage group stayed without a snapshot after a's lag_leave
+  and LEAD_FROM, and a's JOIN after its reconnect waited `hold_join` 30 s (`Snapshot.Complete` false) and ended `HoldExpired`
+  in an own instance. Round I1a's / S1's code (nobody else uploads a sealed NEW's snapshot); it passed in r3 when the BARRIER
+  went down with the cut. For the integration (run folders `tools/online_test/.work/run_20261112_161228`, `..._185243`).
 
 ## How to run the tests
 

@@ -14118,17 +14118,26 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
 - `Overlay::prompt` (unused) went; `Session::holding_press()` stays as the
   session tests' observer.
 
-**Results** (2026-11-07 and 2026-11-11, the runs in the notes: the later
-ones with the client of 001f786b, the earlier ones with a client that
-lacked only the back point): the lane's
-scenarios W1 (the prompt), W2, W2b, W11b, W30b, W30c (without friends) and
-round I1a's whole W set with `DW4_ONLINE_AUTOCHOICE=first` (W3-W9, W11, W12,
-W18, W19, W22, W24-W30, W32 and the counter-proofs W1x, W30x) pass; ctest
-57/57; the relay's unit tests 481/481 and integration tests 141 (3
-skipped); det.sh with online off 4004f056 / 396cb219 twice. W29's fake
-guests answer the loading-screen form (the first a row with nobody at
-stag0101, the cursor on *New instance*, the second a's row with one there,
-preselected).
+**Results** (2026-11-12, after the second review, on the final code: the
+client of 14f2c86a, the relay of 4cdb0f8a; runs r10-r13 in the notes): the
+lane's scenarios W1 (the prompt), W2, W2b, W11, W11b, W30b, W30c (without
+friends) and W4c (decision 43) pass; of round I1a's set with
+`DW4_ONLINE_AUTOCHOICE=first` A1, S14p, S14z, W1x, W3, W4, W4b, W4bx, W5,
+W5f, W6, W7, W7b, W7c, W7d, W8, W9, W12, W18, W19, W22, W24-W30, W30x and W32
+pass (S14p, W28 and W4bx on their second run: a story save faster than the
+harness's log poll, a MariaDB deadlock of two session-start keeps at the
+world entry, and b's PLAN a moment before a's instance started; W4bx now
+takes either form). **W7e fails twice**: a's BARRIER reached the relay
+before the test cut, so the sealed NEW kept a as its snapshot uploader
+(the lowest slot); a never uploaded, b's stage group stayed without a
+snapshot, and a's later JOIN waited 30 s and made its own instance
+(round I1a's / S1's rule: no other member uploads; in round I1a's runs the
+BARRIER went down with the cut; not this lane's code, for the integration).
+ctest 57/57; the relay's unit tests 499/499 (43 of them through a held
+prompt) and integration tests 142 (3 skipped); det.sh with online off
+4004f056 / 396cb219 twice. W29's fake guests answer the loading-screen form
+(the first a row with nobody at stag0101, the cursor on *New instance*, the
+second a's row with one there, preselected).
 
 ## 20. Risks
 
