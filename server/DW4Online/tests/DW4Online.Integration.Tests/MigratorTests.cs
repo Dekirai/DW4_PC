@@ -38,9 +38,9 @@ public class MigratorTests
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1"));
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1 AND code IN ('speed_6h', 'online_ten')"));
             Assert.Equal(12, await c.ExecuteScalarAsync<int>("SELECT goal FROM achievements WHERE code = 'lowlevel_apocalymon'"));
-            Assert.Equal(24, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history, 0012: the friend tables, 0013: the world's three)
+            Assert.Equal(25, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history, 0012: the friend tables, 0013: the world's four)
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"));
-            Assert.Equal(5, await c.ExecuteScalarAsync<int>( // 0013's views with user names
+            Assert.Equal(6, await c.ExecuteScalarAsync<int>( // 0013's views with user names
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'VIEW'"));
 
             // What the log shows: the plan, each migration with its time, the total.
@@ -451,9 +451,9 @@ public class MigratorTests
             Assert.Equal(From(1), await new Migrator(granted).MigrateAsync());
             await using var c = new MySqlConnection(restricted);
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM account_blocks"));
-            Assert.Equal(5, await c.ExecuteScalarAsync<int>(
+            Assert.Equal(6, await c.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'VIEW'"));
-            foreach (var view in new[] { "v_friends", "v_friend_requests", "v_blocks", "v_instance_history", "v_staff_audit" })
+            foreach (var view in new[] { "v_friends", "v_friend_requests", "v_blocks", "v_instance_history", "v_staff_audit", "v_player_reports" })
                 Assert.Equal(0, await c.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM {view}"));
         }
         finally
@@ -512,17 +512,17 @@ public class MigratorTests
             // Question 36 (b): a guest-only account gets no story and no history row from the migration.
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT (SELECT COUNT(*) FROM online_story) + (SELECT COUNT(*) FROM online_story_history)"));
 
-            string[] tables = ["online_prefs", "instance_history", "instance_history_members"];
+            string[] tables = ["online_prefs", "instance_history", "instance_history_members", "player_reports"];
             var columns = (await c.QueryAsync<(string Table, string Column, string Type, string Comment)>(
                 "SELECT table_name, column_name, column_type, column_comment FROM information_schema.columns " +
                 "WHERE table_schema = DATABASE() AND (table_name IN @tables OR (table_name, column_name) IN " +
                 "(('accounts', 'last_seen_at'), ('achievement_unlocks', 'instance_id'), ('speedrun_times', 'instance_id'), ('online_story_history', 'reason'))) " +
                 "ORDER BY table_name, ordinal_position", new { tables })).ToList();
-            Assert.Equal(12 + 12 + 8 + 4, columns.Count);
+            Assert.Equal(12 + 12 + 8 + 10 + 4, columns.Count);
             Assert.All(columns, col => Assert.DoesNotMatch("blob|binary", col.Type));
             Assert.All(columns, col => Assert.False(string.IsNullOrWhiteSpace(col.Comment), $"{col.Table}.{col.Column} has no comment"));
-            Assert.Equal("enum('room','reset','admin_restore','session','mirror')", columns.Single(col => col.Column == "reason").Type);
-            Assert.Equal(3, await c.ExecuteScalarAsync<int>(
+            Assert.Equal("enum('room','reset','admin_restore','session','mirror')", columns.Single(col => col.Table == "online_story_history" && col.Column == "reason").Type);
+            Assert.Equal(4, await c.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN @tables AND table_comment <> ''", new { tables }));
 
             // The constraints.
@@ -561,9 +561,25 @@ public class MigratorTests
                                  "(UTC_TIMESTAMP(3), @kim, @kim, 'login_ok')", new { kim, max });
             Assert.Equal(("staff_end_instance", "Max", "Kim"), await c.QuerySingleAsync<(string, string, string)>("SELECT event, staff, player FROM v_staff_audit"));
 
-            // Pruning an instance takes its members along.
+            // Report player (round I1b): a fixed reason, never oneself, done only with a handler's time; the view names them.
+            const string report = "INSERT INTO player_reports (reporter_account_id, reported_account_id, reason, instance_id, created_at, state, " +
+                                  "handled_by, handled_at) VALUES (@from, @about, @reason, @wid, '2026-11-06 10:30:00', @state, @by, @at)";
+            await c.ExecuteAsync(report, new { from = lee, about = kim, reason = "griefing", wid, state = "done", by = max, at = "2026-11-06 11:00:00" });
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(report,
+                new { from = lee, about = kim, reason = "spam", wid, state = "open", by = (long?)null, at = (string?)null }));     // the fixed list
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(report,
+                new { from = lee, about = lee, reason = "name", wid, state = "open", by = (long?)null, at = (string?)null }));     // oneself
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(report,
+                new { from = lee, about = kim, reason = "name", wid, state = "done", by = (long?)null, at = (string?)null }));     // done without a time
+            Assert.Equal(("Lee", "Kim", "griefing", "game", "Max"), await c.QuerySingleAsync<(string, string, string, string, string)>(
+                "SELECT reporter, reported, reason, source, handled_by FROM v_player_reports"));
+            await c.ExecuteAsync("INSERT INTO audit_log (at, account_id, actor_id, event) VALUES (UTC_TIMESTAMP(3), @kim, @max, 'report_handled')", new { kim, max });
+            Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM v_staff_audit"));
+
+            // Pruning an instance takes its members along; a report keeps its row without the instance.
             await c.ExecuteAsync("DELETE FROM instance_history WHERE id = @wid", new { wid });
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM instance_history_members"));
+            Assert.Null(await c.ExecuteScalarAsync<long?>("SELECT instance_id FROM player_reports"));
         }
         finally
         {

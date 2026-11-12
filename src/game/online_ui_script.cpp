@@ -348,6 +348,32 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
         host.state.leave_instance_requested = true;
         return true;
     }
+    if (c == "card" || c == "remove" || c == "report") {
+        // card NAME: the player card of that member opens (a screenshot shows it);
+        // remove NAME / report NAME REASON: its buttons, confirmed (round I1b).
+        if (!host.live) fail("no world session");
+        const RoomLive::Member* who = nullptr;
+        for (const auto& m : host.live->members)
+            if (lower(m.name) == lower(arg(1))) who = &m;
+        if (!who) fail("no member " + arg(1) + " in the own instance");
+        if (c == "card") {
+            host.state.card_member = who->member;
+            host.state.card_remove_asked = host.state.card_report_open = false;
+            host.state.card_focus = true; // (as A on the row: the controller's focus on the card's first button)
+            host.state.card_cursor = true;
+        } else if (c == "remove") {
+            host.state.remove_requested = who->member;
+        } else {
+            static constexpr const char* reasons[] = {"griefing", "cheating", "name", "other"};
+            int reason = 0;
+            for (int r = 0; r < 4; ++r)
+                if (lower(arg(2)) == reasons[r]) reason = r + 1;
+            if (reason == 0) fail("unknown report reason " + arg(2));
+            host.state.report_requested = who->member;
+            host.state.report_reason_requested = reason;
+        }
+        return true;
+    }
     if (c == "wait-stage") {
         timed(2, 120);
         return lower(host.stage) == lower(arg(1));

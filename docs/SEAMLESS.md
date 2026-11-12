@@ -9300,6 +9300,7 @@ will move.
 | Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
 | Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "<name> is in <stage>. Go along?" (a late notice), "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Close", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Going along when <name>'s floor is ready...", "<name> is in a boss fight. Going along when it ends.", "View: cancel", "A: Cancel", "Going along...", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "Couldn't go along: <name>'s floor stayed busy.", "Couldn't go along: a scene here took too long.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
 | In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>.", "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
+| Player card (round I1b, the Instance page) | "Report", "Remove", "Report <name> for:", "Griefing", "Cheating", "Name", "Other", "Cancel", "Remove <name> from your instance? They can't rejoin it for a while." (the bar's length is the server's `World:RemovedBarMinutes`, so the question names no number), "You can't send more reports today.", "Couldn't send the report. Try again later.", "This player is not available." (REPORT's answer for a member the client knows no name of) |
 | End | "<host> left. The instance ends.", "<host> lost the connection. Waiting for <host>... <s> s", "<host> is back.", "<host> did not come back. The instance ends.", "<host> was defeated. Waiting for <host>... <s> s", "<host> was defeated. The instance ends.", "The instance has ended.", "A moderator ended this instance.", "You were removed from <host>'s instance.", "Back on your own story.", "The server restarted. Back on your own story.", "Server restart in <s> s." |
 | Leaving | "Leave <host>'s instance? You return to your lobby.", "End the instance for everyone?", "Your guests will return to their lobbies.", "Leave <host>'s instance and join <name>?" |
 | Social | "<name> wants to be your friend. View: Friends", "<n> new friend requests. View: Friends", "<name> accepted your friend request.", "<name> is online.", "<name> invites you to a party. View: answer", "<name> joined your party.", "<name> left the party.", "<name> leads the party now.", "Request sent.", "Invite sent.", "Report sent. Thank you.", "Connection lost. Try the gate again in a moment." |
@@ -9555,7 +9556,13 @@ writing the host's story; and takes it out of the instance's lists. If its stage
 is solo-led and its client does not answer the *home* JOIN_REQ within
 `Instances:JoinRequestTries`, the relay detaches that stage group from the
 instance (a stage group of nobody's instance: no joins, no story, its next
-barrier a DISSOLVE home with the redirect, 19.8.3).
+barrier a DISSOLVE home with the redirect, 19.8.3). A member removed while it
+waits at a barrier (gathering with its stage group, waiting for a JOIN or a
+boss fight, or as the co-arrival of a holding base) goes home from that
+barrier at once (a DISSOLVE redirected home, its own story) and never takes a
+seat in the instance again while the bar lasts; the others decide on, and the
+co-arrivals of a base left without members decide on their own (round I1b,
+19.25).
 
 Since fix-019 the relay also refuses (reason *owner*) every STORY from an
 engine on another's story whatever owner key it names: a stage group of
@@ -10927,7 +10934,7 @@ a hundred requests are one toast, not two hundred seconds of them).
 | Friend request spam | the limits of 19.11, the decline cooldown, blocks, exact names only |
 | Stalking through whereabouts | friends only, the `whereabouts` preference, Private shows "Playing", blocked players see nothing (figures, rows, lists), the website lists instances only to signed-in players |
 | Probing a block | requests and invites answer the same with or without a block; the incoming cap never answers a sender (a request beyond it waits, 19.11) |
-| Staff abuse | the role from the database, every action and look audited, playing staff tagged, blocks passed only by an audited moderation action |
+| Staff abuse | the role from the database, every action and look audited, playing staff tagged, blocks passed only by an audited moderation action; a report about a staff member is handled by another one and never shows him who reported him (19.25 "Round I1b") |
 | A modified host client writes into guests' stories through the mirror | the mirror copies only what the guest's own STORY of the same visit also reported (19.8.6) |
 | A removed guest's modified client keeps sending STORY | its owner switches at the removal, its stage group is detached (19.6.6) |
 | Cheated characters among strangers | the Cheats tab fix before round I1 (19.25); round D's server character later; *Report player* from round I1b |
@@ -12041,7 +12048,7 @@ means round I1a):
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
-| W10 | I1b | a removes b: b goes home; b's prompt and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached |
+| W10 | I1b | a removes b: b goes home; b's prompt and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
 | W10s | I1a | (fix-019's refix) staff remove b while it catches up (a classic JOIN, `Instances:CheckpointJoins` off, b replaying at 200 steps a second) to join a's stage group in stag0102; a leaves the stage during the catch-up: b's fallback is a stage group of nobody's instance (BARRIER_OK `wid` 0, no story, `fallback_home`), HOME at once (`home_req` *staff*), b answers it and goes home by a DISSOLVE with the replace; never `instance_join how=join` for b; the admin's call names the relay's run (run.py `{run}`) |
 | W11 | I1a / I1b | (changed in round 72; decision 41) a lone host moving inside his area: a (alone in its instance) takes stag0101's exit to dng101b1 where c's instance has a stage group: no prompt, a's instance goes on with a (a new stage group of it), a sees none of c's members. W11b (I1b): a quest board's start the census cannot name, with a running instance there: the loading-screen prompt; *B* takes a back into the lobby next to the board, on its own story |
 | W12 | I1 | settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, no randomizer) joins: in the instance b's engine is Hard / 1 / randomizer, at home Normal / 0 / none |
@@ -12644,6 +12651,78 @@ criterion; (b) the prompt's candidates pass `staffChoice` for a staff
 member's rows (19.7.2), and `Preselected` never preselects a row that only
 the staff bypass shows; (c) *Arriving now* (19.7.2) for a stage group at a
 barrier for the arrival's stage, whose members are not *Here* (19.7.3).
+*Built, lane moderation (2026-11-07, branch `feat-i1b-mod` from `int-i1a` bfc3b0a5; progress note
+`docs/ROUND_I1B_MOD_NOTES.md`; the wire and REST decisions shared with the lanes prompt and go are in the round's contract
+file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
+
+- **What I1a had.** The relay lane of I1a built most of 19.6.6's server side: INSTANCE_OP *remove* from the host or seated
+  staff, the bar (`World:RemovedBarMinutes`, 10) in Visible(), WORLD_NOTICE 5 to the removed member, its HOME (owed until
+  its DISSOLVE), the seat and the story owner switched at once (a STORY with the host's key: refused *owner*), the
+  detachment of a solo-led stage group after `Instances:JoinRequestTries` unanswered JOIN_REQ home, and the admin REST's
+  Remove. This lane kept it and added the rest.
+- **Removal.** The audit rows name accounts by id only (web 18:15): `instance_remove` {wid, historyId, hostId, block},
+  `staff_remove` {wid, historyId, hostId, role}; the world log's `remove {wid, account, member, by, reason:
+  host|staff|block}`. A guest, or anyone about the host or about himself, removes nobody (counted). **The host's block
+  removes** (19.11): the relay's re-check after BlocksChanged removes a guest the host newly blocks (a block the host had
+  before, which a moderator passed by an audited override, removes nobody; a guest's block of the host removes nobody).
+  **The bar in the lists:** `WorldInstanceRow.Barred` (the accounts under a live bar) and `WorldVisibility.Visible` hide the
+  instance from a barred player on `/instances` and `GET /instances` (staff still see every row); the relay's prompt rows,
+  co-arrival and automatic join already refused it through Visible(). Expired bars go in the housekeeping.
+- **Report player.** REPORT 0x1E (member u32, reason u8 1 griefing / 2 cheating / 3 name / 4 other, wid u32) and its
+  answer WORLD_NOTICE 14 (argument 0 sent, 1 limit, 2 not available, 3 failed). The relay maps the member id to its account
+  only when the reporter's connection was told about that member (its MEMBER_INFO, `HubMember.Introduced`, cleared at a
+  reconnect), whatever the member does now (also long after it left the world); any other id, and the own one, answers
+  *not available* at once with an empty name, so REPORT is no name or presence oracle. It takes the shared instance's
+  history id (the reporter's own instance when the reported is or was seated in it, else the named wid's), throttles 3 at
+  once then `RoomHub.ReportsPerMinute` (10) a minute like the REST call, and hands the report to `ReportService` off the
+  lock. One service for the game and `POST /api/v1/reports {username, reason}`:
+  never oneself or a deleted account, `Reports:PerDay` (10 in 24 hours, counted in the table; 429 `report_limit`),
+  `Reports:RepeatHours` (24: a second report about the same player adds no row and answers "sent"), the shared instance
+  from `instance_history` within `Reports:SharedInstanceHours` (24) when the relay named none; a reporter at the daily limit
+  is answered *limit* without a query for `ReportService.LimitKnownMinutes` (10); `own_account` is 422;
+  `RateLimits:ReportsPerMinute` (10) on the REST call. **`player_reports`** went into the still unreleased `0013_world`
+  (19.17.1's columns plus `source` game / web; CHECKs: never oneself, *done* only with a time; `instance_id` ON DELETE SET
+  NULL, so the history's prune keeps the report; a COMMENT on every column) with the view `v_player_reports`;
+  `ScrubAsync` deletes an account's own reports, reports about it keep the anonymous id.
+- **Staff.** `GET /admin/reports?state=open|done|all`, `POST /admin/reports/{id}/done` (audited `report_handled`) and
+  `/reopen` (`report_reopened`, also in `v_staff_audit` and the audit list); the website's *Admin > Reports* (open first,
+  newest first, the reported player's open count and his live instance, links to both accounts' pages, *Done* /
+  *Reopen*), the admin index's open count and the account page's "Reports about this player". What staff do about a
+  player stays on his account page (lock, ban) and *Admin > Instances* (End, Remove). **A report about the staff member
+  himself** (19.16 "staff abuse"): Done and Reopen answer 403 `own_report` (nothing audited; the website shows "About you:
+  another moderator handles it." instead of the buttons), and he never learns who reported him: the API gives `reporter`,
+  `reporterId` and the instance fields null, the website's list and his own account page show "a player" without the
+  instance (its host may be the reporter; review 2026-11-12).
+- **Client.** The F1 Online tab's *Instance* page: A on another member's row opens its player card below the table with
+  *Report* (the four reasons, then the toast of the relay's answer) and, for the host and staff playing in the instance,
+  *Remove* with the question "Remove <name> from your instance? They can't rejoin it for a while." (no number: the bar is
+  the server's `World:RemovedBarMinutes`; the card's texts are in 19.5.6); the removed member's toast names the host from
+  the notice itself. Texts beyond 19.5.6: "You can't send more reports today.",
+  "Couldn't send the report. Try again later." Test drivers: the online script's `remove NAME`, `report NAME REASON`
+  and `setflag N` (development builds: a story value outside the pads, W10c), the condition `members=N` (INSTANCE_INFO's
+  members, oneself included; W10d), the UI script's `card`, `remove`, `report`, and `DW4_ONLINE_TEST_IGNORE_HOME=1`
+  (development builds; on the engine's allowed list): a JOIN_REQ home goes unanswered (W10c).
+- **The removal binds at every decision** (19.6.6 "binding on the server", 19.16; reviews 2026-11-11 and 2026-11-12).
+  `TakeSeat` refuses an account under a live bar of the instance or owing it a HOME (`Unseatable`; world log
+  `seat_refused`). `SendRemovedHome` sends the removed members of an arrival home at once (a DISSOLVE of the visit they
+  parked in, redirected to stagML11 point 3, on their own story; world log `removed_home {wid, account, member, stage, hold,
+  co_arrival}`), the rest decides on: at the removal of a waiting arrival, in `Decide`, at the top of every `CheckHolds`
+  pass, at the start of `Join` and before the places of a NEW inside an instance. It covers the co-arrivals of a holding
+  base too (a removed co-arrival never gets CO_ARRIVE into the instance), and a base left without members (removed, or gone
+  from the world: `DetachLocked`) lets its co-arrivals decide on their own (`RedecideCoArrivals`: each parks under its own
+  name again, so a removal or its own leave finds it). A joiner removed during its join gets no seat from its fallback and
+  is asked HOME at once. Relay test option `World:TestJoinHoldMs` (0 = off; never in appsettings): an arrival's JOIN
+  target counts as not joinable that long (W10d).
+- **Scenarios** W10 (the removal, the home departure on the own story, the bar: b's next arrival hosts its own instance,
+  b's `GET /instances` does not list a's while staff's does; run.py's `api_checks` learned `expect_not`), W10b (removed
+  while defeated: HOME's fork takes exactly b's slot, a's stage group plays on), W10c (the client that never answers: its
+  STORY with the host's key refused, the group detached, its gate disc a DISSOLVE home on its own story), and the UI
+  scenario `card` (the host works b's card with the controller: Report, the reasons, Griefing; Remove, the question), and
+  W10d (a removes b while b's JOIN waits: b goes home from the loading screen at once, never seated again).
+  *Admin > Reports* names the instance a report came from (its host, area and start; `GET /admin/reports` rows gain
+  `instanceHost`, `instanceStage`, `instanceStarted`). Results (978efd19): server unit 474/474, integration 143 passed /
+  3 skipped, ctest 57/57, online off (`det.sh` 4004f056 / 396cb219 twice), W10, W10b, W10c and `card` passed; after the
+  reviews (the progress note has the numbers of each round) also W10d.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept

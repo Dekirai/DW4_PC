@@ -17,8 +17,8 @@ public sealed record WorldViewer(long AccountId, bool Staff, IReadOnlySet<long> 
 /// either direction between the viewer and any member of the instance; and the instance is Public, or Friends and the
 /// viewer is a friend of its host (the host's party with round I4), or the viewer is staff. Private instances are never
 /// listed to players (their party from round I4). Staff see every instance in the lists (19.14: "Seeing"); a member
-/// always sees the instance he is in. Removal bars come with round I1b. The relay recomputes the same rule at its
-/// decisions from its own social cache.
+/// always sees the instance he is in. A player under the instance's removal bar does not see it (round I1b, 19.6.6). The
+/// relay recomputes the same rule at its decisions from its own social cache.
 /// </summary>
 public static class WorldVisibility
 {
@@ -27,6 +27,7 @@ public static class WorldVisibility
         if (viewer.AccountId == 0) return false;
         if (viewer.Staff) return true;
         if (instance.HostAccountId == viewer.AccountId || instance.Members.Any(m => m.AccountId == viewer.AccountId)) return true;
+        if (instance.Barred.Contains(viewer.AccountId)) return false;
         if (viewer.Blocks.Contains(instance.HostAccountId) || instance.Members.Any(m => viewer.Blocks.Contains(m.AccountId))) return false;
         return instance.Visibility switch
         {

@@ -1,0 +1,15 @@
+# W10d, host a (k5): hosts a Public instance in stag0101; b's automatic join waits (the relay's test hold) with b's seat
+# taken: a's instance lists b (members=2) although b never enters a's stage group; a removes b then (the Instance page's
+# Remove, INSTANCE_OP remove) and plays on alone. b may never become present in a's stage group.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts in stag0101
+wander -150 -60 20 until members=2 fail stagechange,present>=2
+log b waits for its join in a's instance
+remove {user:b}
+log a removed b
+wander -150 -60 20 until members=1 fail stagechange,present>=2
+log b is gone
+wander -150 -60 20 until epoch>=@420 fail stagechange,present>=2,members>=2
+log a still hosts

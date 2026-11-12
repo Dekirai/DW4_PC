@@ -165,6 +165,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round I1a's integration: W7e's link cut at the barrier (DW4_ONLINE_DEV builds only, online_run.cpp: the
         // relay decides the barrier without the lost member, the simulation is the same)
         "DW4_ONLINE_TEST_CUT_AT_PARK",
+        // round I1b's W10c: a removed member's client that never answers JOIN_REQ home (DW4_ONLINE_DEV builds only,
+        // session.cpp: the relay detaches its stage group; the point of the test)
+        "DW4_ONLINE_TEST_IGNORE_HOME",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK",

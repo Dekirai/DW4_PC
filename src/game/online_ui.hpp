@@ -43,6 +43,7 @@ struct RoomLive {
     std::string host_name;
     int visibility = 0;
     bool is_host = false;
+    bool may_remove = false;             // round I1b: the host, or staff playing in the instance (Remove on the player card)
     std::string area;                    // the instance's area key (death_valley, ...)
     struct Member {
         std::uint32_t member = 0;        // the member id
@@ -80,6 +81,18 @@ struct OnlineUiState {
     bool focus_visibility = false;       // in: the menu opened from the status window's line ("View: change")
     int visibility_requested = -1;
     bool leave_instance_requested = false;
+    // The player card (round I1b, 19.5.2 / 19.5.4): A on another member's row
+    // opens it (*Report*, and *Remove* for the host and staff playing); in: the
+    // member it shows (0: closed), the open question; out: the confirmed
+    // removal and the report with its reason (1 griefing, 2 cheating, 3 name,
+    // 4 other), which the host sends.
+    std::uint32_t card_member = 0;
+    bool card_remove_asked = false, card_report_open = false;
+    bool card_focus = false;             // the controller's focus goes to the card's first button
+    bool card_cursor = false;            // (UI scripts' card: as A on the row with the controller, its cursor shown)
+    std::uint32_t remove_requested = 0;
+    std::uint32_t report_requested = 0;
+    int report_reason_requested = 0;
     online::Screen last_screen = online::Screen::welcome;
     bool focus_pending = false;          // put the controller's focus on the new screen's first item
     bool close_requested = false;        // out: "Play" on the playing screen (the host closes the screens)

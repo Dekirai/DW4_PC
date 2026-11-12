@@ -110,6 +110,7 @@ enum class Type : std::uint8_t {
     checkpoint_bad = 0x17,
     // protocol 49 (round I1a, 19.18): the host's or staff's instance change
     instance_op = 0x1B,
+    report = 0x1E,      // round I1b (moderation): *Report player* from the player card
     // server -> client (0x80-0xBF)
     welcome = 0x80,
     sealed = 0x81,
@@ -633,8 +634,11 @@ struct InstanceInfo {
 // WORLD_NOTICE: u8 kind | u32 member | str name | u32 argument | str text.
 enum class NoticeKind : std::uint8_t {
     joined = 1, left = 2, went_to = 3, visibility = 4, removed = 5, host_away = 6, host_back = 7, ended = 8,
-    lagging = 9, lag_over = 10, shared_progress = 11, restart_in = 12, go_refused = 13
+    lagging = 9, lag_over = 10, shared_progress = 11, restart_in = 12, go_refused = 13,
+    report = 14 // round I1b: the answer to REPORT (argument ReportResult; member and name: the reported player)
 };
+// WORLD_NOTICE 14's argument (i1b-contract.md moderation 16:25).
+enum class ReportResult : std::uint32_t { sent = 0, limit = 1, not_available = 2, failed = 3 };
 // WORLD_NOTICE ended's argument (19.6.5's reasons).
 enum class EndReason : std::uint8_t { host_left = 1, host_defeated = 2, host_lost = 3, staff = 4, empty = 5, server_stop = 6 };
 struct WorldNotice {
@@ -658,6 +662,14 @@ enum class InstanceOpKind : std::uint8_t { visibility = 1, remove = 2, end = 3 }
 struct InstanceOp {
     InstanceOpKind op{};
     std::uint32_t argument{};
+};
+// REPORT (client, round I1b): u32 member (the reported one) | u8 reason (1 griefing, 2 cheating, 3 name, 4 other) | u32 wid (the
+// instance both share, 0 none). The relay answers with WORLD_NOTICE 14.
+enum class ReportReason : std::uint8_t { griefing = 1, cheating = 2, name = 3, other = 4 };
+struct Report {
+    std::uint32_t member{};
+    ReportReason reason{ReportReason::other};
+    std::uint32_t wid{};
 };
 struct Ping {          // u32 nonce | u64 server time ms | i16 arrival margin ms (p0.1) | u8 suggested delay
     std::uint32_t nonce{};
@@ -727,6 +739,7 @@ std::vector<std::uint8_t> encode(const InstanceInfo&);
 std::vector<std::uint8_t> encode(const WorldNotice&);
 std::vector<std::uint8_t> encode(const MemberInfo&);
 std::vector<std::uint8_t> encode(const InstanceOp&);
+std::vector<std::uint8_t> encode(const Report&);
 std::vector<std::uint8_t> encode(const Ping&);
 std::vector<std::uint8_t> encode(const NetStat&);
 std::vector<std::uint8_t> encode(const Close&);
@@ -771,6 +784,7 @@ InstanceInfo decode_instance_info(std::span<const std::uint8_t>);
 WorldNotice decode_world_notice(std::span<const std::uint8_t>);
 MemberInfo decode_member_info(std::span<const std::uint8_t>);
 InstanceOp decode_instance_op(std::span<const std::uint8_t>);
+Report decode_report(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
 NetStat decode_netstat(std::span<const std::uint8_t>);
 Close decode_close(std::span<const std::uint8_t>);

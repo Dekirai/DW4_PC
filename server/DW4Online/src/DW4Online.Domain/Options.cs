@@ -93,6 +93,22 @@ public sealed class FriendsOptions
 }
 
 /// <summary>
+/// Report player (section "Reports", round I1b, SEAMLESS.md 19.16): how many reports a player may send and how a repeat
+/// about the same player counts. The relay's REPORT and POST /api/v1/reports go through the same rules.
+/// </summary>
+public sealed class ReportOptions
+{
+    /// <summary>Reports a player may send within 24 hours (counted in player_reports, so a restart changes nothing).</summary>
+    public int PerDay { get; set; } = 10;
+    /// <summary>A second report of the same reporter about the same player within this many hours adds no row (answered "sent").</summary>
+    public int RepeatHours { get; set; } = 24;
+    /// <summary>How far back a report looks for an instance both players shared (instance_history), when the relay names none.</summary>
+    public int SharedInstanceHours { get; set; } = 24;
+    /// <summary>Rows per page of the admin list.</summary>
+    public int PageSize { get; set; } = 50;
+}
+
+/// <summary>
 /// The world's service-side settings (section "World", SEAMLESS.md 19.17.5): the game data the server admits and ranks,
 /// and how long the instance history is kept. The relay binds its own keys of the same section (WorldHubOptions).
 /// </summary>

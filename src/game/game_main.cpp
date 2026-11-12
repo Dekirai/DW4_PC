@@ -2544,11 +2544,30 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.mode = dw4::game::online::mode_name(online->session().mode());
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
+                        if (const auto& info = online->session().instance(); info && online->session().in_instance())
+                            facts.members = int(info->members.size());
                     }
                     facts.ghosts = ghosts.shown();
                     facts.figures = ghosts.staying();
                     const auto out = online_script.update(engine, facts);
                     if (!out.shot.empty() && !options.screenshot.empty()) ui_shot = out.shot;
+                    if (!out.op.empty() && online) {
+                        // remove NAME / report NAME REASON (round I1b): the player card's buttons through the session.
+                        std::istringstream words(out.op);
+                        std::string verb, name, why;
+                        words >> verb >> name >> why;
+                        auto& session = online->session();
+                        const auto member = session.member_by_name(name);
+                        static constexpr std::pair<const char*, dw4::game::online::wire::ReportReason> kWhy[] = {
+                            {"griefing", dw4::game::online::wire::ReportReason::griefing}, {"cheating", dw4::game::online::wire::ReportReason::cheating},
+                            {"name", dw4::game::online::wire::ReportReason::name}, {"other", dw4::game::online::wire::ReportReason::other}};
+                        auto reason = dw4::game::online::wire::ReportReason::other;
+                        for (const auto& [text, r] : kWhy)
+                            if (why == text) reason = r;
+                        const bool sent = verb == "remove" ? session.remove_member(member) : session.report(member, reason);
+                        std::printf("online-script: %s %s member %u %s (frame %d)\n", verb.c_str(), name.c_str(), member, sent ? "sent" : "refused", frame);
+                        std::fflush(stdout);
+                    }
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
                     input |= out.buttons;
@@ -3564,6 +3583,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.wid = session.wid();
                     room_live.host = session.host();
                     room_live.is_host = session.is_host();
+                    room_live.may_remove = session.may_remove();
                     room_live.host_name = session.member_name(session.host());
                     if (const auto& info = session.instance(); info && info->wid == session.wid()) {
                         room_live.visibility = int(info->visibility);
@@ -4207,6 +4227,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (online_ui.visibility_requested >= 0) {
                     if (online) online->session().set_visibility(dw4::game::online::wire::Visibility(online_ui.visibility_requested));
                     online_ui.visibility_requested = -1;
+                }
+                // The player card's *Remove* and *Report* (round I1b, 19.6.6, 19.16).
+                if (online_ui.remove_requested != 0) {
+                    if (online && online->session().remove_member(online_ui.remove_requested))
+                        std::cout << "online: remove member " << online_ui.remove_requested << " at frame " << frame << '\n';
+                    online_ui.remove_requested = 0;
+                }
+                if (online_ui.report_requested != 0) {
+                    if (online && online->session().report(online_ui.report_requested,
+                                                           dw4::game::online::wire::ReportReason(std::clamp(online_ui.report_reason_requested, 1, 4))))
+                        std::cout << "online: report member " << online_ui.report_requested << " at frame " << frame << '\n';
+                    online_ui.report_requested = 0;
+                    online_ui.report_reason_requested = 0;
                 }
                 if (online_ui.leave_instance_requested) {
                     online_ui.leave_instance_requested = false;

@@ -23,7 +23,7 @@ public interface IAccountRepository
     Task SetProfilePublicAsync(long id, bool value, CancellationToken ct = default);
     /// <summary>
     /// Deletes everything tied to the account (sessions, online character, cloud save, unlocks, stats, times, room
-    /// memberships, bans, friendships, friend requests and blocks in both directions), removes its IP addresses from the audit log and anonymises the row (status deleted,
+    /// memberships, bans, friendships, friend requests and blocks in both directions, its own player reports), removes its IP addresses from the audit log and anonymises the row (status deleted,
     /// user name <paramref name="anonymousName"/>, no e-mail, no usable password). Rooms it hosted keep their record.
     /// Failed logins with an unknown name whose tag is <paramref name="nameTag"/> (the account's name) lose the tag and
     /// their IP address too.

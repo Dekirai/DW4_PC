@@ -13,12 +13,15 @@ namespace DW4Online.Integration.Tests;
 /// statement. A deleted account with friends, requests both ways and blocks both ways is nobody's friend, requester or
 /// blocker afterwards, and no column that references accounts(id) still names it (except the rooms and instances it
 /// hosted). Round I1a's world (migration 0013): its online preferences, its instance memberships and its last-seen time go;
-/// the instances it hosted keep their row (the id then names the anonymous account), its guests keep theirs.
+/// the instances it hosted keep their row (the id then names the anonymous account), its guests keep theirs. Round I1b's
+/// reports: the account's own reports go, reports about it keep the anonymous id for staff (and a report a staff member handled
+/// keeps him as the handler).
 /// </summary>
 public class AccountScrubTests
 {
     /// <summary>Columns that may keep naming a deleted account: rooms and instances keep their record (and their host).</summary>
-    private static readonly HashSet<string> Kept = ["rooms.host_account_id", "account_bans.banned_by", "instance_history.host_account_id"];
+    private static readonly HashSet<string> Kept = ["rooms.host_account_id", "account_bans.banned_by", "instance_history.host_account_id",
+        "player_reports.reported_account_id", "player_reports.handled_by"];
 
     /// <summary>Every column with a foreign key to accounts(id) that still names <paramref name="id"/>, with the row count.</summary>
     private static async Task<List<string>> LeftoversAsync(MySqlConnection c, long id)
@@ -30,6 +33,7 @@ public class AccountScrubTests
         Assert.Contains(("account_blocks", "blocked_account_id"), columns);
         Assert.Contains(("online_prefs", "account_id"), columns);
         Assert.Contains(("instance_history_members", "account_id"), columns);
+        Assert.Contains(("player_reports", "reporter_account_id"), columns);
         var left = new List<string>();
         foreach (var (table, column) in columns)
         {
@@ -147,9 +151,14 @@ public class AccountScrubTests
         var joined = await history.StartAsync(new DW4Online.Domain.Abstractions.InstanceHistoryStart(annId, 1, "stag0101", "public", 0, 3, "s", now));
         await history.MemberJoinedAsync(joined, annId, 1, "host", now);
         await history.MemberJoinedAsync(joined, goneId, 1, "guest", now);
+        // Reports both ways (round I1b): Gone about Ann (goes), Ann about Gone (stays, about the anonymous account).
+        var reports = host.App.Services.GetRequiredService<ReportService>();
+        Assert.True((await reports.ReportAsync(goneId, annId, "griefing", hosted, "game")).Ok);
+        Assert.True((await reports.ReportAsync(annId, goneId, "name", null, "web")).Ok);
         await using var sql = await host.SqlAsync();
         Assert.Equal(1, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_prefs WHERE account_id = @goneId", new { goneId }));
         Assert.Equal(2, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM instance_history_members WHERE account_id = @goneId", new { goneId }));
+        Assert.Equal(2, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM player_reports"));
         return hosted;
     }
 
@@ -162,6 +171,9 @@ public class AccountScrubTests
         Assert.Equal(goneId, await sql.ExecuteScalarAsync<long>("SELECT CAST(host_account_id AS SIGNED) FROM instance_history WHERE id = @hosted", new { hosted }));
         Assert.Equal(2, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM instance_history_members WHERE account_id = @annId", new { annId }));
         Assert.NotNull(await sql.ExecuteScalarAsync<DateTime?>("SELECT last_seen_at FROM accounts WHERE id = @annId", new { annId }));
+        Assert.Equal(0, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM player_reports WHERE reporter_account_id = @goneId", new { goneId }));
+        Assert.Equal((annId, "name"), await sql.QuerySingleAsync<(long, string)>(
+            "SELECT CAST(reporter_account_id AS SIGNED), reason FROM player_reports WHERE reported_account_id = @goneId", new { goneId }));
     }
 
     /// <summary>A friend request in flight for an account deleted meanwhile writes nothing (the repository's guard).</summary>

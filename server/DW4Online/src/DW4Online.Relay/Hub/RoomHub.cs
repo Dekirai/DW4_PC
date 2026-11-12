@@ -216,8 +216,7 @@ public sealed partial class RoomHub
             if (a.Members.Count == 0)
             {
                 _holds.Remove(a);
-                foreach (var c in a.CoArrivals)
-                    if (c.Members.Count > 0) Decide(c, now);
+                RedecideCoArrivals(a, now);
             }
         }
         if (m.Joining is { } j)
@@ -257,6 +256,23 @@ public sealed partial class RoomHub
         m.Slot = -1;
     }
 
+    /// <summary>
+    /// The co-arrivals of a base that has nobody left (its members left the world, or were removed from the instance: 19.6.6) decide
+    /// on their own (SEAMLESS.md 3.4), each as if it had just arrived. Their members' arrival is their own group again, not the gone
+    /// base (review 2026-11-12: a removal, a lost connection or a boss choice must find the group that holds them; before, a member
+    /// that left such a group left its hold behind with nobody in it).
+    /// </summary>
+    private void RedecideCoArrivals(ArrivalGroup g, long now)
+    {
+        var groups = g.CoArrivals.Where(c => c.Members.Count > 0).ToList();
+        g.CoArrivals.Clear();
+        foreach (var c in groups)
+        {
+            foreach (var a in c.Members) a.Member.Arrival = c;
+            Decide(c, now);
+        }
+    }
+
     // Receive ------------------------------------------------------------------------------------------------------------
 
     /// <summary>Handles one frame of a member; a <see cref="ProtocolException"/> closes the connection.</summary>
@@ -292,6 +308,7 @@ public sealed partial class RoomHub
             case Msg.Checkpoint: OnCheckpoint(m, CheckpointMsg.Parse(p), now); break;
             case Msg.CheckpointBad: OnCheckpointBad(m, CheckpointBadMsg.Parse(p), now); break;
             case Msg.InstanceOp: OnInstanceOp(m, InstanceOpMsg.Parse(p), now); break;
+            case Msg.Report: OnReport(m, ReportMsg.Parse(p), now); break;
             case Msg.Bye: ByeMsg.Parse(p); break; // the connection layer closes it gracefully
             default: throw new ProtocolException("unknown frame type " + Msg.Name(type));
         }
@@ -1161,6 +1178,8 @@ public sealed partial class RoomHub
             Dissolve(g, now, redirectHome: true);
             return;
         }
+        // (Members removed while the group gathered at the barrier go home alone; the others decide on, 19.6.6.)
+        if (SendRemovedHome(g, w, now)) return;
         if (StageNames.IsHub(g.Stage))
         {
             Dissolve(g, now, redirectHome: false);
@@ -1293,7 +1312,13 @@ public sealed partial class RoomHub
             Note("hold_boss", g.From, ("target", target.Id));
             return;
         }
-        if (!target.Joinable || !target.Snapshot.Complete)
+        if (_world.TestJoinHoldMs > 0 && g.TestJoinHoldUntil == 0)
+        {
+            g.TestJoinHoldUntil = now + FromMs(_world.TestJoinHoldMs);
+            Count("test_join_hold");
+            Note("test_hold_join", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("ms", _world.TestJoinHoldMs));
+        }
+        if (!target.Joinable || !target.Snapshot.Complete || now < g.TestJoinHoldUntil)
         {
             if (g.Hold != HoldKind.Join)
             {
@@ -1348,6 +1373,8 @@ public sealed partial class RoomHub
         foreach (var g in _holds.ToList())
         {
             if (!_holds.Contains(g)) continue;
+            // (A member removed while the arrival waits goes home now, 19.6.6; the bar is checked again at every pass.)
+            if (SendRemovedHome(g, g.World ?? g.Target?.World, now)) continue;
             switch (g.Hold)
             {
                 case HoldKind.CoArrival:
@@ -1381,7 +1408,7 @@ public sealed partial class RoomHub
                         Count("hold_context_changed");
                         Redecide(g, now);
                     }
-                    else if (g.Target.Joinable && g.Target.Snapshot.Complete && !g.Target.BossLock)
+                    else if (g.Target.Joinable && g.Target.Snapshot.Complete && !g.Target.BossLock && now >= g.TestJoinHoldUntil)
                     {
                         _holds.Remove(g);
                         Join(g, g.Target, now);
@@ -1515,6 +1542,9 @@ public sealed partial class RoomHub
             foreach (var a in g.Members) TakeSeat(g.World, a.Member, now, "new_group");
             foreach (var c in g.CoArrivals.SelectMany(c => c.Members)) TakeSeat(g.World, c.Member, now, "coarrival");
         }
+        // (The last check before the places: a member or co-arrival removed from the instance never comes into one of its stage groups,
+        // 19.6.6; the decisions send such members home before, this guards a path that did not. Nobody left: the co-arrivals decided.)
+        else if (SendRemovedHome(g, g.World, now)) return;
         var w = g.World;
         var reuse = !g.From.Ended && g.From.Id != 0 && g.From.Members.All(x => g.Members.Any(a => a.Member == x));
         // The visit the members parked in (BARRIER_OK names it; a reused instance's visit counts on below).
@@ -1750,8 +1780,8 @@ public sealed partial class RoomHub
     /// JOIN (SEAMLESS.md 3.4 step 3, 6.6): slots are reserved, the members catch up as observers, READY stamps the JOIN. A JOIN takes
     /// no seat (fix-019's refix; before, a member without one took it here, past a removal bar and the four seats): a fresh arrival
     /// took its seats when it chose the instance, and one of its members that lost its seat since decides again on its own
-    /// (<see cref="DecideAlone"/>); a member of the instance removed at its barrier joins without a seat, and its owed HOME
-    /// (<see cref="RetryHome"/>) sends it home from the target's stage group, as from a NEW's.
+    /// (<see cref="DecideAlone"/>); a member of the instance removed at its barrier goes home from that barrier
+    /// (<see cref="SendRemovedHome"/>, round I1b; fix-019 let it join without a seat and sent it home by its owed HOME).
     /// </summary>
     private void Join(ArrivalGroup g, HubInstance target, long now)
     {
@@ -1763,6 +1793,9 @@ public sealed partial class RoomHub
                 Count("join_seat_lost");
                 if (DecideAlone(g, lost, now)) return;
             }
+        // (The last check before the join: a member of the instance removed from it at its barrier never joins it, 19.6.6; it goes
+        // home from that barrier, round I1b.)
+        if (SendRemovedHome(g, target.World, now)) return;
         var free = Enumerable.Range(0, Wire.MaxSlots).Select(s => target.Slots[s] is null && target.Reserved[s] is null).ToArray();
         foreach (var a in g.Members)
         {
@@ -2374,6 +2407,9 @@ public sealed partial class RoomHub
         Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id), ("wid", w.Wid));
         if (w.Ending) SendHome(inst, inst.PresentMask, HomeReason.Ended, now, 0);
         SendInfo(m, now);
+        // A joiner removed during its join (19.6.6) holds no seat (TakeSeat refused it): the HOME it owes goes to its new stage group
+        // at once (JOIN_REQ home), not at the next housekeeping pass.
+        if (m.HomeWish is { } wish && wish.Wid == w.Wid && !w.Seats.ContainsKey(m)) RetryHome(m, now);
     }
 
     /// <summary>

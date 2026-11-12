@@ -541,6 +541,11 @@ public:
     std::uint32_t last_story_owner = 0;
     std::vector<w::Story> story_frames; // every STORY that came (its owner key and delta)
     int leave_intents = 0;
+    // Round I1b (moderation): the INSTANCE_OPs and REPORTs that came, and the
+    // JOIN_ATs (a JOIN_REQ home answered or not).
+    std::vector<std::pair<std::uint32_t, w::InstanceOp>> instance_ops;
+    std::vector<std::pair<std::uint32_t, w::Report>> reports;
+    int join_ats = 0;
     std::map<std::uint32_t, std::uint32_t> welcome_wid;
     std::set<std::uint32_t> wid_forgotten; // members whose next WELCOME is not resumable (the relay restarted)
     void on_story(Member& m, const w::Story& s, double now) {
@@ -1202,6 +1207,7 @@ public:
             break;
         }
         case w::Type::join_at: {
+            ++join_ats;
             const auto j = w::decode_join_at(f.payload);
             auto it = instances.find(j.inst);
             if (it != instances.end() && it->second.pending_home) {
@@ -1308,6 +1314,8 @@ public:
         case w::Type::intent:
             if (w::decode_intent(f.payload).kind == w::IntentKind::leave) ++leave_intents;
             break;
+        case w::Type::instance_op: instance_ops.emplace_back(id, w::decode_instance_op(f.payload)); break;
+        case w::Type::report: reports.emplace_back(id, w::decode_report(f.payload)); break;
         case w::Type::statehash: statehashes.emplace_back(m.name, w::decode_statehash(f.payload)); break;
         case w::Type::checkpoint: {
             const auto c = w::decode_checkpoint(f.payload);

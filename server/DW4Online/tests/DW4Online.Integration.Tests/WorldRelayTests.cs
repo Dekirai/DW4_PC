@@ -1,3 +1,4 @@
+using Dapper;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using DW4Online.Domain.Abstractions;
@@ -153,6 +154,94 @@ public class WorldRelayTests
         host.App.Services.GetRequiredService<IWorldNotifier>().AccountChanged(id);
         var close = CloseMsg.Parse(await m.NextAsync(Msg.Close));
         Assert.Equal(CloseReason.Account, close.Reason);
+    }
+
+    /// <summary>Round I1b: REPORT over the relay is stored by the report service (source game) and answered with WORLD_NOTICE 14; a
+    /// member the reporter was never told about (review 2026-11-11) and the own id are "not available" without a name.</summary>
+    [DbFact]
+    public async Task A_report_over_the_relay_is_stored_and_answered_and_the_own_id_is_not_available()
+    {
+        var (host, port) = await StartAsync();
+        await using var scope = host;
+        var (_, _, kimId) = await host.RegisterAsync("RelayKim");
+        var (_, _, leeId) = await host.RegisterAsync("RelayLee");
+        await using var kim = await WorldMember.ConnectAsync(port, Ticket(host, kimId));
+        await using var lee = await WorldMember.ConnectAsync(port, Ticket(host, leeId));
+        static bool IsReport(byte[] p) => WorldNoticeMsg.Parse(p).Kind == WorldNoticeKind.Report;
+        await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 1, 0).Frame());
+        var stranger = WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport));
+        Assert.Equal((lee.Welcome.Member, "", (uint)ReportResult.NotAvailable), (stranger.Member, stranger.Name, stranger.Argument));
+        // Lee hosts stag0101, Kim joins: Kim's client is told about Lee (the Instance page's card).
+        await lee.SendAsync(new BarrierMsg(lee.Inst, lee.Visit, 0, "stag0101", 0, 1, 1, 5, [1]).Frame());
+        var okLee = BarrierOkMsg.Parse(await lee.NextAsync(Msg.BarrierOk));
+        lee.Enter(okLee);
+        await lee.SendAsync(new SnapshotMsg(lee.Inst, lee.Visit, 4, 0, [1, 2, 3, 4]).Frame());
+        await lee.SendAsync(new SnapHashMsg(lee.Inst, lee.Visit, 0xAA).Frame());
+        await lee.SendAsync(new LogMsg(lee.Inst, lee.Visit, 0, Enumerable.Range(0, 60).Select(_ => new Pad(0, 0, 0, 0, 0)).ToArray()).Frame());
+        await lee.SendAsync(new StateMsg(lee.Inst, lee.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe | StateMsg.LoadEnded, 5, StateReason.None).Frame());
+        await Task.Delay(100);
+        await kim.SendAsync(new BarrierMsg(kim.Inst, kim.Visit, 0, "stag0101", 0, 1, 1, 5, [2]).Frame());
+        Assert.Equal(BarrierDecision.Join, BarrierOkMsg.Parse(await kim.NextAsync(Msg.BarrierOk)).Decision);
+        await Task.Delay(500);
+        await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 1, 0).Frame());
+        var answer = WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport));
+        Assert.Equal((lee.Welcome.Member, "RelayLee", (uint)ReportResult.Sent), (answer.Member, answer.Name, answer.Argument));
+        await kim.SendAsync(new ReportMsg(lee.Welcome.Member, 2, 0).Frame()); // a repeat: sent, no second row
+        Assert.Equal((uint)ReportResult.Sent, WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport)).Argument);
+        await Task.Delay(6100); // (REPORT's bucket: three at once, then ten a minute)
+        await kim.SendAsync(new ReportMsg(kim.Welcome.Member, 3, 0).Frame());
+        Assert.Equal((uint)ReportResult.NotAvailable, WorldNoticeMsg.Parse(await kim.NextAsync(Msg.WorldNotice, IsReport)).Argument);
+        await using var sql = await host.SqlAsync();
+        Assert.Equal(("RelayKim", "RelayLee", "griefing", "game"), await sql.QuerySingleAsync<(string, string, string, string)>(
+            "SELECT reporter, reported, reason, source FROM v_player_reports"));
+    }
+
+    /// <summary>
+    /// Round I1b (19.11, 19.6.6): the host blocks his guest on the website / API (POST /blocks): the relay's live re-check removes
+    /// the guest (WORLD_NOTICE removed, the seat gone, the bar), audited instance_remove with block. Before, the guest's report about the
+    /// host names their instance (the staff list: its host and first stage).
+    /// </summary>
+    [DbFact]
+    public async Task A_hosts_block_through_the_api_removes_his_guest_from_the_instance()
+    {
+        var (host, port) = await StartAsync();
+        await using var scope = host;
+        var (hostToken, _, hostId) = await host.RegisterAsync("BlockHost");
+        var (_, _, guestId) = await host.RegisterAsync("BlockGuest");
+        await using var a = await WorldMember.ConnectAsync(port, Ticket(host, hostId));
+        await using var b = await WorldMember.ConnectAsync(port, Ticket(host, guestId));
+        await a.SendAsync(new BarrierMsg(a.Inst, a.Visit, 0, "stag0101", 0, 1, 1, 5, [1]).Frame());
+        var okA = BarrierOkMsg.Parse(await a.NextAsync(Msg.BarrierOk));
+        a.Enter(okA);
+        await a.SendAsync(new SnapshotMsg(a.Inst, a.Visit, 4, 0, [1, 2, 3, 4]).Frame());
+        await a.SendAsync(new SnapHashMsg(a.Inst, a.Visit, 0xAA).Frame());
+        await a.SendAsync(new LogMsg(a.Inst, a.Visit, 0, Enumerable.Range(0, 60).Select(_ => new Pad(0, 0, 0, 0, 0)).ToArray()).Frame());
+        await a.SendAsync(new StateMsg(a.Inst, a.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe | StateMsg.LoadEnded, 5, StateReason.None).Frame());
+        await Task.Delay(100);
+        await b.SendAsync(new BarrierMsg(b.Inst, b.Visit, 0, "stag0101", 0, 1, 1, 5, [2]).Frame());
+        var okB = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
+        Assert.Equal((BarrierDecision.Join, okA.World.Wid), (okB.Decision, okB.World.Wid));
+        // (b reports a from inside the instance: the report names the instance both share, the staff list its host and stage.)
+        await Task.Delay(500);
+        await b.SendAsync(new ReportMsg(a.Welcome.Member, 4, okA.World.Wid).Frame());
+        Assert.Equal((uint)ReportResult.Sent, WorldNoticeMsg.Parse(await b.NextAsync(Msg.WorldNotice,
+            p => WorldNoticeMsg.Parse(p).Kind == WorldNoticeKind.Report)).Argument);
+        var listed = Assert.Single(await host.App.Services.GetRequiredService<Domain.Abstractions.IReportRepository>().ListAsync(null, 0, 10));
+        Assert.Equal(("BlockGuest", "BlockHost", "other", "BlockHost", "stag0101"),
+            (listed.Reporter, listed.Reported, listed.Reason, listed.InstanceHost, listed.InstanceStage));
+        Assert.NotNull(listed.InstanceStarted);
+
+        Assert.Equal(System.Net.HttpStatusCode.NoContent,
+            (await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(host.Client(hostToken), "/api/v1/blocks", new { username = "BlockGuest" })).StatusCode);
+        var removed = WorldNoticeMsg.Parse(await b.NextAsync(Msg.WorldNotice, p => WorldNoticeMsg.Parse(p).Kind == WorldNoticeKind.Removed));
+        Assert.Equal((a.Welcome.Member, "BlockHost"), (removed.Member, removed.Name));
+        var hub = host.App.Services.GetRequiredService<RelayHub>();
+        Assert.True(hub.Locked((h, _) => h.MemberOf(guestId)!.World is null && h.WorldInstance(okA.World.Wid)!.Bars.ContainsKey(guestId)));
+        var gateway = host.App.Services.GetRequiredService<DW4Online.Server.WorldGateway>();
+        Assert.True(await gateway.Queue.DrainAsync(TimeSpan.FromSeconds(5)));
+        await using var sql = await host.SqlAsync();
+        Assert.Contains("\"block\":true", await sql.ExecuteScalarAsync<string>(
+            "SELECT detail FROM audit_log WHERE event = 'instance_remove' AND account_id = @guestId", new { guestId }));
     }
 
     /// <summary>A raw protocol 49 member: handshake, WELCOME, the first STORY_ACK (its own story).</summary>

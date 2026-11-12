@@ -61,6 +61,24 @@ public sealed record InstanceOpMsg(InstanceOpKind Op, uint Argument)
     public byte[] Frame() => new WireWriter(Msg.InstanceOp).U8((byte)Op).U32(Argument).Frame();
 }
 
+/// <summary>
+/// REPORT (client, protocol 49, round I1b): member u32 (the reported member) | reason u8 (1 griefing, 2 cheating, 3 name, 4 other)
+/// | wid u32 (the instance the reporter shares with him; 0: none). The relay answers with WORLD_NOTICE 14 (<see cref="ReportResult"/>).
+/// </summary>
+public sealed record ReportMsg(uint Member, byte Reason, uint Wid)
+{
+    public static ReportMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new ReportMsg(r.U32(), r.U8(), r.U32());
+        r.End();
+        if (m.Reason is < 1 or > 4) throw new ProtocolException("unknown report reason");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Report).U32(Member).U8(Reason).U32(Wid).Frame();
+}
+
 /// <summary>A member row of INSTANCE_INFO: member u32 | stage str | level u16 | flags u8.</summary>
 public sealed record InstanceInfoMember(uint Member, string Stage, ushort Level, byte Flags)
 {

@@ -203,6 +203,19 @@ void world_messages() {
     check(hex(w::encode(w::MemberInfo{9, "lee", 12, 9})) == "09000000" "03" "6c6565" "0c00" "09", "golden MEMBER_INFO");
     check(hex(w::encode(w::InstanceOp{w::InstanceOpKind::visibility, 2})) == "01" "02000000", "golden INSTANCE_OP");
     check(throws([&] { (void)w::encode(w::InstanceOp{w::InstanceOpKind::visibility, 3}); }), "a visibility above 2 is refused");
+    // Round I1b, moderation (i1b-contract.md 16:25; the relay's WireGoldenTests hold the same bytes): INSTANCE_OP remove,
+    // REPORT and its answer WORLD_NOTICE 14.
+    check(hex(w::encode(w::InstanceOp{w::InstanceOpKind::remove, 9})) == "02" "09000000", "golden INSTANCE_OP remove");
+    check(hex(w::encode(w::Report{9, w::ReportReason::cheating, 7})) == "09000000" "02" "07000000", "golden REPORT");
+    {
+        const auto back = w::decode_report(w::encode(w::Report{9, w::ReportReason::other, 0}));
+        check(back.member == 9 && back.reason == w::ReportReason::other && back.wid == 0, "REPORT round trip");
+        check(throws([&] { (void)w::encode(w::Report{9, w::ReportReason(5), 0}); }), "a report reason above 4 is refused");
+        check(throws([&] { (void)w::decode_report(std::vector<std::uint8_t>{9, 0, 0, 0, 0, 0, 0, 0, 0}); }), "report reason 0 is refused");
+    }
+    check(hex(w::encode(w::WorldNotice{w::NoticeKind::report, 9, "lee", std::uint32_t(w::ReportResult::limit), ""})) ==
+              "0e" "09000000" "03" "6c6565" "01000000" "00",
+          "golden WORLD_NOTICE report");
     check(hex(w::encode(w::JoinReq{7, 2, 1, 3, w::JoinKind::home})) == "07000000" "02000000" "01" "03" "02", "golden JOIN_REQ home");
     check(hex(w::encode(w::JoinReq{7, 2, 1, 3})) == "07000000" "02000000" "01" "03" "01", "golden JOIN_REQ join");
     {
@@ -487,7 +500,7 @@ void messages() {
         for (int b = 0; b < 256; ++b)
             if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
-                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD INSTANCE_OP WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT "
+                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD INSTANCE_OP REPORT WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT "
                        "STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE "
                        "MEMBER_INFO",
               "type registry: " + known);

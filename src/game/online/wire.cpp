@@ -34,6 +34,7 @@ const char* type_name(Type type) noexcept {
     case Type::checkpoint_bad: return "CHECKPOINT_BAD";
     case Type::checkpoint_ask: return "CHECKPOINT_ASK";
     case Type::instance_op: return "INSTANCE_OP";
+    case Type::report: return "REPORT";
     case Type::instance_info: return "INSTANCE_INFO";
     case Type::world_notice: return "WORLD_NOTICE";
     case Type::member_info: return "MEMBER_INFO";
@@ -1434,6 +1435,26 @@ InstanceOp decode_instance_op(std::span<const std::uint8_t> b) {
     m.op = InstanceOpKind(op);
     m.argument = r.u32();
     if (m.op == InstanceOpKind::visibility && m.argument > 2) throw WireError("visibility above 2");
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const Report& m) {
+    if (std::uint8_t(m.reason) < 1 || std::uint8_t(m.reason) > 4) throw WireError("unknown report reason");
+    Writer w;
+    w.u32(m.member);
+    w.u8(std::uint8_t(m.reason));
+    w.u32(m.wid);
+    return std::move(w.out);
+}
+Report decode_report(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Report m;
+    m.member = r.u32();
+    const auto reason = r.u8();
+    if (reason < 1 || reason > 4) throw WireError("unknown report reason");
+    m.reason = ReportReason(reason);
+    m.wid = r.u32();
     r.end();
     return m;
 }

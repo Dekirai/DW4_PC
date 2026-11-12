@@ -1,0 +1,37 @@
+# Round I1b: the player card. a hosts in stag0101 (its pad script), b joins; a opens the F1 Online tab and b's card (as A on
+# its row with the controller), then works it with the controller: A on Report shows the reasons, A on Griefing sends it
+# (the toast "Report sent. Thank you."); the card again, right to Remove, A shows the question, A removes b (b goes home).
+open
+login $UI_A_NAME $UI_A_PASSWORD
+play
+wait-session
+wait-members 2 420
+sleep 3
+menu online
+wait 20
+card $UI_B_NAME
+wait 20
+shot card
+key pad-a
+wait 20
+shot reasons
+key pad-a
+sleep 3
+wait 10
+shot reported
+card $UI_B_NAME
+wait 20
+key pad-right
+wait 10
+key pad-a
+wait 20
+shot question
+key pad-a
+wait-members <=1 60
+sleep 2
+wait 10
+shot removed
+menu close
+leave
+wait-left 60
+end

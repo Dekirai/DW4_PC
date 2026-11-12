@@ -72,6 +72,8 @@ public static class Msg
     public const byte CheckpointBad = 0x17;
     /// <summary>Round I1 (protocol 49): the host's or staff's instance operation (visibility, remove, end).</summary>
     public const byte InstanceOp = 0x1B;
+    /// <summary>Round I1b (protocol 49, i1b-contract.md moderation 16:25): *Report player* from the player card.</summary>
+    public const byte Report = 0x1E;
 
     // server -> client
     public const byte Welcome = 0x80;
@@ -110,7 +112,7 @@ public static class Msg
         Welcome => "WELCOME", Sealed => "SEALED", Live => "LIVE", JoinReq => "JOIN_REQ", BarrierOk => "BARRIER_OK",
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
-        Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
+        Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", Report => "REPORT", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
         MemberInfo => "MEMBER_INFO",
         _ => "0x" + type.ToString("X2"),
     };
@@ -266,6 +268,21 @@ public enum WorldNoticeKind : byte
     SharedProgress = 11,
     ServerRestart = 12,
     GoRefused = 13,
+    /// <summary>Round I1b: the answer to REPORT (argument <see cref="ReportResult"/>; member and name: the reported player).</summary>
+    Report = 14,
+}
+
+/// <summary>WORLD_NOTICE 14's argument: what became of a REPORT (i1b-contract.md moderation 16:25).</summary>
+public enum ReportResult : uint
+{
+    /// <summary>"Report sent. Thank you." (also a repeat about the same player, which adds nothing).</summary>
+    Sent = 0,
+    /// <summary>The reporter's daily limit (Reports:PerDay).</summary>
+    Limit = 1,
+    /// <summary>"&lt;name&gt; is not available.": an unknown member id, the own one, or an account that is gone.</summary>
+    NotAvailable = 2,
+    /// <summary>The report could not be stored (try later).</summary>
+    Failed = 3,
 }
 
 /// <summary>JOIN_REQ kinds (protocol 49) for solo-led stage groups.</summary>

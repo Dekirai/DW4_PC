@@ -42,6 +42,9 @@ public sealed class WorldHubOptions
     public int HostAwayNoticeSeconds { get; set; } = 5;
     /// <summary>A story keeper nobody plays on any more (its owner left the world, no instance runs on it) is dropped after this.</summary>
     public int KeeperIdleMinutes { get; set; } = 5;
+    /// <summary>Test runs only (scenario W10d, never in appsettings): an arrival's JOIN target counts as not joinable for this long after
+    /// the arrival's first JOIN decision (HoldKind.Join, BARRIER_WAIT not joinable), as a scene would hold it. 0: off.</summary>
+    public int TestJoinHoldMs { get; set; }
 
     public bool AdmitsData(ulong dataHash) =>
         DataHashes.Count == 0 || DataHashes.Any(h => ulong.TryParse(h, out var v) && v == dataHash);
@@ -127,6 +130,8 @@ public sealed class WorldInstance(uint wid)
     public long LastAwayNotice { get; set; }
     /// <summary>Removal bars: account until (relay clock).</summary>
     public Dictionary<long, long> Bars { get; } = [];
+    /// <summary>Every account that held a seat in the instance (a report names the instance both shared, round I1b).</summary>
+    public HashSet<long> EverSeated { get; } = [];
     public int PeakPlayers { get; set; }
     /// <summary>INSTANCE_INFO is sent in the next housekeeping pass.</summary>
     public bool InfoDirty { get; set; }

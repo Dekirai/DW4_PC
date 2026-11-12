@@ -25,6 +25,7 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
     private readonly IAccountRepository? _accounts;
     private readonly ISocialRepository? _social;
     private readonly ILogger<WorldGateway>? _log;
+    private readonly DW4Online.Domain.Services.ReportService? _reports;
     private readonly WorldHistoryQueue _queue;
     private Func<WorldAdmission, ValueTask<WorldAdmitted?>>? _check;
     /// <summary>The newest ticket nonce issued to each account in this process (web's admission answers null for an older one).</summary>
@@ -39,6 +40,7 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
         _accounts = services.GetService<IAccountRepository>();
         _social = services.GetService<ISocialRepository>();
         _log = services.GetService<ILogger<WorldGateway>>();
+        _reports = services.GetService<DW4Online.Domain.Services.ReportService>();
         _queue = new WorldHistoryQueue(services.GetService<IInstanceHistoryRepository>(), services.GetService<IAuditLog>(), _log);
         if (_hub is null) return;
         _hub.Admission = AdmitAsync;
@@ -50,6 +52,7 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
             {
                 if (RememberVisibility is { } remember) _queue.Post(_ => remember(account, Visibilities.Text(visibility)));
             };
+            if (_reports is not null) _hub.World.Reports = Report;
         }
         // A keeper's new revision becomes its owner's online story (SEAMLESS.md 8.4). Under the hub lock: only queue it.
         if (_stories is not null)
@@ -228,6 +231,38 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
             blocks = (await _social.ListBlocksAsync(a.AccountId)).Select(r => r.AccountId).ToList();
         }
         return new WorldAdmitted(a.AccountId, account.Username, role, 1, OnlinePrefs.Default) { Friends = friends, Blocks = blocks };
+    }
+
+    /// <summary>
+    /// A player's REPORT (round I1b, 19.16): the report service stores it off the hub lock (its rules: the daily limit, a repeat about
+    /// the same player adds nothing) and the reporter gets WORLD_NOTICE 14 with the result.
+    /// </summary>
+    private void Report(ReportRequest r)
+    {
+        var reports = _reports!;
+        _ = Task.Run(async () =>
+        {
+            ReportResult result;
+            try
+            {
+                var outcome = await reports.ReportAsync(r.ReporterAccount, r.ReportedAccount, r.Reason, r.HistoryId,
+                    DW4Online.Domain.Abstractions.ReportSources.Game);
+                result = outcome.Ok ? ReportResult.Sent
+                    : outcome.Error!.Kind == DW4Online.Domain.ErrorKind.TooManyRequests ? ReportResult.Limit
+                    : outcome.Error.Kind is DW4Online.Domain.ErrorKind.NotFound or DW4Online.Domain.ErrorKind.Invalid ? ReportResult.NotAvailable
+                    : ReportResult.Failed;
+            }
+            catch (Exception e)
+            {
+                _log?.LogWarning(e, "Storing the report of account {Reporter} about {Reported} failed", r.ReporterAccount, r.ReportedAccount);
+                result = ReportResult.Failed;
+            }
+            _hub?.Locked((hub, _) =>
+            {
+                hub.ReportAnswered(r.ReporterAccount, r.ReportedMember, r.ReportedName, result);
+                return true;
+            });
+        });
     }
 
     public ValueTask DisposeAsync() => _queue.DisposeAsync();

@@ -1,0 +1,18 @@
+# W10c (19.24, 19.6.6): a removed guest whose client never answers its JOIN_REQ home: its STORY with the host's key is
+# refused at once (owner), its stage group is detached (nobody's instance), and its next barrier goes home on its own story.
+a: online-script: step .* log: a in dng101b1
+a: online-script: remove \S+b member \d+ sent
+b: online-script: step .* log: b in stag0101 apart from a
+b: online: .*You were removed from .*'s instance\.
+b: online-script: setflag 595
+b: online-script: step .* log: b home
+b: online-script: step .* log: own story at home
+relay: instance_join .*how=new_group
+relay: remove .*reason=host
+relay: home_req .*reason=Removed
+relay: story_owner
+relay: detached
+relay: redirect .*stage=stagml11 .*point=3
+# (the instance ends only when a's script ends and its client leaves the world: host_left, after b is gone)
+relay: instance_end .*reason=host_left
+!b: online-script: FAIL

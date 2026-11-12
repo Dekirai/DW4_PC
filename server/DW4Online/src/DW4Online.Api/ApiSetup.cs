@@ -30,6 +30,7 @@ public sealed class RateLimitOptions
     public int StageChangesPerMinute { get; set; } = 30;     // per account: entering and leaving stage instances (relay tickets)
     public int SocialPerMinute { get; set; } = 60;           // per account: friend requests and answers, blocks, player cards
     public int FriendListSeconds { get; set; } = 2;          // per account: one GET /friends per this many seconds (0 = no limit)
+    public int ReportsPerMinute { get; set; } = 10;          // per account: POST /reports (Reports:PerDay limits the day, round I1b)
     // WebLoginPerMinute / WebRegisterPerHour / WebAccountChangesPerMinute (website forms) are read by DW4Online.Web from the same section.
 }
 
@@ -48,6 +49,7 @@ public static class RateLimitPolicies
     public const string RoomStage = "room-stage";
     public const string Social = "social";
     public const string FriendList = "friend-list";
+    public const string Reports = "reports";
 }
 
 public static class ApiSetup
@@ -79,6 +81,7 @@ public static class ApiSetup
             o.AddPolicy(RateLimitPolicies.WorldEnter, ctx => Window(AccountKey(ctx), limits.WorldEntersPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.RoomStage, ctx => Window(AccountKey(ctx), limits.StageChangesPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.Social, ctx => Window(AccountKey(ctx), limits.SocialPerMinute, TimeSpan.FromMinutes(1)));
+            o.AddPolicy(RateLimitPolicies.Reports, ctx => Window(AccountKey(ctx), limits.ReportsPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.FriendList, ctx => limits.FriendListSeconds <= 0
                 ? RateLimitPartition.GetNoLimiter("friend-list")
                 : Window(AccountKey(ctx), 1, TimeSpan.FromSeconds(limits.FriendListSeconds)));
@@ -125,6 +128,7 @@ public static class ApiSetup
         RoomEndpoints.Map(v1);
         WorldEndpoints.Map(v1);
         SocialEndpoints.Map(v1);
+        ReportEndpoints.Map(v1);
         AdminEndpoints.Map(v1);
         return routes;
     }
