@@ -1292,9 +1292,17 @@ public sealed partial class RoomHub
             // instance is at that stage any more (above).
             var first = InDungeon(go).Select(e => PlaceOf(e).Group).FirstOrDefault(x => x is not null && candidates.Contains(x));
             var goTarget = first ?? candidates.OrderByDescending(x => x.Count).First();
-            Note("go_join", goTarget, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("offer", go.Id));
-            JoinTarget(g, goTarget, now);
-            return;
+            if (GoContextFits(go, g.From, g.Context, goTarget))
+            {
+                Note("go_join", goTarget, ("wid", go.World.Wid), ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("offer", go.Id));
+                JoinTarget(g, goTarget, now);
+                return;
+            }
+            // The context there changed after the stamp (a quest step on the floor in the second of the departure, 3.7): the GO may
+            // not join it; the barrier is decided as any arrival's below (a stage group of the instance with its context, else NEW
+            // with the notice OtherContext). Open for the user (SEAMLESS.md 19.32): wait instead.
+            Count("go_context_changed");
+            Note("go_context_changed", goTarget, ("wid", go.World.Wid), ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("offer", go.Id));
         }
         var sameContext = candidates.Where(x => HubRules.ContextMatches(x, g.Context)).ToList();
         var fits = sameContext.Where(x => x.FreeSlots >= size).ToList();
@@ -1421,10 +1429,11 @@ public sealed partial class RoomHub
                         g.Hold = HoldKind.None;
                         Redecide(g, now);
                     }
-                    else if (!HubRules.ContextMatches(g.Target, g.Context))
+                    else if (!HubRules.ContextMatches(g.Target, g.Context) && !(g.Go is { } held && GoContextFits(held, g.From, g.Context, g.Target)))
                     {
                         // The target's play changed its context while the arrival waited (a quest step): it may not join
-                        // any more; JoinOrNew finds another instance or answers NEW (OtherContext).
+                        // any more; JoinOrNew finds another instance or answers NEW (OtherContext). (A GO's barrier by the GO's
+                        // rule: a deeper floor that its own load changed, B1's COUNTER 2, still takes it, 19.30.7.)
                         _holds.Remove(g);
                         g.Hold = HoldKind.None;
                         Count("hold_context_changed");

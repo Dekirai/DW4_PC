@@ -19,8 +19,12 @@ namespace DW4Online.Relay.World
         public long ClosedAt { get; set; }
         /// <summary>The entrants, the first entrant first (by a mat, or by going along).</summary>
         public List<HubMember> Entrants { get; } = [];
-        /// <summary>Every member the offer named: a re-entry of one of them within World:OfferReopenSeconds after the close reopens it.</summary>
-        public HashSet<HubMember> Named { get; } = [];
+        /// <summary>When each entrant last left the dungeon (kept after the close): its entry within World:OfferReopenSeconds of that is a
+        /// re-entry (silent, 19.30.5); a later one, or a member the offer never named, is news. Removed at the member's re-entry.</summary>
+        public Dictionary<HubMember, long> LeftAt { get; } = [];
+        /// <summary>The play on a floor of the dungeon changed the context there after its load (a quest step, 3.7): the entrants carry it
+        /// deeper, and a GO from the field (the entrants' old context) may no longer join them.</summary>
+        public bool ContextChanged { get; set; }
         /// <summary>Entrants whose way out of the dungeon was a game over (the barrier's alive bit clear): "Kim was defeated in ...".</summary>
         public HashSet<HubMember> LeftDefeated { get; } = [];
         /// <summary>The target as last told: the first entrant's stage and its stage group's entrance point.</summary>
@@ -51,6 +55,9 @@ namespace DW4Online.Relay.World
         public HubInstance? StampedIn { get; set; }
         public uint StampTick { get; set; }
         public bool Boss { get; set; }
+        /// <summary>The player's *Cancel* came after the GO was sealed in its stream (it crossed the stamp): the GO runs, so the request
+        /// stays for its barrier; a GO that is dropped and would be asked again (go_req_timeout, a LEAD_FROM before its tick) ends instead.</summary>
+        public bool WithdrawLate { get; set; }
     }
 }
 
@@ -101,12 +108,24 @@ namespace DW4Online.Relay.Hub
         {
             var toDungeon = DungeonOf(g.Stage);
             var fromDungeon = DungeonOf(g.From.Stage);
-            foreach (var o in w.Offers.Where(o => o.Open && o.Dungeon == fromDungeon && o.Dungeon != toDungeon))
+            foreach (var o in w.Offers.Where(o => o.Open && o.Dungeon == fromDungeon))
+            {
+                // A floor of the dungeon whose play changed the context after its load (the barrier's hash is not the visit's entry
+                // context, 3.7): the entrants carry it on, a GO from the field may no longer join them (19.30.5: "has the entrants'
+                // session context"). A floor's own load (COUNTER 2 at every first floor) is no change.
+                if (!o.ContextChanged && g.From.EntryContext is { } entry && g.Context != entry && g.Members.Any(a => o.Entrants.Contains(a.Member)))
+                {
+                    o.ContextChanged = true;
+                    Count("offer_context_changed");
+                    Note("offer_context_changed", g.From, ("wid", w.Wid), ("offer", o.Id));
+                }
+                if (o.Dungeon == toDungeon) continue;
                 foreach (var a in g.Members.Where(a => o.Entrants.Contains(a.Member)))
                 {
                     if (((g.Alive >> a.Slot) & 1) == 0) o.LeftDefeated.Add(a.Member);
                     else o.LeftDefeated.Remove(a.Member);
                 }
+            }
             var members = g.Members.Select(a => a.Member).ToList();
             // The GO's own barrier (19.30.7 step 4): matched by its stage and point.
             var goers = members.Where(x => x.Go is { Stamped: true } r && SameStage(r.Stage, g.Stage) && r.Point == g.Point).ToList();
@@ -125,8 +144,9 @@ namespace DW4Online.Relay.Hub
                 var o = w.Offers.FirstOrDefault(x => x.Open && x.Dungeon == toDungeon);
                 if (o is null)
                 {
-                    var reopen = w.Offers.Where(x => !x.Open && x.Dungeon == toDungeon && members.Any(x.Named.Contains) &&
-                                                     Ms(now - x.ClosedAt) <= _world.OfferReopenSeconds * 1000.0)
+                    // (Silent only when every one of them left this dungeon within the reopen time: with a member the offer never named,
+                    // or one whose leave is older, the entry is news and opens a new offer with its notice, 19.30.5.)
+                    var reopen = w.Offers.Where(x => !x.Open && x.Dungeon == toDungeon && members.All(m => Reentry(x, m, now)))
                         .OrderByDescending(x => x.ClosedAt).FirstOrDefault();
                     if (reopen is not null) ReopenOffer(reopen, members, g, now);
                     else if (w.Offers.Count(x => x.Open) < MaxOffers) OpenOffer(w, toDungeon, members, g, silent, now);
@@ -134,7 +154,8 @@ namespace DW4Online.Relay.Hub
                 }
                 else
                 {
-                    var newcomers = members.Where(x => !o.Entrants.Contains(x)).ToList();
+                    // (An entrant that left the dungeon while the offer stayed open comes in again: a newcomer as well.)
+                    var newcomers = members.Where(x => !o.Entrants.Contains(x) || o.LeftAt.ContainsKey(x)).ToList();
                     if (newcomers.Count > 0) ExtendOffer(o, newcomers, g, silent, now);
                 }
             }
@@ -148,7 +169,6 @@ namespace DW4Online.Relay.Hub
             w.NextOfferId = (ushort)(id == ushort.MaxValue ? 1 : id + 1);
             var o = new GoOffer(id, dungeon, w, now) { Stage = g.Stage, Point = g.Point, Context = g.Context };
             o.Entrants.AddRange(entrants);
-            o.Named.UnionWith(entrants);
             foreach (var x in entrants) o.Asked.UnionWith(x.HeadingAsked);
             w.Offers.Add(o);
             Count("offers_opened");
@@ -158,15 +178,19 @@ namespace DW4Online.Relay.Hub
                 if (!o.Entrants.Contains(x)) OfferToMember(o, x, silent ? (byte)0 : OfferMsg.Notice, now);
         }
 
-        /// <summary>A member who goes into the same dungeon again within World:OfferReopenSeconds after the offer that named him closed: open
-        /// again on the *Instance* pages, with no notice and no closing line for anyone (19.30.5).</summary>
+        /// <summary>A member of <paramref name="o"/> that left its dungeon within World:OfferReopenSeconds: its entry now is a re-entry.</summary>
+        private bool Reentry(GoOffer o, HubMember m, long now) =>
+            o.LeftAt.TryGetValue(m, out var left) && Ms(now - left) <= _world.OfferReopenSeconds * 1000.0;
+
+        /// <summary>Members who go into the same dungeon again within World:OfferReopenSeconds after they left it, the offer that named them
+        /// closed meanwhile: open again on the *Instance* pages, with no notice and no closing line for anyone (19.30.5).</summary>
         private void ReopenOffer(GoOffer o, List<HubMember> entrants, ArrivalGroup g, long now)
         {
             o.Open = true;
             o.ClosedAt = 0;
             o.Entrants.Clear();
             o.Entrants.AddRange(entrants);
-            o.Named.UnionWith(entrants);
+            foreach (var x in entrants) o.LeftAt.Remove(x);
             o.LeftDefeated.Clear();
             o.Receivers.Clear();
             o.Late.Clear();
@@ -174,6 +198,7 @@ namespace DW4Online.Relay.Hub
             o.Stage = g.Stage;
             o.Point = g.Point;
             o.Context = g.Context;
+            o.ContextChanged = false;
             Count("offers_reopened");
             Note("offer_reopen", null, ("wid", o.World.Wid), ("offer", o.Id), ("entrants", entrants.Select(x => x.Id).ToArray()));
             foreach (var x in o.World.Members.ToList())
@@ -181,12 +206,16 @@ namespace DW4Online.Relay.Hub
         }
 
         /// <summary>A second group goes into the open offer's dungeon: it joins the entrants and the notice shows again, with the new names,
-        /// to the members that did not go along (not for a re-entry of a member it named, nor for one who came by *Go along*).</summary>
+        /// to the members that did not go along (not for a re-entry within World:OfferReopenSeconds of an entrant's own leave, nor for one
+        /// who came by *Go along*).</summary>
         private void ExtendOffer(GoOffer o, List<HubMember> newcomers, ArrivalGroup g, bool silent, long now)
         {
-            var reentry = newcomers.All(o.Named.Contains);
-            o.Entrants.AddRange(newcomers);
-            o.Named.UnionWith(newcomers);
+            var reentry = newcomers.All(x => Reentry(o, x, now));
+            foreach (var x in newcomers)
+            {
+                o.LeftAt.Remove(x);
+                if (!o.Entrants.Contains(x)) o.Entrants.Add(x);
+            }
             var asked = newcomers.SelectMany(x => x.HeadingAsked).ToHashSet();
             Note("offer_extend", null, ("wid", o.World.Wid), ("offer", o.Id), ("entrants", o.Entrants.Select(x => x.Id).ToArray()),
                 ("silent", silent || reentry));
@@ -282,6 +311,10 @@ namespace DW4Online.Relay.Hub
                 }
                 o.Entrants.RemoveAll(e => e.World != w);
                 var inside = InDungeon(o);
+                // (When each entrant left the dungeon: its entry within the reopen time of that is a re-entry, 19.30.5.)
+                foreach (var e in o.Entrants)
+                    if (inside.Contains(e)) o.LeftAt.Remove(e);
+                    else o.LeftAt.TryAdd(e, now);
                 if (inside.Count == 0)
                 {
                     var defeated = o.Entrants.Count > 0 && o.Entrants.All(o.LeftDefeated.Contains);
@@ -338,19 +371,45 @@ namespace DW4Online.Relay.Hub
 
         // Requests (19.30.7) --------------------------------------------------------------------------------------------------------
 
-        /// <summary>INTENT 4: go along with offer <c>argument</c>, or (0) withdraw the own waiting request / report the own GO expired.</summary>
+        /// <summary>INTENT 4's argument -1: the client's report that its stamped GO ended without a departure (it expired 300 ticks after
+        /// its tick, or did nothing at its step: the member defeated or gone there).</summary>
+        public const int GoEndedArgument = -1;
+
+        /// <summary>INTENT 4: go along with offer <c>argument</c>; 0 the player's *Cancel*; -1 (<see cref="GoEndedArgument"/>) the client's
+        /// report that its stamped GO ended without a departure.</summary>
         private void OnGoIntent(HubMember m, IntentMsg msg, long now)
         {
+            if (msg.Argument == GoEndedArgument)
+            {
+                if (m.Go is not { } done) return;
+                if (!done.Stamped)
+                {
+                    EndGo(m, null, now, "withdrawn");
+                    return;
+                }
+                m.Go = null;
+                Note("go_end", null, ("wid", done.Offer.World.Wid), ("offer", done.Offer.Id), ("member", m.Id), ("reason", "expired"));
+                if (done.Offer.Open && done.Offer.Receivers.Contains(m)) SendOffer(done.Offer, m, OfferOp.Changed, 0);
+                return;
+            }
             if (msg.Argument == 0)
             {
                 if (m.Go is not { } r) return;
-                if (!r.Stamped) EndGo(m, null, now, "withdrawn");
-                else
+                if (!r.Stamped || WithdrawUnsealedGo(m, r))
                 {
-                    m.Go = null;
-                    Note("go_end", null, ("wid", r.Offer.World.Wid), ("offer", r.Offer.Id), ("member", m.Id), ("reason", "expired"));
-                    if (r.Offer.Open && r.Offer.Receivers.Contains(m)) SendOffer(r.Offer, m, OfferOp.Changed, 0);
+                    EndGo(m, null, now, "withdrawn");
+                    return;
                 }
+                // The *Cancel* crossed the stamp: the GO is sealed in the member's stream and runs on every engine, so the request stays
+                // for its barrier (its rules: the offer's stage group first, no new stage group next to a living one, 19.30.7 step 4);
+                // the row says "Going along..." (flag 16).
+                if (!r.WithdrawLate)
+                {
+                    r.WithdrawLate = true;
+                    Count("go_withdraw_late");
+                    Note("go_withdraw_late", r.StampedIn, ("wid", r.Offer.World.Wid), ("offer", r.Offer.Id), ("member", m.Id), ("tick", r.StampTick));
+                }
+                if (r.Offer.Open && r.Offer.Receivers.Contains(m)) SendOffer(r.Offer, m, OfferOp.Changed, 0);
                 return;
             }
             var w = m.World;
@@ -386,6 +445,34 @@ namespace DW4Online.Relay.Hub
             Note("go_request", null, ("wid", w.Wid), ("offer", o.Id), ("member", m.Id));
             TryGo(w, now);
             if (m.Go is { Stamped: false }) SendOffer(o, m, OfferOp.Changed, 0);
+        }
+
+        /// <summary>A stamped GO that is in no stream yet, withdrawn: JOIN_REQ kind go asked of the solo leader without its JOIN_AT yet (that
+        /// JOIN_AT then seals the lead alone without the GO, <see cref="GoJoinAt"/>), or a sealed stamp whose tick is not sealed yet (the
+        /// GO leaves the pending events). False: the GO is sealed and runs.</summary>
+        private bool WithdrawUnsealedGo(HubMember m, GoRequest r)
+        {
+            if (r.StampedIn is not { } s) return false;
+            // (A fork before the GO's tick moved its pending event into the member's side, 19.18.)
+            var at = m.Instance is { Ended: false } cur && (cur == s || cur.Parent == s.Id) ? cur : s;
+            if (r.StampTick == 0 && at.AskedGo is { } ag && ag.Slot == m.Slot)
+            {
+                Count("go_withdrawn_unsealed");
+                Note("go_unstamped", at, ("member", m.Id), ("how", "join_req"));
+                return true;
+            }
+            if (at.Ended) return false;
+            foreach (var (t, list) in at.PendingEvents.Where(kv => kv.Key >= r.StampTick).ToList())
+            {
+                var go = list.FindIndex(e => e.Type == Ev.Go && e.Slot == m.Slot);
+                if (go < 0) continue;
+                list.RemoveAt(go);
+                if (list.Count == 0) at.PendingEvents.Remove(t);
+                Count("go_withdrawn_unsealed");
+                Note("go_unstamped", at, ("member", m.Id), ("how", "pending"), ("tick", t));
+                return true;
+            }
+            return false;
         }
 
         /// <summary>A request ends without a GO: the reason as WORLD_NOTICE go refused (none for a withdraw), its row's flags cleared.</summary>
@@ -445,9 +532,17 @@ namespace DW4Online.Relay.Hub
                     if (o.Receivers.Contains(m)) SendOffer(o, m, OfferOp.Changed, 0);
                 }
                 if (boss) r.Since = now; // (no time limit in a boss fight)
+                var s = place.Group;
+                if (target is not null && s is not null && place.Settled && !GoContextFits(o, s, s.ContextHash, target))
+                {
+                    // (3.7, 19.30.5: the play on the entrants' floors changed the context since they went in, a quest step: a member
+                    // with the old one may not join them; the offer stays on the page.)
+                    Count("go_context_changed");
+                    EndGo(m, GoRefusal.NotOffered, now, "context");
+                    continue;
+                }
                 var targetReady = target is { Ended: false, Barrier: null, Joinable: true, BossLock: false, NoLiving: false, LogFull: false } &&
                                   target.Snapshot.Complete && target.World == w;
-                var s = place.Group;
                 var senderReady = m.Connected && place.Settled && s is { Ended: false, Barrier: null, MembershipSafe: true } &&
                                   ((s.Mode == InstanceMode.Sealed && s.Sealing && s.LeadFrom is null && s.Streams[m.Slot] is not null) ||
                                    (s.Mode == InstanceMode.SoloLed && s.Leader == m && s.SoloJoin is null && s.AskedJoin is null && s.AskedHome is null &&
@@ -460,6 +555,18 @@ namespace DW4Online.Relay.Hub
                 if (!boss && Ms(now - r.Since) >= _world.GoAlongWaitSeconds * 1000.0) EndGo(m, GoRefusal.Busy, now);
             }
         }
+
+        /// <summary>
+        /// A GO may join <paramref name="target"/> by the session context (3.7, 19.30.5): as any arrival (the target runs or arrived with
+        /// the sender's context), or by the GO's own rule: the sender's stage group has the entrants' context (the offer's: their barrier's
+        /// hash, taken in the field, by the same rule as the offer itself) and no play since the entrants went in changed it, not on a
+        /// floor they left (the offer's flag) and not on the target since its load (its entry context). A floor's own load changing a
+        /// context value (every first floor sets COUNTER 2) is no change: the B2 of a GO from the field arrived with B1's context, which
+        /// the field never had.
+        /// </summary>
+        private static bool GoContextFits(GoOffer o, HubInstance sender, ulong senderContext, HubInstance target) =>
+            HubRules.ContextMatches(target, senderContext) ||
+            (HubRules.ContextMatches(sender, o.Context) && !o.ContextChanged && (target.EntryContext is not { } entry || target.ContextHash == entry));
 
         private void StampGo(HubMember m, GoRequest r, HubInstance s, HubInstance target, Dictionary<HubInstance, uint> ticks, long now)
         {
@@ -510,6 +617,8 @@ namespace DW4Online.Relay.Hub
                     s.AskedGo = null;
                     r.Stamped = false; // (asked again at the next ready pass)
                     Count("go_req_timeout");
+                    // (Its *Cancel* came after the ask: nothing was sealed, so the cancel holds now.)
+                    if (r.WithdrawLate) EndGo(m, null, now, "withdrawn");
                 }
                 return;
             }
@@ -532,7 +641,7 @@ namespace DW4Online.Relay.Hub
                 list.RemoveAll(e => e.Type == Ev.Go);
                 if (list.Count == 0) g.PendingEvents.Remove(t);
             }
-            foreach (var m in g.Members)
+            foreach (var m in g.Members.ToList())
                 if (m.Go is { Stamped: true } r && r.StampedIn == g && r.StampTick >= lead)
                 {
                     r.Stamped = false;
@@ -540,6 +649,8 @@ namespace DW4Online.Relay.Hub
                     r.StampTick = 0;
                     Count("go_refiled");
                     Note("go_refiled", g, ("member", m.Id), ("tick", lead));
+                    // (Its *Cancel* came after the stamp: the dropped GO is not asked again.)
+                    if (r.WithdrawLate) EndGo(m, null, 0, "withdrawn");
                 }
         }
 
@@ -559,12 +670,18 @@ namespace DW4Online.Relay.Hub
             i.Mode = InstanceMode.Sealed;
             i.Streams[m.Slot] = NewStream(m, m.Slot, j, DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks));
             m.Cursor = j;
-            TestAtGoStamp(m, i, j);
-            i.AddEvent(j, TickEvent.Go(go.Slot, go.Point, go.Stage));
+            // (A request withdrawn while its JOIN_REQ was out, or ended otherwise: J seals the lead alone, without the GO.)
+            var live = m.Go is { Stamped: true } r && r.StampedIn == i && go.Slot == m.Slot;
+            if (live)
+            {
+                TestAtGoStamp(m, i, j);
+                i.AddEvent(j, TickEvent.Go(go.Slot, go.Point, go.Stage));
+                m.Go!.StampTick = j;
+                Count("go_stamped_solo");
+            }
+            else Count("go_join_at_withdrawn");
             ScheduleLeadFrom(i, j + 1);
-            if (m.Go is { } r) r.StampTick = j;
-            Count("go_stamped_solo");
-            Note("go_join_at", i, ("tick", j), ("slot", go.Slot), ("stage", go.Stage.ToLowerInvariant()), ("wid", i.World?.Wid ?? 0));
+            Note("go_join_at", i, ("tick", j), ("slot", go.Slot), ("stage", go.Stage.ToLowerInvariant()), ("wid", i.World?.Wid ?? 0), ("go", live));
             i.Sealing = true;
             _sealer?.Invoke();
             return true;
@@ -673,17 +790,37 @@ namespace DW4Online.Relay.Hub
             return true;
         }
 
-        /// <summary>*B: Back to the lobby* on a GO's held loading screen (19.30.7 step 4): the member's *Leave instance* from its barrier, a
-        /// DISSOLVE home (the host's ends the instance first).</summary>
+        /// <summary>
+        /// *B: Back to the lobby* on a GO's held loading screen (19.30.7 step 4): the member's own *Leave instance* from its barrier, a
+        /// DISSOLVE home. Only that member goes: the others of its barrier (a member stamped at the same tick, a defeated partner the
+        /// side rule took along) wait on. The host's (after his "End the instance for everyone?") ends the instance, and everyone at
+        /// that barrier goes home with it.
+        /// </summary>
         private bool GoBackToLobby(HubMember m, long now)
         {
             if (m.Arrival is not { Go: not null } g || !_holds.Contains(g)) return false;
-            _holds.Remove(g);
-            g.Hold = HoldKind.None;
-            if (m.World is { } w && w.Host == m) EndWorld(w, EndReason.HostLeft, now);
+            if (g.Members.FirstOrDefault(a => a.Member == m) is not { } mine) return false;
+            var w = m.World;
+            var host = w is not null && w.Host == m;
             Count("go_back_to_lobby");
-            Note("go_back", g.From, ("member", m.Id), ("wid", m.World?.Wid ?? 0));
-            Dissolve(g, now, redirectHome: true);
+            Note("go_back", g.From, ("member", m.Id), ("wid", w?.Wid ?? 0), ("host", host), ("staying", g.Members.Count - 1));
+            if (host || g.Members.Count == 1)
+            {
+                _holds.Remove(g);
+                g.Hold = HoldKind.None;
+                if (host) EndWorld(w!, EndReason.HostLeft, now);
+                Dissolve(g, now, redirectHome: true);
+                return true;
+            }
+            g.Members.Remove(mine);
+            var own = new ArrivalGroup
+            {
+                From = g.From, BarrierTick = g.BarrierTick, Stage = g.Stage, Point = g.Point, Context = g.Context, ParkedAt = g.ParkedAt, Alive = g.Alive,
+                PlanNew = g.PlanNew, World = g.World, Arrival = g.Arrival, Go = g.Go,
+            };
+            own.Members.Add(mine);
+            m.Arrival = own;
+            Dissolve(own, now, redirectHome: true);
             return true;
         }
     }
