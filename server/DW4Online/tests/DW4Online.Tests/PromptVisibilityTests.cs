@@ -12,6 +12,68 @@ namespace DW4Online.Tests;
 /// </summary>
 public partial class HubLogicTests
 {
+    /// <summary>
+    /// fix-019's to-do for I1b (19.7.2, 19.14): the staff bypass only by the moderator's own choice. His prompt lists a Private or Friends
+    /// instance (with players at the arrival stage, so a player's row would be preselected) after the rows a player would see, never
+    /// preselected, also not when a normal row follows it; a CHOICE of it seats him (role staff, audited staff_join); the automatic
+    /// paths (World:ArrivalPrompt off, a starting instance's co-arrival) never take it; a player never gets the row.
+    /// </summary>
+    [Fact]
+    public void A_moderators_prompt_offers_a_private_instance_as_his_own_choice_never_preselected_and_never_automatic()
+    {
+        var h = PromptHarness();
+        var audits = new List<string>();
+        h.Hub.Audit = (evt, _, _, _) => audits.Add(evt);
+        Admit(h, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
+        Admit(h, "f", Player(101, "f") with { Friends = [102] });
+        Admit(h, "p", Player(102, "p"));
+        Admit(h, "m", Player(103, "m") with { Staff = true, Friends = [102] });
+        Admit(h, "q", Player(104, "q"));
+        HostJoinable(h, "a", "stag0101");
+        var w = W(h, "a");
+        // m's prompt: a's Private instance (Here 1) is a staff-only row: listed, not preselected.
+        Plan(h, "m", 1, "stag0101");
+        var o = LastOptions(h, "m");
+        Assert.Equal((w.Wid, (byte)Visibility.Private, (byte)1, OptionsMsg.NewInstance), (Assert.Single(o.Rows).Wid, o.Rows[0].Visibility, o.Rows[0].Here, o.Preselected));
+        // A player never gets the row.
+        Plan(h, "q", 1, "stag0101");
+        Assert.Equal((OptionsMsg.Nothing, 0), (LastOptions(h, "q").Flags, LastOptions(h, "q").Rows.Count));
+        // p (m's friend) hosts a Public instance at stag0101 too: m's list puts p's row first (what a player sees) and preselects it.
+        HostJoinable(h, "p", "stag0101");
+        var wp = W(h, "p");
+        h.Advance(1000);
+        Plan(h, "m", 2, "stag0101");
+        o = LastOptions(h, "m");
+        Assert.Equal([wp.Wid, w.Wid], o.Rows.Select(r => r.Wid));
+        Assert.Equal((byte)0, o.Preselected);
+        // m chooses a's row himself: a JOIN, role staff, audited.
+        Choose(h, "m", 2, ChoiceKind.Join, w.Wid);
+        BarrierPlan(h, "m", "stag0101", 2);
+        Assert.Equal((BarrierDecision.Join, w.Wid), (h.Decision("m").Decision, h.Decision("m").World.Wid));
+        Assert.Contains("staff_join", audits);
+        Assert.Equal(InstanceRole.Staff, h.P("m").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Role);
+
+        // The automatic path (World:ArrivalPrompt off) never takes a staff-only row: the moderator gets his own instance.
+        var auto = new Harness(world: new WorldHubOptions { ArrivalPrompt = false });
+        Admit(auto, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
+        Admit(auto, "m", Player(103, "m") with { Staff = true });
+        HostJoinable(auto, "a", "stag0101");
+        auto.Barrier("m", "stag0101");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (auto.Decision("m").Decision, auto.Decision("m").World.Arrival));
+        Assert.NotSame(W(auto, "a"), W(auto, "m"));
+        // A starting Private instance takes no moderator as its co-arrival either (an arrival without a choice, prompt on).
+        var start = PromptHarness();
+        Admit(start, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
+        Admit(start, "m", Player(103, "m") with { Staff = true });
+        BarrierPlan(start, "a", "stag0101", BarrierMsg.PlanNewInstance);
+        start.Snapshot("a");
+        start.Log("a", 0, 60);
+        Assert.NotEqual(0, W(start, "a").StartingUntil);
+        Plan(start, "m", 1, "stag0101");
+        Assert.NotEqual(OptionsMsg.Starting, LastOptions(start, "m").Flags);
+        Assert.Equal(OptionsMsg.NewInstance, LastOptions(start, "m").Preselected);
+    }
+
     [Fact]
     public void The_prompt_lists_a_private_instance_only_for_staff_and_a_friends_instance_only_for_the_hosts_friends()
     {
@@ -28,7 +90,8 @@ public partial class HubLogicTests
         Assert.Equal((OptionsMsg.Nothing, 0), (LastOptions(h, "b").Flags, LastOptions(h, "b").Rows.Count));
         Plan(h, "c", 1, "stag0101");
         var o = LastOptions(h, "c");
-        Assert.Equal((w.Wid, (byte)Visibility.Private, (byte)0), (Assert.Single(o.Rows).Wid, o.Rows[0].Visibility, o.Preselected));
+        // (A row only the staff bypass shows is never preselected: the cursor stays on New instance, fix-019's to-do for I1b.)
+        Assert.Equal((w.Wid, (byte)Visibility.Private, OptionsMsg.NewInstance), (Assert.Single(o.Rows).Wid, o.Rows[0].Visibility, o.Preselected));
         Choose(h, "c", 1, ChoiceKind.Join, w.Wid);
         BarrierPlan(h, "c", "stag0101", 1);
         Assert.Equal((BarrierDecision.Join, w.Wid), (h.Decision("c").Decision, h.Decision("c").World.Wid));

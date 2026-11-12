@@ -1054,11 +1054,13 @@ public sealed partial class RoomHub
     /// (JOIN), or a guest's NEW (a gate stage the host's story opened, or a visited stage), or greyed (story not here yet, the
     /// host reconnecting, too long to catch up), ordered by 19.7.3 with decision 40.
     /// </summary>
-    public List<CandidateRow> Candidates(ArrivalGroup g, long now) => Candidates(g, now, out _, out _);
+    public List<CandidateRow> Candidates(ArrivalGroup g, long now, bool staffChoice = false) => Candidates(g, now, out _, out _, staffChoice);
 
     /// <summary>The candidates, and why an instance with a stage group at the arrival stage was none (the loading screen's notice of
-    /// a NEW next to it: another context, full, too long to catch up; 3.4) with the names of its members.</summary>
-    public List<CandidateRow> Candidates(ArrivalGroup g, long now, out BarrierNotice notice, out List<string> names)
+    /// a NEW next to it: another context, full, too long to catch up; 3.4) with the names of its members. <paramref name="staffChoice"/>:
+    /// the rows of a prompt (the member's own choice): a moderator's list also has the Private and Friends instances only the staff
+    /// bypass shows, as <see cref="CandidateRow.StaffOnly"/> rows (fix-019's to-do for I1b, 19.7.2); blocks and bars count as ever.</summary>
+    public List<CandidateRow> Candidates(ArrivalGroup g, long now, out BarrierNotice notice, out List<string> names, bool staffChoice = false)
     {
         notice = BarrierNotice.None;
         names = [];
@@ -1076,7 +1078,12 @@ public sealed partial class RoomHub
         foreach (var w in inArea)
         {
             if (w.Ending || w.Unlisted || w.DataHash != data) continue;
-            if (!members.All(x => Matching.Visible(w, x, now))) continue;
+            var staffOnly = false;
+            if (!members.All(x => Matching.Visible(w, x, now)))
+            {
+                if (!staffChoice || !members.All(x => Matching.Visible(w, x, now, staffChoice: true))) continue;
+                staffOnly = true;
+            }
             var atStage = w.Groups.Where(x => !x.Ended && x.Logged && !x.Departing && !x.LogFull && x.Barrier is null && SameStage(x.Stage, g.Stage)).ToList();
             // The instance's players at the arrival stage (decision 40, "Here (n)"): the members of its stage groups that stay at S (no
             // barrier, not an exit fork's leaving side, not past their log's end: the groups a JOIN could take) and their joiners. Never
@@ -1101,7 +1108,7 @@ public sealed partial class RoomHub
             {
                 if (atStage.Count > 0) full.Add(w);
                 // (Round I1b: the prompt lists it greyed, *Full*, 19.7.2.)
-                if (_world.ArrivalPrompt) rows.Add(new CandidateRow(w, null, RowState.Greyed, here, hostFriend, friendsInside, ping, "full"));
+                if (_world.ArrivalPrompt) rows.Add(new CandidateRow(w, null, RowState.Greyed, here, hostFriend, friendsInside, ping, "full", staffOnly));
                 continue;
             }
             RowState state;
@@ -1127,7 +1134,7 @@ public sealed partial class RoomHub
                 state = RowState.Greyed;
                 why = "story_not_here";
             }
-            rows.Add(new CandidateRow(w, group, state, here, hostFriend, friendsInside, ping, why));
+            rows.Add(new CandidateRow(w, group, state, here, hostFriend, friendsInside, ping, why, staffOnly));
         }
         var (why2, which) = tooLong.Count > 0 ? (BarrierNotice.TooLongToCatchUp, tooLong) : full.Count > 0 ? (BarrierNotice.Full, full) :
             otherContext.Count > 0 ? (BarrierNotice.OtherContext, otherContext) : (BarrierNotice.None, []);
@@ -1160,9 +1167,11 @@ public sealed partial class RoomHub
         }
         // Round I1b (19.7.4, 19.7.7): the prompt's answer decides, checked again (or the prompt is held again, refreshed).
         if (_world.ArrivalPrompt && g.PromptChoice is not null && DecideChoice(g, now)) return;
-        var rows = Candidates(g, now, out var notice, out var names);
-        var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable);
-        if (_world.ArrivalPrompt && starting is null && rows.Count > 0 && StageNames.IsHub(g.From.Stage))
+        // (The prompt's rows include a moderator's staff-only rows, his own choice; the automatic paths never take one.)
+        var prompted = _world.ArrivalPrompt && StageNames.IsHub(g.From.Stage);
+        var rows = Candidates(g, now, out var notice, out var names, staffChoice: prompted);
+        var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !r.StaffOnly);
+        if (prompted && starting is null && rows.Count > 0)
         {
             // Round I1b (19.7.5): candidates and no answer: the loading-screen form (a PLAN's answer that came too late, a departure
             // the census cannot name, an arrival whose OPTIONS showed nothing then).

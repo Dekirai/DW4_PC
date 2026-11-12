@@ -88,8 +88,9 @@ public partial class HubLogicTests
         Assert.NotSame(W(h, "a"), W(h, "b"));
         // fix-019: a moderator who simply plays is a player for the automatic join too: a's Private instance is not his to enter (the
         // staff bypass is for the staff member's own choice of the row, I1b's prompt and I3's browser, 19.14). Before, c joined a's
-        // instance at once (its story replaced by a stranger's).
-        var s = new Harness();
+        // instance at once (its story replaced by a stranger's). (The automatic path, World:ArrivalPrompt off; the prompt's staff-only
+        // rows: PromptVisibilityTests.)
+        var s = new Harness(world: new WorldHubOptions { ArrivalPrompt = false });
         var audits = new List<string>();
         s.Hub.Audit = (evt, _, _, _) => audits.Add(evt);
         Admit(s, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
@@ -122,8 +123,8 @@ public partial class HubLogicTests
         Assert.Equal((BarrierDecision.Join, W(p, "a").Wid), (p.Decision("c").Decision, p.Decision("c").World.Wid));
         Assert.Contains("staff_join", pAudits);
         Assert.Equal(InstanceRole.Staff, p.P("c").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Role);
-        // Friends: a friend of the host joins, a stranger does not, nor a moderator who is no friend.
-        var g = new Harness();
+        // Friends: a friend of the host joins, a stranger does not, nor a moderator who is no friend (automatically).
+        var g = new Harness(world: new WorldHubOptions { ArrivalPrompt = false });
         Admit(g, "a", Player(100, "a") with { DefaultVisibility = Visibility.Friends });
         Admit(g, "f", Player(101, "f") with { Friends = [100] });
         Admit(g, "s", Player(102, "s"));
@@ -185,12 +186,17 @@ public partial class HubLogicTests
         // e, a stranger, takes the gate to stag0201: nobody of a's instance there and not a friend's: New instance (fix-019, the I1a
         // interim rule: the automatic join takes only the row I1b's prompt would preselect, decision 40). Before, e became a guest
         // in a stranger's story elsewhere in the area.
+        // (Round I1b: e's loading-screen prompt lists a's row with the cursor on New instance, decision 40; e takes the cursor.)
+        h.P("e").AutoAnswer = false;
         BarrierWith(h, "e", "stag0201", RoomSettings.Default);
+        var oe = h.P("e").Last(Msg.Options, OptionsMsg.Parse);
+        Assert.Equal((w.Wid, OptionsMsg.NewInstance), (Assert.Single(oe.Rows).Wid, oe.Preselected));
+        h.Send("e", new ChoiceMsg(0, oe.Inst, oe.Visit, ChoiceKind.New, 0, oe.Visibility, 0, ChoiceMsg.DefaultBackPoint).Frame());
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, StoryMode.Merge), (h.Decision("e").Decision, h.Decision("e").World.Arrival,
             h.Decision("e").World.StoryMode));
         Assert.NotSame(w, W(h, "e"));
         h.Advance(11_000); // (e's instance no longer *starting*)
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         // b, a's friend, takes the gate to stag0201: no stage group of a's there, a gate the host's story opened: a guest's NEW with
         // the host's story (the friend's row first, before e's with e at stag0201).
         BarrierWith(h, "b", "stag0201", RoomSettings.Default);
@@ -201,16 +207,18 @@ public partial class HubLogicTests
         Assert.Equal(1, RoomStoryData.FromBlob(ok.Story, ok.StoryRevision).Flags[4]); // the host's phase, not b's own
         Assert.Same(w, W(h, "b"));
         Assert.Equal(2, w.Groups.Count);
-        // (Round I1b: b's loading-screen prompt listed a's row joinable with nobody of it at stag0201, the cursor on New instance by
-        // decision 40; the harness took the first choosable row, as DW4_ONLINE_AUTOCHOICE=first does.)
+        // (Round I1b: b's loading-screen prompt listed a's row joinable with nobody of it at stag0201 first, the host b's friend, so the
+        // cursor on it by decision 40, then e's instance loading with e there; the harness took the first choosable row.)
         var ob = h.P("b").Last(Msg.Options, OptionsMsg.Parse);
-        Assert.Equal((w.Wid, OptionState.Joinable, (byte)0, OptionsMsg.NewInstance), (Assert.Single(ob.Rows).Wid, ob.Rows[0].State, ob.Rows[0].Here, ob.Preselected));
+        Assert.Equal([w.Wid, W(h, "e").Wid], ob.Rows.Select(r => r.Wid));
+        Assert.Equal((OptionState.Joinable, (byte)0, (byte)0), (ob.Rows[0].State, ob.Rows[0].Here, ob.Preselected));
         // c arrives by the return mat on dng205b2: never visited, no gate: "Story not here yet", its own instance.
         h.Barrier("c", "dng205b2");
         Assert.NotSame(w, W(h, "c"));
         Assert.Equal(ArrivalKind.NewInstance, h.Decision("c").World.Arrival);
-        Assert.Equal((w.Wid, OptionState.StoryNotHere), (Assert.Single(h.P("c").Last(Msg.Options, OptionsMsg.Parse).Rows).Wid,
-            h.P("c").Last(Msg.Options, OptionsMsg.Parse).Rows[0].State)); // (the greyed row of the prompt, round I1b)
+        // (The greyed rows of the prompt, round I1b: a's, and e's own Dry Land instance.)
+        Assert.All(h.P("c").Last(Msg.Options, OptionsMsg.Parse).Rows, r => Assert.Equal(OptionState.StoryNotHere, r.State));
+        Assert.Contains(h.P("c").Last(Msg.Options, OptionsMsg.Parse).Rows, r => r.Wid == w.Wid);
         // After the instance has been at dng205b2, d's arrival there enters it.
         BarrierWith(h, "a", "dng205b2", hostSettings);
         h.Snapshot("a");

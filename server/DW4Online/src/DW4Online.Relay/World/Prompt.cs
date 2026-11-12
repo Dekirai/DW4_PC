@@ -99,8 +99,8 @@ namespace DW4Online.Relay.Hub
             p.Point = msg.Point;
             p.Context = msg.Context;
             var g = PlanGroup(m, home, msg.Stage, msg.Point, msg.Context, now);
-            var rows = Candidates(g, now);
-            var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable);
+            var rows = Candidates(g, now, staffChoice: true);
+            var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !r.StaffOnly);
             OptionsMsg options;
             if (starting is not null)
                 options = new OptionsMsg(msg.Plan, 0, 0, msg.Stage.ToLowerInvariant(), OptionsMsg.Starting, m.DefaultVisibility, OptionsMsg.NewInstance,
@@ -281,7 +281,8 @@ namespace DW4Online.Relay.Hub
                     Dissolve(g, now, redirectHome: true, backPoint: point);
                     return true;
                 case ChoiceKind.Join:
-                    var rows = Candidates(g, now);
+                    // (The member's own choice: a moderator may take a row only the staff bypass shows, audited staff_join by TakeSeat.)
+                    var rows = Candidates(g, now, staffChoice: true);
                     var row = rows.FirstOrDefault(r => r.World.Wid == c.Wid);
                     if (row is null || !row.Choosable)
                     {
@@ -298,6 +299,16 @@ namespace DW4Online.Relay.Hub
                         return true;
                     }
                     var w = row.World;
+                    if (SeatsRefused(g, w, now))
+                    {
+                        // (The removal binds at the choice too, 19.6.6: a member or co-arrival the instance may not seat makes the row not
+                        // choosable; the barrier waits with a refreshed prompt, "no longer open". Visible() keeps a barred account's rows
+                        // out already; this covers a HOME still owed to the instance.)
+                        Count("choice_refused");
+                        Note("choice_refused", g.From, ("member", m.Id), ("wid", c.Wid), ("why", "removed"));
+                        HoldPrompt(g, rows, OptionsMsg.NoticeClosed, g.PromptHosts.GetValueOrDefault(c.Wid) ?? "", now);
+                        return true;
+                    }
                     var starting = w.StartingUntil != 0 && row.Group is not null;
                     g.Arrival = starting ? ArrivalKind.Starting : row.Group is null ? ArrivalKind.GuestNew : ArrivalKind.AutoJoin;
                     g.World = w;
@@ -321,10 +332,17 @@ namespace DW4Online.Relay.Hub
             }
         }
 
+        /// <summary>A member or co-arrival of <paramref name="g"/> that <paramref name="w"/> may not seat (<see cref="Unseatable"/>: a removal
+        /// bar, a HOME it still owes the instance; moderation lane, 19.6.6 "binding on the server").</summary>
+        private bool SeatsRefused(ArrivalGroup g, WorldInstance w, long now) =>
+            g.Members.Select(a => a.Member).Concat(g.CoArrivals.SelectMany(x => x.Members).Select(a => a.Member))
+                .Any(x => !w.Seats.ContainsKey(x) && Unseatable(w, x, now));
+
         /// <summary>Decision 43: a starting instance at the arrival's stage (19.7.6) that the arrival may see and fits, and that was never
         /// offered to it (the base of the others leaving with it went a moment earlier); null: none.</summary>
         private CandidateRow? StartingNotOffered(ArrivalGroup g, long now) =>
-            Candidates(g, now).FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !g.PromptHosts.ContainsKey(r.World.Wid));
+            Candidates(g, now).FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !g.PromptHosts.ContainsKey(r.World.Wid) &&
+                                                   !SeatsRefused(g, r.World, now));
 
         /// <summary>A *New instance* chooser joins a starting instance as its co-arrival (decision 43): a JOIN at the entrance with 3.4's
         /// hold, as an arrival without a choice does (19.7.6), with the co-arrival's toast.</summary>
@@ -371,7 +389,7 @@ namespace DW4Online.Relay.Hub
             if (g.Members.Count == 0 || Ms(now - g.PromptOptionsAt) < _world.OptionsRefreshMs) return;
             g.PromptOptionsAt = now;
             var m = g.Members[0].Member;
-            var rows = Candidates(g, now);
+            var rows = Candidates(g, now, staffChoice: true);
             var options = BuildOptions(m, 0, g.From.Id, g.From.Visit, g.Stage, rows, 0, "", OptionsMsg.Refresh);
             var frame = options.Frame();
             if (g.PromptOptions is { } last && last.AsSpan().SequenceEqual(frame)) return;
@@ -396,7 +414,7 @@ namespace DW4Online.Relay.Hub
                 }
                 if (Ms(now - p.OptionsAt) < _world.OptionsRefreshMs) continue;
                 p.OptionsAt = now;
-                var rows = Candidates(PlanGroup(m, home, p.Stage, p.Point, p.Context, now), now);
+                var rows = Candidates(PlanGroup(m, home, p.Stage, p.Point, p.Context, now), now, staffChoice: true);
                 var options = BuildOptions(m, p.Plan, 0, 0, p.Stage, rows, 0, "", OptionsMsg.Refresh);
                 var frame = options.Frame();
                 if (p.Options is { } last && last.AsSpan().SequenceEqual(frame)) continue;

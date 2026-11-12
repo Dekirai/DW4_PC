@@ -265,9 +265,15 @@ public sealed partial class RoomHub
     /// </summary>
     private void RedecideCoArrivals(ArrivalGroup g, long now)
     {
-        var groups = g.CoArrivals.Where(c => c.Members.Count > 0).ToList();
+        var groups = g.CoArrivals.ToList();
         g.CoArrivals.Clear();
-        foreach (var c in groups)
+        RedecideGroups(groups, now);
+    }
+
+    /// <summary>Former co-arrivals decide on their own (<see cref="RedecideCoArrivals"/>; FinishCoArrival's base that chose a row).</summary>
+    private void RedecideGroups(IEnumerable<ArrivalGroup> groups, long now)
+    {
+        foreach (var c in groups.Where(c => c.Members.Count > 0).ToList())
         {
             foreach (var a in c.Members) a.Member.Arrival = c;
             Decide(c, now);
@@ -1541,11 +1547,8 @@ public sealed partial class RoomHub
             holder.CoArrivals.Clear();
             holder.Awaited.Clear();
             if (!DecideChoice(holder, now)) FreshJoinOrNew(holder, now);
-            foreach (var c in others)
-            {
-                foreach (var a in c.Members) a.Member.Arrival = c;
-                Decide(c, now);
-            }
+            // (Each parks under its own name again, as the co-arrivals of a base left without members: moderation lane, 2026-11-12.)
+            RedecideGroups(others, now);
             return;
         }
         if (holder.Fresh && holder.PromptChoice is { Choice: ChoiceKind.New } chosen)

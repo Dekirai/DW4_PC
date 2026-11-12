@@ -19,9 +19,11 @@ public enum RowState
 }
 
 /// <summary>One row of an arrival's candidates: the instance, its stage group at the arrival stage (null: none), the state, its players
-/// at the arrival stage, the friend relation and the worst round trip of its members.</summary>
+/// at the arrival stage, the friend relation and the worst round trip of its members. <see cref="StaffOnly"/>: a row only the staff
+/// bypass shows (a Private or Friends instance a moderator may choose himself in the prompt; fix-019, 19.7.2): never preselected, never
+/// an automatic join or co-arrival.</summary>
 public sealed record CandidateRow(WorldInstance World, HubInstance? Group, RowState State, int Here, bool HostFriend, int FriendsInside, double PingMs,
-    string Why = "")
+    string Why = "", bool StaffOnly = false)
 {
     public bool Choosable => State != RowState.Greyed;
     public bool JoinableNow => State is RowState.Joinable or RowState.GuestNew;
@@ -93,7 +95,8 @@ public static class Matching
     /// now in step 4 ("joinable now, by ping").
     /// </summary>
     public static List<CandidateRow> Order(IEnumerable<CandidateRow> rows) =>
-        rows.OrderBy(Rank)
+        rows.OrderBy(r => r.StaffOnly ? 1 : 0) // (a moderator's prompt lists what a player would see first, then the staff-only rows)
+            .ThenBy(Rank)
             .ThenBy(r => r.HostFriend ? 0 : r.FriendsInside > 0 ? 1 : 2)
             .ThenByDescending(r => r.HostFriend ? 0 : r.FriendsInside)
             .ThenBy(r => r.Here > 0 ? 0 : 1)
@@ -120,7 +123,8 @@ public static class Matching
     public static CandidateRow? AutoJoinRow(IReadOnlyList<CandidateRow> ordered) => Preselected(ordered);
 
     /// <summary>The row I1b's prompt preselects (19.7.3): the first row when it is not greyed and is the party's or a friend's or has
-    /// players at the arrival stage; otherwise none (*New instance*).</summary>
+    /// players at the arrival stage; otherwise none (*New instance*). A row only the staff bypass shows is never preselected nor counted
+    /// as the first (fix-019: a moderator who simply plays is a player; the row is his own choice only).</summary>
     public static CandidateRow? Preselected(IReadOnlyList<CandidateRow> ordered) =>
-        ordered.Count > 0 && ordered[0].Choosable && (ordered[0].HostFriend || ordered[0].FriendsInside > 0 || ordered[0].Here > 0) ? ordered[0] : null;
+        ordered.FirstOrDefault(r => !r.StaffOnly) is { Choosable: true } first && (first.HostFriend || first.FriendsInside > 0 || first.Here > 0) ? first : null;
 }

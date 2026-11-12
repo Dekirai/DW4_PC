@@ -161,7 +161,12 @@ public partial class HubLogicTests
         Assert.NotNull(h.I("a").Barrier);
         // c, a stranger, comes to stag0101: nobody of a's instance stays there, so the I1a interim rule makes him no guest of theirs
         // (before the refix a and b counted as "here" and c entered a's instance alone in a new stage group at stag0101).
+        // (Round I1b: c's loading-screen prompt lists a's row with Here 0 and the cursor on New instance, decision 40; c takes the cursor.)
+        h.P("c").AutoAnswer = false;
         h.Barrier("c", "stag0101");
+        var o = h.P("c").Last(Msg.Options, OptionsMsg.Parse);
+        Assert.Equal(((byte)0, OptionsMsg.NewInstance), (Assert.Single(o.Rows, r => r.Wid == w.Wid).Here, o.Preselected));
+        h.Send("c", new ChoiceMsg(0, o.Inst, o.Visit, ChoiceKind.New, 0, o.Visibility, 0, ChoiceMsg.DefaultBackPoint).Frame());
         var ok = h.Decision("c");
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (ok.Decision, ok.World.Arrival));
         Assert.NotSame(w, W(h, "c"));
