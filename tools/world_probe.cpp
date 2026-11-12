@@ -14,6 +14,9 @@
 //   dw4_world_probe DATA census     round I1b's departure census: Engine::pending_departure_choice
 //                                   at every line of the lobby gate's and the return mat's menus against
 //                                   the departure the press really started (19.7.4)
+//   dw4_world_probe DATA go [CASE]  round I1b's first task (19.30.7): the GO departure against
+//                                   the exit port's own departure to the same stage and point
+//                                   (both copies of the fork, replays, the zone shuffle off and on)
 //   dw4_world_probe DATA homeover [CASE]  a stage group left with only defeated players
 //                                   after a HOME, with the alive mask of every stage change, and the
 //                                   original's game over offline (19.6.5)
@@ -21,6 +24,7 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/online.hpp"
 #include "dw4/engine/online_membership.hpp"
+#include "dw4/engine/randomizer.hpp"
 #include "dw4/engine/tick_state.hpp"
 #include "online/engine_adapter.hpp"
 #include "online/room_settings.hpp"
@@ -1400,11 +1404,368 @@ void census_probe() {
     std::printf("census: %d lines named, %d lines equal to what the press started (a named departure, or none for a line naming none)\n", named, equal);
 }
 
+// ---------------------------------------------------------------------------
+// go (round I1b's first task, docs/SEAMLESS.md 19.30.7)
+// ---------------------------------------------------------------------------
+// Two members in stag0201 (slot 0 walks, slot 1 walks until frame kGoTeleport
+// after the load and then stands). The exit port's own departure: slot 1 is
+// put onto matz01 (to dng204b1 point 0, g_StChangeKind "run") and answers its
+// prompt Yes; the port forks it off (ForkKind::exit) and its copy departs.
+// The GO: slot 1 is put next to the mat (not on it) at the same frame, and
+// Engine::online_go(slot 1, the port's barrier target) runs before the step
+// in which the port forked, so both forks record the same frame. Each run in
+// both copies of the fork (split identity 1: the leavers, 0: the stayers),
+// and as replays with the recorded fork side (identity -1, the side taken
+// from STATE_DATA's fork list) and, for the GO, a counter-proof replay with
+// the exit's frame convention (one frame early). The leavers' barrier target
+// (stage, point after the zone remap), their load snapshot and the net
+// fingerprints after the load are compared between the port and the GO; the
+// zone shuffle off and on (seed 4242, zones 1 and 2).
+namespace go_probe {
+
+constexpr std::uint64_t kGoTeleport = 600;   // frames after the stag0201 load
+constexpr std::uint64_t kAfterLoad = 1200;   // fingerprints compared after the leavers' load step
+constexpr std::uint64_t kStayerFrames = 1500; // the stayers' copy after the fork
+
+struct Run {
+    std::uint64_t load0{};           // the stag0201 load step
+    std::uint64_t teleport{};
+    std::optional<SplitResult> split;
+    std::optional<ExitHeading> heading;
+    std::uint64_t park{};            // the step that made the stage change pending
+    std::string barrier_stage;
+    int barrier_point{};
+    std::uint8_t alive{}, present{};
+    std::uint64_t load{};            // the leavers' load step
+    std::string load_stage;
+    std::vector<std::uint8_t> canonical;
+    std::map<std::uint64_t, std::uint64_t> fp;    // post-step frame -> net fingerprint (until the park)
+    std::map<std::uint64_t, std::uint64_t> after; // frames after the leavers' load step -> net fingerprint
+    std::uint8_t present_end{};
+    std::string stage_end;
+};
+
+std::uint8_t alive_of(Engine& engine) {
+    std::uint8_t alive = 0;
+    if (const auto* sys = engine.get<GameSystem>())
+        for (int s = 0; s < 4; ++s)
+            if (sys->players[std::size_t(s)].joined && sys->players[std::size_t(s)].hp > 0) alive |= std::uint8_t(1u << s);
+    return alive;
+}
+
+// `go`: the GO's target (empty: the port's run); `go_before`: the post-step
+// frame of the step the GO comes before (the port's fork frame); `sides`: a
+// replay's fork list (identity -1).
+Run run(int identity, int zones, const std::string& go_stage, int go_point, std::uint64_t go_before, const std::vector<ForkSide>& sides) {
+    Run r;
+    std::optional<Engine> holder;
+    new_engine(holder);
+    auto& engine = *holder;
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    const char* species[2] = {"p_agumon", "p_dorumon"};
+    for (int s = 0; s < 2; ++s) {
+        sys->players[std::size_t(s)].joined = true;
+        sys->players[std::size_t(s)].digimon = species[s];
+    }
+    if (zones) {
+        engine.cheats().rand_seed = 4242;
+        engine.cheats().rand_zones = std::uint8_t(zones);
+    }
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 0b11;
+    engine.set_online(rules);
+    engine.set_split_identity(identity);
+    engine.set_view_slot(identity < 0 ? 0 : identity);
+    if (!sides.empty()) engine.set_fork_sides(sides);
+    engine.request_stage("stag0201");
+    const bool port = go_stage.empty();
+    std::uint64_t serial = 0, load_serial = 0;
+    bool placed = false;
+    for (int i = 0; i < 12000; ++i) {
+        const std::uint64_t frame = engine.frame();
+        if (!r.load0 && engine.stage_name() == "stag0201" && engine.stage_snapshot()) r.load0 = engine.stage_snapshot() ? frame : 0;
+        if (!placed && r.load0 && frame >= r.load0 + kGoTeleport && engine.membership_safe()) {
+            const auto* mats = engine.get<MatCtrlManager>();
+            auto centre = mats ? mats->mat_centre("matz01") : std::nullopt;
+            if (!centre) throw std::runtime_error("stag0201 has no matz01");
+            // The GO's slot 1 stands beside the mat (60 units off it, on the
+            // field side), the port's on it.
+            if (!port) centre->x += 60.0f;
+            if (!teleport(engine, 1, *centre)) throw std::runtime_error("teleport failed");
+            r.teleport = frame;
+            placed = true;
+        }
+        if (!port && placed && !r.split && frame + 1 == go_before) {
+            const bool departs = engine.online_go(0b10, go_stage, go_point);
+            (void)departs;
+            if (auto split = engine.take_split()) r.split = split;
+            if (auto heading = engine.take_heading(); heading && !r.heading) r.heading = heading;
+        }
+        std::array<PadSample, 4> pads{};
+        if (r.load) {
+            // After the leavers' load: slot 0 (the goer, slot 0 since its NEW) walks by the same pads in both runs.
+            pads[0] = pad_for(frame - r.load, 0);
+        } else {
+            pads = pads_at(frame);
+            if (placed) {
+                pads[1] = PadSample{};
+                pads[1].connected = true;
+                // The port's prompt: A now and then answers it (Yes: the cursor starts on it).
+                if (port && frame >= r.teleport + 40 && (frame - r.teleport) % 30 < 2) pads[1].buttons = dw4::pad_button::a;
+            }
+        }
+        const bool was_pending = engine.pending_stage().has_value();
+        step(engine, pads);
+        if (auto split = engine.take_split(); split && !r.split) r.split = split;
+        // (The first heading: the port's or the GO's own; the NEXTSTAGE's
+        // note_departure of the then solo copy announces it once more.)
+        if (auto heading = engine.take_heading(); heading && !r.heading) r.heading = heading;
+        if (!r.load) r.fp[engine.frame()] = engine.net_fingerprint();
+        if (!was_pending && engine.pending_stage() && !r.park) {
+            r.park = engine.frame();
+            r.barrier_stage = std::string(*engine.pending_stage());
+            if (const auto* points = engine.get<PlayerPointManager>()) r.barrier_point = points->point_no();
+            r.alive = alive_of(engine);
+            r.present = engine.online().present;
+            serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+            BarrierResult b;
+            b.decision = Decision::new_instance;
+            b.slot_map = {-1, -1, -1, -1};
+            for (int s = 0, to = 0; s < 4; ++s)
+                if (r.present & (1u << s)) b.slot_map[std::size_t(s)] = to++;
+            b.own_slot = 0;
+            b.rules = engine.online();
+            engine.set_barrier(b);
+        }
+        const auto* snapshot = engine.stage_snapshot();
+        if (r.park && !r.load && snapshot && snapshot->serial != serial) {
+            r.load = engine.frame();
+            r.load_stage = snapshot->stage;
+            r.canonical = engine.snapshot_bytes(SnapshotForm::canonical);
+            load_serial = snapshot->serial;
+        }
+        if (r.load) {
+            r.after[engine.frame() - r.load] = engine.net_fingerprint();
+            if (engine.frame() - r.load >= kAfterLoad) break;
+        }
+        // The stayers' copy never parks: it plays on after the fork.
+        if (r.split && !r.park && engine.frame() >= r.split->frame + kStayerFrames) break;
+    }
+    (void)load_serial;
+    r.present_end = engine.online().present;
+    r.stage_end = engine.stage_name();
+    engine.set_online(OnlineRules{});
+    return r;
+}
+
+// The first post-step frame whose fingerprints differ (0: equal over the frames both have).
+std::uint64_t first_diff(const std::map<std::uint64_t, std::uint64_t>& a, const std::map<std::uint64_t, std::uint64_t>& b, std::uint64_t& compared) {
+    compared = 0;
+    for (const auto& [k, v] : a) {
+        const auto it = b.find(k);
+        if (it == b.end()) continue;
+        ++compared;
+        if (it->second != v) return k;
+    }
+    return 0;
+}
+
+std::string split_text(const std::optional<SplitResult>& s) {
+    if (!s) return "no fork";
+    char t[96];
+    std::snprintf(t, sizeof t, "fork at %llu leavers %x kept %x child %x local %d", static_cast<unsigned long long>(s->frame), unsigned(s->leavers),
+                  unsigned(s->kept), unsigned(s->child), s->local_leaves ? 1 : 0);
+    return t;
+}
+
+std::string heading_text(const std::optional<ExitHeading>& h) {
+    if (!h) return "no heading";
+    char t[128];
+    std::snprintf(t, sizeof t, "heading %s point %d leavers %x asked %x at %llu", h->stage.c_str(), h->point, unsigned(h->leavers), unsigned(h->asked),
+                  static_cast<unsigned long long>(h->frame));
+    return t;
+}
+
+void compare_snapshots(const std::vector<std::uint8_t>& go, const std::vector<std::uint8_t>& ref) {
+    if (go == ref) {
+        std::printf("      load snapshots: equal\n");
+        return;
+    }
+    try {
+        const auto a = decode_snapshot(go);
+        const auto b = decode_snapshot(ref);
+        auto guest = a;
+        const auto target = encode_snapshot(b, SnapshotForm::canonical);
+        std::string fields;
+        const std::pair<const char*, std::function<void()>> swaps[] = {
+            {"flags", [&] { guest.flags = b.flags; }},
+            {"counters", [&] { guest.counters = b.counters; }},
+            {"frame/time", [&] {
+                 guest.frame = b.frame;
+                 guest.time = b.time;
+             }},
+            {"pad_input_enabled", [&] { guest.pad_input_enabled = b.pad_input_enabled; }},
+            {"cheats", [&] { guest.cheats = b.cheats; }},
+            {"random", [&] { guest.random = b.random; }},
+            {"point_no", [&] { guest.point_no = b.point_no; }},
+            {"loader_teardown", [&] { guest.loader_teardown = b.loader_teardown; }},
+            {"loader_common", [&] { guest.loader_common = b.loader_common; }},
+            {"stage_active", [&] { guest.stage_active = b.stage_active; }},
+            {"system (GameSystem)", [&] { guest.system = b.system; }},
+            {"sound", [&] { guest.sound = b.sound; }},
+            {"online", [&] { guest.online = b.online; }},
+            {"personal", [&] { guest.personal = b.personal; }},
+            {"clock_lateness", [&] { guest.clock_lateness = b.clock_lateness; }},
+            {"pads", [&] { guest.pads = b.pads; }},
+            {"console_reset", [&] { guest.console_reset = b.console_reset; }},
+        };
+        auto before = encode_snapshot(guest, SnapshotForm::canonical);
+        for (const auto& [field, swap] : swaps) {
+            if (before == target) break;
+            swap();
+            auto after = encode_snapshot(guest, SnapshotForm::canonical);
+            if (after != before) fields += std::string(fields.empty() ? "" : ", ") + field;
+            before = std::move(after);
+        }
+        std::printf("      load snapshots differ in: %s%s (frames %llu / %llu)\n", fields.empty() ? "none" : fields.c_str(),
+                    before == target ? "" : " (and more)", static_cast<unsigned long long>(a.frame), static_cast<unsigned long long>(b.frame));
+        if (fields.find("GameSystem") != std::string::npos) {
+            const auto* ga = static_cast<const GameSystem*>(a.system.get());
+            const auto* gb = static_cast<const GameSystem*>(b.system.get());
+            for (int s = 0; ga && gb && s < 4; ++s) {
+                const auto& pa = ga->players[std::size_t(s)];
+                const auto& pb = gb->players[std::size_t(s)];
+                if (pa.joined || pb.joined)
+                    std::printf("        player %d: joined %d/%d %s/%s hp %d/%d mp %d/%d bits %d/%d devices %zu/%zu\n", s, pa.joined ? 1 : 0,
+                                pb.joined ? 1 : 0, pa.digimon.c_str(), pb.digimon.c_str(), pa.hp, pb.hp, pa.mp, pb.mp, pa.bits, pb.bits,
+                                pa.devices.size(), pb.devices.size());
+            }
+            if (ga && gb)
+                std::printf("        gate %s/%s %d/%d ninzu %d/%d\n", ga->gate_stage_name.value_or("-").c_str(), gb->gate_stage_name.value_or("-").c_str(),
+                            ga->gate_stage_no, gb->gate_stage_no, ga->ninzu, gb->ninzu);
+        }
+        if (fields.find("flags") != std::string::npos) {
+            int shown = 0;
+            std::set<std::int32_t> keys;
+            for (const auto& [k, v] : a.flags) keys.insert(k);
+            for (const auto& [k, v] : b.flags) keys.insert(k);
+            for (const auto k : keys) {
+                const auto ia = a.flags.find(k);
+                const auto ib = b.flags.find(k);
+                const bool ha = ia != a.flags.end(), hb = ib != b.flags.end();
+                if (ha == hb && (!ha || ia->second == ib->second)) continue;
+                if (shown++ < 20)
+                    std::printf("        flag %d: GO %s, port %s\n", k, ha ? std::to_string(int(ia->second)).c_str() : "-",
+                                hb ? std::to_string(int(ib->second)).c_str() : "-");
+            }
+        }
+    } catch (const std::exception& e) {
+        std::printf("      (snapshot decode failed: %s)\n", e.what());
+    }
+}
+
+void probe(int only) {
+    std::printf("go probe: stag0201, slot 0 walks, slot 1 at matz01 (to dng204b1 point 0) from load + %llu; the exit port's departure\n"
+                "(slot 1 on the mat answers Yes) against a GO of slot 1 to the port's barrier target before the port's fork step\n",
+                static_cast<unsigned long long>(kGoTeleport));
+    const int zone_cases[] = {0, 1, 2};
+    for (int ci = 0; ci < 3; ++ci) {
+        if (only >= 0 && only != ci) continue;
+        const int zones = zone_cases[ci];
+        std::printf("  zone shuffle %s\n", zones ? (std::string("on (seed 4242, zones ") + std::to_string(zones) + ")").c_str() : "off");
+        const Run pl = run(1, zones, {}, 0, 0, {});
+        const Run ps = run(0, zones, {}, 0, 0, {});
+        std::printf("    port, leavers' copy: teleport %llu, %s, %s; barrier %s point %d (alive %x present %x) at %llu, load step %llu (%s)\n",
+                    static_cast<unsigned long long>(pl.teleport), split_text(pl.split).c_str(), heading_text(pl.heading).c_str(),
+                    pl.barrier_stage.c_str(), pl.barrier_point, unsigned(pl.alive), unsigned(pl.present), static_cast<unsigned long long>(pl.park),
+                    static_cast<unsigned long long>(pl.load), pl.load_stage.c_str());
+        std::printf("    port, stayers' copy: %s, end present %x stage %s\n", split_text(ps.split).c_str(), unsigned(ps.present_end), ps.stage_end.c_str());
+        if (!pl.split || pl.barrier_stage.empty()) {
+            std::printf("    (the port did not depart: no comparison)\n");
+            continue;
+        }
+        const std::uint64_t fork = pl.split->frame;
+        const Run gl = run(1, zones, pl.barrier_stage, pl.barrier_point, fork, {});
+        const Run gs = run(0, zones, pl.barrier_stage, pl.barrier_point, fork, {});
+        std::printf("    GO, leavers' copy:   teleport %llu, %s, %s; barrier %s point %d (alive %x present %x) at %llu, load step %llu (%s)\n",
+                    static_cast<unsigned long long>(gl.teleport), split_text(gl.split).c_str(), heading_text(gl.heading).c_str(),
+                    gl.barrier_stage.c_str(), gl.barrier_point, unsigned(gl.alive), unsigned(gl.present), static_cast<unsigned long long>(gl.park),
+                    static_cast<unsigned long long>(gl.load), gl.load_stage.c_str());
+        std::printf("    GO, stayers' copy:   %s, end present %x stage %s\n", split_text(gs.split).c_str(), unsigned(gs.present_end), gs.stage_end.c_str());
+        std::printf("    the GO's target: %s (the port's barrier %s point %d, the mat's named dng204b1 point 0)\n",
+                    gl.barrier_stage == pl.barrier_stage && gl.barrier_point == pl.barrier_point ? "the same stage and point" : "DIFFERS",
+                    pl.barrier_stage.c_str(), pl.barrier_point);
+        if (zones) {
+            // Counter-proof of the remap's skip: STAGECTL's own remap of the
+            // already remapped target (what a NEXTSTAGE without I<1> sends).
+            // The remap is keyed by the field a departure leaves: a GO from a
+            // field whose own entrance names the target would be sent on.
+            for (const char* from : {"stag0201", "stag0202", "stag0203", "stag0204", "stag0205"}) {
+                const auto again = randomizer::zone_remap(randomizer::sub_seed(4242, "zones"), zones, from, pl.barrier_stage, pl.barrier_point);
+                std::printf("    counter-proof: a GO from %s to %s point %d with the remap would lead to %s point %d%s\n", from,
+                            pl.barrier_stage.c_str(), pl.barrier_point, again ? again->stage.c_str() : pl.barrier_stage.c_str(),
+                            again ? again->point : pl.barrier_point, again && again->stage != pl.barrier_stage ? " (WRONG: caught)" : "");
+            }
+        }
+        std::printf("    departure: port fork -> park %llu frames, GO %llu frames; park -> load step: port %llu, GO %llu\n",
+                    static_cast<unsigned long long>(pl.park - fork), gl.park ? static_cast<unsigned long long>(gl.park - fork) : 0ull,
+                    static_cast<unsigned long long>(pl.load - pl.park), static_cast<unsigned long long>(gl.load - gl.park));
+        // Both copies of the GO's fork, live and replayed with the recorded side.
+        std::uint64_t n = 0;
+        auto d = first_diff(gs.fp, gl.fp, n);
+        std::printf("    GO copies before the fork: stayers vs leavers %s\n",
+                    d && gl.split && d < gl.split->frame ? ("differ at " + std::to_string(d)).c_str() : "equal up to the fork step");
+        if (gl.split) {
+            // (The client's fork list: a fork reported with tick t is the
+            // engine's frame after the step of t, GameEngineLink::
+            // set_fork_sides: for the GO the step it came before, `fork`.)
+            const ForkSide stay{fork, gl.split->leavers, false}, leave{fork, gl.split->leavers, true};
+            const Run rs = run(-1, zones, pl.barrier_stage, pl.barrier_point, fork, {stay});
+            const Run rl = run(-1, zones, pl.barrier_stage, pl.barrier_point, fork, {leave});
+            d = first_diff(gs.fp, rs.fp, n);
+            std::printf("    GO replay (identity -1) of the stayers' side: %s over %llu frames\n", d ? ("differs at " + std::to_string(d)).c_str() : "equal",
+                        static_cast<unsigned long long>(n));
+            d = first_diff(gl.fp, rl.fp, n);
+            std::uint64_t n2 = 0;
+            const auto d2 = first_diff(gl.after, rl.after, n2);
+            std::printf("    GO replay of the leavers' side: %s over %llu frames to the park, after the load %s over %llu frames (%s)\n",
+                        d ? ("differs at " + std::to_string(d)).c_str() : "equal", static_cast<unsigned long long>(n),
+                        d2 ? ("differs at +" + std::to_string(d2)).c_str() : "equal", static_cast<unsigned long long>(n2), rl.load_stage.c_str());
+            // Counter-proof: the exit's frame convention (the fork inside the step) misses the GO's side.
+            const ForkSide early{fork - 1, gl.split->leavers, true};
+            const Run rx = run(-1, zones, pl.barrier_stage, pl.barrier_point, fork, {early});
+            d = first_diff(gl.fp, rx.fp, n);
+            std::printf("    counter-proof, the leavers' side recorded one frame early (ForkKind::exit's frame): %s (replay ends in %s, present %x)\n",
+                        d ? ("differs from " + std::to_string(d)).c_str() : "equal (NOT caught)", rx.stage_end.c_str(), unsigned(rx.present_end));
+        }
+        // The port's fork, replayed the same way (sanity).
+        {
+            const ForkSide leave{pl.split->frame, pl.split->leavers, true};
+            const Run rl = run(-1, zones, {}, 0, 0, {leave});
+            d = first_diff(pl.fp, rl.fp, n);
+            std::printf("    port replay of the leavers' side: %s over %llu frames\n", d ? ("differs at " + std::to_string(d)).c_str() : "equal",
+                        static_cast<unsigned long long>(n));
+        }
+        // The leavers' load: GO against the port.
+        compare_snapshots(gl.canonical, pl.canonical);
+        d = first_diff(gl.after, pl.after, n);
+        std::printf("      fingerprints after the load step: %s over %llu frames\n", d ? ("differ from +" + std::to_string(d)).c_str() : "equal",
+                    static_cast<unsigned long long>(n));
+        d = first_diff(gs.fp, ps.fp, n);
+        std::printf("      stayers' copies (GO vs port): %s (the teleport at %llu)\n", d ? ("differ from " + std::to_string(d)).c_str() : "equal",
+                    static_cast<unsigned long long>(pl.teleport));
+    }
+}
+
+} // namespace go_probe
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: dw4_world_probe DATA settings|redirect|homeover|guestnew\n");
+        std::fprintf(stderr, "usage: dw4_world_probe DATA settings|redirect|homeover|guestnew|go\n");
         return 2;
     }
     g_data = argv[1];
@@ -1425,6 +1786,7 @@ int main(int argc, char** argv) {
         else if (what == "guestnew") guestnew_probe();
         else if (what == "mats" && argc > 3) mats_probe(argv[3]);
         else if (what == "census") census_probe();
+        else if (what == "go") go_probe::probe(argc > 3 ? std::atoi(argv[3]) : -1);
         else {
             std::fprintf(stderr, "unknown probe %s\n", what.c_str());
             return 2;

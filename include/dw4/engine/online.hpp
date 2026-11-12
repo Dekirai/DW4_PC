@@ -65,7 +65,12 @@ struct PersonalSession {
 //              about accounts: exactly the mask leaves, defeated or not (no
 //              side rule); like give_up applied before a step, so its
 //              recorded side is one frame later than an exit's.
-enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2, home = 3 };
+//   go       - round I1b (19.30.7): GO, a member's go along: the exit's side
+//              rule (the leavers are the living of the mask; the defeated go
+//              along when no living member stays), applied before a step like
+//              give_up and HOME, so its recorded side is one frame later than
+//              an exit's.
+enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2, home = 3, go = 4 };
 
 // How a barrier's story reaches the engine (round I1a, 19.8.3 / 19.30.4):
 // merge (rounds S2-G: the story's values added to the engine's) or replace
@@ -122,6 +127,10 @@ struct ExitHeading {
     std::string stage;
     int point{};
     std::uint8_t leavers{}; // the members that go (everyone present: the original group move)
+    // Round I1b (19.30.5, 19.18 HEADING): the slots the exit port asked on the
+    // mat for this departure that stay (ExitPort::asked without the leavers):
+    // the relay sends them no go-along notice. 0 for every other heading.
+    std::uint8_t asked{};
 };
 
 // What the exit port shows right now (presentation: the client's texts, the
@@ -160,6 +169,11 @@ constexpr std::uint8_t exit_leavers(std::uint8_t present, std::uint8_t living, s
     if ((living & ~leaving) == 0) return present;
     return leaving;
 }
+
+// Round I1b (19.30.7): a GO tick event not applied within this many ticks
+// after its tick expires on every engine alike (a constant of the event:
+// every engine must agree), and the membership events behind it go on.
+inline constexpr std::uint32_t kGoExpiryTicks = 300;
 
 // The engine's view of the room's settings that reach the simulation online
 // (6.12: cheats and rebalancing are refused; the randomizer, the drops and

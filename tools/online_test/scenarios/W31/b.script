@@ -1,0 +1,19 @@
+# W31, b (k10): joins a in stag0201 by the gate; when a went into dng204b1 alone b sees the notice and answers at once
+# (the box's A after the notice's half second): its request waits while dng204b1 loads and its entry scene runs ("Going
+# along when Kim's floor is ready..."), b plays on in stag0201; then its GO departure and the join at dng204b1's entrance.
+# b stays at B1's entrance when a goes on to B2.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until notices>=1 fail stagechange
+log b sees the notice
+idle until frames>=40
+goalong until go=waiting or go=stamped or go=going
+log b asked to go along
+idle until stage=dng204b1,present=2,sealed>=120 fail epoch>=@1000
+log b joined a in dng204b1
+idle until present=1 fail epoch>=@1700,stage=stagml11
+log a went on without b
+idle until frames>=600

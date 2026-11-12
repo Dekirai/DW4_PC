@@ -1,0 +1,15 @@
+{
+  "desc": "go along, expiry (19.30.8, W31i): b and c in stag0201, a in dng204b1; b goes along and the relay test hook World:TestGoHook busy_sender:600 makes b's stage group busy from the GO's tick (the stand-in for c's exit prompt left open there): the GO expires after 300 ticks on both engines (equal fingerprints), \"Couldn't go along: a scene here took too long.\", the relay clears the request; b and c go on to stag0202 (both put onto matz00 by the test hook mat) and b asks again right after the arrival, before its stage group seals: the request waits and is stamped, b joins a",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 80000,
+  "timeout": 1400,
+  "min_shared_ticks": 4000,
+  "server": {"World": {"TestGoHook": "busy_sender:600", "TestGoHookCount": 1, "TestHooks": true}},
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "seed_story": true},
+    {"name": "c", "script": "c.script", "card": "k10", "start": 6, "seed_story": true}
+  ]
+}

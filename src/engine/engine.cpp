@@ -791,6 +791,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     // that starts with one member has the shared camera and the leash.
     if (online_.enabled && !restoring) {
         online_.boss_lock = false;
+        online_test_busy_ = 0; // (round I1b's busy test hook ends at a barrier)
         if (std::popcount(unsigned(online_.present)) < 2) {
             online_.player_cameras = 0;
             online_.leash_off = false;

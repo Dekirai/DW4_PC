@@ -237,9 +237,9 @@ public partial class HubLogicTests
     }
 
     private static Harness SealedPair(out uint inst, RelayOptions? relay = null, InstanceOptions? instances = null,
-        int protocol = Wire.CheckpointProtocol, string stage = "stag0201")
+        int protocol = Wire.CheckpointProtocol, string stage = "stag0201", WorldHubOptions? world = null)
     {
-        var h = new Harness(instances, relay, protocol: protocol);
+        var h = new Harness(instances, relay, protocol: protocol, world: world);
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Send("a", new HeadingMsg(h.Inst("a"), stage, 0, 5).Frame());

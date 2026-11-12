@@ -36,6 +36,9 @@ struct SplitInfo {
 struct HeadingInfo {
     std::string stage;
     int point{};
+    // Round I1b (19.30.5): the slots the exit port asked on the mat for this
+    // departure that stay (HEADING's asked mask).
+    std::uint8_t asked{};
 };
 
 // What a member shows the others (PRESENCE, name tags; PRESENCE2, the ghost
@@ -126,6 +129,25 @@ public:
     // The defaults: an engine without them (test fakes) does nothing.
     virtual void home(std::uint8_t mask) { (void)mask; }
     virtual bool depart_home() { return false; }
+    // Round I1b (docs/SEAMLESS.md 19.30.7): GO for a slot mask, every GO of a
+    // step together (Engine::online_go: the exit's departure to `stage` and
+    // `point` taken as named, a fork of ForkKind::go for part of the present
+    // slots). Returns whether this copy departs. The default: an engine
+    // without it (test fakes) does nothing.
+    virtual bool go(std::uint8_t mask, const std::string& stage, int point) {
+        (void)mask, (void)stage, (void)point;
+        return false;
+    }
+    // Round I1b's scenario hooks (development builds only, the TEST event,
+    // wire.hpp TestHook): before a step, at a tick every member applies. The
+    // default: an engine without them (test fakes) does nothing.
+    virtual void test_hook(int slot, wire::TestHook hook, int argument) { (void)slot, (void)hook, (void)argument; }
+    // Presentation (the go-along notice waits for it, 19.30.6): the slot's own
+    // scene (a talk, a map recorder) runs.
+    virtual bool own_scene(int slot) const {
+        (void)slot;
+        return false;
+    }
     // Presentation only: whose camera the picture uses (a defeated member
     // watches the nearest living member).
     virtual void set_view_slot(int slot) = 0;

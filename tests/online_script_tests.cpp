@@ -85,6 +85,13 @@ void unknown_names() {
     check(!e.load(write_script("shot_unnamed", "shot\n"), error) && error.find("shot needs a name") != std::string::npos, "a shot needs a name");
     error.clear();
     check(!f.load(write_script("shot_path", "shot ../x\n"), error), "a shot name is no path");
+    // Round I1b: the loading screen's wall-clock wait and the mat hook.
+    OnlineScript g;
+    error.clear();
+    check(g.load(write_script("go_waits", "idle until goback=1 fail stage=dng204b1\nidle until waited>=22\ntesthook mat matz02 until frames>=30\ngoback\n"),
+                 error) &&
+              g.steps().size() == 4 && g.steps()[2].args == std::vector<std::string>{"mat", "matz02"},
+          "waited and testhook mat load: " + error);
 }
 
 void scenario_scripts() {

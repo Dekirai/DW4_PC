@@ -70,7 +70,7 @@ add_library(dw4_online STATIC
   src/game/online/cpu_gate.cpp src/game/online/env_check.cpp src/game/online/pad_wire.cpp src/game/online/wire.cpp
   src/game/online/pacing.cpp src/game/online/net_stats.cpp src/game/online/net_log.cpp src/game/online/host_priority.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
-  src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
+  src/game/online/session.cpp src/game/online/session_go.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
   src/game/online/lobby.cpp src/game/online/achievement_api.cpp src/game/online/title_driver.cpp
   src/game/online/prompt_wire.cpp src/game/online/session_prompt.cpp)
 target_include_directories(dw4_online PUBLIC src/game)

@@ -53,6 +53,26 @@ public sealed class WorldHubOptions
     /// <summary>A test hook (scenario W2b): the relay drops every PLAN unanswered, so the client's press goes out after
     /// World:PlanWaitMs and the barrier is decided as a loading-screen arrival.</summary>
     public bool TestDropPlans { get; set; }
+    /// <summary>Round I1b (19.30.5): a member who goes into the same dungeon again this soon after the offer that named him closed
+    /// reopens it silently (no notice, no closing line).</summary>
+    public int OfferReopenSeconds { get; set; } = 120;
+    /// <summary>Round I1b: how long a go-along notice is on screen (the party's *Follow* notice uses the same, 19.12).</summary>
+    public int AnswerNoticeSeconds { get; set; } = 20;
+    /// <summary>Round I1b (19.30.7): a go-along request waits this long for the target's floor (no limit while it is boss-locked).</summary>
+    public int GoAlongWaitSeconds { get; set; } = 60;
+
+    // Round I1b's scenario hooks (test runs only; off by default, never in a deployment). They stamp TEST events (Ev.Test) that
+    // only development clients apply.
+    /// <summary>INTENT kind test from a member of a sealed stage group stamps a TEST event there (the online script's testhook).</summary>
+    public bool TestHooks { get; set; }
+    /// <summary>At a GO's stamp: "defeat" (the going slot falls at the GO's tick, before it), "busy_sender:N" (the sender's stage group
+    /// busy for N ticks from the GO's tick, before it), "busy_target:N" (the target stage group busy for N ticks from its next stamp
+    /// tick; sealed targets only); empty: none.</summary>
+    public string TestGoHook { get; set; } = "";
+    /// <summary>How many GO stamps get <see cref="TestGoHook"/> (the first ones of the relay's run).</summary>
+    public int TestGoHookCount { get; set; } = 1;
+    /// <summary>A GO's barrier waits this long before its decision (W31c's race: the entrants leave meanwhile); 0: none.</summary>
+    public int TestGoBarrierHoldMs { get; set; }
 
     public bool AdmitsData(ulong dataHash) =>
         DataHashes.Count == 0 || DataHashes.Any(h => ulong.TryParse(h, out var v) && v == dataHash);
@@ -145,6 +165,10 @@ public sealed class WorldInstance(uint wid)
     public bool InfoDirty { get; set; }
     /// <summary>The players of the last minute (achievements' play context): when the housekeeping last saw n seats taken.</summary>
     public long[] SeenWithPlayers { get; } = new long[Wire.MaxSlots + 1];
+    /// <summary>Round I1b (19.30.5): the go-along offers, open and recently closed (a re-entry within World:OfferReopenSeconds reopens
+    /// one); at most four open.</summary>
+    public List<GoOffer> Offers { get; } = [];
+    public ushort NextOfferId { get; set; } = 1;
 
     public bool HostAway => HostAwaySince != 0;
     public int Players => Seats.Count;

@@ -1,0 +1,13 @@
+{
+  "desc": "go along, the host goes in (19.30.8, W31f): host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a goes home by the Gate Disk (its line \"Your guests will return to their lobbies.\"): the instance ends (host_left), b goes home 3 s later. (19.24 names dng204b2's matz02 after a test hook's boss kill; the Gate Disk is the host's other way home with the same line and needs no hook.)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 70000,
+  "timeout": 1200,
+  "min_shared_ticks": 1200,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "seed_story": true}
+  ]
+}

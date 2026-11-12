@@ -1,0 +1,17 @@
+# W31c2, b (k10): joins a in stag0201, sees the notice of a's entry and goes along 30 s later (a's floor is ready: the GO
+# is stamped at once); its GO barrier is held (the test hook) until a has left dng204b1: b lands alone in dng204b1 in a
+# new stage group of a's instance ("Kim left Sand Labyrinth B1 before you arrived."), its seat kept.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until notices>=1 fail epoch>=@800
+log b sees the notice
+idle until frames>=1800
+goalong until go=stamped or go=going
+log b goes along
+idle until stage=dng204b1,control fail epoch>=@1000
+log b in dng204b1
+idle until frames>=900 fail present>=2,stagechange
+log b alone in dng204b1 in a's instance

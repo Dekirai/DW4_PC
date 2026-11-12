@@ -1,0 +1,31 @@
+{
+  "desc": "go along, noise (19.30.8, W31g): a walks into dng204b1 and out again three times within two minutes: b and c see one notice and no closing line as a notice (silent reopens); b closes the offer with B: no further notice for b, the row stays",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 90000,
+  "timeout": 1500,
+  "min_shared_ticks": 12000,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "desc": "go along, defeated (19.30.8, W31d): a, b, c and d in a's Dry Land instance in stag0201; b falls there (the development test hook) before a goes into dng204b1: no notice while b is defeated; d answers at once and the relay's test hook (World:TestGoHook defeat, the first GO) lets d fall at its GO's tick: the GO does nothing on every engine, \"Couldn't go along: you were defeated.\"; c, now the last living member of the stage group, goes along: b and d are taken along (the side rule), no game over; all four in B1",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 80000,
+  "timeout": 1400,
+  "min_shared_ticks": 15000,
+  "server": {"World": {"TestHooks": true, "TestGoHook": "defeat", "TestGoHookCount": 1}},
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "seed_story": true},
+    {"name": "c", "script": "c.script", "card": "k10", "start": 6, "seed_story": true},
+    {"name": "d", "script": "d.script", "card": "k10", "start": 9, "seed_story": true}
+  ]
+}

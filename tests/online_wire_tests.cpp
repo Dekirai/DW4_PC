@@ -331,6 +331,98 @@ void world_messages() {
     check(std::uint8_t(w::CloseReason::account) == 9, "CLOSE account is 9");
 }
 
+// Round I1b's go along (docs/SEAMLESS.md 19.18, 19.30; DW4_PC-wt/i1b-contract.md
+// "go 2026-11-07 16:15"; the relay's WireGoldenTests.Go_along_messages_equal_the_clients
+// holds the same bytes).
+void go_messages() {
+    check(std::uint8_t(w::Type::offer) == 0x9B, "OFFER is 0x9B");
+    // HEADING with the exit port's asked mask appended.
+    check(hex(w::encode(w::Heading{7, "stag0201", 0, 0x10ull, 0b0100})) == "07000000" "08" "7374616730323031" "00" "1000000000000000" "04",
+          "golden HEADING with asked");
+    check(w::decode_heading(w::encode(w::Heading{7, "stag0201", 0, 0x10ull, 0b0100})).asked == 0b0100, "HEADING asked round trip");
+    check(throws([&] { (void)w::decode_heading(w::encode(w::Heading{7, "stag0201", 0, 0x10ull, 0})) /* fine */; }) == false, "HEADING asked 0");
+    {
+        auto bad = w::encode(w::Heading{7, "stag0201", 0, 0x10ull, 0});
+        bad.back() = 0x10;
+        check(throws([&] { (void)w::decode_heading(bad); }), "HEADING asked above slot 3 is refused");
+        bad.pop_back();
+        check(throws([&] { (void)w::decode_heading(bad); }), "HEADING without asked is refused (protocol 49)");
+    }
+    // STATE flag 16, no living member.
+    check(hex(w::encode(w::State{7, 3, 61, w::state_flag::no_living | w::state_flag::membership_safe, 5, w::NotJoinable::scene})) ==
+              "07000000" "03000000" "3d000000" "12" "0500000000000000" "02",
+          "golden STATE with no living member");
+    check(w::decode_state(w::encode(w::State{7, 3, 61, 16, 5, w::NotJoinable::none})).flags == 16, "STATE flag 16 decodes");
+    // INTENT 4 go along (the offer id) and its withdraw (0).
+    check(hex(w::encode(w::Intent{7, 2, w::IntentKind::go_along, 3})) == "07000000" "02000000" "04" "03000000", "golden INTENT go along");
+    check(hex(w::encode(w::Intent{7, 2, w::IntentKind::go_along, 0})) == "07000000" "02000000" "04" "00000000", "golden INTENT withdraw");
+    // JOIN_REQ kind go with stage and point.
+    {
+        w::JoinReq req{7, 2, 1, 3, w::JoinKind::go, "dng204b1", 0};
+        check(hex(w::encode(req)) == "07000000" "02000000" "01" "03" "03" "08" "646e673230346231" "00", "golden JOIN_REQ go");
+        const auto back = w::decode_join_req(w::encode(req));
+        check(back.kind == w::JoinKind::go && back.stage == "dng204b1" && back.point == 0 && back.slot == 1, "JOIN_REQ go round trip");
+    }
+    // Round I1b's scenario hooks: the TEST event (slot | hook | argument) and
+    // INTENT kind test (WireGoldenTests.cs holds the same bytes).
+    {
+        w::TickBody t;
+        w::Event test;
+        test.kind = w::EventKind::test;
+        test.slot = 2;
+        test.hook = std::uint8_t(w::TestHook::busy);
+        test.argument = 600;
+        t.events.push_back(test);
+        w::Writer tw;
+        w::write_tick(tw, t);
+        check(hex(tw.out) == "00" "01" "f0" "0600" "02" "02" "58020000", "golden tick record with TEST " + hex(tw.out));
+        w::Reader tr{tw.out};
+        check(w::read_tick(tr) == t, "TEST round trip");
+        check(hex(w::encode(w::Intent{7, 2, w::IntentKind::test, 2 | (600 << 8)})) == "07000000" "02000000" "7f" "02580200", "golden INTENT test");
+        check(w::decode_intent(w::encode(w::Intent{7, 2, w::IntentKind::test, 1})).kind == w::IntentKind::test, "INTENT test decodes");
+    }
+    // The GO tick event: slot | point | stage.
+    {
+        w::TickBody t;
+        w::Event go;
+        go.kind = w::EventKind::go;
+        go.slot = 1;
+        go.point = 2;
+        go.stage = "dng204b1";
+        t.events.push_back(go);
+        w::Writer tw;
+        w::write_tick(tw, t);
+        check(hex(tw.out) == "00" "01" "07" "0b00" "01" "02" "08" "646e673230346231", "golden tick record with GO " + hex(tw.out));
+        w::Reader tr{tw.out};
+        check(w::read_tick(tr) == t, "GO round trip");
+    }
+    // OFFER: open with the notice (two entrants), the close.
+    {
+        w::Offer open{3, w::OfferOp::open, w::Offer::notice | w::Offer::late, {5, 9}, "dng204b1", 20, w::OfferClose::none};
+        check(hex(w::encode(open)) == "0300" "01" "03" "02" "05000000" "09000000" "08" "646e673230346231" "14" "00", "golden OFFER open");
+        check(w::decode_offer(w::encode(open)) == open, "OFFER round trip");
+        w::Offer closed{3, w::OfferOp::closed, 0, {5}, "dng204b2", 20, w::OfferClose::left};
+        check(hex(w::encode(closed)) == "0300" "03" "00" "01" "05000000" "08" "646e673230346232" "14" "01", "golden OFFER closed");
+        auto bytes = w::encode(closed);
+        bytes[0] = 0;
+        bytes[1] = 0;
+        check(throws([&] { (void)w::decode_offer(bytes); }), "OFFER id 0 is refused");
+        bytes = w::encode(closed);
+        bytes[2] = 4;
+        check(throws([&] { (void)w::decode_offer(bytes); }), "OFFER op 4 is refused");
+        bytes = w::encode(closed);
+        bytes.back() = 5;
+        check(throws([&] { (void)w::decode_offer(bytes); }), "OFFER close reason 5 is refused");
+        w::Offer five{3, w::OfferOp::open, 0, {1, 2, 3, 4, 5}, "dng204b1", 20, w::OfferClose::none};
+        check(throws([&] { (void)w::encode(five); }), "OFFER with five entrants is refused");
+    }
+    // WORLD_NOTICE go refused (kind 13) with its reason.
+    {
+        w::WorldNotice n{w::NoticeKind::go_refused, 5, "kim", std::uint32_t(w::GoRefused::closed), "dng204b1"};
+        check(hex(w::encode(n)) == "0d" "05000000" "03" "6b696d" "01000000" "08" "646e673230346231", "golden WORLD_NOTICE go refused");
+    }
+}
+
 void messages() {
     // Tick records: mask, event count, pads, events (type, u16 length, payload).
     const auto t = tick_with_events();
@@ -372,7 +464,7 @@ void messages() {
     check(state.tick == 61 && state.flags == 5 && state.reason == w::NotJoinable::boss, "STATE");
     check(w::decode_state(w::encode(w::State{7, 3, 61, w::state_flag::load_ended | w::state_flag::boss_lock, 5, w::NotJoinable::boss})).flags == 12,
           "STATE with the load end");
-    check(throws([&] { w::decode_state(w::encode(w::State{7, 3, 61, 16, 5, w::NotJoinable::none})); }), "STATE with an unknown flag is refused");
+    check(throws([&] { w::decode_state(w::encode(w::State{7, 3, 61, 32, 5, w::NotJoinable::none})); }), "STATE with an unknown flag is refused");
     auto intent = w::decode_intent(w::encode(w::Intent{7, 3, w::IntentKind::give_up, 0}));
     check(intent.kind == w::IntentKind::give_up, "INTENT");
     w::Presence presence{0, "stagml11", 9, 1.5f, -2.0f, 300.25f, 0.5f, 3, 12, 80, 120, 10, 30};
@@ -506,6 +598,7 @@ void messages() {
     check(empty_chunks.size() == 1 && w::ChunkAssembler{}.add(empty_chunks[0], 10).value().empty(), "an empty body is one chunk");
     world_messages();
     prompt_messages();
+    go_messages();
     auto ping = w::decode_ping(w::encode(w::Ping{9, 1000, -2, 3}));
     check(ping.margin_ms == -2 && ping.delay == 3, "PING");
     // NETSTAT (round 62): golden bytes shared with WireGoldenTests.cs.
@@ -569,7 +662,7 @@ void messages() {
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
                        "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD PLAN CHOICE INSTANCE_OP REPORT WELCOME SEALED LIVE JOIN_REQ "
                        "BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 OPTIONS "
-                       "CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE MEMBER_INFO",
+                       "CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE MEMBER_INFO OFFER",
               "type registry: " + known);
         check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
         // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).
@@ -585,7 +678,7 @@ void messages() {
                          "0502000004",
           "golden tick record " + hex(tw.out));
     check(hex(w::encode(w::Input{7, 2, 99, {{0x8000, 1, 2, 3, 4}}})) == "070000000200000063000000010080010203" "04", "golden INPUT");
-    check(hex(w::encode(w::Heading{7, "stag0102", 3, 0xABCDull})) == "0700000008737461673031303203cdab000000000000", "golden HEADING");
+    check(hex(w::encode(w::Heading{7, "stag0102", 3, 0xABCDull})) == "0700000008737461673031303203cdab000000000000" "00", "golden HEADING");
     // (Protocol 49: the token, the plan id and the own settings appended; the
     // relay's WireGoldenTests.World_messages_equal_the_clients holds the same.)
     check(hex(w::encode(w::Barrier{7, 2, 500, "dng101b1", 1, 3, 3, 0x1122334455667788ull, {9, 9}})) ==

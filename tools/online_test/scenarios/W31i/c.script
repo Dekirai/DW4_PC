@@ -1,0 +1,16 @@
+# W31i, c (k10): in stag0201 with b; lets the notice of a's entry run out; 45 s after it (b's GO expired by then) it
+# takes matz00 to stag0202 with b (the owner waits for two on the mat) and stays there. (It reaches matz00 by the test hook
+# "testhook mat": stag0201's mummies felled it on its walk there in run f1 of the go lane.)
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log c in stag0201
+idle until notices>=1 fail epoch>=@900
+log c sees the notice
+idle until frames>=2700 fail stagechange
+testhook mat matz00 until frames>=30
+mat matz00 yes 2 until stage=stag0202,control fail epoch>=@1100
+log c in stag0202
+idle until epoch>=@1250
+log c done

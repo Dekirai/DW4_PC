@@ -1,0 +1,14 @@
+# W31f (19.24, 19.30.8 "The host goes in"): an offer like anyone's; nothing follows the host; his way home (here the
+# Gate Disk, whose prompt line says "Your guests will return to their lobbies.") ends the instance: the guest goes home.
+a: online-script: step .* log: a in dng204b1
+a: online-script: step .* log: a home
+b: online-script: step .* log: b sees the notice
+b: online-script: step .* log: b's notice ran out
+b: online-script: step .* log: nothing moved b
+b: online: .*The instance ends
+b: online-script: step .* log: b home
+relay: offer_open .*stage=dng204b1
+relay: instance_end .*reason=host_left
+!relay: go_request
+!a: online-script: FAIL
+!b: online-script: FAIL

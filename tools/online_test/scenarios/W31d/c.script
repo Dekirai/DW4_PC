@@ -1,0 +1,15 @@
+# W31d, c (k10): in stag0201 with b and d; sees the notice of a's entry and goes along 60 s later, when d's GO did nothing
+# and d fell: c is the last living member of its stage group, so b and d go along with it (the side rule), no game over.
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log c in stag0201
+idle until notices>=1 fail epoch>=@900
+log c sees the notice
+idle until frames>=3600 fail stagechange
+goalong until go=stamped or go=going
+log c goes along
+idle until stage=dng204b1,present=4,sealed>=300 fail epoch>=@1200
+log c, b and d joined a in B1
+idle until frames>=1200

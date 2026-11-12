@@ -106,6 +106,13 @@ struct SessionConfig {
     // A stage folder as the player reads it ("Dry Land: Mummy Desert"; the
     // game's area table). Unset: the folder.
     std::function<std::string(std::string_view)> stage_name;
+    // Round I1b's go along (19.30.5-19.30.7): a dungeon or boss stage (the
+    // area table's kind; unset: none), a stage with its floor as the go-along
+    // texts read it ("Ancient Ruins B2"; unset: stage_name), and a dungeon's
+    // name ("Ancient Ruins"; unset: stage_name).
+    std::function<bool(std::string_view)> dungeon_stage;
+    std::function<std::string(std::string_view)> floor_name;
+    std::function<std::string(std::string_view)> dungeon_name;
     // Round J (6.13): a checkpoint's compression (the app's zstd); unset:
     // the bytes go raw. A payload starts with its codec byte (0 raw, 1 this).
     std::function<std::vector<std::uint8_t>(std::span<const std::uint8_t>)> compress, decompress;
@@ -160,6 +167,13 @@ struct Overlay {
     // A running line while the game plays on (19.5.5: "Kim lost the
     // connection. Waiting for Kim... 52 s", counting down).
     std::string status;
+    // Round I1b (19.30.7): a GO's barrier held over 10 s ("Waiting for Kim's
+    // floor..."): B takes the member back to the lobby (its *Leave instance*;
+    // the host's ends the instance after his question). go_back_line is the
+    // control hint the screen adds: "B: Back to the lobby", for the host
+    // after his B "End the instance for everyone?   A: Yes   B: No".
+    bool go_back = false;
+    std::string go_back_line;
 };
 
 // Round I1b, the arrival prompt as the overlay draws it (19.5.3, 19.7.3-19.7.5):
@@ -187,6 +201,29 @@ struct PromptView {
     double opened_at = 0;
     bool new_instance() const { return cursor >= rows.size(); }
 };
+// Round I1b (docs/SEAMLESS.md 19.30.5-19.30.6): a go-along offer as this
+// member sees it (OFFER), with its notice.
+struct GoOffer {
+    std::uint16_t id{};
+    std::vector<std::uint32_t> entrants;  // the first entrant first
+    std::string stage;                    // where the first entrant still in the dungeon is
+    std::string first_stage;              // the stage it opened with (a deeper floor reads "... now.")
+    std::uint8_t flags{};                 // the relay's last flags for this member (wire::Offer)
+    bool open = true;
+    std::string closing;                  // its closing line while it shows (3 s, greyed)
+    double closed_at = -1;
+    bool notice_due = false;              // a notice waits (the member's scene, a demo, defeated, a barrier)
+    bool late = false;                    // the notice names where the entrants are now
+    std::string notice_stage;             // the stage its notice came with (shown later after a move: the late form)
+    bool closed_by_b = false;             // B in the box: no further notice for this offer
+    double notice_at = -1;                // its notice shows since (-1: not shown)
+    double notice_seconds = 20;
+    double opened_at = 0;                 // (newest first)
+};
+// The member's own go-along request (19.30.7): sent (no answer yet), waiting
+// for the target (its floor loads or is busy), waiting for a boss fight's
+// end, stamped (the GO comes), going (the GO's departure ran).
+enum class GoState : std::uint8_t { none, asked, waiting, boss, stamped, going };
 
 class Session {
 public:
@@ -349,11 +386,57 @@ public:
     // The own settings change (the Game Start's difficulty, Online > Settings).
     void set_own_settings(const wire::Settings& settings) { config_.own_settings = settings; }
     void send_heading(const std::string& stage, int point);
+
+    // ---- Round I1b: go along (docs/SEAMLESS.md 19.30.5-19.30.7).
+    // The open offers and the closing ones (their line 3 s), newest first.
+    const std::vector<GoOffer>& go_offers() const { return go_offers_; }
+    // "Kim is in Ancient Ruins B1." ("... B2 now." after the entrants moved
+    // deeper; the closing line once it closed).
+    std::string go_row_text(const GoOffer& offer) const;
+    // "Kim went into Ancient Ruins B1. Go along?" ("Kim and Lee ..."; a late
+    // notice: "Kim is in Ancient Ruins B2. Go along?").
+    std::string go_notice_text(const GoOffer& offer) const;
+    // Why A cannot go along now ("(defeated)", "(loading)", "(in a dungeon)",
+    // "(waiting)"); "" when it can.
+    std::string go_grey(const GoOffer& offer) const;
+    GoState go_state() const { return go_state_; }
+    std::uint16_t go_offer_id() const { return go_offer_; }
+    // The waiting row and the line where the notice was: "Going along when
+    // Kim's floor is ready..." (the screen's line adds "View: cancel"), "Kim
+    // is in a boss fight. Going along when it ends.", "Going along..."; ""
+    // without a request.
+    std::string go_line() const;
+    // A on a row: INTENT 4 (false when the member cannot go now); A on the
+    // own waiting row or Cancel: the withdraw (INTENT 4, 0; false when
+    // nothing waits or the GO is stamped already).
+    bool go_along(std::uint16_t offer);
+    bool cancel_go_along();
+    // B in the box: no further notice for that offer (its row stays).
+    void close_go_notices(std::uint16_t offer);
+    // B on the GO's held loading screen (Overlay::go_back): the member's
+    // *Leave instance* from its barrier (the host's ends the instance).
+    bool go_back_to_lobby();
+    // The held GO screen's buttons (presses, not holds): a guest's B goes
+    // back to the lobby; the host's B asks "End the instance for everyone?"
+    // first (Overlay::go_back_line), A there ends it, B keeps waiting
+    // (19.30.7 step 4). True when the leave was sent.
+    bool go_back_press(bool a, bool b);
+    // The notices on screen now (newest first, at most three) and how long
+    // the newest has been up (the half second before View focuses it).
+    std::vector<const GoOffer*> go_notices(double now) const;
     void set_rate(std::uint32_t steps_per_second);
     void leave(const std::string& reason = "left");
     // Development builds' scenario hook (DW4_ONLINE_TEST_CUT_AT_PARK, W7e): the
     // link is lost here and now, as a cut cable would lose it.
     void test_cut(double now) { lose_connection(now); }
+    // Development builds' scenario hooks of round I1b (the online script's
+    // testhook, goalong closed): INTENT kind test asks a relay with
+    // World:TestHooks for a TEST event in the own sealed stage group (false
+    // when not sealed or not connected); go_along_raw sends INTENT 4 for an
+    // offer whatever the client thinks of it (a request that crossed the
+    // offer's close: the relay answers *go refused*).
+    bool test_hook_request(wire::TestHook hook, int value);
+    bool go_along_raw(std::uint16_t offer);
 
 private:
     // Round I1b (session_prompt.cpp): the gate form's input hold of the own
@@ -413,6 +496,17 @@ private:
     // A kept *Leave instance* wish goes out once the INTENT can (leave_instance).
     void send_pending_leave();
     void on_world_notice(const wire::WorldNotice& notice);
+    // Round I1b (session_go.cpp): an OFFER; the notices' wait (each poll); a
+    // GO refused; the step's GO events (one Engine::online_go per target);
+    // a GO that expired; the own departure's barrier.
+    void on_offer(const wire::Offer& offer, double now);
+    void tick_go(double now);
+    bool go_notice_blocked() const;
+    void on_go_refused(const wire::WorldNotice& notice);
+    void apply_gos(std::vector<wire::Event>& gos, bool replaying);
+    void go_expired(bool replaying);
+    std::string go_first_name(const GoOffer* offer) const;
+    GoOffer* find_go_offer(std::uint16_t id);
     // The toast of an arrival into an instance (19.5.6), once BARRIER_OK and
     // the instance's INSTANCE_INFO are both there.
     void arrival_toast();
@@ -605,6 +699,16 @@ private:
     std::string host_away_name_;      // WORLD_NOTICE host_away: the running line's host and its end (-1: none)
     double host_away_until_ = -1;
     std::uint8_t own_box_ = 1;
+    // Round I1b: go along (session_go.cpp).
+    std::vector<GoOffer> go_offers_;
+    GoState go_state_ = GoState::none;
+    std::uint16_t go_offer_ = 0;        // the offer of the own request
+    std::uint32_t go_target_ = 0;       // its first entrant when it was made (the texts)
+    std::string go_target_stage_;       // where they were (the loading line, the refusal)
+    double go_parked_at_ = -1;          // the GO's barrier parked since (-1: none)
+    bool go_back_asked_ = false;        // the host's "End the instance for everyone?" is up
+    std::uint16_t go_cancelled_offer_ = 0; // the own Cancel's offer until the relay answers it (a cancel may cross the stamp)
+    std::string go_offer_stage_;        // the own request's offer: its stage as last heard while open ("went on to")
     bool hello_seen_ = false;
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;

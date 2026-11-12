@@ -294,6 +294,8 @@ bool Engine::membership_safe() const {
     if (demo_.running_unscoped() != 0) return false;
     if (const auto* windows = get<SubWindowManager>(); windows && windows->shared_window_open()) return false;
     if (pending_fork_) return false;
+    // (Round I1b's busy test hook, development scenarios only: 0 otherwise.)
+    if (online_test_busy_ > 0) return false;
     return true;
 }
 
@@ -410,6 +412,7 @@ void Engine::finish_online_step(const std::array<PadSample, 4>& samples) {
     }
     // (The leash ring that loads with the stage goes in every step's
     // apply_leash_rule.)
+    if (online_test_busy_ > 0) --online_test_busy_;
 }
 
 std::optional<SplitResult> Engine::take_split() {
@@ -608,10 +611,11 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     // The recorded side: named by the continuing side or by the side that
     // leaves the instance id (the relay's fork lists).
     const std::uint8_t child = kept == leavers ? stayers : leavers;
-    // ForkSide::frame is the frame after the fork tick's step; a give-up and
-    // a HOME fork between two steps (online_intent / online_home before the
-    // step), one frame earlier than a fork inside the step.
-    const std::uint64_t at = kind == ForkKind::give_up || kind == ForkKind::home ? frame_ + 1 : frame_;
+    // ForkSide::frame is the frame after the fork tick's step; a give-up, a
+    // HOME and a GO fork between two steps (online_intent / online_home /
+    // online_go before the step), one frame earlier than a fork inside the
+    // step.
+    const std::uint64_t at = kind == ForkKind::give_up || kind == ForkKind::home || kind == ForkKind::go ? frame_ + 1 : frame_;
     for (const auto& side : fork_sides_)
         if (side.frame == at && (side.leavers == leavers || side.leavers == child)) {
             take = side.leavers == leavers ? side.take_leavers : !side.take_leavers;

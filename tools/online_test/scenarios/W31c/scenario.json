@@ -1,0 +1,24 @@
+{
+  "desc": "go along, races (19.30.8), the part without a hook: a goes into dng204b1 and back out before b answers: the offer closes (\"Kim left Sand Labyrinth.\" in b's box, no closing line as a notice), b's A on the closing row goes nowhere, and a request that crossed the close (the development hook goalong closed) is refused (go refused, closed). The hooked part is W31c2.",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 80000,
+  "timeout": 1300,
+  "min_shared_ticks": 1500,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

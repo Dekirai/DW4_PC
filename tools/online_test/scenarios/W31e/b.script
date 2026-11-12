@@ -1,0 +1,15 @@
+# W31e, b (k10): stays in stag0201; sees two notices (a's and c's entries), answers c's (dng205b1) and joins c.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b in stag0201
+idle until offers>=2 fail epoch>=@1000
+log b has two offers
+goalong dng205b1 until go=waiting or go=stamped or go=going
+log b goes along with c
+idle until stage=dng205b1,present=2,sealed>=120 fail epoch>=@1400
+log b joined c in dng205b1
+idle until offers=0 fail frames>=600
+log a's offer closed for b
+idle until frames>=1800

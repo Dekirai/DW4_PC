@@ -70,7 +70,8 @@ public class WireGoldenTests
             PayloadHex(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, NetStatMsg.InStream).Frame()));
         Assert.Equal(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1), NetStatMsg.Parse(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1).Frame().AsSpan(Wire.HeaderBytes)));
         Assert.Equal(0x8F, new NetStatMsg(0, 0, 0, 0, 0, 0, 0, 0).Frame()[0]);
-        Assert.Equal("0700000008737461673031303203cdab000000000000", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
+        // (Protocol 49, round I1b: + the exit port's asked mask.)
+        Assert.Equal("0700000008737461673031303203cdab000000000000" + "00", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
         // Protocol 49: + travel token u32, plan id u16 and the member's own settings (11 B; the defaults: light 1).
         Assert.Equal("0700000002000000f401000008646e67313031623101030388776655443322110200000009" + "09" + "00000000" + "0000" +
                      "0000010000000000000000",
@@ -131,12 +132,45 @@ public class WireGoldenTests
             ["InstanceInfo"] = 0x95, ["WorldNotice"] = 0x96, ["MemberInfo"] = 0x97,
             // Round I1b: the arrival prompt's rows.
             ["Options"] = 0x91,
+            // Round I1b's go along (19.30.5).
+            ["Offer"] = 0x9B,
         };
         Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
         foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));
     }
 
     private static ReadOnlySpan<byte> Body(byte[] frame) => frame.AsSpan(Wire.HeaderBytes);
+
+    /// <summary>Round I1b's go along (i1b-contract.md "go 2026-11-07 16:15"): the bytes of tests/online_wire_tests.cpp go_messages.</summary>
+    [Fact]
+    public void Go_along_messages_equal_the_clients()
+    {
+        Assert.Equal("07000000" + "08" + "7374616730323031" + "00" + "1000000000000000" + "04", PayloadHex(new HeadingMsg(7, "stag0201", 0, 0x10, 0b0100).Frame()));
+        Assert.Throws<ProtocolException>(() => HeadingMsg.Parse(Convert.FromHexString("07000000" + "08" + "7374616730323031" + "00" + "1000000000000000" + "10")));
+        Assert.Equal("07000000" + "03000000" + "3d000000" + "12" + "0500000000000000" + "02",
+            PayloadHex(new StateMsg(7, 3, 61, StateMsg.NoLivingMember | StateMsg.MembershipSafe, 5, (StateReason)2).Frame()));
+        Assert.Equal("07000000" + "02000000" + "04" + "03000000", PayloadHex(new IntentMsg(7, 2, IntentKind.GoAlong, 3).Frame()));
+        Assert.Equal("07000000" + "02000000" + "01" + "03" + "03" + "08" + "646e673230346231" + "00",
+            PayloadHex(new JoinReqMsg(7, 2, 1, 3, JoinReqKind.Go, "dng204b1", 0).Frame()));
+        var rec = new TickRecord();
+        rec.Events.Add(TickEvent.Go(1, 2, "dng204b1"));
+        var w = new WireWriter(0);
+        rec.Write(w);
+        Assert.Equal("00" + "01" + "07" + "0b00" + "01" + "02" + "08" + "646e673230346231", Convert.ToHexString(w.Payload()).ToLowerInvariant());
+        // Round I1b's scenario hooks: the TEST event and INTENT kind test (tests/online_wire_tests.cpp holds the same bytes).
+        var testRec = new TickRecord();
+        testRec.Events.Add(TickEvent.Test(2, TestHook.Busy, 600));
+        var tw = new WireWriter(0);
+        testRec.Write(tw);
+        Assert.Equal("00" + "01" + "f0" + "0600" + "02" + "02" + "58020000", Convert.ToHexString(tw.Payload()).ToLowerInvariant());
+        Assert.Equal("07000000" + "02000000" + "7f" + "02580200", PayloadHex(new IntentMsg(7, 2, IntentKind.Test, 2 | (600 << 8)).Frame()));
+        Assert.Equal("0300" + "01" + "03" + "02" + "05000000" + "09000000" + "08" + "646e673230346231" + "14" + "00",
+            PayloadHex(new OfferMsg(3, OfferOp.Open, OfferMsg.Notice | OfferMsg.Late, [5, 9], "dng204b1", 20, OfferClose.None).Frame()));
+        Assert.Equal("0300" + "03" + "00" + "01" + "05000000" + "08" + "646e673230346232" + "14" + "01",
+            PayloadHex(new OfferMsg(3, OfferOp.Closed, 0, [5], "dng204b2", 20, OfferClose.Left).Frame()));
+        Assert.Equal("0d" + "05000000" + "03" + "6b696d" + "01000000" + "08" + "646e673230346231",
+            PayloadHex(new WorldNoticeMsg(WorldNoticeKind.GoRefused, 5, "kim", (uint)GoRefusal.Closed, "dng204b1").Frame()));
+    }
 
     /// <summary>The messages and changes of round I1 (protocol 49): the layouts of i1a-contract.md ("client 12:40", "relay 13:05");
     /// tests/online_wire_tests.cpp holds the same bytes.</summary>

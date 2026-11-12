@@ -61,6 +61,25 @@
 //   setflag N [V]       the engine's flag N set to V (1), once (development
 //                       builds only: a story value the session then reports,
 //                       W10c's removed client that keeps writing)
+//   goalong [STAGE]     round I1b (19.30.6): A on the newest open go-along
+//                       offer's row (with STAGE: the newest whose entrants
+//                       are in STAGE), as the *Instance* page's box does,
+//                       once the row is not greyed (right after a barrier
+//                       the client may not go yet: the press waits)
+//   cancelgo            A on the own waiting row (the withdraw)
+//   closeoffer          B in the box on the newest offer (no further notice)
+//   goalong closed      (development builds) INTENT 4 for the newest closed
+//                       offer whose line still shows, as a request that
+//                       crossed the close (the relay answers *go refused*)
+//   goback              B on a held GO barrier's loading screen once its line
+//                       offers it (*B: Back to the lobby*, round I1b)
+//   testhook defeat     (development builds, a relay with World:TestHooks) a
+//   testhook busy N     TEST event in the own sealed stage group: this
+//   testhook mat NAME   member's player falls / the group is neither
+//                       membership-safe nor joinable for N ticks / this
+//                       member's player stands on the mat NAME (matz02;
+//                       asked while it has control), the stand-in for a
+//                       floor the test characters do not survive (once)
 //   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
 //                       --screenshot's file (the ghost figures' look,
 //                       docs/SEAMLESS.md 12; a run without --screenshot
@@ -92,6 +111,13 @@
 //         scenes=N (present members in their own talk)
 //         lost>=N (HP this member lost since the step began)
 //         enemy<N (a living enemy within N units of this member)
+//         offers>=N (open go-along offers on this member's page, round I1b)
+//         notices>=N (go-along notices on screen now)
+//         go=NAME (the own go-along request: none, asked, waiting, boss,
+//         stamped, going)  offerstage=NAME (the newest open offer's stage)
+//         goback=0|1 (a held GO barrier offers B: Back to the lobby)
+//         waited>=S (seconds since this step began, the wall clock: also
+//         counts while a barrier is held, where frames do not)
 //
 // Without "until", hold / press / log / shot end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
@@ -123,6 +149,20 @@ struct OnlineScriptFacts {
     int ghosts = 0;              // ghost figures shown (GhostFigures::shown, presentation)
     int figures = 0;             // of them staying, not fading out (GhostFigures::staying)
     int members = 0;             // the members INSTANCE_INFO lists, oneself included (0 at home; round I1b)
+    // Round I1b's go along (the session's view): open offers, notices on
+    // screen, the newest open offer (0: none) and its stage, the own request.
+    int offers = 0, notices = 0;
+    std::uint16_t newest_offer = 0;
+    std::string offer_stage;
+    std::vector<std::pair<std::uint16_t, std::string>> open_offers; // newest first: id, stage
+    std::string go = "none";
+    std::uint16_t closing_offer = 0; // the newest closed offer whose line still shows (its 3 s)
+    bool go_back = false;            // a held GO barrier offers B: Back to the lobby (its line after 10 s)
+    bool go_ready = false;           // A on the newest open offer's row would go now (the row is not greyed)
+    // The session holds a barrier (parked: no step runs). The host calls
+    // update() once a frame then too: the conditions are checked, and of the
+    // actions only goback acts (B on a held GO barrier's loading screen).
+    bool parked = false;
 };
 
 class OnlineScript {
@@ -135,6 +175,17 @@ public:
         float reach{4.0f};
         std::string shot; // a "shot" step ended in this update: its name
         std::string op;   // a session operation of this update: "remove NAME" or "report NAME REASON"
+        // Round I1b: the box's answers (applied by the host as the UI's).
+        std::uint16_t go_along{};
+        bool go_cancel{};
+        std::uint16_t go_close{};
+        // Development builds' hooks (the host sends them): INTENT 4 for a
+        // closed offer ("goalong closed"), a TEST event asked of the relay
+        // ("testhook": hook 1 defeat, 2 busy, value).
+        std::uint16_t go_along_raw{};
+        std::uint8_t test_hook{};
+        int test_value{};
+        bool go_back{}; // B on the held GO barrier's loading screen (goback)
     };
     struct Condition {
         std::string key, op, text;
@@ -203,6 +254,7 @@ private:
     // The disk action: the disk's row, the rows above it, its start.
     int disk_line_ = -1, disk_ups_ = 0, disk_at_ = 0, disk_dir_ = 1;
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point step_wall_ = std::chrono::steady_clock::now(); // (waited)
 };
 
 } // namespace dw4::game

@@ -1112,7 +1112,11 @@ bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Pa
             std::string target(packet.string(0));
             // Randomizer: a shuffled dungeon entrance (or its way back) leads
             // to its new stage and player point (SETGENERATEPOS came first).
-            if (engine.cheats().zone_shuffle())
+            // (Round I1b: a GO's departure sends I<1> after the stage, the
+            // target as named: a stage group's barrier target, remapped
+            // already, docs/SEAMLESS.md 19.30.7. No script sends an int here.)
+            const bool as_named = !packet.ints.empty() && packet.ints[0] == 1;
+            if (engine.cheats().zone_shuffle() && !as_named)
                 if (auto* points = engine.get<PlayerPointManager>()) {
                     std::string lower = target;
                     for (auto& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));

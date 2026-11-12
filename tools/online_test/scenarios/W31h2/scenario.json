@@ -1,0 +1,37 @@
+{
+  "desc": "go along, a busy target after the stamp, the second run (19.30.8, W31h): as W31h, but b waits: the 40 s scene ends and b joins a and c",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 80000,
+  "timeout": 1400,
+  "min_shared_ticks": 25000,
+  "server": {
+    "World": {
+      "TestGoHook": "busy_target:2400",
+      "TestGoHookCount": 1
+    }
+  },
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

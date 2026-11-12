@@ -189,6 +189,14 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>The join that made the member one of its instance, until the instance's log reaches its JOIN (a gap before J
     /// that never closes sends it back to its own stage as NEW).</summary>
     public JoinState? JoinedVia { get; set; }
+    /// <summary>Round I1b (19.30.7): the member's go-along request (waiting or stamped), one at a time.</summary>
+    public DW4Online.Relay.World.GoRequest? Go { get; set; }
+    /// <summary>Round I1b (19.30.5): the members the exit port asked on the mat for the member's newest HEADING (no notice for them).</summary>
+    public List<HubMember> HeadingAsked { get; set; } = [];
+    /// <summary>The departure (stage, point) <see cref="HeadingAsked"/> was given for, until the member's next barrier: a HEADING of the
+    /// same departure again keeps them (the engine announces a copy's NEXTSTAGE once more when the port's fork left the member alone in it,
+    /// with no asked slots).</summary>
+    public (string Stage, byte Point)? HeadingAskedFor { get; set; }
 }
 
 public sealed record Heading(string Stage, byte Point, ulong Context, long At);
@@ -293,6 +301,8 @@ public enum HoldKind
     Boss,
     /// <summary>Round I1b (19.7.5): a fresh arrival's barrier held for the loading-screen form of the prompt, without a time limit.</summary>
     Prompt,
+    /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs: a GO's barrier waits before its decision.</summary>
+    TestGo,
 }
 
 /// <summary>
@@ -342,6 +352,11 @@ public sealed class ArrivalGroup
     /// <summary>World:TestJoinHoldMs (test runs only): the JOIN waits until then whatever the target's state.</summary>
     public long TestJoinHoldUntil { get; set; }
     public int Size => Members.Count + CoArrivals.Sum(c => c.Members.Count);
+    /// <summary>Round I1b (19.30.7): the barrier of a stamped GO: its offer's stage group first, a JOIN hold without
+    /// Instances:JoinHoldSeconds while that stage group exists, no *Go alone* at a boss lock, no rescue join.</summary>
+    public DW4Online.Relay.World.GoOffer? Go { get; set; }
+    /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs held this GO barrier once already.</summary>
+    public bool TestHeld { get; set; }
 }
 
 public sealed record Arrival(HubMember Member, int Slot, byte[] Carry);
@@ -531,6 +546,12 @@ public sealed class HubInstance(uint id)
     /// <summary>A detached stage group's former instance (fix-019's refix): its engines hold that instance's story and settings until
     /// their way home, the own story only for its former host. The STORY refusal and the achievements' play context read it.</summary>
     public DW4Online.Relay.World.WorldInstance? DetachedFrom { get; set; }
+    /// <summary>Round I1b (19.18): STATE's flag 16, no present slot alive (the go-along wait and the GO's join hold read it).</summary>
+    public bool NoLiving { get; set; }
+    /// <summary>Round I1b (19.30.5): the point the visit's barrier entered the stage through (a go-along's target point).</summary>
+    public byte EntryPoint { get; set; }
+    /// <summary>Round I1b (19.30.7): JOIN_REQ kind go went to the solo leader: its JOIN_AT seals GO (slot, stage, point).</summary>
+    public (int Slot, string Stage, byte Point, long AskedAt)? AskedGo { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

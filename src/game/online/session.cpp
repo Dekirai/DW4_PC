@@ -1,5 +1,7 @@
 #include "session.hpp"
 
+#include "dw4/engine/online.hpp"
+
 #include "pad_wire.hpp"
 
 #include <algorithm>
@@ -375,6 +377,7 @@ void Session::poll(double now) {
         barrier_fallback(now);
     if (prompt_ && auto_answer_at_ >= 0 && now >= auto_answer_at_) auto_answer(now);
     if (leave_wanted_) send_pending_leave();
+    tick_go(now);
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
         flush_log(now, false);
         if (state_pending_) report_state(now, false);
@@ -529,7 +532,7 @@ void Session::track_figure(double now) {
 
 bool Session::informational(w::Type type) noexcept {
     return type == w::Type::netstat || type == w::Type::presence_of || type == w::Type::presence2_of || type == w::Type::instance_info ||
-           type == w::Type::world_notice || type == w::Type::member_info ||
+           type == w::Type::world_notice || type == w::Type::member_info || type == w::Type::offer ||
            type == w::Type::room;
 }
 
@@ -546,8 +549,7 @@ void Session::handle(const w::Frame& frame, double now) {
     case w::Type::join_req: {
         const auto m = w::decode_join_req(p);
         // (Kind 2 home: the same JOIN_AT; SEALED(J) brings HOME, 19.6.5. Kind 3
-        // go is round I1b's.)
-        if (m.kind == w::JoinKind::go) break;
+        // go, round I1b: SEALED(J) brings GO, 19.30.7.)
         if (m.kind == w::JoinKind::home && config_.test_ignore_home) {
             trace("join_req home ignored (test hook) inst=%u visit=%u", m.inst, m.visit);
             break;
@@ -672,6 +674,7 @@ void Session::handle(const w::Frame& frame, double now) {
         break;
     }
     case w::Type::world_notice: on_world_notice(w::decode_world_notice(p)); break;
+    case w::Type::offer: on_offer(w::decode_offer(p), now); break;
     case w::Type::member_info: {
         const auto m = w::decode_member_info(p);
         if (!m.name.empty()) names_[m.member] = m.name;
@@ -1069,7 +1072,8 @@ void Session::on_world_notice(const w::WorldNotice& m) {
         default: notice("Couldn't send the report. Try again later."); break;
         }
         break;
-    default: break; // kinds of later rounds (friends, party, go along)
+    case w::NoticeKind::go_refused: on_go_refused(m); break;
+    default: break; // kinds of later rounds (friends, party)
     }
 }
 
@@ -1216,17 +1220,39 @@ bool Session::apply_events(bool replaying) {
     // let the remaining member lead alone at its tick, or nobody seals the
     // ticks it waits for; S19b on real game clients).
     bool held = false;
+    // Round I1b (19.30.7): the GO events of this step, applied together (one
+    // Engine::online_go per target) before the next membership event and at
+    // the end.
+    std::vector<w::Event> gos;
     for (auto it = events_.begin(); it != events_.end() && it->tick <= tick_;) {
         const auto& e = it->event;
         if (e.kind == w::EventKind::leave && e.slot == slot_ && !replaying && mode_ == Mode::sealed) {
             // The server took this member out (6.9, 6.10: lag, a resync too
             // long, too many resyncs, a missing hash): it plays on alone.
+            if (!gos.empty()) apply_gos(gos, replaying);
             go_alone();
             return true;
         }
-        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent || e.kind == w::EventKind::home) {
+        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent || e.kind == w::EventKind::home ||
+            e.kind == w::EventKind::go) {
             w::NotJoinable reason{};
+            // (The GOs before a membership event apply first, and the event is
+            // checked against the engine after them, 6.5: their fork and
+            // departure make the step unsafe, and the event waits; before, it
+            // was applied right after them, in the leavers' copy too.)
+            if (!held && e.kind != w::EventKind::go && !gos.empty()) apply_gos(gos, replaying);
             held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
+            if (held && e.kind == w::EventKind::go && tick_ >= it->tick + engine::kGoExpiryTicks) {
+                // A GO not applied within 300 ticks after its tick expires on
+                // every engine alike; the membership events behind it go on
+                // (they wait for their own step).
+                trace("go expired inst=%u visit=%u tick=%u slot=%d stamped=%u%s", inst_, visit_, tick_, int(e.slot), it->tick,
+                      replaying ? " (replay)" : "");
+                if (e.slot == slot_) go_expired(replaying);
+                it = events_.erase(it);
+                changed = true;
+                continue;
+            }
             if (held) {
                 // 6.5: a LEAVE whose tick came plays the neutral, connected
                 // pad from here, and the leader's pad answers its prompts
@@ -1280,7 +1306,18 @@ bool Session::apply_events(bool replaying) {
             if (!replaying && own) log("home: this member takes the home departure at tick %u (reason %u)", tick_, unsigned(e.reason));
             break;
         }
-        case w::EventKind::go: break; // round I1b
+        case w::EventKind::go: gos.push_back(e); break;
+        case w::EventKind::test:
+            // Round I1b's scenario hooks: only development builds apply them
+            // (a relay stamps them only with its test options on), in their
+            // order with the GOs of the step.
+#ifdef DW4_ONLINE_DEV
+            if (!gos.empty()) apply_gos(gos, replaying);
+            trace("test hook applied inst=%u visit=%u tick=%u slot=%d hook=%u argument=%d%s", inst_, visit_, tick_, slot, unsigned(e.hook),
+                  int(e.argument), replaying ? " (replay)" : "");
+            engine_.test_hook(slot, w::TestHook(e.hook), e.argument);
+#endif
+            break;
         // LEAD_FROM and DELAY are for the member that plays now: never from a
         // replayed history or while observing (a joiner before its JOIN). A
         // resync replays the member's own instance: a LEAD_FROM there that
@@ -1307,6 +1344,7 @@ bool Session::apply_events(bool replaying) {
         it = events_.erase(it);
         changed = true;
     }
+    if (!gos.empty()) apply_gos(gos, replaying);
     return changed;
 }
 
@@ -1574,7 +1612,7 @@ void Session::after_step(double now) {
     // (Also from a hub instance: the lobby gate announces a field, 3.4.)
     if (const auto heading = engine_.take_heading(); heading && member) {
         send(w::Type::heading, w::encode(w::Heading{inst_, heading->stage, std::uint8_t(std::clamp(heading->point, 0, 255)),
-                                                    engine_.session_context_hash()}));
+                                                    engine_.session_context_hash(), heading->asked}));
         // (The scene and fade before its NEXTSTAGE show nowhere else: the
         // others' figure of this member does not come back at the gate.)
         depart(now);
@@ -1629,16 +1667,21 @@ void Session::report_state(double now, bool force) {
     // from the first joinable STATE, a visit that ran into a boss right after
     // its load took the boss kill's context as its entry, and an arrival with
     // the old context joined after the kill.)
+    // (Round I1b, 19.18: no present slot alive, from the engine's alive mask:
+    // the go-along wait and the join holds read it, no rescue joins.)
+    const std::uint8_t present = engine_.present_mask();
+    const bool nobody_alive = present != 0 && (engine_.alive_mask() & present) == 0;
     const std::uint8_t flags = std::uint8_t((joinable ? w::state_flag::joinable : 0) | (engine_.membership_safe() ? w::state_flag::membership_safe : 0) |
                                             (engine_.boss_lock() ? w::state_flag::boss_lock : 0) |
-                                            (load_end_ ? w::state_flag::load_ended : 0));
+                                            (load_end_ ? w::state_flag::load_ended : 0) | (nobody_alive ? w::state_flag::no_living : 0));
     const std::uint64_t context = engine_.session_context_hash();
     if (flags == state_flags_ && context == state_context_ && !force) {
         state_pending_ = false;
         return;
     }
     // The boss lock, the load end and the context at once, the rest at most once a second.
-    const bool urgent = force || context != state_context_ || ((flags ^ state_flags_) & (w::state_flag::boss_lock | w::state_flag::load_ended));
+    const bool urgent = force || context != state_context_ ||
+                        ((flags ^ state_flags_) & (w::state_flag::boss_lock | w::state_flag::load_ended | w::state_flag::no_living));
     if (!urgent && now - state_sent_at_ < 1.0) {
         state_pending_ = true;
         return;
@@ -1703,6 +1746,12 @@ void Session::park(double now) {
     loading_.clear();
     // (19.5.3: "Joining Rin..." while the gate's departure to a chosen row with players here loads.)
     if (from_home && chosen_join_ && chosen_here_ && !chosen_host_.empty()) loading_ = "Joining " + chosen_host_ + "...";
+    // (Round I1b: the GO's departure: "Joining Kim...", 19.30.6.)
+    go_parked_at_ = -1;
+    if (go_state_ == GoState::going) {
+        loading_ = "Joining " + go_first_name(find_go_offer(go_offer_)) + "...";
+        go_parked_at_ = now;
+    }
     boss_choice_ = false;
     parked_at_ = now;
     mode_ = Mode::parked;
@@ -1800,6 +1849,24 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
         prompt_hold_ = false;
         if (prompt_ && prompt_->form == PromptForm::loading) close_prompt("answered");
         mode_ = Mode::transition;
+        if (go_state_ == GoState::going) {
+            // The GO's barrier is decided (a JOIN at the entrance, or a new
+            // stage group there when nobody of the instance is left: "Kim
+            // went on to B2." while the offer is still open deeper, else
+            // "Kim left B1 before you arrived."; a decision with its own
+            // notice, another quest there, says only that).
+            if (ok.decision == w::Decision::new_instance && ok.wid != 0 && ok.notice == w::Notice::none) {
+                const auto floor = [&](const std::string& stage) { return config_.floor_name ? config_.floor_name(stage) : stage_title(stage); };
+                const std::string name = go_first_name(find_go_offer(go_offer_));
+                if (!go_offer_stage_.empty() && go_offer_stage_ != ok.stage) notice(name + " went on to " + floor(go_offer_stage_) + ".");
+                else notice(name + " left " + floor(ok.stage) + " before you arrived.");
+            }
+            go_state_ = GoState::none;
+            go_offer_ = 0;
+            go_offer_stage_.clear();
+        }
+        go_parked_at_ = -1;
+        go_back_asked_ = false;
         return;
     }
     if (!engine_.supports_barriers() && mode_ == Mode::solo && ok.inst == inst_ && ok.visit + 1 == visit_) {
@@ -2383,6 +2450,13 @@ Overlay Session::overlay(double now) const {
         o.lagging[std::size_t(s)] = (present_ & (1u << s)) && slot_members_[std::size_t(s)] != kNoMember &&
                                     lagging_members_.contains(slot_members_[std::size_t(s)]);
     o.slow_uplink = lagging_members_.contains(member_id_);
+    // Round I1b (19.30.7): a GO's barrier the relay holds for the target's
+    // floor: after 10 s "Waiting for Kim's floor..." with B: Back to the lobby.
+    if (mode_ == Mode::parked && go_parked_at_ >= 0 && now - go_parked_at_ > 10.0) {
+        o.loading = "Waiting for " + go_first_name(nullptr) + "'s floor...";
+        o.go_back = true;
+        o.go_back_line = go_back_asked_ ? "End the instance for everyone?   A: Yes   B: No" : "B: Back to the lobby";
+    }
     if (host_away_until_ >= 0 && wid_ != 0) {
         const int left = int(std::ceil(std::max(0.0, host_away_until_ - now)));
         o.status = host_away_name_ + " lost the connection. Waiting for " + host_away_name_ + "... " + std::to_string(left) + " s";

@@ -41,6 +41,7 @@ const char* type_name(Type type) noexcept {
     case Type::instance_info: return "INSTANCE_INFO";
     case Type::world_notice: return "WORLD_NOTICE";
     case Type::member_info: return "MEMBER_INFO";
+    case Type::offer: return "OFFER";
     case Type::welcome: return "WELCOME";
     case Type::sealed: return "SEALED";
     case Type::live: return "LIVE";
@@ -331,6 +332,11 @@ void write_tick(Writer& w, const TickBody& tick) {
             p.u8(e.point);
             put_stage(p, e.stage, false);
             break;
+        case EventKind::test:
+            p.u8(e.slot);
+            p.u8(e.hook);
+            p.i32(e.argument);
+            break;
         default: throw WireError("unknown event kind");
         }
         if (p.out.size() > 0xFFFF) throw WireError("event too long");
@@ -381,6 +387,11 @@ TickBody read_tick(Reader& r) {
             e.slot = p.u8();
             e.point = p.u8();
             e.stage = stage_of(p, false);
+            break;
+        case EventKind::test:
+            e.slot = p.u8();
+            e.hook = p.u8();
+            e.argument = p.i32();
             break;
         default: continue; // an event type of a newer server: skipped
         }
@@ -451,6 +462,8 @@ std::vector<std::uint8_t> encode(const Heading& m) {
     put_stage(w, m.stage, false);
     w.u8(m.point);
     w.u64(m.context);
+    check_mask(m.asked);
+    w.u8(m.asked);
     return std::move(w.out);
 }
 Heading decode_heading(std::span<const std::uint8_t> b) {
@@ -460,6 +473,8 @@ Heading decode_heading(std::span<const std::uint8_t> b) {
     m.stage = stage_of(r, false);
     m.point = r.u8();
     m.context = r.u64();
+    m.asked = r.u8();
+    check_mask(m.asked);
     r.end();
     return m;
 }
@@ -755,7 +770,7 @@ State decode_state(std::span<const std::uint8_t> b) {
     m.visit = r.u32();
     m.tick = r.u32();
     m.flags = r.u8();
-    if (m.flags > 15) throw WireError("unknown state flags");
+    if (m.flags & ~state_flag::known) throw WireError("unknown state flags");
     m.context = r.u64();
     m.reason = NotJoinable(r.u8());
     r.end();
@@ -877,7 +892,7 @@ Intent decode_intent(std::span<const std::uint8_t> b) {
     m.inst = r.u32();
     m.visit = r.u32();
     const auto kind = r.u8();
-    if (kind < 1 || kind > 4) throw WireError("unknown intent");
+    if ((kind < 1 || kind > 4) && kind != std::uint8_t(IntentKind::test)) throw WireError("unknown intent");
     m.kind = IntentKind(kind);
     m.argument = r.i32();
     r.end();
@@ -1419,6 +1434,40 @@ MemberInfo decode_member_info(std::span<const std::uint8_t> b) {
     m.name = r.str8(64);
     m.level = r.u16();
     m.flags = r.u8();
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const Offer& m) {
+    if (m.entrants.size() > 4) throw WireError("more than four entrants");
+    Writer w;
+    w.u16(m.id);
+    w.u8(std::uint8_t(m.op));
+    w.u8(m.flags);
+    w.u8(std::uint8_t(m.entrants.size()));
+    for (const auto e : m.entrants) w.u32(e);
+    put_stage(w, m.stage, true);
+    w.u8(m.notice_seconds);
+    w.u8(std::uint8_t(m.close));
+    return std::move(w.out);
+}
+Offer decode_offer(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Offer m;
+    m.id = r.u16();
+    if (m.id == 0) throw WireError("offer id 0");
+    const auto op = r.u8();
+    if (op < 1 || op > 3) throw WireError("unknown offer op");
+    m.op = OfferOp(op);
+    m.flags = r.u8();
+    const auto n = r.u8();
+    if (n > 4) throw WireError("more than four entrants");
+    for (int i = 0; i < n; ++i) m.entrants.push_back(r.u32());
+    m.stage = stage_of(r, true);
+    m.notice_seconds = r.u8();
+    const auto close = r.u8();
+    if (close > 4) throw WireError("unknown offer close reason");
+    m.close = OfferClose(close);
     r.end();
     return m;
 }
