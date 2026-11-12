@@ -55,7 +55,7 @@ public sealed class ReportsModel(ReportService reports, WorldService world, Time
         Me = HttpContext.WebSession()?.AccountId ?? 0;
         Reports = await reports.ListAsync(State == "all" ? null : State, PageNumber, Me, ct);
         var live = new Dictionary<long, uint>();
-        foreach (var i in world.AdminInstances())
+        foreach (var i in world.AdminInstances().Rows)
             foreach (var m in i.Members)
                 live[m.AccountId] = i.Wid;
         LiveInstance = live;

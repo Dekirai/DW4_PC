@@ -77,7 +77,7 @@ public sealed record ReportRow
 public sealed record ReportInsert(long Reporter, long Reported, string Reason, string Source, long? InstanceId, DateTime At);
 
 /// <summary>
-/// player_reports (round I1b, migration 0013). A plain store: the limits and who may report whom are
+/// player_reports (round I1b, migration 0014). A plain store: the limits and who may report whom are
 /// <see cref="Services.ReportService"/>'s rules. Rows are never written for a deleted account.
 /// </summary>
 public interface IReportRepository

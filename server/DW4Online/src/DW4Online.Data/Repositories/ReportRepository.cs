@@ -4,7 +4,7 @@ using DW4Online.Domain.Abstractions;
 namespace DW4Online.Data.Repositories;
 
 /// <summary>
-/// player_reports (round I1b, migration 0013_world, SEAMLESS.md 19.17.1). The rules (limits, repeats, who may report whom)
+/// player_reports (round I1b, migration 0014_reports, SEAMLESS.md 19.17.1). The rules (limits, repeats, who may report whom)
 /// live in ReportService; this is the store. An insert writes nothing when either account is deleted.
 /// </summary>
 public sealed class ReportRepository(Database db) : IReportRepository

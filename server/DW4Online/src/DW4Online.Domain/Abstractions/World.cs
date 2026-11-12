@@ -144,7 +144,8 @@ public sealed class StaffAuditRow
         }
     }
 
-    /// <summary>The audit events of staff actions and looks (the view v_staff_audit holds the same list).</summary>
+    /// <summary>The audit events of staff actions and looks (the view v_staff_audit, migration 0013, holds the same list except
+    /// report_reopened: migration 0014 could not replace the view without the right DROP).</summary>
     public static readonly string[] Events =
     [
         "staff_join", "staff_join_override", "staff_spectate_start", "staff_spectate_end", "staff_end_instance", "staff_remove",
