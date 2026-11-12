@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Dapper;
 using DW4Online.Domain.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -70,11 +71,13 @@ public class ReportApiTests
     public async Task Staff_list_reports_and_mark_them_done_or_open_again_with_audit_rows()
     {
         await using var host = await TestHost.StartAsync();
-        var (kimToken, _, _) = await host.RegisterAsync("Kim");
+        var (kimToken, _, kimId) = await host.RegisterAsync("Kim");
         var (_, _, leeId) = await host.RegisterAsync("Lee");
         var (annToken, _, _) = await host.RegisterAsync("Ann");
-        await host.RegisterAsync("Moddy");
-        await using (var sql = await host.SqlAsync()) await sql.ExecuteAsync("UPDATE accounts SET role = 'moderator' WHERE username = 'Moddy'");
+        var (_, _, moddyId) = await host.RegisterAsync("Moddy");
+        await host.RegisterAsync("Mona");
+        await using (var sql = await host.SqlAsync())
+            await sql.ExecuteAsync("UPDATE accounts SET role = 'moderator' WHERE username IN ('Moddy', 'Mona')");
         var mod = host.Client((await host.LoginAsync("Moddy")).Token);
         var kim = host.Client(kimToken);
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Lee", "griefing")).StatusCode);
@@ -100,12 +103,27 @@ public class ReportApiTests
         Assert.Equal(3, (await (await mod.GetAsync("/api/v1/admin/reports?state=all")).Json()).GetProperty("total").GetInt32());
         Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync($"/api/v1/admin/reports/{id}/reopen", null)).StatusCode);
         Assert.Equal("report_open", await (await mod.PostAsync($"/api/v1/admin/reports/{id}/reopen", null)).ProblemCode());
-        // A report about the moderator himself: another moderator handles it (403 own_report, nothing audited).
+        // A report about the moderator himself (from an instance Kim hosted and Moddy played in): another moderator handles it (403
+        // own_report, nothing audited), and Moddy never learns who reported him: no reporter, no shared instance (its host is Kim).
+        var history = host.App.Services.GetRequiredService<IInstanceHistoryRepository>();
+        var now = host.Clock.GetUtcNow().UtcDateTime;
+        var shared = await history.StartAsync(new InstanceHistoryStart(kimId, 1, "stag0101", "public", 0, 3, "s", now.AddHours(-1)));
+        await history.MemberJoinedAsync(shared, kimId, 1, "host", now.AddHours(-1));
+        await history.MemberJoinedAsync(shared, moddyId, 1, "guest", now.AddHours(-1));
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Moddy", "other")).StatusCode);
         var aboutMod = (await (await mod.GetAsync("/api/v1/admin/reports")).Json()).GetProperty("reports")[0];
         Assert.Equal("Moddy", aboutMod.GetProperty("reported").GetString());
+        Assert.All(new[] { "reporter", "reporterId", "instanceId", "instanceHost", "instanceStage", "instanceStarted" },
+            p => Assert.Equal(JsonValueKind.Null, aboutMod.GetProperty(p).ValueKind));
         var ownDone = await mod.PostAsync($"/api/v1/admin/reports/{aboutMod.GetProperty("id").GetInt64()}/done", null);
         Assert.Equal((HttpStatusCode.Forbidden, "own_report"), (ownDone.StatusCode, await ownDone.ProblemCode()));
+        // Another moderator sees all of it (and Moddy the reporters of the reports about others, as before).
+        var mona = host.Client((await host.LoginAsync("Mona")).Token);
+        var seen = (await (await mona.GetAsync("/api/v1/admin/reports")).Json()).GetProperty("reports")[0];
+        Assert.Equal(("Moddy", "Kim", kimId, shared, "Kim"), (seen.GetProperty("reported").GetString(), seen.GetProperty("reporter").GetString(),
+            seen.GetProperty("reporterId").GetInt64(), seen.GetProperty("instanceId").GetInt64(), seen.GetProperty("instanceHost").GetString()));
+        var aboutAnn = (await (await mod.GetAsync("/api/v1/admin/reports")).Json()).GetProperty("reports")[1];
+        Assert.Equal(("Ann", "Kim"), (aboutAnn.GetProperty("reported").GetString(), aboutAnn.GetProperty("reporter").GetString()));
 
         await using var check = await host.SqlAsync();
         var audits = (await check.QueryAsync<(string Event, long Account, string Detail)>(
@@ -143,10 +161,18 @@ public class ReportApiTests
         Assert.Contains("done (Boss", account.Html);
         Assert.Contains($"Report {id} is open again.",
             (await boss.PostAsync("/admin/reports?handler=Reopen", new() { ["Id"] = id.ToString() }, "/admin/reports?State=done")).Html);
-        // A report about Boss himself: no Done for him; a forged post is refused.
+        // A report about Boss himself: no Done for him, nor who reported him (here and on his own account page: "a player"); a forged
+        // post is refused.
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(host.Client(kimToken), "Boss", "name")).StatusCode);
         var mine = await sqlId.ExecuteScalarAsync<long>("SELECT CAST(MAX(id) AS SIGNED) FROM player_reports");
-        Assert.Contains("About you: another moderator handles it.", (await boss.GetAsync("/admin/reports")).Html);
+        var withMine = (await boss.GetAsync("/admin/reports")).Html;
+        Assert.Contains("About you: another moderator handles it.", withMine);
+        Assert.Contains("<span class=\"muted\">a player</span>", withMine);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(withMine, "/admin/account/Kim\"")); // (only the report about Lee names Kim)
+        var own = (await boss.GetAsync("/admin/account/Boss")).Html;
+        Assert.Contains("Reports about this player (1)", own);
+        Assert.Contains("<span class=\"muted\">a player</span>", own);
+        Assert.DoesNotContain("/admin/account/Kim", own);
         Assert.Contains("another moderator handles it",
             (await boss.PostAsync("/admin/reports?handler=Done", new() { ["Id"] = mine.ToString() }, "/admin/reports")).Html);
         Assert.Equal("open", await sqlId.ExecuteScalarAsync<string>("SELECT state FROM player_reports WHERE id = @mine", new { mine }));

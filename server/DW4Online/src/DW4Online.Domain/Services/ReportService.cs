@@ -93,20 +93,28 @@ public sealed class ReportService(
         }
     }
 
-    /// <summary>The admin list: <paramref name="state"/> open, done or null (all), page 1 first.</summary>
-    public async Task<ReportPage> ListAsync(string? state, int page, CancellationToken ct = default)
+    /// <summary>The admin list for the staff member <paramref name="viewer"/>: <paramref name="state"/> open, done or null (all), page 1
+    /// first; a report about the viewer himself without its reporter (<see cref="ReportRow.WithoutReporter"/>).</summary>
+    public async Task<ReportPage> ListAsync(string? state, int page, long viewer, CancellationToken ct = default)
     {
         state = state is ReportStates.Open or ReportStates.Done ? state : null;
         var size = Math.Clamp(options.PageSize, 1, 500);
         page = Math.Max(1, page);
         var total = await reports.CountAsync(state, ct);
         var rows = await reports.ListAsync(state, (page - 1) * size, size, ct);
-        return new ReportPage(rows, total, page, size);
+        return new ReportPage(ForViewer(rows, viewer), total, page, size);
     }
 
     public Task<int> OpenCountAsync(CancellationToken ct = default) => reports.CountAsync(ReportStates.Open, ct);
 
-    public Task<IReadOnlyList<ReportRow>> AboutAsync(long reported, CancellationToken ct = default) => reports.AboutAsync(reported, 50, ct);
+    /// <summary>The last 50 reports about <paramref name="reported"/> (the account page) for the staff member <paramref name="viewer"/>:
+    /// without their reporters when he looks at his own account.</summary>
+    public async Task<IReadOnlyList<ReportRow>> AboutAsync(long reported, long viewer, CancellationToken ct = default) =>
+        ForViewer(await reports.AboutAsync(reported, 50, ct), viewer);
+
+    /// <summary>A staff member never learns who reported him (19.16 "staff abuse": retaliation; review 2026-11-12).</summary>
+    private static IReadOnlyList<ReportRow> ForViewer(IReadOnlyList<ReportRow> rows, long viewer) =>
+        rows.Any(r => r.ReportedAccountId == viewer) ? rows.Select(r => r.ReportedAccountId == viewer ? r.WithoutReporter() : r).ToList() : rows;
 
     /// <summary>A report about the staff member's own account is handled by another moderator (19.16 "staff abuse").</summary>
     private static DomainError OwnReport() =>

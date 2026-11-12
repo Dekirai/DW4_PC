@@ -40,7 +40,7 @@ public static class ReportSources
 }
 
 /// <summary>A row of player_reports with the names of the accounts (the admin list; v_player_reports).</summary>
-public sealed class ReportRow
+public sealed record ReportRow
 {
     public long Id { get; init; }
     public long ReporterAccountId { get; init; }
@@ -62,6 +62,16 @@ public sealed class ReportRow
     public string? InstanceHost { get; init; }
     public string? InstanceStage { get; init; }
     public DateTime? InstanceStarted { get; init; }
+    /// <summary>The viewer is the reported account (a staff member looking at a report about himself, 19.16 "staff abuse"): who
+    /// reported him is hidden, and so is the instance both shared (its host may be the reporter, its few members narrow it down).</summary>
+    public bool ReporterHidden { get; init; }
+
+    /// <summary>This row as the reported account itself may see it (<see cref="ReporterHidden"/>).</summary>
+    public ReportRow WithoutReporter() => this with
+    {
+        ReporterAccountId = 0, Reporter = "", InstanceId = null, InstanceHost = null, InstanceStage = null, InstanceStarted = null,
+        ReporterHidden = true,
+    };
 }
 
 public sealed record ReportInsert(long Reporter, long Reported, string Reason, string Source, long? InstanceId, DateTime At);

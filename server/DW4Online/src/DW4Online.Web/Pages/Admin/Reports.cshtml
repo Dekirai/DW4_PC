@@ -50,7 +50,17 @@ else
                         }
                     </td>
                     <td>@DW4Online.Domain.Abstractions.ReportReasons.Title(r.Reason)</td>
-                    <td><a href="~/admin/account/@r.Reporter">@r.Reporter</a> <span class="muted small">(@r.Source)</span></td>
+                    <td>
+                        @if (r.ReporterHidden)
+                        {
+                            <span class="muted">a player</span>
+                        }
+                        else
+                        {
+                            <a href="~/admin/account/@r.Reporter">@r.Reporter</a>
+                        }
+                        <span class="muted small">(@r.Source)</span>
+                    </td>
                     <td>
                         @if (r.InstanceId is { } h)
                         {

@@ -30,14 +30,16 @@ public static class ReportEndpoints
         // state: open (default), done or all; page from 1.
         admin.MapGet("", async (string? state, int? page, ReportService reports, HttpContext ctx) =>
         {
-            var p = await reports.ListAsync(state is null ? "open" : state == "all" ? null : state, page ?? 1, ctx.RequestAborted);
+            var p = await reports.ListAsync(state is null ? "open" : state == "all" ? null : state, page ?? 1, ctx.Session().AccountId,
+                ctx.RequestAborted);
             return Results.Ok(new
             {
+                // (A report about the caller himself names neither its reporter nor the instance both shared: null.)
                 reports = p.Reports.Select(x => new
                 {
                     x.Id,
-                    reporter = x.Reporter,
-                    reporterId = x.ReporterAccountId,
+                    reporter = x.ReporterHidden ? null : x.Reporter,
+                    reporterId = x.ReporterHidden ? null : (long?)x.ReporterAccountId,
                     reported = x.Reported,
                     reportedId = x.ReportedAccountId,
                     x.Reason,

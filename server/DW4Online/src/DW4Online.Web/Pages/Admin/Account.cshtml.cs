@@ -111,7 +111,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         Character = await characters.GetAsync(target.Id, ct);
         Story = await characters.StoryHistoryAsync(target.Id, ct);
         Instances = await world.HistoryAsync(target.Id, 50, withSpectating: true, ct);
-        Reports = await reports.AboutAsync(target.Id, ct);
+        Reports = await reports.AboutAsync(target.Id, HttpContext.WebSession()!.AccountId, ct); // (his own: without the reporters)
         Unlocks = (await achievements.ListAsync(target.Id, ct))
             .SelectMany(a => a.Unlocks.Select(u => (a, u)))
             .OrderByDescending(x => x.u.UnlockedAt)

@@ -53,7 +53,7 @@ public sealed class ReportsModel(ReportService reports, WorldService world, Time
         State = State is ReportStates.Done or "all" ? State : ReportStates.Open;
         Now = time.GetUtcNow().UtcDateTime;
         Me = HttpContext.WebSession()?.AccountId ?? 0;
-        Reports = await reports.ListAsync(State == "all" ? null : State, PageNumber, ct);
+        Reports = await reports.ListAsync(State == "all" ? null : State, PageNumber, Me, ct);
         var live = new Dictionary<long, uint>();
         foreach (var i in world.AdminInstances())
             foreach (var m in i.Members)
