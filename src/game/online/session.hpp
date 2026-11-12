@@ -153,7 +153,6 @@ struct Overlay {
     bool slow_uplink = false;   // the server fills this member's pads
     std::array<bool, 4> lagging{};
     bool boss_choice = false;   // "Wait for <names>" / "Go alone" on the loading screen
-    bool prompt = false;        // round I1b: the arrival prompt is open (Session::prompt)
     // A running line while the game plays on (19.5.5: "Kim lost the
     // connection. Waiting for Kim... 52 s", counting down).
     std::string status;
@@ -170,9 +169,16 @@ struct PromptView {
     std::string stage;                  // the arrival stage (folder)
     std::vector<wire::OptionRow> rows;
     std::size_t cursor = 0;
+    // The player moved the cursor (up / down) or changed *New instance*'s
+    // visibility since the prompt opened: a refresh keeps the cursor he moved
+    // on its instance (or on *New instance*); an unmoved cursor takes the
+    // refresh's preselection (decision 40: a row that lost its claim to it is
+    // never kept preselected; round I1b's second review).
+    bool moved = false;
     wire::Visibility visibility = wire::Visibility::public_; // *New instance*'s (Left / Right)
     bool details = false;               // X
     std::string notice;                 // "Kim's instance is full now."
+    std::string notice_host;            // the host the notice names: kept through refreshes while no row of his is choosable
     int rtt_ms = -1;                    // the own round trip (the header's "Your ping"); -1 unknown
     double opened_at = 0;
     bool new_instance() const { return cursor >= rows.size(); }
@@ -303,7 +309,8 @@ public:
     const std::optional<PromptView>& prompt() const { return prompt_; }
     void prompt_input(std::uint32_t buttons, double now);
     // The gate form holds a press (waiting for OPTIONS, the overlay open, or
-    // its answer going out): the host keeps its own presses away meanwhile.
+    // its answer going out); before_step gives the engine neutral pads
+    // meanwhile. An observer (the session tests).
     bool holding_press() const { return gate_phase_ != GatePhase::idle; }
 
     // The member's own choices.

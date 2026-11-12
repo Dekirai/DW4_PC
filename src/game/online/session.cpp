@@ -2317,7 +2317,6 @@ Overlay Session::overlay(double now) const {
     o.loading = loading_;
     if (o.loading.empty() && story_hold_) o.loading = "Loading your story...";
     o.boss_choice = boss_choice_;
-    o.prompt = prompt_.has_value();
     o.connection_lost = mode_ == Mode::lost || (resume_after_lost_ && !hello_done_);
     if (o.connection_lost && o.loading.empty() && mode_ == Mode::lost) o.loading = "Connection lost, reconnecting...";
     if (mode_ == Mode::catching_up && state_last_ > state_first_)

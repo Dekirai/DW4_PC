@@ -203,14 +203,21 @@ void Session::on_options(const w::Options& o, double now) {
 
 void Session::open_prompt(PromptForm form, const w::Options& o, double now) {
     const bool refresh = prompt_ && prompt_->form == form;
-    std::optional<std::uint32_t> kept; // (a refresh keeps the cursor on the same instance, or on New instance)
+    // A refresh keeps the cursor the player moved on the same instance (or on New instance). An unmoved cursor takes the
+    // refresh's preselection: the relay's decision 40 decides it again, so a row that lost its players at the arrival stage
+    // (or its party / friend claim) is never kept under a quick A (round I1b's second review).
+    std::optional<std::uint32_t> kept;
     bool kept_new = false;
+    bool moved = false;
     w::Visibility visibility = o.visibility;
     bool details = false;
     double opened_at = now;
     if (refresh) {
-        if (prompt_->new_instance()) kept_new = true;
-        else kept = prompt_->rows[prompt_->cursor].wid;
+        moved = prompt_->moved;
+        if (moved) {
+            if (prompt_->new_instance()) kept_new = true;
+            else kept = prompt_->rows[prompt_->cursor].wid;
+        }
         visibility = prompt_->visibility;
         details = prompt_->details;
         opened_at = prompt_->opened_at;
@@ -223,12 +230,24 @@ void Session::open_prompt(PromptForm form, const w::Options& o, double now) {
     v.details = details;
     v.opened_at = opened_at;
     v.rtt_ms = o.rtt ? int(o.rtt) : -1;
-    if (o.notice != 0 && !o.notice_name.empty())
+    v.moved = moved;
+    if (o.notice != 0 && !o.notice_name.empty()) {
         v.notice = o.notice == 1 ? o.notice_name + "'s instance is full now."
                    : o.notice == 2 ? "Couldn't join " + o.notice_name + ": the instance has ended."
                                    : "Couldn't join " + o.notice_name + ": it is not open to you any more.";
-    else if (refresh)
-        v.notice = prompt_->notice;
+        v.notice_host = o.notice_name;
+    } else if (refresh && !prompt_->notice.empty()) {
+        // (A refresh carries no line: the old one stays while no row of the instance it names can be chosen; once one can, it is
+        // out of date and goes.)
+        const auto& host = prompt_->notice_host;
+        const bool choosable_again = std::any_of(v.rows.begin(), v.rows.end(), [&](const w::OptionRow& r) {
+            return r.host_name == host && w::choosable(r.state);
+        });
+        if (!choosable_again) {
+            v.notice = prompt_->notice;
+            v.notice_host = host;
+        }
+    }
     v.cursor = o.preselected < v.rows.size() ? o.preselected : v.rows.size();
     if (kept_new) v.cursor = v.rows.size();
     else if (kept)
@@ -267,12 +286,19 @@ void Session::prompt_input(std::uint32_t buttons, double now) {
     if (!prompt_ || pressed == 0) return;
     auto& v = *prompt_;
     if (pressed & pad_button::up) {
-        if (v.cursor > 0) --v.cursor;
+        if (v.cursor > 0) {
+            --v.cursor;
+            v.moved = true;
+        }
     } else if (pressed & pad_button::down) {
-        if (v.cursor < v.rows.size()) ++v.cursor;
+        if (v.cursor < v.rows.size()) {
+            ++v.cursor;
+            v.moved = true;
+        }
     } else if ((pressed & (pad_button::left | pad_button::right)) && v.new_instance()) {
         const int step = (pressed & pad_button::right) ? 1 : 2;
         v.visibility = w::Visibility((int(v.visibility) + step) % 3);
+        v.moved = true; // (the player set up New instance: a refresh keeps him there)
     } else if (pressed & pad_button::x) {
         v.details = !v.details;
     } else if (pressed & pad_button::a) {

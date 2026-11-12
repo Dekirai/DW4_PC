@@ -1110,7 +1110,23 @@ void prompt_gate_form() {
         world.run(20.0); // (no time limit)
         check(a.session->prompt() && a.engine.gate_menu && a.engine.gate_confirms == 0 && a.session->holding_press(), "it waits for the player");
         check(world.hub.barrier_plans.empty(), "nothing left");
-        // A refresh with Rin's row first keeps the cursor on Kim's.
+        // Decision 40 through a refresh (round I1b's second review): Kim's player left the arrival stage, so the relay preselects
+        // New instance; the cursor the player never moved follows it (a quick A never makes him a guest of a stranger elsewhere).
+        auto gone = prompt_rows();
+        gone.rows[0].here = 0;
+        gone.plan = world.hub.plans.back().plan;
+        gone.flags = w::Options::refresh;
+        gone.preselected = w::Options::kNewInstance;
+        gone.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(gone), world.now);
+        world.run(0.2);
+        check(a.session->prompt() && a.session->prompt()->new_instance() && !a.session->prompt()->moved,
+              "an unmoved cursor takes the refresh's preselection (New instance)");
+        // The player moves up to Kim's row himself: a refresh with Rin's row first keeps the cursor he moved on Kim's.
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        check(a.session->prompt()->cursor == 0 && a.session->prompt()->moved, "moved to Kim's row");
         auto refresh = prompt_rows();
         std::swap(refresh.rows[0], refresh.rows[1]);
         refresh.plan = world.hub.plans.back().plan;
@@ -1119,7 +1135,7 @@ void prompt_gate_form() {
         refresh.stage = "stag0101";
         world.hub.send(2, w::Type::options, w::encode(refresh), world.now);
         world.run(0.2);
-        check(a.session->prompt() && a.session->prompt()->cursor == 1 && a.session->prompt()->rows[1].wid == 7, "the cursor stays on Kim's row");
+        check(a.session->prompt() && a.session->prompt()->cursor == 1 && a.session->prompt()->rows[1].wid == 7, "the moved cursor stays on Kim's row");
         // Down: Mo's full row, where A does nothing; down to New instance, right: Friends; up twice to Kim's row, A.
         key(a, dw4::pad_button::down, world.now);
         key(a, dw4::pad_button::a, world.now);
@@ -1138,6 +1154,48 @@ void prompt_gate_form() {
         check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "then the held press");
         check(world.run_until(5, [&] { return !world.hub.barrier_plans.empty(); }), "the departure's BARRIER");
         check(world.hub.barrier_plans[0] == refresh.plan, "the BARRIER names the plan");
+    }
+    {
+        // An unmoved cursor follows a refresh's preselection back to a row (the row regained players at the arrival stage), and
+        // the notice line stays only while no row of the instance it names can be chosen (round I1b's second review).
+        World world;
+        auto first = prompt_rows();
+        first.rows[0].here = 0;
+        first.preselected = w::Options::kNewInstance;
+        world.hub.prompt = first;
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        check(a.session->prompt()->new_instance(), "New instance preselected");
+        const auto plan = world.hub.plans.back().plan;
+        auto back = prompt_rows();
+        back.plan = plan;
+        back.flags = w::Options::refresh;
+        back.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(back), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->cursor == 0 && a.session->prompt()->rows[0].wid == 7, "the unmoved cursor on the refresh's preselection");
+        // Kim's instance full now (a refresh naming it), then a refresh without a line while it is still full, then one where it
+        // has a seat again.
+        auto full = prompt_rows();
+        full.plan = plan;
+        full.flags = w::Options::refresh;
+        full.stage = "stag0101";
+        full.rows[0].state = w::RowState::full;
+        full.preselected = 1;
+        full.notice = 1;
+        full.notice_name = "Kim";
+        world.hub.send(2, w::Type::options, w::encode(full), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice == "Kim's instance is full now.", "the notice line");
+        full.notice = 0;
+        full.notice_name.clear();
+        world.hub.send(2, w::Type::options, w::encode(full), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice == "Kim's instance is full now.", "kept while Kim's row is greyed");
+        world.hub.send(2, w::Type::options, w::encode(back), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice.empty(), "gone once Kim's row can be chosen again");
     }
     {
         // B: the game's own cancel closes the menu; no BARRIER, nothing loaded.
