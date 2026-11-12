@@ -378,33 +378,50 @@ public sealed partial class RoomHub
 
     /// <summary>
     /// The members of an arrival that were removed from <paramref name="w"/> (no seat in it and <see cref="Unseatable"/>: the host
-    /// removed them while their stage group gathered at a barrier, while their arrival waited for its JOIN or a boss fight) go home at
-    /// once, whatever the rest of their group does: a DISSOLVE redirected to the lobby on their own story (19.6.6: the removal's HOME
-    /// could not be stamped at the barrier). The rest decides on as it would have. True: nobody of the group is left.
+    /// removed them while their stage group gathered at a barrier, while their arrival waited for its JOIN or a boss fight, or while
+    /// they waited as co-arrivals of a holding base) go home at once, whatever the rest of their group does: a DISSOLVE of the visit
+    /// they parked in, redirected to the lobby on their own story (19.6.6: the removal's HOME could not be stamped at the barrier).
+    /// The rest decides on as it would have; the co-arrivals of a base that has nobody left decide on their own
+    /// (<see cref="RedecideCoArrivals"/>, review 2026-11-12). True: nobody of the base is left.
     /// </summary>
     private bool SendRemovedHome(ArrivalGroup g, WorldInstance? w, long now)
     {
         if (w is null) return false;
-        var removed = g.Members.Where(a => !w.Seats.ContainsKey(a.Member) && Unseatable(w, a.Member, now)).ToList();
+        bool Removed(Arrival a) => !w.Seats.ContainsKey(a.Member) && Unseatable(w, a.Member, now);
+        // (A co-arrival is parked at its own stage group's barrier: it goes home from there; a group with members left stays the base's.)
+        foreach (var c in g.CoArrivals.ToList())
+        {
+            var gone = c.Members.Where(Removed).ToList();
+            if (gone.Count == 0) continue;
+            foreach (var a in gone) c.Members.Remove(a);
+            if (c.Members.Count == 0) g.CoArrivals.Remove(c);
+            HomeRemoved(c, gone, w, g.Hold, coArrival: true, now);
+        }
+        var removed = g.Members.Where(Removed).ToList();
         if (removed.Count == 0) return false;
-        var home = new ArrivalGroup { From = g.From, BarrierTick = g.BarrierTick, Stage = g.Stage, Point = g.Point, Context = g.Context,
-            ParkedAt = g.ParkedAt, Alive = g.Alive };
+        foreach (var a in removed) g.Members.Remove(a);
+        HomeRemoved(g, removed, w, g.Hold, coArrival: false, now);
+        if (g.Members.Count > 0) return false;
+        _holds.Remove(g);
+        g.Hold = HoldKind.None;
+        RedecideCoArrivals(g, now);
+        return true;
+    }
+
+    /// <summary>The DISSOLVE home of removed members of the arrival <paramref name="parked"/> (the barrier they parked at), counted
+    /// and written to the world log (<c>removed_home</c>, with the hold they waited in).</summary>
+    private void HomeRemoved(ArrivalGroup parked, List<Arrival> removed, WorldInstance w, HoldKind hold, bool coArrival, long now)
+    {
+        var home = new ArrivalGroup { From = parked.From, BarrierTick = parked.BarrierTick, Stage = parked.Stage, Point = parked.Point,
+            Context = parked.Context, ParkedAt = parked.ParkedAt, Alive = parked.Alive };
         foreach (var a in removed)
         {
-            g.Members.Remove(a);
             home.Members.Add(a);
             Count("removed_at_decision");
-            Note("removed_home", g.From, ("wid", w.Wid), ("account", a.Member.AccountId), ("member", a.Member.Id), ("stage", g.Stage),
-                ("hold", g.Hold.ToString().ToLowerInvariant()));
-        }
-        var empty = g.Members.Count == 0;
-        if (empty)
-        {
-            _holds.Remove(g);
-            g.Hold = HoldKind.None;
+            Note("removed_home", parked.From, ("wid", w.Wid), ("account", a.Member.AccountId), ("member", a.Member.Id), ("stage", parked.Stage),
+                ("hold", hold.ToString().ToLowerInvariant()), ("co_arrival", coArrival));
         }
         Dissolve(home, now, redirectHome: true);
-        return empty;
     }
 
     /// <summary>A member's seat frees (it went home, left the world, was removed): the instance ends when nobody is left.</summary>

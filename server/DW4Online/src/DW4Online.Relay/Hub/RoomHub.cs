@@ -216,8 +216,7 @@ public sealed partial class RoomHub
             if (a.Members.Count == 0)
             {
                 _holds.Remove(a);
-                foreach (var c in a.CoArrivals)
-                    if (c.Members.Count > 0) Decide(c, now);
+                RedecideCoArrivals(a, now);
             }
         }
         if (m.Joining is { } j)
@@ -255,6 +254,23 @@ public sealed partial class RoomHub
         }
         m.Instance = null;
         m.Slot = -1;
+    }
+
+    /// <summary>
+    /// The co-arrivals of a base that has nobody left (its members left the world, or were removed from the instance: 19.6.6) decide
+    /// on their own (SEAMLESS.md 3.4), each as if it had just arrived. Their members' arrival is their own group again, not the gone
+    /// base (review 2026-11-12: a removal, a lost connection or a boss choice must find the group that holds them; before, a member
+    /// that left such a group left its hold behind with nobody in it).
+    /// </summary>
+    private void RedecideCoArrivals(ArrivalGroup g, long now)
+    {
+        var groups = g.CoArrivals.Where(c => c.Members.Count > 0).ToList();
+        g.CoArrivals.Clear();
+        foreach (var c in groups)
+        {
+            foreach (var a in c.Members) a.Member.Arrival = c;
+            Decide(c, now);
+        }
     }
 
     // Receive ------------------------------------------------------------------------------------------------------------
@@ -1531,6 +1547,9 @@ public sealed partial class RoomHub
             foreach (var a in g.Members) TakeSeat(g.World, a.Member, now, "new_group");
             foreach (var c in g.CoArrivals.SelectMany(c => c.Members)) TakeSeat(g.World, c.Member, now, "coarrival");
         }
+        // (The last check before the places: a member or co-arrival removed from the instance never comes into one of its stage groups,
+        // 19.6.6; the decisions send such members home before, this guards a path that did not. Nobody left: the co-arrivals decided.)
+        else if (SendRemovedHome(g, g.World, now)) return;
         var w = g.World;
         var reuse = !g.From.Ended && g.From.Id != 0 && g.From.Members.All(x => g.Members.Any(a => a.Member == x));
         // The visit the members parked in (BARRIER_OK names it; a reused instance's visit counts on below).

@@ -373,6 +373,165 @@ public partial class HubLogicTests
         Assert.Equal(StoryRefusal.Owner, h.P("b").Last(Msg.StoryAck, StoryAckMsg.Parse).Refused.Single().Reason);
     }
 
+    /// <summary>a hosts Dry Land (dng205b1, joinable); b (stag0201) and c (stag0202) are two solo-led stage groups of a's instance. b, c
+    /// and a announce stag0203; b arrives first and holds as a co-arrival base awaiting c and a; c arrives and is b's co-arrival; the
+    /// base still awaits a (the I1b review of 2026-11-12, its probes).</summary>
+    private static (Harness H, WorldInstance W) CoArrivalOfAGuestBase()
+    {
+        var h = new Harness();
+        Admit(h, "a", Player(100, "a") with { Story = StoryAt(4) });
+        Admit(h, "b", Player(101, "b") with { Story = StoryAt(2) });
+        Admit(h, "c", Player(102, "c") with { Story = StoryAt(2) });
+        BarrierWith(h, "a", "stag0202");
+        h.Snapshot("a");
+        BarrierWith(h, "a", "dng205b1");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        var w = W(h, "a");
+        foreach (var (n, stage) in new[] { ("b", "stag0201"), ("c", "stag0202") })
+        {
+            BarrierWith(h, n, stage);
+            Assert.Equal(BarrierDecision.New, h.Decision(n).Decision);
+            h.Snapshot(n);
+            h.Log(n, 0, 60);
+            h.Joinable(n);
+            Assert.Same(w, W(h, n));
+        }
+        Assert.NotSame(h.I("b"), h.I("c"));
+        foreach (var n in new[] { "b", "c", "a" }) h.Send(n, new HeadingMsg(h.Inst(n), "stag0203", 0, 5).Frame());
+        BarrierWith(h, "b", "stag0203");
+        Assert.Equal(WaitReason.CoArrival, h.P("b").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        var decided = h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count;
+        BarrierWith(h, "c", "stag0203");
+        Assert.Equal(decided, h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count); // (b's co-arrival; the base waits for a)
+        Assert.Same(h.Mem("b").Arrival, h.Mem("c").Arrival);
+        return (h, w);
+    }
+
+    [Fact]
+    public void Removing_the_only_member_of_a_holding_base_lets_its_co_arrival_decide_on_its_own_and_play_on_in_the_instance()
+    {
+        var (h, w) = CoArrivalOfAGuestBase();
+        var c = h.Mem("c");
+        var parked = c.Instance!;
+        var decided = h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count;
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
+        Assert.Equal(BarrierDecision.Dissolve, h.Decision("b").Decision);
+        // c parks under its own name again and decides as if it had just arrived: a is still announced, so it holds for him (before the
+        // review's fix c waited for a base that was gone: no BARRIER_OK, no BARRIER_WAIT, its client's fallback after 5 s).
+        Assert.Equal([c], c.Arrival!.Members.Select(x => x.Member));
+        Assert.Equal(WaitReason.CoArrival, h.P("c").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        for (var k = 0; k < 5; ++k)
+        {
+            h.Advance(1000);
+            h.Hub.Housekeep(h.Now);
+        }
+        // The hold ends: c plays on as a stage group of a's instance at stag0203, its seat kept, the host's story.
+        var ok = h.Decision("c");
+        Assert.Equal(decided + 1, h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse).Count);
+        Assert.Equal((BarrierDecision.New, parked.Id, w.Wid, h.Mem("a").Id), (ok.Decision, ok.Inst, ok.World.Wid, ok.World.OwnerMember));
+        Assert.True(w.Seats.ContainsKey(c));
+        Assert.Same(w, h.I("c").World);
+        Assert.Null(c.Arrival);
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("faults"));
+    }
+
+    [Fact]
+    public void A_co_arrival_removed_while_its_base_holds_goes_home_from_its_own_barrier_and_never_co_arrives_into_the_instance()
+    {
+        var (h, w) = CoArrivalOfAGuestBase();
+        var c = h.Mem("c");
+        var parked = c.Instance!;
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, c.Id).Frame());
+        // At once: the DISSOLVE of the visit c parked in, into the lobby on its own story (its engine held a's), no seat, no HOME owed.
+        var home = h.Decision("c");
+        Assert.Equal((BarrierDecision.Dissolve, parked.Id, parked.Visit, c.Id, StoryMode.Replace, "stagml11", RoomHub.HomePoint),
+            (home.Decision, home.Inst, home.Visit, home.World.OwnerMember, home.World.StoryMode, home.World.RedirectStage.ToLowerInvariant(),
+                home.World.RedirectPoint));
+        Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("removed_at_decision"));
+        Assert.Null(c.Arrival);
+        Assert.Null(c.HomeWish);
+        Assert.Equal(InstanceMode.Hub, h.I("c").Mode);
+        // The base goes on without it when its hold ends: NEW with no co-arrival; c never gets CO_ARRIVE into a's instance (before the
+        // review's fix it did, without a seat, with the host's story and owner key).
+        for (var k = 0; k < 5; ++k)
+        {
+            h.Advance(1000);
+            h.Hub.Housekeep(h.Now);
+        }
+        var b = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, 0), (b.Decision, b.CoArrivals.Count));
+        Assert.Single(h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse), x => x.Decision == BarrierDecision.Dissolve);
+        Assert.DoesNotContain(h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse), x => x.Decision == BarrierDecision.CoArrive);
+        Assert.False(w.Seats.ContainsKey(c));
+        Assert.Null(c.World);
+        Assert.NotSame(w, h.I("c").World);
+        Assert.Equal(["Joined", "Left"], SeatNotices(h, "a", "c"));
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("faults"));
+    }
+
+    [Fact]
+    public void A_NEW_never_places_a_co_arrival_barred_from_the_instance_without_a_seat_whatever_path_led_there()
+    {
+        var (h, w) = CoArrivalOfAGuestBase();
+        var c = h.Mem("c");
+        // A path that took c's seat and barred it without sending it home (none is known since the review's fixes): New, when a arrives
+        // as the base's last awaited member (no CheckHolds pass between), is the last check.
+        Assert.True(w.Seats.Remove(c));
+        c.World = null;
+        w.Bars[c.AccountId] = h.Now + 600 * System.Diagnostics.Stopwatch.Frequency;
+        BarrierWith(h, "a", "stag0203");
+        Assert.Equal((BarrierDecision.Dissolve, "stagml11"), (h.Decision("c").Decision, h.Decision("c").World.RedirectStage.ToLowerInvariant()));
+        Assert.DoesNotContain(h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse), x => x.Decision == BarrierDecision.CoArrive);
+        var b = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, 1), (b.Decision, b.CoArrivals.Count)); // (a, the last awaited one, came along)
+        Assert.Equal(h.Mem("a").Id, b.CoArrivals.Single().Member);
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("faults"));
+    }
+
+    [Fact]
+    public void The_co_arrival_of_a_base_whose_only_member_left_the_world_is_its_own_arrival_for_a_removal()
+    {
+        var (h, w) = CoArrivalOfAGuestBase();
+        var c = h.Mem("c");
+        h.Hub.Leave(101, h.Now); // b leaves the world while its base holds (POST /world/leave)
+        // c decides on its own (DetachLocked) and holds for a under its own name: its arrival is its group, not b's gone base.
+        Assert.Equal([c], c.Arrival!.Members.Select(x => x.Member));
+        Assert.Equal(WaitReason.CoArrival, h.P("c").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        // So the host's removal finds it at once (before, only the next housekeeping pass did).
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, c.Id).Frame());
+        Assert.Equal((BarrierDecision.Dissolve, "stagml11"), (h.Decision("c").Decision, h.Decision("c").World.RedirectStage.ToLowerInvariant()));
+        Assert.Null(c.Arrival);
+        for (var k = 0; k < 5; ++k)
+        {
+            h.Advance(1000);
+            h.Hub.Housekeep(h.Now);
+        }
+        Assert.Single(h.P("c").All(Msg.BarrierOk, BarrierOkMsg.Parse), x => x.Decision == BarrierDecision.Dissolve);
+        Assert.False(w.Seats.ContainsKey(c));
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("faults"));
+    }
+
+    [Fact]
+    public void The_co_arrival_of_a_base_whose_only_member_left_the_world_may_leave_too_without_leaving_an_empty_hold()
+    {
+        var (h, w) = CoArrivalOfAGuestBase();
+        h.Hub.Leave(101, h.Now);
+        Assert.Equal(WaitReason.CoArrival, h.P("c").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        // c leaves the world too while it holds for a: its hold goes with it (before, c's arrival still named b's gone base, so c's
+        // own hold stayed with no member and its end failed in the housekeeping: a NEW of nobody).
+        h.Hub.Leave(102, h.Now);
+        for (var k = 0; k < 5; ++k)
+        {
+            h.Advance(1000);
+            h.Hub.Housekeep(h.Now);
+        }
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("faults"));
+        Assert.Equal(["a"], w.Seats.Keys.Select(x => x.Name));
+        Assert.False(w.Ending);
+    }
+
     [Fact]
     public void A_report_names_the_reported_account_and_the_shared_instance_and_its_answer_reaches_the_reporter()
     {
