@@ -1,8 +1,8 @@
 # W4bx (19.24, 19.7.6): counter-proof of W4b: with World:StartingSeconds 0 b's arrival is no join of a starting instance
-# but the prompt (round I1b: the gate form with a's row, preselected for its player here; autochoice first takes it):
+# but the prompt (round I1b: the gate form with a's row, preselected for its player here, or the loading-screen form when b's PLAN came a moment before a's instance started (second review's r11); autochoice first takes it):
 # BARRIER_OK arrival 2, the guest's toast, not the co-arrival's.
 a: online-script: step .* log: together
-b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+b: online-trace: prompt open form=(gate|loading) stage=stag0101 rows=1 cursor=0
 b: online-trace: prompt answer choice=join
 b: online: You're a guest in .*'s story
 b: online-script: step .* log: together
