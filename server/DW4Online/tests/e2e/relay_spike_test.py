@@ -218,7 +218,8 @@ def main():
     # Both confirm the same exit (HEADING with the context hash), then park at their barriers: a co-arrival.
     context = 0xC0FFEE
     for m in (a, b):
-        m.send(HEADING, struct.pack("<I", m.inst) + string("stag0101") + bytes([0]) + struct.pack("<Q", context))
+        # (Round I1b appends the slots the exit port asked on the mat that stay: none from home.)
+        m.send(HEADING, struct.pack("<I", m.inst) + string("stag0101") + bytes([0]) + struct.pack("<Q", context) + bytes([0]))
     # Each connection has its own reader on the relay: b's HEADING must be in before a's barrier is decided (a real
     # client sends HEADING one to two seconds before its barrier). Without the pause a busy machine let a's barrier
     # overtake it and a went on alone.
