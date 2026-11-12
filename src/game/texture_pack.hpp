@@ -12,6 +12,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace dw4 {
+struct RgbaImage;
+}
+
 namespace dw4::game {
 
 struct TextureImage {
@@ -28,7 +32,18 @@ public:
     bool dumping() const { return !dump_.empty(); }
 
     static std::uint64_t hash(const std::uint8_t* rgba, std::size_t bytes, int width, int height);
+    // The pack hash of a decoded game texture, the one the renderer looks
+    // replacements up by and dumps under. CMPR (BC1) images hash the earlier
+    // decode with black transparent texels (decode_bc1 now keeps GX's average
+    // colour there), so packs made before that change still match them.
+    // Every tool that names textures for packs (tools/dw4_texpack) calls this
+    // function; a copy of the rule would drift from the renderer.
+    static std::uint64_t image_hash(const RgbaImage& image);
     static std::string file_name(const std::string& image_name, int width, int height, std::uint64_t hash);
+    // Writes straight RGBA8 rows (or `channels` 8-bit channels per pixel) as
+    // a PNG file (dumps and exports).
+    static bool write_png(const std::filesystem::path& path, const std::uint8_t* pixels, int width, int height,
+                          int channels = 4);
 
     // The replacement for a texture, if the pack has one (loaded from disk).
     std::optional<TextureImage> replacement(std::uint64_t hash) const;

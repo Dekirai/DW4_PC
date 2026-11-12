@@ -712,16 +712,9 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         if (pack_) {
             // Texture packs: dumps and replacements by pixel hash. CMPR
             // textures keep the hash of the earlier decode with black
-            // transparent texels, so existing packs still match them.
-            std::uint64_t hash;
-            if (image.block_compressed) {
-                auto earlier = image.rgba;
-                for (std::size_t i = 0; i + 3 < earlier.size(); i += 4)
-                    if (earlier[i + 3] == 0) earlier[i] = earlier[i + 1] = earlier[i + 2] = 0;
-                hash = TexturePack::hash(earlier.data(), earlier.size(), width, height);
-            } else {
-                hash = TexturePack::hash(pixels, image.rgba.size(), width, height);
-            }
+            // transparent texels, so existing packs still match them
+            // (TexturePack::image_hash, shared with tools/dw4_texpack).
+            const std::uint64_t hash = TexturePack::image_hash(image);
             const std::string name(binding->image.str(22));
             pack_->dump(name, pixels, width, height, hash);
             replaced = pack_->replacement(hash);

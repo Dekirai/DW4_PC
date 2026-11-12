@@ -1,5 +1,7 @@
 #include "texture_pack.hpp"
 
+#include "dw4/textures.hpp"
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -71,6 +73,20 @@ std::uint64_t TexturePack::hash(const std::uint8_t* rgba, std::size_t bytes, int
     return h;
 }
 
+std::uint64_t TexturePack::image_hash(const RgbaImage& image) {
+    const int width = int(image.width), height = int(image.height);
+    if (!image.block_compressed) return hash(image.rgba.data(), image.rgba.size(), width, height);
+    auto earlier = image.rgba;
+    for (std::size_t i = 0; i + 3 < earlier.size(); i += 4)
+        if (earlier[i + 3] == 0) earlier[i] = earlier[i + 1] = earlier[i + 2] = 0;
+    return hash(earlier.data(), earlier.size(), width, height);
+}
+
+bool TexturePack::write_png(const std::filesystem::path& path, const std::uint8_t* pixels, int width, int height,
+                            int channels) {
+    return stbi_write_png(path.string().c_str(), width, height, channels, pixels, width * channels) != 0;
+}
+
 std::string TexturePack::file_name(const std::string& image_name, int width, int height, std::uint64_t hash) {
     char tail[64];
     std::snprintf(tail, sizeof tail, "_%dx%d_%016llx.png", width, height, static_cast<unsigned long long>(hash));
@@ -99,7 +115,7 @@ void TexturePack::dump(const std::string& image_name, const std::uint8_t* rgba, 
     const auto path = dump_ / file_name(image_name, width, height, hash);
     std::error_code error;
     if (std::filesystem::exists(path, error)) return;
-    stbi_write_png(path.string().c_str(), width, height, 4, rgba, width * 4);
+    write_png(path, rgba, width, height);
 }
 
 } // namespace dw4::game

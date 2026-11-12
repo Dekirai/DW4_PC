@@ -139,6 +139,79 @@ NEAREST, which the original never applies. So every game texture samples
 bilinearly. Dolphin comparisons of fire blasts (dng101b2) and disk sparkles
 (dng101b1) match the bilinear sprites.
 
+## Texture pack hash
+
+Texture packs (README, *Texture packs*) find a replacement by the 64-bit
+FNV-1a hash of the decoded texture: offset basis `0xcbf29ce484222325`, prime
+`0x100000001b3`, over the width and the height (each as four little-endian
+bytes) and then the RGBA8 rows top to bottom. A BC1 (GX CMPR) texel with
+alpha 0 enters the hash as `0, 0, 0, 0`: the decoder keeps GX's average
+colour in those texels, the hash keeps the earlier black, so older packs
+still match. `TexturePack::image_hash` (`src/game/texture_pack.cpp`) is the
+one implementation; the renderer and `dw4_texpack` both call it. Any change
+to the decoders or to this rule changes the hashes and invalidates every
+pack; `tests/texpack_tests.cpp` pins three values.
+
+## Exporting every texture (dw4_texpack)
+
+`dw4_texpack export --data ROOT --out DIR [--no-uv-masks]` reads the game data
+(the extracted folder or the disc image; only read) and writes each unique
+texture once, with what the data says about its use. It is a development
+tool for texture pack authors and is not part of the release package. Its
+output is derived from the game's pictures and stays on the user's machine.
+`DIR` must be new, empty or an earlier export (marked by
+`.dw4_texpack_export`, whose own files are replaced). The tool runs at
+below-normal priority.
+
+| Output | Contents |
+| --- | --- |
+| `textures/<name>_<w>x<h>_<hash>.png` | The decoded pixels (straight RGBA, the GX average colour in transparent CMPR texels), named exactly as the renderer's dumps; the file works unchanged as a replacement. Rows are stored as the decoder delivers them, so some pictures (text) stand upside down, as in the dumps. |
+| `manifest.tsv` | One line per unique hash (columns below). |
+| `instances.tsv` | One line per `igImage`: archive, entry, source path, reference, name, hash. |
+| `atlas/<hash>.tsv` | Cells in texels (`x0 y0 x1 y1`, end exclusive): `font` glyphs (with the character code), particle sprite sheet `grid` cells, `quad` sprite rectangles and `uvkey` cells of keyed UV animations. |
+| `uvmask/<hash>.png` | 8-bit mask of the texels the meshes' UVs cover (one texel of margin), for textures whose UVs stay inside the picture. |
+| `summary.txt` | Counts, errors and warnings. |
+
+Manifest columns:
+
+| Column | Meaning |
+| --- | --- |
+| `hash`, `file`, `names` | Pack hash, PNG name, every image name it carries (one hash can have several, such as `P_dorumon01.dds` and `P_dorumon02.dds`). |
+| `width`, `height`, `format` | Size and source format: `C8` (indexed8 with an RGBA8 palette) or `CMPR` (BC1). |
+| `palette_entries`, `palette_group`, `palette_variants` | For C8: palette size, an id of the index plane, and how many unique textures share that index plane under other palettes (variants to process alike). |
+| `alpha`, `alpha0_texels`, `alpha_partial_texels` | `opaque`, `cutout` (alpha 0 and 255 only) or `blend`, with the texel counts. |
+| `alpha_test`, `blend` | The alpha compare (`GREATER 0.1`, the engine default, or the material's) and the blend factors (`SRC_ALPHA/ONE` is additive) of every draw that uses the texture, `off` where disabled. |
+| `wrap`, `filter` | The sampler (`engine::texture_sampler`): wraps S/T, filters mag/min. |
+| `languages`, `usa` | `all` for language-neutral data, otherwise the language or region packs (`usa`, `eng`, ..., `aus`, `aeu`, `ajp`, `base` for `loading/`); `usa` is 1 when the USA release loads it (neutral, `usa` or `aus`). |
+| `stages` | Stages whose files hold it (`common` for `_common/` and `bectext.igb`; loading screens by their stage). |
+| `instances`, `documents`, `uses` | `igImage` objects, documents, and draws found in the scene graphs. |
+| `pack_names` | Names under which a `beTextureCtrl` pack offers it (`lh_pack`, `ls_pack`, the language packs); scene sets that ask for the name draw it. |
+| `uv_range` | Union of the drawn UV boxes (after texture transforms), `u0..u1,v0..v1`. |
+| `tiles` | Axes on which a draw's UVs leave the picture by more than a texel (and 1 %) with a repeat wrap: the picture repeats within a face. |
+| `uv_edges` | Axes on which drawn UVs reach a border (within a texel) or cross it with a repeat wrap: bilinear filtering reads the opposite edge there, and faces side by side with border-to-border UVs tile the picture. Pad these axes cyclically before upscaling. |
+| `uv_motion` | `scroll` (an interpolated UV transform sequence), `keys` (a stepped one), `texgen` (sphere map), `particle` (moving particle UVs). |
+| `atlas` | `font:<name>:<glyphs>`, `grid:<x>x<y>` (particle sprite sheets), `quads:<n>` (distinct sprite rectangles, not just the whole picture); cells in `atlas/`. |
+| `uv_mask` | `uvmask/<hash>.png`, `full` (repeating or moving UVs reach everything) or `-`. |
+| `source` | One document that holds it. |
+
+The scene walk follows the engine's nodes and attributes (`SceneCache`) with
+the traversal's rules for the unit 0 texture, its enable state, blending, the
+alpha compare and the coordinate source, but visits every child (all switch
+and LOD children, actor skins). Scene sets that `beTextureCtrl` binds by name
+take every pack texture of that name in their stages (both `lh_pack` and
+`ls_pack`, every language), as `TextureCtrlManager::bind_all` would with the
+packs a stage loads. Particle UVs come from the `igParticleAttr` records,
+glyph cells from `beFontImage`. What only a manager writes at run time
+(numbers, menu text quads) is not in the data, so `num01.png` shows only its
+authored cell.
+
+Measured on the USA disc (GDJEB2) on 2026-11-12: 2,273 documents, 25,906
+images, 1,697 unique hashes (1,538 used by the USA release), 0 errors,
+6,674 `beTextureCtrl` bindings all resolved in their own stages, 1,696
+textures with draws (the exception, `font00.png`, has its glyph atlas), about
+22 s. All 37 hashes the renderer dumped on the scripted route to dng101b1
+are among them.
+
 ## Reproduce the checks
 
 Build the project, then run synthetic tests with no original data:
@@ -168,3 +241,14 @@ For the viewer, select `area.afs`, entry 621, texture index 0. This list index
 is separate from the serialized global reference number shown in diagnostics.
 Original archives, extracted image data, and generated previews remain outside
 Git. Corpus checks are local integration evidence and are not required by CI.
+
+The texture pack export test (CTest `texpack`) checks the shared hash on
+synthetic C8 and CMPR images, the exported names as replacements and the
+output folder rules. Given the game data (CMake `DW4_TEST_DATA`, or as its
+argument) it also compares the export's hashes of original documents with
+the renderer's path (the engine's texture bindings, decoded and hashed) and
+with hashes the renderer dumped:
+
+```powershell
+.\build\Release\dw4_texpack_tests.exe 'E:\path\Digimon World 4 - Extracted'
+```

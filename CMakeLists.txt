@@ -376,6 +376,13 @@ if(DW4_BUILD_APP)
     # with hid, cfgmgr32 also the Switch 2 Pro Controller, switch2_pro.cpp)
     target_link_libraries(dw4_game PRIVATE ws2_32 setupapi winusb hid cfgmgr32)
   endif()
+  # Texture pack authoring (docs/TEXTURES.md): dw4_texpack export writes every
+  # texture of the game data once under the renderer's pack hash, which it
+  # takes from the renderer's own code (src/game/texture_pack.cpp). A
+  # development tool, not part of the release.
+  add_executable(dw4_texpack tools/dw4_texpack/main.cpp tools/dw4_texpack/texpack_export.cpp src/game/texture_pack.cpp)
+  target_include_directories(dw4_texpack PRIVATE ${stb_src_SOURCE_DIR})
+  target_link_libraries(dw4_texpack PRIVATE dw4_engine)
   # Round I1a's ghost figure measurement (docs/SEAMLESS.md 19.13): a test
   # build's DW4_PROBE_GHOSTS* switches (ghost_figures.hpp, game_main.cpp).
   # Never in a player build.
@@ -430,6 +437,14 @@ if(DW4_BUILD_APP)
       target_link_libraries(dw4_switch2_tests PRIVATE setupapi winusb hid cfgmgr32)
     endif()
     add_test(NAME switch2 COMMAND dw4_switch2_tests)
+    # The texture export's pack hashes are the renderer's: synthetic C8 and
+    # CMPR images, the exported names read back as replacements; with
+    # DW4_TEST_DATA the original documents through the engine's bindings and
+    # the hashes the renderer dumped on the dng101b1 route.
+    add_executable(dw4_texpack_tests tests/texpack_tests.cpp tools/dw4_texpack/texpack_export.cpp src/game/texture_pack.cpp)
+    target_include_directories(dw4_texpack_tests PRIVATE ${stb_src_SOURCE_DIR})
+    target_link_libraries(dw4_texpack_tests PRIVATE dw4_engine)
+    add_test(NAME texpack COMMAND dw4_texpack_tests "${DW4_TEST_DATA}")
     # The run's save store: store choice, migration, imports, online session card.
     add_executable(dw4_save_store_tests tests/save_store_tests.cpp src/game/save_store.cpp src/game/settings.cpp src/game/controls.cpp)
     target_link_libraries(dw4_save_store_tests PRIVATE dw4_core SDL3::SDL3)
