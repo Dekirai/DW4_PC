@@ -1,5 +1,5 @@
 {
-  "desc": "the automatic join (I1a): b joins a's running instance at the gate and plays a's story; home on its own story",
+  "desc": "the prompt (I1b): b at the lobby gate while a's instance runs in stag0101: the gate form preselects a's row (players here); b takes it (autochoice cursor) and joins at the entrance; a's story in stag0101, home on its own story",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -29,7 +29,8 @@
       "card": "k2",
       "start": 3,
       "seed_story": true,
-      "upload_card": true
+      "upload_card": true,
+      "autochoice": "cursor"
     }
   ]
 }

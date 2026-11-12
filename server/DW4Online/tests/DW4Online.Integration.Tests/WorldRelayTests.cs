@@ -50,7 +50,8 @@ public class WorldRelayTests
     [DbFact]
     public async Task A_stranger_joins_a_public_instance_and_its_story_goes_to_the_host_whose_online_story_is_saved()
     {
-        var (host, port) = await StartAsync();
+        // (Round I1a's automatic join of the first row: the prompt switched off; WorldPromptTests answers it.)
+        var (host, port) = await StartAsync(new() { ["Instances:StoryMinVisitSeconds"] = "1", ["World:ArrivalPrompt"] = "false" });
         await using var scope = host;
         var (_, _, hostId) = await host.RegisterAsync("WorldHost");
         var (_, _, guestId) = await host.RegisterAsync("WorldGuest");

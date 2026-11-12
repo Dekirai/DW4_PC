@@ -1,0 +1,18 @@
+# W4c (19.24, 19.7.6, decision 43 of 2026-11-11): two players who leave together and both choose New instance land together.
+# k's instance at stag0101 makes both get the gate form (k's row, Here (1), preselected); both answer New instance; the
+# relay takes the second as the first one's co-arrival (or, a moment late, as a join of its starting instance).
+k: online-script: step .* log: k hosts at stag0101
+a: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+a: online-trace: prompt answer choice=new
+b: online-trace: prompt answer choice=new
+a: online-script: step .* log: together
+b: online-script: step .* log: together
+relay: choice .*choice=new
+relay: prompt_new
+relay: instance_join .*role=guest
+shared: a b >= 3000
+!b: online: You joined .*'s instance
+!a: online-script: FAIL
+!b: online-script: FAIL
+!k: online-script: FAIL

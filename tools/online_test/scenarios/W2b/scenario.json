@@ -1,0 +1,33 @@
+{
+  "desc": "a lost PLAN (19.7.4): the relay drops every PLAN (World:TestDropPlans): b's held press goes out after World:PlanWaitMs and the departure runs; its BARRIER (plan 0) is decided as a loading-screen arrival: the prompt on b's loading screen, answered with a's row (autochoice first)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "server": {
+    "World": {
+      "TestDropPlans": true
+    }
+  },
+  "own_story": [
+    "b"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "upload_card": true
+    }
+  ]
+}

@@ -35,6 +35,9 @@ const char* type_name(Type type) noexcept {
     case Type::checkpoint_ask: return "CHECKPOINT_ASK";
     case Type::instance_op: return "INSTANCE_OP";
     case Type::report: return "REPORT";
+    case Type::plan: return "PLAN";
+    case Type::choice: return "CHOICE";
+    case Type::options: return "OPTIONS";
     case Type::instance_info: return "INSTANCE_INFO";
     case Type::world_notice: return "WORLD_NOTICE";
     case Type::member_info: return "MEMBER_INFO";

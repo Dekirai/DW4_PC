@@ -11,6 +11,9 @@
 //                                   NEXTSTAGE to that stage and point (19.8.3)
 //   dw4_world_probe DATA guestnew   a guest's NEW (the replace with the host's story and settings)
 //                                   against a Game Start with them (19.30.4)
+//   dw4_world_probe DATA census     round I1b's departure census: Engine::pending_departure_choice
+//                                   at every line of the lobby gate's and the return mat's menus against
+//                                   the departure the press really started (19.7.4)
 //   dw4_world_probe DATA homeover [CASE]  a stage group left with only defeated players
 //                                   after a HOME, with the alive mask of every stage change, and the
 //                                   original's game over offline (19.6.5)
@@ -23,6 +26,7 @@
 #include "online/room_settings.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -1218,6 +1222,182 @@ void mats_probe(const std::string& stage) {
         for (const auto& box : mats->mat_boxes())
             std::printf("  %-8s x %.0f..%.0f  y %.0f..%.0f  z %.0f..%.0f\n", box.name.c_str(), box.min.x, box.max.x, box.min.y, box.max.y, box.min.z,
                         box.max.z);
+    // The stage's generate points (player 0 of each group; round I1b: the hub point next to a departure's mat, 19.7.5).
+    if (const auto* points = engine.get<PlayerPointManager>())
+        for (int group = 0; group < 16; ++group)
+            if (const auto m = points->point_matrix(group, 0)) std::printf("  point %2d  x %.0f  y %.0f  z %.0f\n", group, (*m)(3, 0), (*m)(3, 1), (*m)(3, 2));
+}
+
+
+// ---------------------------------------------------------------------------
+// census (round I1b, 19.7.4's first task): every departure from a hub stage
+// into a joinable stage that the own player's press starts, measured with the
+// real scripts: the player put onto the mat, the menu opened by the stage's
+// own script, Engine::pending_departure_choice read at every cursor line, then
+// A (or B) pressed; the stage and point the NEXTSTAGE really took against
+// what the accessor named
+// ---------------------------------------------------------------------------
+struct CensusCase {
+    const char* name;
+    std::vector<int> flags;  // story flags set before the lobby loads
+    const char* mat;         // the mat the player stands on
+    const char* gate_stage;  // the Security Gate stage (the return mat), nullptr: none
+    int gate_no = 0;
+};
+
+struct CensusLine {
+    bool named = false;
+    DepartureChoice choice;
+    std::string took_stage;
+    int took_point = -1;
+    std::uint64_t press_frame = 0, departure_frame = 0;
+    bool cancelled = false;
+    int items = 0;
+};
+
+// One run: the lobby on the case's story, the player on the mat, the menu's
+// cursor moved down `line` times, then A (cancel: B instead).
+CensusLine census_run(const CensusCase& c, int line, bool cancel) {
+    CensusLine out;
+    std::optional<Engine> holder;
+    new_engine(holder);
+    auto& engine = *holder;
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    sys->players[0].joined = true;
+    sys->players[0].digimon = "p_agumon";
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 1;
+    engine.set_online(rules);
+    engine.set_split_identity(0);
+    engine.set_view_slot(0);
+    for (const int f : c.flags) engine.flags()[f] = 1;
+    if (c.gate_stage) {
+        sys->gate_stage_name = std::string(c.gate_stage);
+        sys->gate_stage_no = c.gate_no;
+    }
+    engine.request_stage("stagml11");
+    PadSample neutral;
+    neutral.connected = true;
+    std::array<PadSample, 4> idle{};
+    idle[0] = neutral;
+    auto with = [&](std::uint32_t buttons) {
+        auto pads = idle;
+        pads[0].buttons = buttons;
+        return pads;
+    };
+    // The lobby loaded and showing; its entry talk (a direct start) ended by A now and then.
+    for (int i = 0; i < 6000 && !(engine.stage_name() == "stagml11" && engine.presenting() && !engine.loading() && engine.pad_input_enabled()); ++i)
+        step(engine, engine.frame() % 40 == 0 ? with(dw4::pad_button::a) : idle);
+    for (int i = 0; i < 9000 && engine.demo().running() != 0; ++i) step(engine, engine.frame() % 30 == 0 ? with(dw4::pad_button::a) : idle);
+    for (int i = 0; i < 120; ++i) step(engine, idle);
+    // Onto the mat: its box's middle (MATCTRL runs the mat's script).
+    Vec3f at{};
+    bool found = false;
+    if (const auto* mats = engine.get<MatCtrlManager>())
+        for (const auto& box : mats->mat_boxes())
+            if (box.name == c.mat) {
+                at = {(box.min.x + box.max.x) * 0.5f, box.max.y, (box.min.z + box.max.z) * 0.5f};
+                found = true;
+            }
+    if (!found) {
+        std::printf("    (no mat %s in stagml11)\n", c.mat);
+        return out;
+    }
+    for (int i = 0; i < 600 && !engine.pending_departure_choice(0); ++i) {
+        if (i % 30 == 0) teleport(engine, 0, at);
+        step(engine, idle);
+    }
+    auto choice = engine.pending_departure_choice(0);
+    if (std::getenv("DW4_PROBE_DEBUG")) {
+        const auto* models = engine.get<ModelCtrlManager>();
+        const auto* p = models ? models->player(0) : nullptr;
+        std::printf("    [%llu] %s: mat %s at %.0f %.0f %.0f, player %s at %.0f %.0f %.0f, demo works %zu, input %d\n",
+                    static_cast<unsigned long long>(engine.frame()), c.name, c.mat, at.x, at.y, at.z, p && p->generated ? "generated" : "none",
+                    p && p->node ? p->node->matrix(3, 0) : 0.0f, p && p->node ? p->node->matrix(3, 1) : 0.0f, p && p->node ? p->node->matrix(3, 2) : 0.0f,
+                    engine.demo().running(), engine.pad_input_enabled() ? 1 : 0);
+        if (const auto* selects = engine.get<SelectCtrlManager>())
+            for (const auto& m : selects->open_selects())
+                std::printf("      select %s index %d cursor %d items %d input %d trigger %d\n", m.name.c_str(), m.index, m.cursor, m.items,
+                            m.taking_input ? 1 : 0, m.trigger);
+        for (const auto& line : engine.demo().describe()) std::printf("      %s\n", line.c_str());
+    }
+    if (!choice) return out;
+    out.items = choice->items;
+    // The cursor down `line` times (a press, then neutral until the menu takes input again).
+    for (int k = 0; k < line; ++k) {
+        for (int tries = 0; tries < 8; ++tries) {
+            step(engine, with(dw4::pad_button::down));
+            bool moved = false;
+            for (int i = 0; i < 60 && !moved; ++i) {
+                step(engine, idle);
+                if (const auto* selects = engine.get<SelectCtrlManager>())
+                    for (const auto& m : selects->open_selects())
+                        if (m.name == choice->menu && m.taking_input && m.cursor == k + 1) moved = true;
+            }
+            if (moved) break;
+        }
+    }
+    const auto menu = choice->menu;
+    choice = engine.pending_departure_choice(0);
+    out.named = choice.has_value();
+    if (choice) out.choice = *choice;
+    else out.choice.menu = menu; // (a line that names nothing: A must start no departure)
+    out.press_frame = engine.frame();
+    step(engine, with(cancel ? dw4::pad_button::b : dw4::pad_button::a));
+    for (int i = 0; i < 1200; ++i) {
+        if (engine.pending_stage()) {
+            out.took_stage = std::string(*engine.pending_stage());
+            if (const auto* points = engine.get<PlayerPointManager>()) out.took_point = int(points->point_no());
+            out.departure_frame = engine.frame();
+            break;
+        }
+        if (cancel && i > 200 && !engine.pending_departure_choice(0)) {
+            out.cancelled = true;
+            break;
+        }
+        step(engine, idle);
+    }
+    return out;
+}
+
+void census_probe() {
+    const CensusCase cases[] = {
+        {"lobby gate, training (flag 2, before 503)", {2}, "mate00"},
+        {"lobby gate, after the training (2, 503)", {2, 503}, "mate00"},
+        {"lobby gate, phase 5 (5, 503)", {5, 503}, "mate00"},
+        {"lobby gate, phase 6 (6, 503)", {6, 503}, "mate00"},
+        {"lobby gate, a quest board's start (6, 503, 409)", {6, 503, 409}, "mate00"},
+        {"return mat, Security Gate dng205b2 no 2", {6, 503}, "mate02", "dng205b2", 2},
+        {"return mat, Security Gate stag0202 no 1", {6, 503}, "mate02", "stag0202", 1},
+    };
+    std::printf("census probe (19.7.4): stagML11 direct start, online rules, the player put onto the mat; the accessor's\n"
+                "destination at each cursor line against the NEXTSTAGE the press really started\n");
+    int named = 0, equal = 0;
+    for (const auto& c : cases) {
+        const auto first = census_run(c, 0, false);
+        const int lines = std::max(1, first.items);
+        for (int line = 0; line < lines; ++line) {
+            const auto r = line == 0 ? first : census_run(c, line, false);
+            const bool same = r.named ? r.took_stage.size() && !dw4::engine::Engine::hub_stage(r.took_stage) &&
+                                            std::equal(r.took_stage.begin(), r.took_stage.end(), r.choice.stage.begin(), r.choice.stage.end(),
+                                                       [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }) &&
+                                            r.took_point == r.choice.point
+                                      : r.items > 0 && (r.took_stage.empty() || dw4::engine::Engine::hub_stage(r.took_stage));
+            named += r.named ? 1 : 0;
+            equal += same ? 1 : 0;
+            std::printf("  %-52s line %d of %d: named %s point %d (menu %s, purpose %d) -> took %s point %d at +%llu: %s\n", c.name, line, r.items,
+                        r.named ? r.choice.stage.c_str() : "-", r.named ? r.choice.point : -1, r.named ? r.choice.menu.c_str() : "-",
+                        r.named ? int(r.choice.purpose) : 0, r.took_stage.empty() ? "-" : r.took_stage.c_str(), r.took_point,
+                        static_cast<unsigned long long>(r.departure_frame ? r.departure_frame - r.press_frame : 0), same ? "EQUAL" : "DIFFERS");
+        }
+    }
+    // B: the menu's own cancel: no departure, and the accessor names nothing afterwards.
+    const auto b = census_run(cases[3], 0, true);
+    std::printf("  B on the gate's menu (phase 6): named %s, departure %s, menu gone %s\n", b.named ? b.choice.stage.c_str() : "-",
+                b.took_stage.empty() ? "none" : b.took_stage.c_str(), b.cancelled ? "yes" : "no");
+    std::printf("census: %d lines named, %d lines equal to what the press started (a named departure, or none for a line naming none)\n", named, equal);
 }
 
 } // namespace
@@ -1244,6 +1424,7 @@ int main(int argc, char** argv) {
         else if (what == "homeover") homeover_probe(argc > 3 ? std::atoi(argv[3]) : -1);
         else if (what == "guestnew") guestnew_probe();
         else if (what == "mats" && argc > 3) mats_probe(argv[3]);
+        else if (what == "census") census_probe();
         else {
             std::fprintf(stderr, "unknown probe %s\n", what.c_str());
             return 2;

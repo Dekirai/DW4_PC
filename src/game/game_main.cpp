@@ -31,6 +31,7 @@
 #include "online_run.hpp"
 #include "cloud_backup_panel.hpp"
 #include "online_ui.hpp"
+#include "online_prompt_ui.hpp"
 #include "online_ui_script.hpp"
 #include "title_entry.hpp"
 #include "online/lobby.hpp"
@@ -2444,6 +2445,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // none).
             if (online) {
                 online->pass(steady_seconds());
+                {
+                    // Round I1b (19.5.7): the arrival prompt's keys, the own pad's and the keyboard's arrows, Enter
+                    // and Backspace (read every pass, so a press held when it opens is no answer).
+                    std::uint32_t keys = dw4::game::prompt_buttons(live[0].buttons, live[0].stick_directions, live[0].stick.x, live[0].stick.y);
+                    if (online->session().prompt() && !show_menu)
+                        if (const bool* k = SDL_GetKeyboardState(nullptr)) {
+                            if (k[SDL_SCANCODE_UP]) keys |= dw4::pad_button::up;
+                            if (k[SDL_SCANCODE_DOWN]) keys |= dw4::pad_button::down;
+                            if (k[SDL_SCANCODE_LEFT]) keys |= dw4::pad_button::left;
+                            if (k[SDL_SCANCODE_RIGHT]) keys |= dw4::pad_button::right;
+                            if (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]) keys |= dw4::pad_button::a;
+                            if (k[SDL_SCANCODE_BACKSPACE]) keys |= dw4::pad_button::b;
+                        }
+                    online->session().prompt_input(keys, steady_seconds());
+                }
                 if (online_achievements) online_achievements->pass(steady_seconds());
                 steps = online->session().steps_allowed(steps, pass_seconds);
                 if (online->session().paces()) accumulator = 0;
@@ -4350,6 +4366,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // Seamless co-op notices, bottom centre (presentation only):
                 // the defeated member's hint, the exit prompt's names.
+                // Round I1b: the arrival prompt (19.5.3), in the gate form over the frozen game or on the loading screen.
+                if (online && online->session().prompt()) dw4::game::draw_arrival_prompt(*online->session().prompt(), gamepads.empty());
                 if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
                     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 24), ImGuiCond_Always, ImVec2(0.5f, 1));

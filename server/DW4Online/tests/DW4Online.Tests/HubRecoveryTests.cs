@@ -121,7 +121,7 @@ public partial class HubLogicTests
         var stopped = p.NextSeal;
         g.Seal(1600);
         Assert.Equal(stopped, p.NextSeal);
-        g.Hub.Housekeep(g.Now); // ForkConfirmMs: both sides reported
+        g.Housekeep(); // ForkConfirmMs: both sides reported
         Assert.Equal(BarrierDecision.New, g.Decision("a").Decision);
         Assert.Equal(BarrierDecision.New, g.Decision("b").Decision);
         Assert.Same(g.Mem("a").Instance, g.Mem("b").Instance);
@@ -149,8 +149,8 @@ public partial class HubLogicTests
         Assert.Same(inst, h.Mem("b").Instance);
         h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now); // lost before its LOG reached J
         h.Seal(16_000); // (a hosts: its grace keeps it; the ticks ahead of its LOG pass Instances:MaxAheadSeconds)
-        h.Hub.Housekeep(h.Now);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
+        h.Housekeep();
         Assert.Equal(1, h.Hub.Counters["gap_lost"]);
         Assert.True(inst.Ended);
         var back = h.Decision("b");
@@ -166,10 +166,10 @@ public partial class HubLogicTests
         var greq = g.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
         g.Send("a", new JoinAtMsg(greq.Inst, greq.Visit, 70).Frame());
         g.Seal(14_000);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.False(gi.Ended);
         g.Seal(2_000);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.True(gi.Ended);
         Assert.Equal(CloseReason.Protocol, g.P("a").Closed);
         Assert.Equal(BarrierDecision.New, g.Decision("b").Decision);
@@ -203,7 +203,7 @@ public partial class HubLogicTests
                     for (var k = 0; k < 4; ++k)
                     {
                         h.Advance(5100);
-                        h.Hub.Housekeep(h.Now);
+                        h.Housekeep();
                     }
                     h.Log("a", 60, 300);
                     break;
@@ -309,7 +309,7 @@ public partial class HubLogicTests
         h.Send("b", new NetFpMsg(inst, i.Visit, t, 2).Frame());
         Assert.False(h.P("b").Has(Msg.Resync));
         h.Advance(2100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(1, h.Hub.Counters["split_unconfirmed"]);
         Assert.True(h.P("b").Has(Msg.Resync));
     }

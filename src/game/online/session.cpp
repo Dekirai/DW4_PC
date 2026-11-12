@@ -240,6 +240,8 @@ void Session::lose_connection(double now) {
         close_reason_ = "The relay did not answer.";
         return;
     }
+    // (Round I1b: an open prompt answers nobody now, 19.7.4 / 19.7.5.)
+    prompt_lost(now);
     // A solo member plays on (its LOG waits); everyone else freezes.
     resume_after_lost_ = true;
     ++net_.reconnects;
@@ -369,8 +371,9 @@ void Session::poll(double now) {
     // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
     // for a co-arrival, a join or a boss choice) is an answer: the five
     // seconds count from the server's last word, and a boss choice waits.
-    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout)
+    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && !prompt_hold_ && now - parked_at_ > config_.barrier_timeout)
         barrier_fallback(now);
+    if (prompt_ && auto_answer_at_ >= 0 && now >= auto_answer_at_) auto_answer(now);
     if (leave_wanted_) send_pending_leave();
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
         flush_log(now, false);
@@ -562,8 +565,34 @@ void Session::handle(const w::Frame& frame, double now) {
         break;
     }
     case w::Type::barrier_ok: on_barrier_ok(w::decode_barrier_ok(p), now); break;
+    case w::Type::options: {
+        // (Round I1b, 19.18: an OPTIONS that does not decode means nothing to choose.)
+        std::optional<w::Options> m;
+        try {
+            m = w::decode_options(p);
+        } catch (const w::WireError& error) {
+            log("an OPTIONS frame did not decode (%s): nothing to choose", error.what());
+        }
+        if (!m) {
+            m.emplace();
+            m->flags = w::Options::nothing;
+            m->plan = gate_phase_ == GatePhase::waiting ? gate_plan_ : 0;
+            m->inst = inst_;
+            m->visit = visit_;
+        }
+        on_options(*m, now);
+        break;
+    }
     case w::Type::barrier_wait: {
         const auto m = w::decode_barrier_wait(p);
+        if (m.reason == w::WaitReason::choice) {
+            // (Round I1b, 19.7.5: the relay holds this barrier for the prompt; OPTIONS comes with it. The five-second rule waits.)
+            prompt_hold_ = true;
+            if (mode_ == Mode::parked) parked_at_ = now;
+            loading_.clear();
+            break;
+        }
+        prompt_hold_ = false;
         std::string names;
         for (std::size_t i = 0; i < m.names.size(); ++i) names += (i ? (i + 1 == m.names.size() ? " and " : ", ") : "") + m.names[i];
         if (names.empty()) names = "the others";
@@ -950,11 +979,21 @@ void Session::arrival_toast() {
     for (const auto& m : instance_->members)
         if (m.member == host_) host_stage = m.stage;
     const std::string where = host_stage.empty() ? std::string() : " " + host + " is in " + stage_title(host_stage) + ".";
+    // (Round I1b, 19.5.3: a row the player chose in the prompt: the guest's
+    // toast, and where the host is when he is elsewhere; I1a's "You joined"
+    // stays for an arrival nobody asked, the relay's choice.)
+    const bool chosen = chosen_join_;
+    chosen_join_ = false;
     switch (arrival) {
     case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + "). View: Online menu"); break;
-    case w::Arrival::auto_join: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
+    case w::Arrival::auto_join:
+        if (!chosen) notice("You joined " + host + "'s instance." + where + " Leave: Online menu");
+        break;
     case w::Arrival::co_arrival: notice("You arrived together with " + host + ": you're a guest in " + host + "'s story."); break;
-    case w::Arrival::guest_new: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
+    case w::Arrival::guest_new:
+        if (!chosen) notice("You joined " + host + "'s instance." + where + " Leave: Online menu");
+        else if (!where.empty()) notice(where.substr(1));
+        break;
     default: return;
     }
     // (The co-arrival's toast names the guest's story already.)
@@ -1307,7 +1346,7 @@ void Session::start_sealed(const w::WirePad& pad) {
     last_tick_at_ = now_;
 }
 
-std::array<PadSample, 4> Session::before_step(const PadSample& local, double now) {
+std::array<PadSample, 4> Session::step_pads(const PadSample& local, double now) {
     now_ = now;
     const auto own = quantize_pad(local);
     std::array<PadSample, 4> pads{};
@@ -1320,7 +1359,7 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
             mode_ = Mode::solo;
             log_first_ = tick_;
             log_.clear();
-            return before_step(local, now);
+            return step_pads(local, now);
         }
         const auto it = ticks_.find(tick_);
         if (it == ticks_.end()) return last_pads_; // the host ran a step it was not given (should not happen)
@@ -1642,9 +1681,18 @@ void Session::park(double now) {
     b.context = engine_.session_context_hash();
     b.carry = own_carry_;
     b.own = config_.own_settings;
-    // DW4_ONLINE_AUTOCHOICE=new (development builds): a departure from home asks for a new instance.
-    if (config_.plan_new_instance && is_hub_stage(engine_.stage()) && !is_hub_stage(b.stage)) b.plan = w::Barrier::plan_new_instance;
+    // Round I1b: a departure from home names the gate form's plan (its CHOICE
+    // went before the press; 0: no answer came, the loading-screen form).
+    // DW4_ONLINE_AUTOCHOICE=new (development builds) without a plan: a
+    // departure from home asks for a new instance.
+    const bool from_home = is_hub_stage(engine_.stage()) && !is_hub_stage(b.stage);
+    if (from_home && departure_plan_ != 0) b.plan = departure_plan_;
+    else if (config_.plan_new_instance && from_home) b.plan = w::Barrier::plan_new_instance;
+    departure_plan_ = 0;
+    if (!from_home) chosen_join_ = false;
+    prompt_hold_ = false;
     send(w::Type::barrier, w::encode(b));
+    trace("barrier to=%s point=%u plan=%u inst=%u visit=%u tick=%u", b.stage.c_str(), unsigned(b.point), unsigned(b.plan), b.inst, b.visit, b.tick);
     ticks_.clear(); // ticks sealed after B are discarded
     events_.clear();
     join_at_.reset();
@@ -1653,6 +1701,8 @@ void Session::park(double now) {
     previous_inst_.reset();
     decision_.reset();
     loading_.clear();
+    // (19.5.3: "Joining Rin..." while the gate's departure to a chosen row with players here loads.)
+    if (from_home && chosen_join_ && chosen_here_ && !chosen_host_.empty()) loading_ = "Joining " + chosen_host_ + "...";
     boss_choice_ = false;
     parked_at_ = now;
     mode_ = Mode::parked;
@@ -1747,6 +1797,8 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
         take_decision(ok);
         loading_.clear();
         boss_choice_ = false;
+        prompt_hold_ = false;
+        if (prompt_ && prompt_->form == PromptForm::loading) close_prompt("answered");
         mode_ = Mode::transition;
         return;
     }

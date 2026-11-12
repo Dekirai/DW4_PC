@@ -501,7 +501,7 @@ public class MigratorTests
             await c.ExecuteAsync(room, new { code = "AAAAA5", host = gone, settings = "{\"cameraMode\":1}" });
             await c.ExecuteAsync("INSERT INTO room_members (room_id, account_id, slot, joined_at) SELECT id, @ann, 1, UTC_TIMESTAMP(3) FROM rooms", new { ann });
             await using var db = new Database(TestDb.ConnectionString(name));
-            Assert.Equal(new[] { 13 }, await new Migrator(db).MigrateAsync());
+            Assert.Equal(From(13), await new Migrator(db).MigrateAsync()); // (0013, then 0014: the reports)
 
             var prefs = (await c.QueryAsync<(long Account, int Camera, int Light, bool Fast, long? Seed, int Modes, string Visibility, int Box)>(
                 "SELECT CAST(account_id AS SIGNED), camera_mode, light_mode, fast_loading, CAST(randomizer_seed AS SIGNED), randomizer_modes, " +

@@ -1,0 +1,8 @@
+# W4c, k (k5): hosts its own instance at stag0101 (nothing running before it: no prompt) and stays at the gate's arrival
+# until a and b have chosen.
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 yes until stage=stag0101,control
+log k hosts at stag0101
+idle until epoch>=@230 fail stagechange
+log k done

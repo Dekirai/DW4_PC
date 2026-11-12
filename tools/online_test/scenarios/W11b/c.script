@@ -1,0 +1,7 @@
+# W11b, host c (k5): hosts a Public instance in stag0101 and plays there while a's departure is prompted and taken back.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log c hosts in stag0101
+wander -150 -60 20 until epoch>=@300 fail stagechange
+log c done

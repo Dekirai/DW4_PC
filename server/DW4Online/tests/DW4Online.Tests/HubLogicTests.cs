@@ -2,6 +2,7 @@ using System.Diagnostics;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.Tests;
@@ -20,7 +21,19 @@ public partial class HubLogicTests
         public List<(byte Type, byte[] Payload)> Frames { get; } = [];
         public CloseReason? Closed { get; private set; }
 
-        public void Send(byte[] frame, bool bulk = false) => Frames.Add((frame[0], frame[Wire.HeaderBytes..]));
+        /// <summary>Round I1b: the harness answers a held barrier's arrival prompt as the FakeClient and DW4_ONLINE_AUTOCHOICE=first do
+        /// (the first choosable row, else *New instance*), so the I1a tests run with the shipped World:ArrivalPrompt.</summary>
+        public bool AutoAnswer { get; set; }
+        /// <summary>A held barrier's OPTIONS (plan 0, not a refresh) the harness answers after the call that brought it.</summary>
+        public OptionsMsg? HeldPrompt { get; set; }
+
+        public void Send(byte[] frame, bool bulk = false)
+        {
+            Frames.Add((frame[0], frame[Wire.HeaderBytes..]));
+            if (AutoAnswer && frame[0] == Msg.Options && OptionsMsg.Parse(frame[Wire.HeaderBytes..]) is { Plan: 0 } o && (o.Flags & OptionsMsg.Refresh) == 0)
+                HeldPrompt = o;
+        }
+
         public void Close(CloseReason reason, string text) => Closed = reason;
 
         public List<T> All<T>(byte type, Parser<T> parse) => Frames.Where(f => f.Type == type).Select(f => parse(f.Payload)).ToList();
@@ -47,24 +60,69 @@ public partial class HubLogicTests
         public long Now { get; private set; } = Stopwatch.Frequency * 1000;
         public Dictionary<string, (HubMember Member, Peer Peer)> M { get; } = [];
 
+        /// <summary>The harness answers held arrival prompts (<see cref="Peer.AutoAnswer"/>).</summary>
+        public bool AutoAnswer { get; }
+
+        /// <summary>(Round I1b: without <paramref name="world"/> the hub runs the shipped World:ArrivalPrompt and the harness answers a held
+        /// barrier's prompt as the FakeClient does (<paramref name="answer"/>), which is what round I1a's automatic join of the first row
+        /// was; a test of I1a's automatic path itself passes <c>world: new WorldHubOptions { ArrivalPrompt = false }</c>. PromptTests
+        /// answer the prompt themselves.)</summary>
         public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null,
-            int protocol = Wire.CheckpointProtocol)
+            int protocol = Wire.CheckpointProtocol, WorldHubOptions? world = null, bool? answer = null)
         {
+            AutoAnswer = answer ?? world is null;
             Hub = new RoomHub(new RoomInfo("ROOM01", protocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
-                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner);
+                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner, world ?? new WorldHubOptions());
+        }
+
+        /// <summary>A peer for a member of this harness (answering held prompts when the harness does).</summary>
+        public Peer NewPeer() => new() { AutoAnswer = AutoAnswer };
+
+        /// <summary>Answers every held prompt that came meanwhile (the first choosable row, else *New instance* with the offered
+        /// visibility), as a client would right away.</summary>
+        public void AnswerPrompts()
+        {
+            for (var round = 0; round < 8; ++round)
+            {
+                var any = false;
+                foreach (var (m, p) in M.Values.ToList())
+                {
+                    if (p.HeldPrompt is not { } o) continue;
+                    p.HeldPrompt = null;
+                    any = true;
+                    var row = o.Rows.FirstOrDefault(r => OptionStates.Choosable(r.State));
+                    var c = row is not null
+                        ? new ChoiceMsg(0, o.Inst, o.Visit, ChoiceKind.Join, row.Wid, o.Visibility, 0, ChoiceMsg.DefaultBackPoint)
+                        : new ChoiceMsg(0, o.Inst, o.Visit, ChoiceKind.New, 0, o.Visibility, 0, ChoiceMsg.DefaultBackPoint);
+                    var f = c.Frame();
+                    Hub.Receive(m, f[0], f[Wire.HeaderBytes..], Now);
+                }
+                if (!any) return;
+            }
+        }
+
+        /// <summary>The hub's housekeeping now, then the answers to prompts it held.</summary>
+        public void Housekeep()
+        {
+            Hub.Housekeep(Now);
+            AnswerPrompts();
         }
 
         public void Advance(double ms) => Now += (long)(ms * Stopwatch.Frequency / 1000.0);
 
         public Peer Connect(string name, int index)
         {
-            var peer = new Peer();
+            var peer = NewPeer();
             var m = Hub.Connect(index, 100 + index, name, index == 0, peer, Now);
             M[name] = (m, peer);
             return peer;
         }
 
-        public void Send(string name, byte[] frame) => Hub.Receive(M[name].Member, frame[0], frame[Wire.HeaderBytes..], Now);
+        public void Send(string name, byte[] frame)
+        {
+            Hub.Receive(M[name].Member, frame[0], frame[Wire.HeaderBytes..], Now);
+            AnswerPrompts();
+        }
         public Peer P(string name) => M[name].Peer;
         public HubMember Mem(string name) => M[name].Member;
         public uint Inst(string name) => Mem(name).Instance?.Id ?? Mem(name).Joining!.Target.Id;
@@ -229,7 +287,8 @@ public partial class HubLogicTests
     [Fact]
     public void Another_context_a_full_instance_or_a_long_catch_up_open_a_new_instance_with_a_notice()
     {
-        var h = new Harness(new InstanceOptions { MaxCatchUpSeconds = 30 });
+        // (Round I1a's automatic path: without the arrival prompt the notice says why; with it, see the test below.)
+        var h = new Harness(new InstanceOptions { MaxCatchUpSeconds = 30 }, world: new WorldHubOptions { ArrivalPrompt = false });
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Connect("c", 2);
@@ -243,6 +302,33 @@ public partial class HubLogicTests
         h.Mem("c").Rate = 61; // a weak machine: 120 ticks at (61 - 59.94) steps/s is about two minutes
         h.Barrier("c", "stag0401", context: 1);
         Assert.Equal(BarrierNotice.TooLongToCatchUp, h.Decision("c").Notice);
+    }
+
+    [Fact]
+    public void With_the_arrival_prompt_another_context_keeps_its_notice_and_a_long_catch_up_is_a_greyed_row()
+    {
+        // Round I1b (World:ArrivalPrompt as shipped, the harness answering like DW4_ONLINE_AUTOCHOICE=first): an instance of another
+        // context is no row (19.8.8), so b gets no prompt and the NEW says why; a's instance beyond Instances:MaxCatchUpSeconds is a
+        // greyed row *Too long to catch up* in c's prompt (state 8), and c's *New instance* needs no notice any more.
+        var h = new Harness(new InstanceOptions { MaxCatchUpSeconds = 30 });
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Connect("c", 2);
+        h.Barrier("a", "stag0401", context: 1);
+        h.Snapshot("a");
+        h.Joinable("a", context: 1);
+        h.Barrier("b", "stag0401", context: 2);
+        Assert.Equal((BarrierDecision.New, BarrierNotice.OtherContext), (h.Decision("b").Decision, h.Decision("b").Notice));
+        Assert.False(h.P("b").Has(Msg.Options));
+        h.Log("a", 0, 120);
+        h.Mem("c").Rate = 61;
+        h.Barrier("c", "stag0401", context: 1);
+        var o = h.P("c").Last(Msg.Options, OptionsMsg.Parse);
+        Assert.Equal((h.Mem("a").World!.Wid, OptionState.TooLong, OptionsMsg.NewInstance), (Assert.Single(o.Rows).Wid, o.Rows[0].State, o.Preselected));
+        Assert.Equal(WaitReason.Choice, h.P("c").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, BarrierNotice.None),
+            (h.Decision("c").Decision, h.Decision("c").World.Arrival, h.Decision("c").Notice));
+        Assert.NotSame(h.Mem("a").World, h.Mem("c").World);
     }
 
     [Fact]
@@ -467,7 +553,7 @@ public partial class HubLogicTests
         Assert.True(h.P("a").Has(Msg.CheckpointAsk));
         Assert.False(h.P("b").Has(Msg.StateData));
         h.Advance(600);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var classic = StateBlob.Parse(h.P("b").StateBlob());
         Assert.Null(classic.Checkpoint);
         Assert.Equal(700, classic.Ticks.Count);
@@ -622,7 +708,7 @@ public partial class HubLogicTests
         var lateOk = late.Decision("b");
         late.Send("b", new ReadyMsg(lateOk.NewInst, lateOk.NewVisit, 720, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
         late.Advance(2100);
-        late.Hub.Housekeep(late.Now);
+        late.Housekeep();
         Assert.True(late.P("a").Has(Msg.JoinReq));
         Assert.Equal(1, late.Hub.Counters["ready_unchecked"]);
     }
@@ -701,7 +787,7 @@ public partial class HubLogicTests
         late.Send("b", new ReadyMsg(lateOk.NewInst, lateOk.NewVisit, 664, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
         Assert.False(late.P("a").Has(Msg.JoinReq));
         late.Advance(2100);
-        late.Hub.Housekeep(late.Now);
+        late.Housekeep();
         Assert.True(late.P("a").Has(Msg.JoinReq));
         Assert.Equal(1, late.Hub.Counters["ready_unchecked"]);
     }
@@ -849,7 +935,7 @@ public partial class HubLogicTests
                 // Nobody else reports it: turned down after Instances:ForkConfirmMs (the members' engines still agree), and
                 // the READY is compared with the donor's report: here the joiner's rebuild is off.
                 h.Advance(1100);
-                h.Hub.Housekeep(h.Now);
+                h.Housekeep();
                 Assert.Equal(1, h.Hub.Counters["split_unconfirmed"]);
                 Assert.Equal(1, h.Hub.Counters["ready_mismatch"]);
                 Assert.True(i.CheckpointSuspect);
@@ -868,10 +954,10 @@ public partial class HubLogicTests
         Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
         Assert.NotNull(h.Mem("b").Joining);
         h.Advance(30_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.NotNull(h.Mem("b").Joining);
         h.Advance(6_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Null(h.Mem("b").Joining);
         Assert.Equal(1, h.Hub.Counters["join_ready_timeout"]);
         Assert.Equal((BarrierDecision.New, BarrierNotice.JoinFailed), (h.Decision("b").Decision, h.Decision("b").Notice));
@@ -891,7 +977,7 @@ public partial class HubLogicTests
         h.Barrier("b", "stag0101");
         Assert.Equal(BarrierDecision.Join, h.Decision("b").Decision);
         h.Advance(600);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(1, h.Hub.Counters["classic_too_long"]);
         Assert.Equal((BarrierDecision.New, BarrierNotice.TooLongToCatchUp), (h.Decision("b").Decision, h.Decision("b").Notice));
         Assert.False(h.P("b").Has(Msg.StateData));
@@ -914,7 +1000,7 @@ public partial class HubLogicTests
         h.Send("a", new CheckpointMsg(i.Id, i.Visit, 640, 0xBEEF, 20, 10, 0, [1, 2, 3]).Frame());
         Assert.NotNull(i.Upload);
         h.Advance(4100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Null(i.Upload);
         Assert.Equal(1, h.Hub.Counters["checkpoint_upload_abandoned"]);
     }
@@ -932,7 +1018,7 @@ public partial class HubLogicTests
         Assert.Equal(20u, i.AgreedLoadEnd);
         Assert.Empty(i.StateHashes);
         h.Advance(5000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.False(h.P("a").Has(Msg.CheckpointAsk));
     }
 
@@ -1038,7 +1124,7 @@ public partial class HubLogicTests
         h.Barrier("b", "dng101b1");
         Assert.False(h.P("b").Has(Msg.BarrierOk));
         h.Advance(2100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal((BarrierDecision.New, BarrierNotice.HoldExpired), (h.Decision("b").Decision, h.Decision("b").Notice));
 
         var p = SealedPair(out _);
@@ -1098,10 +1184,10 @@ public partial class HubLogicTests
         h.Seal(100);
         h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
         h.Seal(5000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Same(i, h.Mem("b").Instance); // still filled inside the window
         h.Seal(5100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Null(h.Mem("b").Instance);
         h.Seal(300);
         var ticks = h.P("a").Ticks();
@@ -1145,7 +1231,7 @@ public partial class HubLogicTests
         h.Seal(2000);
         Assert.Equal(stoppedAt, i.NextSeal); // nothing sealed while the barrier waits for b
         h.Advance(3100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var ok = h.Decision("a");
         Assert.Equal((BarrierDecision.New, "stag0102"), (ok.Decision, ok.Stage));
         Assert.NotEqual(inst, ok.NewInst);
@@ -1191,7 +1277,7 @@ public partial class HubLogicTests
         Assert.Equal(CloseReason.Account, b.Closed);
         Assert.Null(h.Hub.MemberOf(h.Mem("b").AccountId));
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.True(a.Has(Msg.Ping));
         Assert.False(a.Has(Msg.Roster));
     }
@@ -1222,9 +1308,9 @@ public partial class HubLogicTests
         h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
         var pings = b.All(Msg.Ping, PingMsg.Parse).Count;
         h.Advance(61_000); // (a hosts its instance: its grace of 60 s, 19.6.7)
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         h.Advance(1_100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.True(b.All(Msg.Ping, PingMsg.Parse).Count > pings);
         Assert.False(h.Hub.Counters.ContainsKey("faults"));
         Assert.Null(h.Mem("a").Instance);
@@ -1378,7 +1464,7 @@ public partial class HubLogicTests
         var s = CoArrivedPair(out _);
         var si = s.I("a");
         s.Advance(61_000);
-        s.Hub.Housekeep(s.Now);
+        s.Housekeep();
         Assert.Equal(1, s.Hub.Counters["snaphash_timeout"]);
         Assert.True(si.Sealing);
         Assert.Null(s.Mem("b").Instance);
@@ -1396,7 +1482,7 @@ public partial class HubLogicTests
         h.Send("b", new SplitMsg(inst, i.Visit, i.NextSeal - 5, 0b01, SplitKind.Exit).Frame()); // b names a as the leaver
         Assert.Same(i, h.I("a"));
         h.Advance(2100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Same(i, h.I("a"));
         Assert.Equal(1, h.Hub.Counters["split_unconfirmed"]);
         h.Send("a", new SplitMsg(inst, i.Visit, i.NextSeal + 5, 0b01, SplitKind.Exit).Frame()); // a tick not sealed yet
@@ -1423,7 +1509,7 @@ public partial class HubLogicTests
         t.Send("c", new SplitMsg(parent.Id, parent.Visit, f, 0b100, SplitKind.Exit).Frame());
         Assert.Same(parent, t.I("c"));
         t.Advance(2100);
-        t.Hub.Housekeep(t.Now);
+        t.Housekeep();
         Assert.NotSame(parent, t.I("c"));
         Assert.Equal(2, parent.Count);
     }
@@ -1445,7 +1531,7 @@ public partial class HubLogicTests
         for (var k = 0; k < 4; ++k)
         {
             h.Advance(5100);
-            h.Hub.Housekeep(h.Now);
+            h.Housekeep();
         }
         Assert.Equal(3, h.P("a").All(Msg.JoinReq, JoinReqMsg.Parse).Count);
         var fallback = h.Decision("b");
@@ -1524,7 +1610,7 @@ public partial class HubLogicTests
         var h = SealedPair(out var inst, new RelayOptions { LagLeaveSeconds = 10 });
         var i = h.I("a");
         h.Seal(12_000); // neither sends pads
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Same(i, h.Mem("a").Instance);
         Assert.Same(i, h.Mem("b").Instance);
         Assert.DoesNotContain(h.P("a").Ticks(), t => t.Rec.Events.Any(e => e.Type == Ev.Leave));
@@ -1534,7 +1620,7 @@ public partial class HubLogicTests
             h.Send("a", new InputMsg(inst, i.Visit, i.NextSeal + 3, [new Pad(1, 0, 0, 0, 0), new Pad(1, 0, 0, 0, 0)]).Frame());
             h.Seal(17);
         }
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Null(h.Mem("b").Instance);
         Assert.Same(i, h.Mem("a").Instance);
         h.Seal(300);

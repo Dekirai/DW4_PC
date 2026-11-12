@@ -27,10 +27,10 @@ public partial class HubLogicTests
         g.Seal(300);
         g.Hub.Disconnect(g.Mem("a"), g.P("a"), g.Now);
         g.Seal(59_000);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.False(w.Ending);
         g.Seal(2_000);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.Equal(EndReason.HostLost, w.EndReason);
         Assert.True(g.Mem("a").LeftWorld); // (the same pass: his member timeout counts from the disconnect once the grace is over)
         g.Seal(1_000);
@@ -40,7 +40,7 @@ public partial class HubLogicTests
         // The end notice's 3 s first, then JOIN_REQ home for b's slot (its JOIN_AT seals HOME with the reason).
         Assert.DoesNotContain(g.P("b").Frames, f => f.Type == Msg.JoinReq && JoinReqMsg.Parse(f.Payload).Kind == JoinReqKind.Home);
         g.Advance(3_100);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         var home = g.P("b").Last(Msg.JoinReq, JoinReqMsg.Parse);
         Assert.Equal((JoinReqKind.Home, (byte)(1 << bSlot)), (home.Kind, home.Slot));
         var j = i.Log.Count + 30;

@@ -63,6 +63,14 @@ int GameEngineLink::pending_point() const {
     return snapshot ? int(snapshot->point_no) : 0;
 }
 
+std::optional<engine::DepartureChoice> GameEngineLink::pending_departure_choice() const {
+#ifdef DW4_ONLINE_ENGINE_API
+    return e().pending_departure_choice(own_slot_);
+#else
+    return std::nullopt;
+#endif
+}
+
 bool GameEngineLink::supports_barriers() const {
 #ifdef DW4_ONLINE_ENGINE_API
     return true;

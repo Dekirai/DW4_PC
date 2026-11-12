@@ -168,6 +168,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round I1b's W10c: a removed member's client that never answers JOIN_REQ home (DW4_ONLINE_DEV builds only,
         // session.cpp: the relay detaches its stage group; the point of the test)
         "DW4_ONLINE_TEST_IGNORE_HOME",
+        // round I1b: the arrival prompt's automatic answer delayed (a picture of it) and the gate form switched off (W11b's
+        // loading-screen form); DW4_ONLINE_DEV builds only, online_run.cpp: the answer is the player's, the simulation is the same
+        "DW4_ONLINE_AUTOCHOICE_DELAY_MS", "DW4_ONLINE_TEST_GATE_FORM",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK",

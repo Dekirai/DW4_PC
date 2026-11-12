@@ -664,6 +664,7 @@ public sealed partial class RoomHub
     /// due HOMEs of solo-led groups, idle keepers, the instance info, the presence selection, the browser snapshot.</summary>
     private void HousekeepWorld(long now)
     {
+        RefreshPlans(now); // (round I1b: the gate form's open prompts, 19.7.3)
         foreach (var w in _worlds.Values.ToList())
         {
             if (!_worlds.ContainsKey(w.Wid)) continue;
@@ -1077,17 +1078,6 @@ public sealed partial class RoomHub
             if (w.Ending || w.Unlisted || w.DataHash != data) continue;
             if (!members.All(x => Matching.Visible(w, x, now))) continue;
             var atStage = w.Groups.Where(x => !x.Ended && x.Logged && !x.Departing && !x.LogFull && x.Barrier is null && SameStage(x.Stage, g.Stage)).ToList();
-            if (w.FreeSeats < size)
-            {
-                if (atStage.Count > 0) full.Add(w);
-                continue;
-            }
-            var group = atStage.Where(x => x.FreeSlots >= size).OrderByDescending(x => x.Count).FirstOrDefault();
-            if (group is not null ? !HubRules.ContextMatches(group, g.Context) : w.Context != g.Context)
-            {
-                if (atStage.Count > 0) otherContext.Add(w);
-                continue;
-            }
             // The instance's players at the arrival stage (decision 40, "Here (n)"): the members of its stage groups that stay at S (no
             // barrier, not an exit fork's leaving side, not past their log's end: the groups a JOIN could take) and their joiners. Never
             // the members of a group on its way elsewhere (fix-019's refix: a group at a barrier from S to another stage still counted,
@@ -1097,6 +1087,23 @@ public sealed partial class RoomHub
             var hostFriend = members.Any(x => x.Friends.Contains(w.HostAccount));
             var friendsInside = w.Members.Count(x => members.Any(y => y.Friends.Contains(x.AccountId)));
             var ping = w.Members.Select(x => x.Rtt.Median).DefaultIfEmpty(0).Max();
+            var isFull = w.FreeSeats < size;
+            var group = isFull ? null : atStage.Where(x => x.FreeSlots >= size).OrderByDescending(x => x.Count).FirstOrDefault();
+            // The context first (19.8.8: the prompt matches only equal session contexts): a full instance of another context (a quest)
+            // is no row either (round I1b's review: it opened a prompt with a single greyed row for a quest player).
+            var contextGroup = isFull ? atStage.OrderByDescending(x => x.Count).FirstOrDefault() : group;
+            if (contextGroup is not null ? !HubRules.ContextMatches(contextGroup, g.Context) : w.Context != g.Context)
+            {
+                if (atStage.Count > 0) otherContext.Add(w);
+                continue;
+            }
+            if (isFull)
+            {
+                if (atStage.Count > 0) full.Add(w);
+                // (Round I1b: the prompt lists it greyed, *Full*, 19.7.2.)
+                if (_world.ArrivalPrompt) rows.Add(new CandidateRow(w, null, RowState.Greyed, here, hostFriend, friendsInside, ping, "full"));
+                continue;
+            }
             RowState state;
             var why = "";
             if (w.HostAway)
@@ -1139,14 +1146,29 @@ public sealed partial class RoomHub
     private void FreshJoinOrNew(ArrivalGroup g, long now)
     {
         // The choice *New instance* (plan 0xFFFF) holds whatever came before this decision (a co-arrival hold nobody joined, a
-        // redecision after its target ended).
+        // redecision after its target ended): no row joined. Like the prompt's New instance (decision 43) it lands with the others
+        // leaving with it: a starting instance it may see takes it as a co-arrival.
         if (g.PlanNew)
         {
+            if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
+            {
+                TakeStarting(g, start, now);
+                return;
+            }
             New(g, now, BarrierNotice.None, []);
             return;
         }
+        // Round I1b (19.7.4, 19.7.7): the prompt's answer decides, checked again (or the prompt is held again, refreshed).
+        if (_world.ArrivalPrompt && g.PromptChoice is not null && DecideChoice(g, now)) return;
         var rows = Candidates(g, now, out var notice, out var names);
         var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable);
+        if (_world.ArrivalPrompt && starting is null && rows.Count > 0 && StageNames.IsHub(g.From.Stage))
+        {
+            // Round I1b (19.7.5): candidates and no answer: the loading-screen form (a PLAN's answer that came too late, a departure
+            // the census cannot name, an arrival whose OPTIONS showed nothing then).
+            HoldPrompt(g, rows, 0, "", now);
+            return;
+        }
         var row = starting ?? Matching.AutoJoinRow(rows);
         Note("candidates", null, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("stage", g.Stage),
             ("rows", rows.Select(r => $"{r.World.Wid}:{r.State}:{r.Here}{(r.Why.Length > 0 ? ":" + r.Why : "")}").ToArray()),

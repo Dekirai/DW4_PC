@@ -1,0 +1,8 @@
+# W4c, b (k5): the gate to stag0101 at the same moment as a (in its own lobby); New instance as well.
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+follow 40 until present=2,sealed>=4000 fail stagechange
+log together
+idle until frames>=60

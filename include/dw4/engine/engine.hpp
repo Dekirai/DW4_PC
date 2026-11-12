@@ -2,6 +2,7 @@
 
 #include "dw4/engine/igb_view.hpp"
 #include "dw4/engine/online.hpp"
+#include "dw4/engine/online_departure.hpp"
 #include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/engine/tick_state.hpp"
@@ -310,6 +311,8 @@ public:
     void update(Engine& engine);
     void clear();
     std::size_t running() const { return running_.size(); }
+    // The running works, read only (round I1b's departure census, 19.7.4).
+    const std::vector<std::unique_ptr<DemoWork>>& works() const { return running_; }
     // Online (docs/SEAMLESS.md 5.3): the works that are no member's own
     // scene, and those plus the own scenes of `slot` (what DMgetCount counts
     // for a script run of that trigger; -1: the unscoped works alone).
@@ -590,6 +593,13 @@ public:
     // members who take the same gate within seconds arrive together).
     // Observe-only (nothing of it is in the fingerprint or the snapshot).
     void note_departure(std::string_view stage, int point, std::int64_t delay);
+    // Round I1b (docs/SEAMLESS.md 19.7.4): in a hub stage, the stage and
+    // point the own player's next confirming press (A on the open cursor
+    // menu) would start, when that press leads out of the hub stages: the
+    // lobby gate's destination select and the return mat (the census in
+    // online_departure.hpp). Read-only; nothing while no such menu takes
+    // input. `own_slot` is the slot whose pad must be the menu's reader.
+    std::optional<DepartureChoice> pending_departure_choice(int own_slot) const;
     // The exit port's state for this machine's texts and draw filter.
     const ExitPromptView& exit_prompt() const { return exit_view_; }
     // The subtrees this machine's picture leaves out in a multi-member

@@ -1,0 +1,16 @@
+# W2 (19.24): the prompt's B in the gate form: the press held, PLAN answered with a's row, B as the game's cancel. b never
+# sends a BARRIER into stag0101 and loads nothing (its own story and card untouched: own_story).
+a: online-script: step .* log: a hosts in stag0101
+b: online-trace: prompt hold stage=stag0101 point=0 menu=i_zzstchgcur
+b: online-trace: prompt open form=gate stage=stag0101 rows=1
+b: online-trace: prompt answer choice=back
+b: online-trace: prompt closed \(back\)
+b: online-script: step .* log: b stands at the gate
+relay: instance_start .*stage=stag0101
+relay: plan .*stage=stag0101
+relay: choice .*choice=back
+!b: online-trace: barrier to=stag0101
+!b: online-trace: prompt plan-timeout
+!relay: instance_join .*role=guest
+!a: online-script: FAIL
+!b: online-script: FAIL

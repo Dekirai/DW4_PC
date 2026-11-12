@@ -1159,6 +1159,8 @@ public:
         std::string name;
         int index{}, cursor{}, items{};
         bool vertical{}, cancel{}, taking_input{};
+        int trigger = -1; // the trigger slot of the run that opened it (Engine::pad_reader_slot)
+        std::vector<std::uint8_t> enabled; // per line (empty: every line)
     };
     std::vector<OpenSelect> open_selects() const;
     // Seamless co-op (docs/SEAMLESS.md 5.3): a cursor of that name and RAM

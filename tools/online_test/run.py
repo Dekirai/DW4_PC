@@ -9,8 +9,9 @@ every client's net fingerprints and membership log and the relay's world members
 every line), compares them per instance and checks each scenario's expected events. It stops only the processes it
 started (by their handles), never anything by name.
 
-World keys of scenario.json (round I1a): "autochoice" (first | new: DW4_ONLINE_AUTOCHOICE of every client, the development
-build's answer to the arrival prompt; default first; a client's own "autochoice" wins), a client's "box" (--online-play
+World keys of scenario.json (round I1a): "autochoice" (first | new | cursor | back, or a list "back,first" with one answer
+per prompt, round I1b: DW4_ONLINE_AUTOCHOICE of every client, the development build's answer to the arrival prompt; default
+first; a client's own "autochoice" wins), a client's "box" (--online-play
 BOX), a client's "cut" ({"at": S, "seconds": N, "mode": "close" | "half"}: its own proxy cuts its link at the scenario's
 start + S for N seconds; close drops the connection and refuses reconnects, half holds every byte back without a FIN),
 "server_restart" ({"at": S, "kill": false, "down": N}: the scenario's server stops at start + S, gracefully (Ctrl+Break:

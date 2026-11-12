@@ -1015,6 +1015,366 @@ bool has_notice(std::vector<std::string> notices, const std::string& part) {
     return false;
 }
 
+// Round I1b, the arrival prompt (docs/SEAMLESS.md 19.7.4-19.7.5): the gate
+// form holds the confirming press (the engine sees neutral pads), PLAN, and
+// releases it one round trip later when OPTIONS has nothing to choose; with
+// rows the overlay opens without a time limit, the cursor on the
+// preselection, kept on its instance through a refresh; A sends CHOICE
+// before the press and the BARRIER names the plan; B closes the gate's menu
+// by the game's own cancel, no BARRIER; no OPTIONS within World:PlanWaitMs:
+// the press goes out anyway and the BARRIER has plan 0; the connection lost
+// while it holds: the press is dropped and the menu closed. The
+// loading-screen form: BARRIER_WAIT choice + OPTIONS, no five-second
+// fallback, B *Back to the lobby* (the relay's redirect), A a new instance;
+// the automatic answer of test runs.
+w::Options prompt_rows() {
+    w::Options o;
+    o.preselected = 0;
+    o.rtt = 35;
+    w::OptionRow kim;
+    kim.wid = 7;
+    kim.host = 9;
+    kim.host_name = "Kim";
+    kim.host_stage = "stag0101";
+    kim.players = 1;
+    kim.here = 1;
+    kim.taken = 1;
+    kim.story_label = "Chapter 4, Hard";
+    kim.ping = 41;
+    w::OptionRow rin = kim;
+    rin.wid = 8;
+    rin.host = 10;
+    rin.host_name = "Rin";
+    rin.host_stage = "dng101b1";
+    rin.here = 0;
+    w::OptionRow mo = kim;
+    mo.wid = 11;
+    mo.host_name = "Mo";
+    mo.state = w::RowState::full;
+    mo.players = 4;
+    o.rows = {kim, rin, mo};
+    return o;
+}
+
+// To the lobby (stagml11) with its gate menu open.
+fake::Client& at_gate(World& world, const std::string& name, std::uint32_t id, const std::function<void(SessionConfig&)>& tweak = {}) {
+    auto& c = world.add(name, id, tweak);
+    c.input = press_in({{"stagis10", 20}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return c.engine.stage() == "stagml11" && c.session->mode() == Mode::solo && c.session->hub(); }),
+          name + " in its lobby");
+    c.engine.gate_menu = true;
+    return c;
+}
+
+// The own player presses A in the lobby for a few ticks from `tick` on.
+std::function<std::uint32_t(const fake::Client&)> press_a_at(std::uint32_t tick) {
+    return [tick](const fake::Client& c) -> std::uint32_t {
+        return c.engine.stage() == "stagml11" && c.session->tick() >= tick && c.session->tick() < tick + 8 ? dw4::pad_button::a : 0u;
+    };
+}
+
+void key(fake::Client& c, std::uint32_t button, double now) {
+    c.session->prompt_input(button, now);
+    c.session->prompt_input(0, now);
+}
+
+void prompt_gate_form() {
+    {
+        // Nothing to choose: the press goes out one round trip later; the BARRIER names the plan.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return !world.hub.plans.empty(); }), "PLAN sent at the press");
+        check(world.hub.plans[0].stage == "stag0101" && world.hub.plans[0].purpose == w::PlanPurpose::gate && world.hub.plans[0].plan != 0,
+              "PLAN names the gate's destination");
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "the held press confirmed the menu");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stag0101"; }), "departed");
+        check(world.hub.barrier_plans.size() == 1 && world.hub.barrier_plans[0] == world.hub.plans[0].plan, "the BARRIER names the plan");
+        check(!a.session->prompt(), "no overlay");
+    }
+    {
+        // Rows: the overlay opens and waits for the player; the game sees neutral pads (the menu stays open).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        {
+            const auto& p = *a.session->prompt();
+            check(p.form == PromptForm::gate && p.rows.size() == 3 && p.cursor == 0 && p.rtt_ms == 35 && p.stage == "stag0101",
+                  "rows in the relay's order, the cursor on the preselection");
+        }
+        world.run(20.0); // (no time limit)
+        check(a.session->prompt() && a.engine.gate_menu && a.engine.gate_confirms == 0 && a.session->holding_press(), "it waits for the player");
+        check(world.hub.barrier_plans.empty(), "nothing left");
+        // Decision 40 through a refresh (round I1b's second review): Kim's player left the arrival stage, so the relay preselects
+        // New instance; the cursor the player never moved follows it (a quick A never makes him a guest of a stranger elsewhere).
+        auto gone = prompt_rows();
+        gone.rows[0].here = 0;
+        gone.plan = world.hub.plans.back().plan;
+        gone.flags = w::Options::refresh;
+        gone.preselected = w::Options::kNewInstance;
+        gone.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(gone), world.now);
+        world.run(0.2);
+        check(a.session->prompt() && a.session->prompt()->new_instance() && !a.session->prompt()->moved,
+              "an unmoved cursor takes the refresh's preselection (New instance)");
+        // The player moves up to Kim's row himself: a refresh with Rin's row first keeps the cursor he moved on Kim's.
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        check(a.session->prompt()->cursor == 0 && a.session->prompt()->moved, "moved to Kim's row");
+        auto refresh = prompt_rows();
+        std::swap(refresh.rows[0], refresh.rows[1]);
+        refresh.plan = world.hub.plans.back().plan;
+        refresh.flags = w::Options::refresh;
+        refresh.preselected = w::Options::kNewInstance;
+        refresh.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(refresh), world.now);
+        world.run(0.2);
+        check(a.session->prompt() && a.session->prompt()->cursor == 1 && a.session->prompt()->rows[1].wid == 7, "the moved cursor stays on Kim's row");
+        // Down: Mo's full row, where A does nothing; down to New instance, right: Friends; up twice to Kim's row, A.
+        key(a, dw4::pad_button::down, world.now);
+        key(a, dw4::pad_button::a, world.now);
+        check(a.session->prompt() && a.session->prompt()->cursor == 2 && world.hub.choices.empty(), "a greyed row is not choosable");
+        key(a, dw4::pad_button::down, world.now);
+        key(a, dw4::pad_button::right, world.now);
+        check(a.session->prompt()->new_instance() && a.session->prompt()->visibility == w::Visibility::friends, "New instance, Friends");
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        world.run(0.1);
+        key(a, dw4::pad_button::a, world.now);
+        world.run(0.1);
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::join && world.hub.choices[0].wid == 7 &&
+                  world.hub.choices[0].plan == refresh.plan,
+              "A: CHOICE join Kim's instance for the plan");
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "then the held press");
+        check(world.run_until(5, [&] { return !world.hub.barrier_plans.empty(); }), "the departure's BARRIER");
+        check(world.hub.barrier_plans[0] == refresh.plan, "the BARRIER names the plan");
+    }
+    {
+        // An unmoved cursor follows a refresh's preselection back to a row (the row regained players at the arrival stage), and
+        // the notice line stays only while no row of the instance it names can be chosen (round I1b's second review).
+        World world;
+        auto first = prompt_rows();
+        first.rows[0].here = 0;
+        first.preselected = w::Options::kNewInstance;
+        world.hub.prompt = first;
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        check(a.session->prompt()->new_instance(), "New instance preselected");
+        const auto plan = world.hub.plans.back().plan;
+        auto back = prompt_rows();
+        back.plan = plan;
+        back.flags = w::Options::refresh;
+        back.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(back), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->cursor == 0 && a.session->prompt()->rows[0].wid == 7, "the unmoved cursor on the refresh's preselection");
+        // Kim's instance full now (a refresh naming it), then a refresh without a line while it is still full, then one where it
+        // has a seat again.
+        auto full = prompt_rows();
+        full.plan = plan;
+        full.flags = w::Options::refresh;
+        full.stage = "stag0101";
+        full.rows[0].state = w::RowState::full;
+        full.preselected = 1;
+        full.notice = 1;
+        full.notice_name = "Kim";
+        world.hub.send(2, w::Type::options, w::encode(full), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice == "Kim's instance is full now.", "the notice line");
+        full.notice = 0;
+        full.notice_name.clear();
+        world.hub.send(2, w::Type::options, w::encode(full), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice == "Kim's instance is full now.", "kept while Kim's row is greyed");
+        world.hub.send(2, w::Type::options, w::encode(back), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice.empty(), "gone once Kim's row can be chosen again");
+    }
+    {
+        // B: the game's own cancel closes the menu; no BARRIER, nothing loaded.
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        key(a, dw4::pad_button::b, world.now);
+        world.run(2.0);
+        check(a.engine.gate_cancels == 1 && a.engine.gate_confirms == 0 && a.engine.stage() == "stagml11" && !a.session->prompt() &&
+                  !a.session->holding_press() && world.hub.barrier_plans.empty(),
+              "B leaves the player standing at the gate");
+        check(!world.hub.choices.empty() && world.hub.choices.back().choice == w::ChoiceKind::back, "the relay is told (its plan closes)");
+    }
+    {
+        // PLAN's throttle: B, then the gate again within the second: the second PLAN waits until a second after the
+        // first, and World:PlanWaitMs counts from it (the press is not released early).
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        const double first_plan = world.now;
+        key(a, dw4::pad_button::b, world.now);
+        world.run(0.2);
+        check(a.engine.gate_cancels == 1, "B closed the menu");
+        a.engine.gate_menu = true; // (the player stands on the mat again: the menu opens again)
+        a.input = press_a_at(a.session->tick() + 2);
+        world.run(0.3);
+        check(world.hub.plans.size() == 1 && a.session->holding_press() && a.engine.gate_confirms == 0, "the second press waits for the throttle");
+        check(world.run_until(3, [&] { return world.hub.plans.size() == 2; }), "the second PLAN");
+        check(world.now - first_plan >= 0.95, "a second after the first");
+        check(world.run_until(3, [&] { return a.session->prompt().has_value(); }), "its prompt");
+        check(a.engine.gate_confirms == 0, "the press still held");
+    }
+    {
+        // W2b: the relay drops the PLAN: the press goes out after World:PlanWaitMs; the BARRIER has no plan.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.drop_plans = true;
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return !world.hub.plans.empty(); }), "PLAN sent at the press");
+        const double pressed_at = world.now;
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "the press went out anyway");
+        check(world.now - pressed_at >= 0.95 && world.now - pressed_at < 1.3, "after about a second");
+        check(world.run_until(5, [&] { return !world.hub.barrier_plans.empty(); }) && world.hub.barrier_plans[0] == 0, "BARRIER plan 0");
+        check(!world.hub.choices.empty() && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == world.hub.plans[0].plan,
+              "the timed-out plan withdrawn (CHOICE back)");
+    }
+    {
+        // The menu closes otherwise while the overlay is open: the overlay closes and the plan is withdrawn (CHOICE back), so the
+        // relay sends no more refreshes for it (round I1b's review).
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        a.engine.gate_menu = false;
+        world.run(0.2);
+        check(!a.session->prompt() && !a.session->holding_press() && a.engine.gate_confirms == 0, "closed with the menu");
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == world.hub.plans[0].plan,
+              "the plan withdrawn");
+    }
+    {
+        // The connection lost while the overlay is open: closed, the press dropped, the menu closed, the notice.
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        world.hub.drop(2);
+        world.run(1.0);
+        check(!a.session->prompt() && a.engine.gate_cancels == 1 && a.engine.gate_confirms == 0 && a.engine.stage() == "stagml11",
+              "closed, the menu cancelled");
+        check(has_notice(a.session->take_notices(), "Connection lost. Try the gate again in a moment."), "the notice");
+    }
+    {
+        // DW4_ONLINE_AUTOCHOICE=first: the first choosable row, without a person.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        auto rows = prompt_rows();
+        rows.rows[0].state = w::RowState::story_not_here;
+        rows.preselected = w::Options::kNewInstance;
+        world.hub.prompt = rows;
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.auto_choice = AutoChoice::first; });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return !world.hub.choices.empty(); }), "answered");
+        check(world.hub.choices[0].choice == w::ChoiceKind::join && world.hub.choices[0].wid == 8, "the first choosable row (Rin's)");
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "and the press");
+    }
+}
+
+void prompt_loading_form() {
+    {
+        // The gate form off: the relay holds the barrier for the prompt, the five-second rule waits; B: back to the lobby.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+        check(world.hub.plans.empty() && world.hub.barrier_plans.size() == 1 && world.hub.barrier_plans[0] == 0, "no PLAN, BARRIER plan 0");
+        check(a.session->prompt()->form == PromptForm::loading && a.session->mode() == Mode::parked, "parked, on its loading screen");
+        world.run(12.0);
+        check(a.session->prompt() && a.session->mode() == Mode::parked, "no five-second fallback while it prompts");
+        key(a, dw4::pad_button::b, world.now);
+        check(world.hub.choices.empty(), "(sent, on its way)");
+        world.run(0.1);
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == 0,
+              "CHOICE back at the held barrier");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "back in the lobby");
+        check(world.hub.choices[0].back_point == 1 && a.engine.redirected_point && *a.engine.redirected_point == 1,
+              "next to the gate (the census's point, stagML11 point 1)");
+    }
+    {
+        // A departure the census names no point for: B leaves the point to the relay (stagML11 point 3).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) {
+            c.gate_form = false;
+            c.auto_choice = AutoChoice::back;
+        });
+        a.engine.gate_back_point = -1;
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(8, [&] { return !world.hub.choices.empty(); }), "B at the held barrier");
+        check(world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].back_point == 0xFF, "no back point named");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "back in the lobby");
+        check(a.engine.redirected_point && *a.engine.redirected_point == 3, "at the relay's default (stagML11 point 3)");
+    }
+    {
+        // A on New instance at a held barrier: CHOICE new; the relay's NEW.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) {
+            c.gate_form = false;
+            c.auto_choice = AutoChoice::new_instance;
+        });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(8, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "a new instance");
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::new_instance && world.hub.choices[0].plan == 0,
+              "CHOICE new at the held barrier");
+    }
+    {
+        // "Joining <host>..." only for a row with players at the arrival stage (19.5.3): Rin's row (nobody here) starts the stage as
+        // a guest, Kim's (here 1) joins.
+        for (const bool kim : {false, true}) {
+            World world;
+            world.hub.co_arrival_hold = 0.2;
+            world.hub.prompt = prompt_rows();
+            auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+            a.input = press_a_at(a.session->tick() + 30);
+            check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+            if (!kim) key(a, dw4::pad_button::down, world.now);
+            key(a, dw4::pad_button::a, world.now);
+            const auto loading = a.session->overlay(world.now).loading;
+            check(kim ? loading == "Joining Kim..." : loading.find("Joining") == std::string::npos,
+                  kim ? "Kim's row: Joining Kim..." : "Rin's row (nobody here): no Joining line");
+        }
+    }
+    {
+        // The connection lost at the held barrier closes the prompt (the relay forgot the hold).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+        world.hub.drop(2);
+        world.run(0.5);
+        check(!a.session->prompt(), "closed at the loss");
+    }
+}
+
 void world_session() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -1700,6 +2060,10 @@ int main(int argc, char** argv) {
         room_story();
         std::cout << "world session\n";
         world_session();
+        std::cout << "world: the arrival prompt, gate form\n";
+        prompt_gate_form();
+        std::cout << "world: the arrival prompt, loading-screen form\n";
+        prompt_loading_form();
         std::cout << "world: a restart's story key\n";
         restart_story_key(9);
         restart_story_key(3);

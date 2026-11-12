@@ -142,6 +142,7 @@ public sealed partial class RoomHub
         if (m.Peer != peer) return;
         m.Peer = null;
         m.DisconnectedAt = now;
+        m.Prompt.Clear(); // (round I1b: an open plan answers nobody now; the held prompt goes with the arrival below)
         Note("disconnect", m.Instance, ("member", m.Id), ("account", m.AccountId), ("graceful", graceful), ("wid", m.World?.Wid ?? 0));
         if (graceful)
         {
@@ -309,6 +310,8 @@ public sealed partial class RoomHub
             case Msg.CheckpointBad: OnCheckpointBad(m, CheckpointBadMsg.Parse(p), now); break;
             case Msg.InstanceOp: OnInstanceOp(m, InstanceOpMsg.Parse(p), now); break;
             case Msg.Report: OnReport(m, ReportMsg.Parse(p), now); break;
+            case Msg.Plan: OnPlan(m, PlanMsg.Parse(p), now); break;
+            case Msg.Choice: OnPromptChoice(m, ChoiceMsg.Parse(p), now); break;
             case Msg.Bye: ByeMsg.Parse(p); break; // the connection layer closes it gracefully
             default: throw new ProtocolException("unknown frame type " + Msg.Name(type));
         }
@@ -1028,7 +1031,7 @@ public sealed partial class RoomHub
             DetachLocked(m, now, leaveNow: true);
             var lone = new HubInstance(0) { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = i?.Detached == true };
             var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now, Alive = msg.AliveMask,
-                PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance };
+                PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance, PlanId = msg.PlanId == BarrierMsg.PlanNewInstance ? (ushort)0 : msg.PlanId };
             g.Members.Add(new Arrival(m, slot, msg.Carry));
             m.Arrival = g;
             Note("barrier_alone", null, ("member", m.Index), ("to", msg.Stage));
@@ -1073,7 +1076,8 @@ public sealed partial class RoomHub
         if (i.Log.Count > b.Tick + 1 && b.Tick + 1 >= i.Log.PrefixCount) i.Log.TruncateTo(b.Tick + 1);
         foreach (var k in i.Ahead.Keys.Where(k => k > b.Tick).ToList()) i.Ahead.Remove(k);
         var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive,
-            PlanNew = b.Messages.Values.Any(x => x.PlanId == BarrierMsg.PlanNewInstance) };
+            PlanNew = b.Messages.Values.Any(x => x.PlanId == BarrierMsg.PlanNewInstance),
+            PlanId = b.Messages.Values.Select(x => x.PlanId).FirstOrDefault(x => x is not 0 and not BarrierMsg.PlanNewInstance) };
         foreach (var (slot, (member, carry)) in reporters)
         {
             g.Members.Add(new Arrival(member, slot, carry));
@@ -1196,11 +1200,14 @@ public sealed partial class RoomHub
             return;
         }
         if (w is not null) ArrivedInside(w, g);
+        else TakePlanChoice(g); // (round I1b: the gate form's answer of the plan the BARRIER named)
         // A base that holds for announced groups takes this one as a co-arrival (one it does not wait for only where the
         // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
-        // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead).
+        // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead). A group that chose a
+        // row in the prompt joins its row; one that chose *New instance* (or plan 0xFFFF) lands with the others leaving with it
+        // (decision 43, 2026-11-11: two players who leave together and both choose New instance land together).
         var holder = _holds.FirstOrDefault(h => h.Hold == HoldKind.CoArrival && h != g && SameStage(h.Stage, g.Stage) && h.Context == g.Context &&
-                                                h.World == w && (w is not null || (!g.PlanNew && MaySeeBase(h, g))) &&
+                                                h.World == w && (w is not null || (g.PromptChoice is not { Choice: ChoiceKind.Join } && MaySeeBase(h, g))) &&
                                                 h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity);
         if (holder is not null)
         {
@@ -1213,12 +1220,15 @@ public sealed partial class RoomHub
         }
         // Announced groups on their way to the same stage with the same context: hold for those that fit, the earliest
         // announced first (before, five arrivals at once left the first one alone: the base held only when every
-        // announced member fit). Groups another base already waits for are that base's.
-        var announced = _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
-                                                   Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
-                                                   h.Context == g.Context && x.Instance is not null && x.Connected &&
-                                                   (w is not null ? x.World == w : x.World is null && MaySeeHost(g.Members[0].Member, g, x)) &&
-                                                   !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
+        // announced member fit). Groups another base already waits for are that base's. A fresh group that chose a row in the
+        // prompt is no base (19.7.6: automatic only where the base starts a new instance): its choice decides at once (round
+        // I1b's review: it held for a stranger's HEADING, and the co-arrival's NEW dropped the chosen join).
+        List<HubMember> announced = w is null && g.PromptChoice is { Choice: ChoiceKind.Join } ? [] :
+            _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
+                                       Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
+                                       h.Context == g.Context && x.Instance is not null && x.Connected &&
+                                       (w is not null ? x.World == w : x.World is null && !x.Prompt.ChoseRow && MaySeeHost(g.Members[0].Member, g, x)) &&
+                                       !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
         var awaited = new List<HubMember>();
         var room = Capacity - g.Members.Count;
         foreach (var group in announced.GroupBy(x => x.Instance!).OrderBy(grp => grp.Min(x => x.Heading!.At)).ThenBy(grp => grp.Min(x => x.Index)))
@@ -1422,6 +1432,12 @@ public sealed partial class RoomHub
                         SendWait(g, g.Target.Snapshot.Complete ? WaitReason.NotJoinable : WaitReason.Snapshot, g.Target.Members.Select(x => x.Name),
                             Ms(g.HoldUntil - now) / 1000.0, 0, now);
                     break;
+                case HoldKind.Prompt:
+                    // (A CHOICE the held prompt's throttle kept waits for its turn, World/Prompt.cs.)
+                    if (g.PendingChoice is { } pending && g.Members.Count > 0 && Ms(now - g.LastChoiceAt) >= ChoiceSpacingMs)
+                        TakeHeldChoice(g, g.Members[0].Member, pending, now);
+                    else RefreshPrompt(g, now);
+                    break;
                 case HoldKind.Boss:
                     if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||
                         g.Target.World is null || g.Target.World.Ending)
@@ -1454,7 +1470,7 @@ public sealed partial class RoomHub
     /// ended get a redirect to stagML11 point 3. The host's DISSOLVE ends his instance: on purpose (host_left), or defeated
     /// (host_defeated, M3: his slot not alive in the barrier, outside a give-up copy), at once before round I3.
     /// </summary>
-    private void Dissolve(ArrivalGroup g, long now, bool redirectHome)
+    private void Dissolve(ArrivalGroup g, long now, bool redirectHome, byte? backPoint = null)
     {
         var fromField = g.From.Stage.Length > 0 && !StageNames.IsHub(g.From.Stage);
         foreach (var a in g.Members)
@@ -1469,7 +1485,7 @@ public sealed partial class RoomHub
             if (redirectHome && !SameStage(g.Stage, HomeStage) || (w is not null && !isHost && SameStage(g.Stage, "stagML02")))
             {
                 redirect = HomeStage;
-                redirectPoint = HomePoint;
+                redirectPoint = backPoint ?? HomePoint;
             }
             if (isHost)
             {
@@ -1516,6 +1532,31 @@ public sealed partial class RoomHub
     {
         _holds.Remove(holder);
         holder.Hold = HoldKind.None;
+        if (holder.Fresh && holder.PromptChoice is { Choice: ChoiceKind.Join })
+        {
+            // (Round I1b: a member that chose a row holds for nobody, Decide. Should one hold all the same, its choice decides and
+            // the groups that came to it decide on their own: a co-arrival's NEW never replaces a chosen join.)
+            Count("co_arrival_base_chose_row");
+            var others = holder.CoArrivals.ToList();
+            holder.CoArrivals.Clear();
+            holder.Awaited.Clear();
+            if (!DecideChoice(holder, now)) FreshJoinOrNew(holder, now);
+            foreach (var c in others)
+            {
+                foreach (var a in c.Members) a.Member.Arrival = c;
+                Decide(c, now);
+            }
+            return;
+        }
+        if (holder.Fresh && holder.PromptChoice is { Choice: ChoiceKind.New } chosen)
+        {
+            // (Decision 43: a *New instance* chooser's base makes the new instance with the chosen visibility; the others leaving with
+            // it, New instance choosers among them, come as its co-arrivals.)
+            var host = holder.Members[0].Member;
+            host.DefaultVisibility = chosen.Visibility;
+            Note("prompt_new", holder.From, ("member", host.Id), ("visibility", Visibilities.Text(chosen.Visibility)), ("starting", 0),
+                ("coarrivals", holder.CoArrivals.Sum(x => x.Members.Count)));
+        }
         New(holder, now, BarrierNotice.None, []);
     }
 

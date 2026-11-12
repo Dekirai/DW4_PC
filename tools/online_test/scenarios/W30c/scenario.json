@@ -1,0 +1,31 @@
+{
+  "desc": "decision 40's order and cursor (19.7.3; I2's friends part not yet): c's instance has c at stag0201, a's Dry Land instance plays in stag0202; b, a stranger to both, takes the gate to stag0201: c's row first with Here (1), then a's row, the cursor on c's (B: back, autochoice back,first); after c went home b's next departure there lists a's row with the cursor on New instance, and A on a's row still enters b at stag0201 as a guest in a new stage group of a's instance",
+  "world": true,
+  "autochoice": "new",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "clients": [
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 3
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true,
+      "autochoice": "back,first"
+    }
+  ]
+}
