@@ -20,8 +20,8 @@ a: online-script: step .* log: b, c and d joined a in B1
 relay: test_hook .*hook=defeat
 relay: offer_open .*stage=dng204b1
 relay: test_go_hook .*hook=defeat
-relay: go_stamped .*stage=dng204b1
-relay: go_stamped .*stage=dng204b1
+relay: go_stamped .*stage=dng204b1.*how=sealed
+relay: go_stamped .*stage=dng204b1.*how=sealed
 relay: go_barrier
 !b: online-trace: offer notice
 !relay: instance_end .*reason=(?!host_left)

@@ -9302,7 +9302,7 @@ will move.
 | --- | --- |
 | Home screen | "Play: <form> Lv <n> (Box <b>)", "Choose character", "Friends (<n> online)", "Party", "Instances", "Settings", "Account", "Log out", "Online now: <n> players, <m> instances" |
 | Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Story not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
-| Loading | "Joining <host>...", "Joining <name>...", "Waiting for <name>'s floor...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
+| Loading | "Joining <host>...", "Joining <name>...", "Waiting for <name>'s floor...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "End the instance for everyone?   A: Yes   B: No" (the host's B on a held GO barrier, 19.30.7; added by the go lane's review fix of 2026-11-12, for the user's OK), "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
 | Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
 | Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "<name> is in <stage>. Go along?" (a late notice), "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Close", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Going along when <name>'s floor is ready...", "<name> is in a boss fight. Going along when it ends.", "View: cancel", "A: Cancel", "Going along...", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "Couldn't go along: <name>'s floor stayed busy.", "Couldn't go along: a scene here took too long.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
 | In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>.", "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
@@ -11602,9 +11602,10 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 - JOIN_REQ 0x83: + kind (join, home, go) for solo-led stage groups
   (19.6.5); *go* (round 72) with the stage and point (19.30.7).
 - INTENT 0x0D: kind 3 *leave* (the own slot home; the relay stamps HOME);
-  kind 4 *go along* (round 72; argument: the offer id, or 0 to withdraw a
-  waiting request or report an expired GO; the relay holds it until the
-  target is ready, then stamps GO, 19.30.7).
+  kind 4 *go along* (round 72; argument: the offer id; 0 the player's
+  *Cancel*; -1 the client's report that its stamped GO ended without a
+  departure, expired or done nothing at its step; the relay holds it until
+  the target is ready, then stamps GO, 19.30.7).
 - STATE 0x0C (round 72, I1b): + flag 16 *no living member* (no present
   slot alive, from the engine's alive mask), sent at once like the boss
   lock: the go-along wait and every JOIN hold read it (no rescue joins,
@@ -11920,8 +11921,8 @@ the travel, HOME, the reconnect inside the instance, toasts; round 72: the
 go-along notice, its waits (an own scene, defeated, loading) and its
 *Instance* page box with *B: Close* and the half second before View
 focuses it, the waiting row and its *Cancel* (INTENT 4 with argument 0),
-INTENT 4 only while the own player can go, the withdraw after an expired
-GO, the join base marked in STORY (I2)); `online`
+INTENT 4 only while the own player can go, the report (-1) after an
+expired GO, the join base marked in STORY (I2)); `online`
 (the engine's new paths on two engines with equal fingerprints:
 `redirect_pending_stage` only for a solo parked engine, the replace at
 DISSOLVE, HOME for a mask, the spawn ring and the safe positions, the
@@ -11984,7 +11985,7 @@ means round I1a):
 | W30 | I1a | (round 72) the area join: a hosts Dry Land and walks to dng205b1; b (another phase, other settings) takes the gate to stag0201: I1a enters b into a's instance as a guest in a new stage group at stag0201 (b's engine has a's phase, flags and settings, its own context), b's toast names a's stage; b walks to stag0202 and into dng205b1 and joins a's stage group there without a prompt; b's gate disc: home on its own story, `online_card.dat` and b's server revision unchanged (counter-proof: with the replace at the guest's NEW switched off, b's engine has its own phase in stag0201 and the test fails) |
 | W30b | I1a / I1b | (round 72) the visited rule: a's Dry Land instance has never been at dng205b2; b arrives by the return mat at dng205b2: I1a gives b a NEW of its own, I1b shows a's row greyed *Story not here yet*; after a walked to dng205b2, b's next arrival there joins a without leaving a's story |
 | W30c | I1b / I2 | (decision 40) the order and the cursor, three game processes: a's Dry Land instance plays in dng205b1, c's instance has c at stag0201; b, a stranger to both, takes the gate to stag0201: c's row first with *Here (1)*, then a's row ("Ancient Ruins B1"), the cursor on c's row; after c went home, b's next departure there lists a's row with the cursor on *New instance*, and A on a's row still enters b at stag0201 as a guest in a new stage group of a's instance; I2 adds: b a friend of a: a's row above c's and preselected |
-| W31 | I1b | (round 72) go along: a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: within 1 s of a's BARRIER_OK b and c show the notice; b answers at once (View after the half second, A): b's request waits while dng204b1 loads and its entry scene runs, b plays on in stag0201 ("Going along when Kim's floor is ready..."), then b's GO departure and b joins a's stage group at dng204b1's entrance from a checkpoint under 2 s after the stamp; c lets the notice run out: gone after 20 s, c plays on, the offer stays on c's *Instance* page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c answers: c joins at B2's entrance; equal NETFP and STATEHASH in every shared stage group; the times from the press to the stamp and from the stamp to control recorded (19.30.7's estimate) |
+| W31 | I1b | (round 72) go along: a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: within 1 s of a's BARRIER_OK b and c show the notice; b answers at once (View after the half second, A): b's request waits while dng204b1 loads and its entry scene runs, b plays on in stag0201 ("Going along when Kim's floor is ready..."), then b's GO departure and b joins a's stage group at dng204b1's entrance from a checkpoint under 2 s after the stamp (measured 3.3-3.4 s; the target is open for the user, 19.25); c lets the notice run out: gone after 20 s, c plays on, the offer stays on c's *Instance* page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c answers: c joins at B2's entrance; equal NETFP and STATEHASH in every shared stage group; the times from the press to the stamp and from the stamp to control recorded (19.30.7's estimate) |
 | W31b | I1b | (round 72) the mat: a and b on stag0201's matz01; a confirms, b says No in its own prompt: b gets no notice (HEADING's asked mask) but the offer on its page; c, elsewhere in stag0201, gets the notice |
 | W31c | I1b | (round 72) races: a goes into dng204b1 and back to stag0201 before b answers: the offer closes ("Kim left Sand Labyrinth."), b's late A is refused (*go refused*); a test hook holds a's way back until b's GO is stamped: b lands alone in dng204b1 in a stage group of a's instance ("... before you arrived."), its seat kept |
 | W31d | I1b | (round 72) defeated: b defeated in stag0201 when a goes in: no notice while b is defeated (it shows when b lives again); c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between the stamp and the GO's step: the GO does nothing on every engine, "Couldn't go along: you were defeated."; W31d2: a test hook defeats every member of a's stage group in dng204b1 while b's request waits: no stamp while nobody lives there (STATE *no living member*); a's game over closes the offer and ends b's request, no rescue join |
@@ -12583,8 +12584,13 @@ into dng205b1 by the development step `depart` (stag0202's enemies felled
 it), and every other walk through stag0201 heals from the L panel.
 Measured in W31 (run r2): the press to the stamp 10.0 s
 (dng204b1's load and entry scene), the stamp to control 3.4 s (the GO's
-departure 2.8 s to the park, the barrier, the checkpoint join), as 19.30.7
-estimated (run d1: 10.9 s and 3.3 s).
+departure 2.8 s to the park, the barrier, the checkpoint join; run d1:
+10.9 s and 3.3 s). That is longer than 19.30.7's estimate ("under two
+seconds from the stamp to control", 19.30.6's "about two seconds", W31's
+"under 2 s"): the GO starts the half fade the prompt would start and the
+exit motion, 169 frames to the park where the port's own "run" departure
+takes 110. W31 does not check the time; whether the measured 3.3-3.4 s
+stand or the departure gets shorter is open for the user.
 *Runs of 2026-11-11 and 2026-11-12 (c1, d1, e1, f1, f2; the notes list each;
 every scenario of the lane passed at the final code).* Three findings
 fixed on the way, besides the scenario scripts: a player that *appears* on
@@ -12595,6 +12601,29 @@ announces a departure once more when the port's fork leaves the member
 alone in its copy; W31b's b got the notice); the online script also runs
 while a barrier is held (its conditions and *goback*, with the wall-clock
 condition `waited`), and the test hold says BARRIER_WAIT every second.
+*Review of 2026-11-12 (go lane).* Fixed, with unit and session tests that
+fail without the fix: *B: Back to the lobby* on a held GO barrier takes
+only the member that pressed it home (before, a guest's B dissolved the
+whole arrival group, its host included, and so ended the instance); the
+host's B asks "End the instance for everyone?   A: Yes   B: No" first; a
+*Cancel* that crosses the stamp withdraws the GO only while nothing of it
+is sealed, else the request stays for its barrier ("Going along...",
+19.30.7 step 1), and the client's report of a GO that ended without a
+departure is INTENT 4's argument -1; the session context of a GO (3.7,
+19.30.7 step 2); the membership events behind a GO in one step are
+checked after it (6.5); "<name> went on to <stage>." and the late form of
+a notice that waited; a re-entry's 120 s from the member's own leave (and
+a member never named is news); *A: Cancel* only on a waiting row.
+Open for the user (the integration moves them to the round's list of open
+points): (1) a context that changes on the target after the stamp, in the
+second of the departure: built as any arrival's decision (a stage group of
+its own there with the notice *other quest*), the other choice being a
+wait on the loading screen; (2) the stamp to control takes 3.3-3.4 s, not
+under two seconds (above): accept, or shorten the GO's departure; (3) the
+host's question's hint "A: Yes   B: No" on the loading screen (19.5.6).
+Not built: a UI scenario of the *Go along* box (the half second, the
+cursor below the box, *B: Close*, *A: Cancel* by the controller); the
+scenarios drive the box's actions through the online script.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
@@ -13251,7 +13280,9 @@ offer:
   reopens it silently: open again on the *Instance* pages, with no notice
   and no closing line for anyone. One who walks in and out of B1 makes one
   notice, not one a minute; after 120 s without a re-entry the next entry
-  is new.
+  is new. A group with a member the offer never named is news as well (a
+  new offer with its notice); while the offer is open, an entrant's own
+  re-entry counts its 120 s from its own leave (review of 2026-11-12).
 
 **Who is offered.** Every member of the instance (a player with a seat;
 never a spectator) that is not one of the offer's entrants and at that
@@ -13287,10 +13318,11 @@ They all still find the offer on the *Instance* page. A member who goes
 into the same dungeon on his own (through a mat) joins the open offer's
 entrants and shows the notice again, with the new names, to the members
 that did not go along and did not close it (not for a re-entry within the
-120 s); one who arrives there by *Go along* joins the entrants silently
-(the others were offered that already). A late notice (at an arrival in a
-field, when a defeated member lives again, after a scene) names where the
-entrants are now: "Kim is in Ancient Ruins B2. Go along?".
+120 s of his own leave); one who arrives there by *Go along* joins the
+entrants silently (the others were offered that already). A late notice
+(at an arrival in a field, when a defeated member lives again, after a
+scene) names where the entrants are now: "Kim is in Ancient Ruins B2. Go
+along?".
 
 **Lifetime.** The offer is open while at least one of its entrants is in
 that dungeon (any of its stages), and it follows them inside it: its target
@@ -13364,7 +13396,8 @@ shrinks over the 20 s:
   leaves as through an exit (the fade, the exit motion), the loading
   screen reads "Joining Kim...", and he appears at the floor's entrance
   (from round I3 next to Kim, 19.30.7) about two seconds after the line
-  changed. The instance's members see "Lee went to Ancient Ruins B1.",
+  changed (measured in W31: 3.3-3.4 s, the departure alone 2.8 s, 19.30.7;
+  open for the user, 19.25). The instance's members see "Lee went to Ancient Ruins B1.",
   Kim's stage group "Lee joined.". A wait that ends without a departure
   says why: "Couldn't go along: Kim left Ancient Ruins.", "Couldn't go
   along: you were defeated.", "Couldn't go along: Kim's floor stayed busy."
@@ -13382,10 +13415,17 @@ story, toward a stage where the instance is right now, so it departs
 straight to its target:
 
 1. **INTENT** kind 4 *go along*, argument the offer id (19.18); kind 4 with
-   argument 0 withdraws (the player's *Cancel*, and the client's report
-   that its GO expired, step 3). The client sends it only while its own
-   player can go: in a field, alive, not at a barrier, no go-along of its
-   own waiting or stamped.
+   argument 0 is the player's *Cancel*, with argument -1 the client's
+   report that its stamped GO ended without a departure (it expired, step
+   3, or did nothing at its step: the member defeated there). The client
+   sends it only while its own player can go: in a field, alive, not at a
+   barrier, no go-along of its own waiting or stamped. A *Cancel* withdraws
+   a waiting request; one that crosses the stamp withdraws the GO only
+   while nothing of it is sealed (a JOIN_REQ *go* not answered yet: its
+   JOIN_AT then seals the lead alone; a GO whose tick is not sealed yet:
+   it leaves the pending events); a sealed GO runs on every engine, so the
+   relay keeps the request for its barrier and the row says "Going
+   along..." (review of 2026-11-12).
 2. **The relay holds the request** (`GoAlong`, *waiting*) and stamps
    nothing until the target is ready. It checks that the offer is open and
    the sender offered (19.30.5), then waits until (a) the target's stage
@@ -13399,7 +13439,12 @@ straight to its target:
    `intent_ignored`), or solo-led (JOIN_REQ kind *go*). While it waits the
    target follows the offer (the entrants moved deeper: the deeper floor).
    The wait ends without a stamp when the sender withdraws; when the offer
-   closes ("Couldn't go along: Kim left Ancient Ruins."); when the sender
+   closes ("Couldn't go along: Kim left Ancient Ruins."); when the play on
+   the entrants' floors changed the session context since they went in (a
+   quest step after a floor's load, on the target or on a floor they left:
+   3.7's rule for a GO, whose B2 arrived with B1's context, which a floor's
+   own load may change and the field never had; "Couldn't go along.",
+   review of 2026-11-12); when the sender
    is defeated ("Couldn't go along: you were defeated."); when the
    sender's own stage group takes a barrier and the sender arrives in a
    dungeon or at home (arriving in a field it waits on, in its new stage
@@ -13448,8 +13493,8 @@ straight to its target:
    `online_exits.cpp` 360-367, with no time limit), a long camera tour, a
    scene with PADINPUT DISABLE. The relay stamped it only while the group
    was membership-safe, so this is rare. The member's client shows
-   "Couldn't go along: a scene here took too long." and withdraws (INTENT
-   4, argument 0); the relay clears `GoAlong` then, or anyway once the
+   "Couldn't go along: a scene here took too long." and reports it (INTENT
+   4, argument -1); the relay clears `GoAlong` then, or anyway once the
    stage group's stream is sealed 5 s past the expiry tick without the
    member's barrier.
 4. **The barrier** is one inside the instance (19.6.3). The relay matches
@@ -13465,14 +13510,23 @@ straight to its target:
    while that stage group exists: the loading screen reads "Joining
    Kim..." and after 10 s "Waiting for Kim's floor..." with *B: Back to the
    lobby* (the member's *Leave instance*; for the host "End the instance
-   for everyone?"). There is no *Go alone* for a GO: a stage group of its
+   for everyone?   A: Yes   B: No" first). Only that member goes home: the
+   others of its barrier (stamped at the same tick, or a defeated partner
+   the side rule took along) wait on; the host's ends the instance, and
+   everyone at that barrier goes home with it. There is no *Go alone* for
+   a GO: a stage group of its
    own next to Kim's would be a second copy of the floor, on a boss floor a
    second copy of the host's boss fight. Only when nobody of the instance
    is at that stage any more does the barrier become a new stage group of
    the instance there ("Kim left Ancient Ruins B1 before you arrived."):
    never a second stage group of the instance next to a living one on the
    same stage, never home, never a new instance. The story: the host
-   keeper's merge, as at every barrier inside the instance.
+   keeper's merge, as at every barrier inside the instance. A context that
+   changed there after the stamp (a quest step in the second of the
+   departure) keeps the GO out of that stage group: the barrier is decided
+   as any arrival's (3.7: another stage group of the instance with its
+   context, else a new one with the notice *other quest*; provisional, the
+   user decides, 19.25's open points).
 5. **Timing** (estimate; I1b measures it in W31): the press, the relay's
    check and the stamp under 0.1 s when Kim's floor is joinable; the
    exit's fade and departure records about a second; the join 0.3-0.45 s
@@ -13610,7 +13664,7 @@ after the stamp; c's press as a's offer moved to B2, its stamp 21.3 s later
   per instance and minute), so none of this moves the load gate's
   numbers.
 - **Protocol** (19.18): OFFER 0x9B; INTENT kind 4 *go along* (argument 0:
-  withdraw); HEADING with the mask of the members the port asked; JOIN_REQ
+  *Cancel*, -1: the own stamped GO ended without a departure); HEADING with the mask of the members the port asked; JOIN_REQ
   kind *go* with stage and point; the tick event GO (`ForkKind::go`, every
   GO of a step together, the 300-tick expiry, following its slot at a
   fork); STATE's flag 16 *no living member*; OPTIONS rows with the host's

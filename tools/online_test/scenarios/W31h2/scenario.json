@@ -5,7 +5,7 @@
   "seed_story": true,
   "frames": 80000,
   "timeout": 1400,
-  "min_shared_ticks": 0,
+  "min_shared_ticks": 25000,
   "server": {
     "World": {
       "TestGoHook": "busy_target:2400",
