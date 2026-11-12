@@ -9556,7 +9556,13 @@ writing the host's story; and takes it out of the instance's lists. If its stage
 is solo-led and its client does not answer the *home* JOIN_REQ within
 `Instances:JoinRequestTries`, the relay detaches that stage group from the
 instance (a stage group of nobody's instance: no joins, no story, its next
-barrier a DISSOLVE home with the redirect, 19.8.3).
+barrier a DISSOLVE home with the redirect, 19.8.3). A member removed while it
+waits at a barrier (gathering with its stage group, waiting for a JOIN or a
+boss fight, or as the co-arrival of a holding base) goes home from that
+barrier at once (a DISSOLVE redirected home, its own story) and never takes a
+seat in the instance again while the bar lasts; the others decide on, and the
+co-arrivals of a base left without members decide on their own (round I1b,
+19.25).
 
 #### 19.6.7 The host's connection loss (Q8)
 
@@ -10842,7 +10848,7 @@ a hundred requests are one toast, not two hundred seconds of them).
 | Friend request spam | the limits of 19.11, the decline cooldown, blocks, exact names only |
 | Stalking through whereabouts | friends only, the `whereabouts` preference, Private shows "Playing", blocked players see nothing (figures, rows, lists), the website lists instances only to signed-in players |
 | Probing a block | requests and invites answer the same with or without a block; the incoming cap never answers a sender (a request beyond it waits, 19.11) |
-| Staff abuse | the role from the database, every action and look audited, playing staff tagged, blocks passed only by an audited moderation action |
+| Staff abuse | the role from the database, every action and look audited, playing staff tagged, blocks passed only by an audited moderation action; a report about a staff member is handled by another one and never shows him who reported him (19.25 "Round I1b") |
 | A modified host client writes into guests' stories through the mirror | the mirror copies only what the guest's own STORY of the same visit also reported (19.8.6) |
 | A removed guest's modified client keeps sending STORY | its owner switches at the removal, its stage group is detached (19.6.6) |
 | Cheated characters among strangers | the Cheats tab fix before round I1 (19.25); round D's server character later; *Report player* from round I1b |
@@ -12562,12 +12568,16 @@ file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
   co-arrival and automatic join already refused it through Visible(). Expired bars go in the housekeeping.
 - **Report player.** REPORT 0x1E (member u32, reason u8 1 griefing / 2 cheating / 3 name / 4 other, wid u32) and its
   answer WORLD_NOTICE 14 (argument 0 sent, 1 limit, 2 not available, 3 failed). The relay maps the member id to its account
-  (also a member that left the world in the last 30 minutes), takes the shared instance's history id (the reporter's own
-  instance when the reported is or was seated in it, else the named wid's), throttles 3 at once then one a second, and hands
-  the report to `ReportService` off the lock. One service for the game and `POST /api/v1/reports {username, reason}`:
+  only when the reporter's connection was told about that member (its MEMBER_INFO, `HubMember.Introduced`, cleared at a
+  reconnect), whatever the member does now (also long after it left the world); any other id, and the own one, answers
+  *not available* at once with an empty name, so REPORT is no name or presence oracle. It takes the shared instance's
+  history id (the reporter's own instance when the reported is or was seated in it, else the named wid's), throttles 3 at
+  once then `RoomHub.ReportsPerMinute` (10) a minute like the REST call, and hands the report to `ReportService` off the
+  lock. One service for the game and `POST /api/v1/reports {username, reason}`:
   never oneself or a deleted account, `Reports:PerDay` (10 in 24 hours, counted in the table; 429 `report_limit`),
   `Reports:RepeatHours` (24: a second report about the same player adds no row and answers "sent"), the shared instance
-  from `instance_history` within `Reports:SharedInstanceHours` (24) when the relay named none;
+  from `instance_history` within `Reports:SharedInstanceHours` (24) when the relay named none; a reporter at the daily limit
+  is answered *limit* without a query for `ReportService.LimitKnownMinutes` (10); `own_account` is 422;
   `RateLimits:ReportsPerMinute` (10) on the REST call. **`player_reports`** went into the still unreleased `0013_world`
   (19.17.1's columns plus `source` game / web; CHECKs: never oneself, *done* only with a time; `instance_id` ON DELETE SET
   NULL, so the history's prune keeps the report; a COMMENT on every column) with the view `v_player_reports`;
@@ -12576,24 +12586,41 @@ file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
   `/reopen` (`report_reopened`, also in `v_staff_audit` and the audit list); the website's *Admin > Reports* (open first,
   newest first, the reported player's open count and his live instance, links to both accounts' pages, *Done* /
   *Reopen*), the admin index's open count and the account page's "Reports about this player". What staff do about a
-  player stays on his account page (lock, ban) and *Admin > Instances* (End, Remove).
+  player stays on his account page (lock, ban) and *Admin > Instances* (End, Remove). **A report about the staff member
+  himself** (19.16 "staff abuse"): Done and Reopen answer 403 `own_report` (nothing audited; the website shows "About you:
+  another moderator handles it." instead of the buttons), and he never learns who reported him: the API gives `reporter`,
+  `reporterId` and the instance fields null, the website's list and his own account page show "a player" without the
+  instance (its host may be the reporter; review 2026-11-12).
 - **Client.** The F1 Online tab's *Instance* page: A on another member's row opens its player card below the table with
   *Report* (the four reasons, then the toast of the relay's answer) and, for the host and staff playing in the instance,
-  *Remove* with the question "Remove <name> from your instance? They can't rejoin it for 10 minutes."; the removed
-  member's toast names the host from the notice itself. Texts beyond 19.5.6: "You can't send more reports today.",
+  *Remove* with the question "Remove <name> from your instance? They can't rejoin it for a while." (no number: the bar is
+  the server's `World:RemovedBarMinutes`; the card's texts are in 19.5.6); the removed member's toast names the host from
+  the notice itself. Texts beyond 19.5.6: "You can't send more reports today.",
   "Couldn't send the report. Try again later." Test drivers: the online script's `remove NAME`, `report NAME REASON`
-  and `setflag N` (development builds: a story value outside the pads, W10c), the UI script's `card`, `remove`,
-  `report`, and `DW4_ONLINE_TEST_IGNORE_HOME=1` (development builds; on the engine's allowed list): a JOIN_REQ home goes
-  unanswered (W10c).
+  and `setflag N` (development builds: a story value outside the pads, W10c), the condition `members=N` (INSTANCE_INFO's
+  members, oneself included; W10d), the UI script's `card`, `remove`, `report`, and `DW4_ONLINE_TEST_IGNORE_HOME=1`
+  (development builds; on the engine's allowed list): a JOIN_REQ home goes unanswered (W10c).
+- **The removal binds at every decision** (19.6.6 "binding on the server", 19.16; reviews 2026-11-11 and 2026-11-12).
+  `TakeSeat` refuses an account under a live bar of the instance or owing it a HOME (`Unseatable`; world log
+  `seat_refused`). `SendRemovedHome` sends the removed members of an arrival home at once (a DISSOLVE of the visit they
+  parked in, redirected to stagML11 point 3, on their own story; world log `removed_home {wid, account, member, stage, hold,
+  co_arrival}`), the rest decides on: at the removal of a waiting arrival, in `Decide`, at the top of every `CheckHolds`
+  pass, at the start of `Join` and before the places of a NEW inside an instance. It covers the co-arrivals of a holding
+  base too (a removed co-arrival never gets CO_ARRIVE into the instance), and a base left without members (removed, or gone
+  from the world: `DetachLocked`) lets its co-arrivals decide on their own (`RedecideCoArrivals`: each parks under its own
+  name again, so a removal or its own leave finds it). A joiner removed during its join gets no seat from its fallback and
+  is asked HOME at once. Relay test option `World:TestJoinHoldMs` (0 = off; never in appsettings): an arrival's JOIN
+  target counts as not joinable that long (W10d).
 - **Scenarios** W10 (the removal, the home departure on the own story, the bar: b's next arrival hosts its own instance,
   b's `GET /instances` does not list a's while staff's does; run.py's `api_checks` learned `expect_not`), W10b (removed
   while defeated: HOME's fork takes exactly b's slot, a's stage group plays on), W10c (the client that never answers: its
   STORY with the host's key refused, the group detached, its gate disc a DISSOLVE home on its own story), and the UI
-  scenario `card` (the host works b's card with the controller: Report, the reasons, Griefing; Remove, the question).
+  scenario `card` (the host works b's card with the controller: Report, the reasons, Griefing; Remove, the question), and
+  W10d (a removes b while b's JOIN waits: b goes home from the loading screen at once, never seated again).
   *Admin > Reports* names the instance a report came from (its host, area and start; `GET /admin/reports` rows gain
   `instanceHost`, `instanceStage`, `instanceStarted`). Results (978efd19): server unit 474/474, integration 143 passed /
-  3 skipped, ctest 57/57, online off (`det.sh` 4004f056 / 396cb219 twice), W10, W10b, W10c and `card` passed; details in
-  the progress note.
+  3 skipped, ctest 57/57, online off (`det.sh` 4004f056 / 396cb219 twice), W10, W10b, W10c and `card` passed; after the
+  reviews (the progress note has the numbers of each round) also W10d.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
