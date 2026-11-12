@@ -104,6 +104,8 @@ failed its check), and passes now.
 - 2026-11-12 after the fixes: server unit 484/484 (`build/go/utest7.log` at 6deab5ad; the reopen case added at ab170b5f, HubLogicTests
   148/148), session tests 455 checks (`build/go/sess_r1.log`), ctest 57/57 (`build/go/ctest7.log`, Release DEV=OFF at 15161cbe),
   det.sh on `build/go/off/dw4_go_off_d.exe`: run1 and run2 4004f056 / audio 396cb219 (`build/go/off/det_d.log`).
+  At 15df694a (code of ab170b5f): server unit 484/484 (`build/go/utest8.log`), integration 137 passed / 4 skipped
+  (`build/go/itest5.log`, mysqld 3653), the whole W31 set passed with real clients (run g1, below).
 - ctest 57/57 (2026-11-12 at 6be4b788, `build/go/ctest6.log`; before: 2026-11-11 at 2deadf82, `ctest5.log`); online script
   tests 351 checks (2026-11-12 at 093a8f0c: every scenario script parses); session tests 397 checks (`go_along_session`);
   wire tests (go_messages, the golden bytes the relay's `WireGoldenTests.Go_along_messages_equal_the_clients` holds too).
@@ -123,7 +125,9 @@ failed its check), and passes now.
 
 ## Left
 
-The W31 set on the fixed client (run g1, see "Scenario runs") and the integration tests after it. Else nothing of the lane. The release (DW4Online 0.1.7 with I1a and I1b) and the round's other Done-when items (the I1a
+Nothing of the lane. For the user (SEAMLESS.md 19.25, review paragraph): the context change after the stamp (built: a stage
+group of its own with *other quest*), the measured 3.3-3.4 s from the stamp to control, the hint "A: Yes   B: No". For the
+integration: the harness step of the contract's go 2026-11-12 17:05 entry (ArrivalPrompt off for the go lane's hub tests). The release (DW4Online 0.1.7 with I1a and I1b) and the round's other Done-when items (the I1a
 scenarios with `DW4_ONLINE_AUTOCHOICE=first`, the regression) are the integration's.
 
 ## How to run the tests
@@ -257,3 +261,9 @@ echo "mysqld shut down $(date)" >> $LOG
 - **f2** (2026-11-12 15:25, 093a8f0c, exe f, `build/go/scen_f2.log`, run folder `run_20261112_152521`): W31i passed (b's
   second request, sent right after its arrival in stag0202, waited 6.8 s for its new stage group, the barrier 2.9 s after
   the stamp, the join).
+- **g1** (2026-11-12 17:03-19:38, 908b2df0, exe g = the review fixes' client 15161cbe, DEV build; `build/go/scen_g1.log`, run folder
+  `run_20261112_170309`): all twelve passed: W31 (354 s, 10,920 shared ticks), W31b (1002 s, 8,040), W31c (214 s, 3,120), W31c2
+  (310 s, 3,060; b's line "... left Sand Labyrinth B1 before you arrived."), W31d (628 s, 28,980; both stamps how=sealed, d's GO
+  that did nothing reported -1: go_end expired), W31d2 (1102 s, 49,380), W31e (1303 s, 35,040), W31f (240 s, 3,120), W31g (586 s,
+  25,800), W31h (1153 s, 62,100), W31h2 (1152 s, 62,160), W31i (1253 s, 8,220), each above its new min_shared_ticks. No
+  go_context_changed / offer_context_changed in any world log (c's GO from stag0202 to B2 passed the GO's context rule).
