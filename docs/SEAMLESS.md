@@ -12580,7 +12580,8 @@ member's player put onto a named mat on every engine of its stage group;
 the online script's explore and the campaign bot's errand both fell in
 B1 at k10), and so do W31i's b and c onto stag0201's matz00; W31e's c goes
 into dng205b1 by the development step `depart` (stag0202's enemies felled
-it), and every other walk through stag0201 heals from the L panel. Measured in W31 (run r2): the press to the stamp 10.0 s
+it), and every other walk through stag0201 heals from the L panel.
+Measured in W31 (run r2): the press to the stamp 10.0 s
 (dng204b1's load and entry scene), the stamp to control 3.4 s (the GO's
 departure 2.8 s to the park, the barrier, the checkpoint join), as 19.30.7
 estimated (run d1: 10.9 s and 3.3 s).
