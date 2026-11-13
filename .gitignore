@@ -67,3 +67,4 @@ __pycache__/
 *.jks
 *.keystore
 *signing*.properties
+*keystore*.properties

@@ -1,0 +1,13 @@
+// Not used by the build. An optional init script for the Gradle user home
+// (docs/ANDROID.md, "Gradle offline"): copied to %USERPROFILE%\.gradle\init.d\
+// it makes Gradle keep downloaded dependencies (the Android Gradle Plugin and
+// its libraries) and wrapper distributions for a year instead of 30 days
+// without use, so a rarely built Android project still builds offline. It
+// applies to every project that uses that Gradle user home. Gradle takes
+// cache settings only from init scripts in the user home's init.d.
+beforeSettings { settings ->
+    settings.caches {
+        downloadedResources.removeUnusedEntriesAfterDays = 365
+        releasedWrappers.removeUnusedEntriesAfterDays = 365
+    }
+}

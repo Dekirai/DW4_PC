@@ -101,7 +101,8 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | `server/DW4Online` | The online backend (ASP.NET Core + MariaDB: accounts, online character, cloud save, achievements, rooms, relay, website), its tests and deployment kit; built with `dotnet`, separate from the CMake build |
 | `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `verify_game.py` (read-only ISO identification) |
 | `tests` | Asset-free tests for the core formats and tools |
-| `android`, `src/android`, `cmake` | The Android port in progress (AYN Thor): the Gradle wrapper around the root CMakeLists.txt and, for now, a device probe app; see [ANDROID.md](docs/ANDROID.md) |
+| `cmake` | CMake includes of the root CMakeLists.txt: `third_party.cmake` (the pinned FetchContent sources, one list for the PC and the Android build) and `android.cmake` (its Android path) |
+| `android`, `src/android` | The Android port in progress (AYN Thor): the Gradle wrapper around the root CMakeLists.txt and, for now, a device probe app; see [ANDROID.md](docs/ANDROID.md) |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
 
 The engine design is described in [ARCHITECTURE.md](docs/ARCHITECTURE.md), the

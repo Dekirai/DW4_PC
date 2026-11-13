@@ -2,6 +2,7 @@ package org.dw4pc.game;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.hardware.display.DisplayManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -30,12 +31,21 @@ public class DW4Activity extends SDLActivity {
         return new String[] {"SDL3", "main"};
     }
 
-    /** Command line arguments: adb shell am start ... --es dw4args "--seconds 10". */
+    /**
+     * Command line arguments: adb shell am start ... --es dw4args "--seconds 10".
+     * Debuggable builds only: the launcher activity is exported, so in a
+     * release build any app could start it with arguments; there the extra is
+     * ignored.
+     */
     @Override
     protected String[] getArguments() {
         Intent intent = getIntent();
         String args = intent != null ? intent.getStringExtra("dw4args") : null;
         if (args == null || args.trim().isEmpty()) {
+            return new String[0];
+        }
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            Log.w(TAG, "dw4args ignored: not a debuggable build");
             return new String[0];
         }
         return args.trim().split("\\s+");

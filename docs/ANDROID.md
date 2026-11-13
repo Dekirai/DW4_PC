@@ -45,7 +45,7 @@ moves to Android in phase B.
 | Platform / build tools | `platforms;android-35`, `build-tools;34.0.0` | compileSdk and targetSdk 35 |
 | Emulator | 36.6.11, WHPX | |
 | Emulator image | `system-images;android-33;default;x86_64` rev 2 | AOSP with SystemUI, GLES up to 3.1 |
-| SDL | 3.4.16 (`fa2c02bb`, `cmake/third_party.cmake`) | `libSDL3.so` on Android, static on the PC |
+| SDL | 3.4.16 (`fa2c02bb`, `cmake/third_party.cmake`) | `libSDL3.so` on Android, static on the PC; a local copy must have the pinned version (Building, 2.) |
 
 libc++ 21 has `std::from_chars` for `float` and `double` (the code uses it in
 `src/lua4.cpp`, `src/engine/engine.cpp` and `src/game/online/json.cpp`): a
@@ -58,11 +58,12 @@ ABIs: `arm64-v8a` (the Thor) and `x86_64` (the emulator), `c++_static`.
 
 | Path | Contents |
 | --- | --- |
-| `cmake/third_party.cmake` | The FetchContent sources (SDL3, imgui, pl_mpeg, stb, zstd) for the PC and the Android build: one list |
+| `cmake/third_party.cmake` | The FetchContent sources (SDL3, imgui, pl_mpeg, stb, zstd) for the PC and the Android build: one list; checks a local SDL copy against the pinned version |
 | `cmake/android.cmake` | The Android path of the root `CMakeLists.txt`: SDL3 shared, the library `main` |
 | `src/android/probe_main.cpp` | Phase A's device probe (the library `main`) |
 | `android/` | Gradle wrapper project: `settings.gradle`, `build.gradle`, `app/build.gradle`, manifest, resources, `DW4Activity.java` |
 | `android/ndk-core-check.cmd` | Compiles `dw4_core`, `dw4_engine`, `dw4_online` with the NDK for both ABIs |
+| `android/gradle/cache-retention.init.gradle` | Optional, not used by the build: longer Gradle cache retention for the owner's Gradle user home ("Gradle offline") |
 
 SDL's Java classes (`org.libsdl.app.*`) are never kept in the repository: the
 Gradle task `copySdlJava` copies them at build time from the same SDL source
@@ -98,9 +99,16 @@ Prerequisites:
        sdk.dir=C\:/Users/<you>/AppData/Local/Android/Sdk
        dw4.depsDir=C\:/Users/<you>/source/repos/DW4_PC/build/Release/_deps
 
-   Nothing in that directory is ever written.
+   Nothing in that directory is ever written. Its `sdl3-src` must be the
+   pinned SDL: `cmake/third_party.cmake` keeps the pin's version next to it
+   (`DW4_SDL3_VERSION`, 3.4.16) and stops the configure when the copy's
+   `include/SDL3/SDL_version.h` names another version, because a local copy
+   bypasses the pin's `URL_HASH`. (A different commit of the same version is
+   not caught; the copy from a current PC build is the pinned one.) The SDL
+   Java classes come from the same directory, so Java and native SDL always
+   match.
 3. The Android Gradle Plugin 8.7.3 and its dependencies in the Gradle cache
-   (`%USERPROFILE%\.gradle\caches\modules-2`).
+   (`%USERPROFILE%\.gradle\caches\modules-2`), see "Gradle offline" below.
 
 Then:
 
@@ -110,19 +118,54 @@ Then:
 The APK is `android/app/build/outputs/apk/debug/app-debug.apk`, signed with
 the SDK's debug key. Release signing comes in phase F: a key of this project
 kept outside the repository (never another project's key); `.gitignore`
-excludes `*.jks`, `*.keystore` and `*signing*.properties`.
+excludes `*.jks`, `*.keystore`, `*signing*.properties` and
+`*keystore*.properties` (the usual `keystore.properties`).
 
-**Gradle offline, state 13.11.2026:** the Gradle cache does not hold AGP
-8.7.3's jars, so `--offline` stops at the plugin classpath (124 artifacts:
+The wrapper: `gradle-wrapper.jar` is Gradle 8.9's own (SHA-256 `49849512...`,
+the same file as `lib/plugins/gradle-wrapper-main-8.9.jar` of the 8.9
+distribution), and `gradle-wrapper.properties` carries the distribution's
+published SHA-256 (`distributionSha256Sum`), which the wrapper checks when it
+downloads the distribution (an installed one is not checked again).
+
+### Gradle offline
+
+**State 13.11.2026:** the Gradle cache does not hold AGP 8.7.3's jars, so
+`--offline` stops at the plugin classpath (124 artifacts:
 `com.android.tools.build:gradle:8.7.3`, `builder`, `bundletool`, `aapt2-proto`,
 `com.android.tools:sdk-common`/`sdklib`/`repository`/`ddmlib` 31.7.3, netty,
 grpc, guava, bouncycastle and others; the execution adds at least
 `com.android.tools.build:aapt2:8.7.3-12006047:windows` and the D8/R8 jar).
-Gradle 8 deletes cached dependencies that were not used for 30 days; the
-cache filled in September 2026 was removed this way at the first Gradle 8.9
-run of phase A. One online Gradle run (owner's approval) refills it; after
-that the build runs offline again, as long as some Android build uses the
-cache at least once a month.
+One online Gradle run (owner's approval) fills it; after that the build runs
+offline.
+
+**Why the cache went empty:** Gradle 8 cleans its user home at most once a
+day, at the end of any build, and deletes downloaded dependencies and wrapper
+distributions that no build used for 30 days. The AGP and AndroidX cache from
+September 2026 (another project's builds) was older than that, so the first
+Gradle 8.9 run of phase A (creating the wrapper, 13.11. 06:05) deleted it; any
+other Gradle run would have done the same. It affects every project on the
+machine that shares `%USERPROFILE%\.gradle`.
+
+**Keeping it** (each changes the owner's Gradle setup, so it is the owner's
+choice; nothing in the build does it):
+
+1. Longer retention for the shared user home: copy
+   `android/gradle/cache-retention.init.gradle` to
+   `%USERPROFILE%\.gradle\init.d\`. Downloaded dependencies and wrapper
+   distributions then stay for 365 days without use (checked on Gradle 8.9 in
+   a separate user home: 365 instead of 30; created resources keep Gradle's 7
+   days). It applies to every project using that user home. Gradle reads
+   cache settings only from `init.d`; the file in the repository has no
+   effect by itself.
+2. A Gradle user home of its own for DW4_PC, for example
+   `set GRADLE_USER_HOME=%USERPROFILE%\.gradle-dw4` before `gradlew` (or
+   `gradlew -g <dir>`). DW4_PC's runs then never clean the shared cache, and
+   other projects never clean DW4_PC's; the first run in it downloads the
+   Gradle 8.9 distribution and AGP once. Its own cache still expires after
+   30 days without a build unless the init script from 1. goes into its
+   `init.d` as well.
+
+Without either, a monthly Android build keeps the cache alive.
 
 Phase A therefore checked the Gradle side in parts: the native libraries came
 from the same root CMake configuration Gradle uses (NDK toolchain file,
@@ -138,25 +181,35 @@ the manifest, resources and Java sources in `android/app`.
 
 configures the root `CMakeLists.txt` with the NDK for arm64-v8a and x86_64
 (`-DDW4_ANDROID_APP=OFF`: no SDL) and builds `dw4_core`, `dw4_engine` and
-`dw4_online` with `ninja -k 0`, so every compile error shows.
+`dw4_online` with `ninja -k 0`, so every compile error shows. It runs the
+builds at below-normal priority and ends with exit code 1 and "errors" when
+either ABI fails (it names the ABI), 0 otherwise.
 
 ## The emulator
 
 AVD `dw4thor33` (its own; the AVD `emusync33` belongs to another project and
 is never touched): API 33 `default` x86_64 image, upper screen 1920x1080 at
 400 dpi, landscape, 4 GB RAM, hardware keyboard, no audio, no camera, and the
-Thor's lower screen as a second display 1240x1080 at 330 dpi.
+Thor's lower screen as a second display 1240x1080 at 330 dpi. `hw.ramSize` in
+the AVD's `config.ini` is a plain number of MB (`4096`, guest `MemTotal`
+4008536 kB): with `4096M` the emulator fell back to its 2048 MB minimum
+("Increasing RAM size to 2048MB").
 
     emulator -avd dw4thor33 -no-window -no-audio -gpu swiftshader_indirect ^
              -no-snapshot -no-boot-anim -port 5580 -multidisplay 1,1240,1080,330,0
 
 - `-multidisplay` takes one comma-separated argument (`index,width,height,
   dpi,flag`); with spaces the emulator refuses the command line.
-- Flag 0 already gives a presentation display: DisplayManager reports display
-  2 "Emulator 2D Display" 1240x1080 with `FLAG_PRESENTATION` (flags 0xc8:
-  PRESENTATION, SHOULD_SHOW_SYSTEM_DECORATIONS, TRUSTED), state ON, listed in
-  `DISPLAY_CATEGORY_PRESENTATION`. It is a virtual display: `screencap -d`
-  cannot capture it.
+- Flag 0 means "the emulator's default", not "no flags": the emulator writes
+  `hw.display1.flag = 1739` into the AVD's `config.ini`, Android's virtual
+  display flags PUBLIC | PRESENTATION | OWN_CONTENT_ONLY | SUPPORTS_TOUCH |
+  ROTATES_WITH_CONTENT | SHOULD_SHOW_SYSTEM_DECORATIONS | TRUSTED. Inside the
+  guest DisplayManager reports display 2 "Emulator 2D Display" 1240x1080 with
+  `Display` flags 0xc8 (PRESENTATION, SHOULD_SHOW_SYSTEM_DECORATIONS,
+  TRUSTED), state ON, listed in `DISPLAY_CATEGORY_PRESENTATION`. Phase E
+  compares these with what `dumpsys display` reports for the Thor's lower
+  screen. On the emulator it is a virtual display: `screencap -d` cannot
+  capture it.
 - `-gpu swiftshader_indirect` and `-gpu host` both work without a window;
   `host` reaches the NVIDIA GPU (GLES 3.1). The very first boot of the fresh
   AVD with `-gpu host` and `-multidisplay` ended (exit 127) right after the
@@ -168,12 +221,22 @@ Install, start, look:
 
     adb -s emulator-5580 install -r app-debug.apk
     adb -s emulator-5580 shell am start -W -n org.dw4pc.game/.DW4Activity
-    adb -s emulator-5580 shell am start -n org.dw4pc.game/.DW4Activity --es dw4args "--seconds 10"
+    adb -s emulator-5580 shell "am start -n org.dw4pc.game/.DW4Activity --es dw4args '--seconds 10'"
     adb -s emulator-5580 exec-out screencap -p > probe.png
     adb -s emulator-5580 logcat -d -s DW4probe
 
 The intent extra `dw4args` becomes the program's arguments
-(`DW4Activity.getArguments`); phase C uses it for the det runs.
+(`DW4Activity.getArguments`, split at white space); phase C uses it for the
+det runs. `adb shell` joins its arguments into one shell line on the device,
+so the whole `am start` goes in one pair of quotes and the extra's value in
+its own inner quotes; `... --es dw4args "--seconds 10"` without them reaches
+the app as just `--seconds`. The probe logs what it got (`arguments 2:
+[--seconds] [10]`). Only a debuggable build (`FLAG_DEBUGGABLE`, every debug
+APK) takes the extra: the launcher activity is exported, so a release build
+ignores it (and logs "dw4args ignored") instead of letting any app pass
+arguments. Checked on the emulator (13.11.2026): the debug APK logs
+`arguments 2: [--seconds] [3]` and quits after 3 s; the same APK without
+`android:debuggable` logs "dw4args ignored" and `arguments 0: none`.
 
 ## The device probe (phase A's app)
 
@@ -181,8 +244,8 @@ The intent extra `dw4args` becomes the program's arguments
 clears to `#2060C0` and draws a `#F0B020` triangle with a `#version 300 es`
 shader from a vertex buffer, and logs to logcat (tag `DW4probe`):
 
-- SDL's compiled and linked version, the Android SDK version, the ABI, clang
-  and libc++;
+- its arguments (`dw4args`), SDL's compiled and linked version, the Android
+  SDK version, the ABI, clang and libc++;
 - `SDL_GetBasePath`, `SDL_GetPrefPath`, the internal, external and cache
   paths, the external storage state;
 - `GL_VERSION`, `GL_RENDERER`, the GLSL version, the uniform limits
@@ -194,8 +257,8 @@ shader from a vertex buffer, and logs to logcat (tag `DW4probe`):
   dpi and the activity's own display (`DW4Activity.displayReport` through
   JNI), and display events (`DisplayListener`);
 - game controllers SDL sees (name, vendor, product), key, button and touch
-  events, the lifecycle events, frame times every 5 s, and the first frame's
-  centre and corner pixel.
+  events, the lifecycle events with the thread they arrive on, frame times
+  every 5 s, and the first frame's centre and corner pixel.
 
 ### Results on the emulator (x86_64, 13.11.2026)
 
@@ -227,7 +290,11 @@ Findings for phase B:
 - The lifecycle events (`WILL_ENTER_BACKGROUND`, `DID_ENTER_BACKGROUND`,
   `LOW_MEMORY` on HOME, `WILL_ENTER_FOREGROUND`, `DID_ENTER_FOREGROUND`)
   reached an `SDL_AddEventWatch` callback, never `SDL_PollEvent`; the game's
-  lifecycle handling goes into such a watch.
+  lifecycle handling goes into such a watch. The watch runs on the SDL
+  thread: SDL 3.4.16 queues the events from the Java side and delivers them
+  in `Android_PumpEvents` (also while it blocks in a pause) through
+  `SDL_SendAppEvent`, which only calls the event watchers. The probe logs
+  the thread: all five events arrived on the thread that runs `SDL_main`.
 - The emulator's GLES translator draws nothing without an enabled vertex
   attribute array (an attribute-less `gl_VertexID` triangle stayed
   invisible); the renderer always draws from buffers anyway.

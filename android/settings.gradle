@@ -1,5 +1,7 @@
 // DW4_PC for Android (docs/ANDROID.md): a Gradle wrapper around the root
-// CMakeLists.txt. Builds offline from the local Gradle cache (--offline).
+// CMakeLists.txt. --offline works only while the Gradle cache holds the
+// Android Gradle Plugin and its dependencies; one online run fills it
+// ("Gradle offline" in docs/ANDROID.md).
 pluginManagement {
     repositories {
         google()

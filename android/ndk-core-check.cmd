@@ -18,7 +18,14 @@ set FAILED=0
 for %%A in (arm64-v8a x86_64) do (
   "%CMAKE%" -S . -B "%OUT%\%%A" -G Ninja "-DCMAKE_MAKE_PROGRAM=%NINJA%" "-DCMAKE_TOOLCHAIN_FILE=%NDK%\build\cmake\android.toolchain.cmake" -DANDROID_ABI=%%A -DANDROID_PLATFORM=android-33 -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DDW4_ANDROID_APP=OFF >nul || exit /b 1
   echo === %%A
-  start "" /b /wait /belownormal "%CMAKE%" --build "%OUT%\%%A" --target dw4_core dw4_engine dw4_online -- -k 0 || set FAILED=1
+  rem Below normal priority. "|| ..." would only see whether start itself ran;
+  rem start /wait leaves cmake's exit code in errorlevel, which "if errorlevel"
+  rem reads when the line runs (inside this block, too).
+  start "" /b /wait /belownormal "%CMAKE%" --build "%OUT%\%%A" --target dw4_core dw4_engine dw4_online -- -k 0
+  if errorlevel 1 (
+    echo === %%A: compile errors
+    set FAILED=1
+  )
 )
 if %FAILED%==1 (echo NDK compile check: errors & exit /b 1)
 echo NDK compile check: dw4_core, dw4_engine, dw4_online compile for arm64-v8a and x86_64

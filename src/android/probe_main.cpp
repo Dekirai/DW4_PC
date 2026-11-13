@@ -316,9 +316,15 @@ const char* event_name(Uint32 type) {
     }
 }
 
-// The application lifecycle events reach an event watch at once (on Android
-// the watch runs on the Java side's thread while the SDL thread may block in
-// the pause); phase B's event filter hooks in the same way.
+// The application lifecycle events reach only an event watch. In SDL 3.4.16
+// the Java side queues them (Android_SendLifecycleEvent, SDL_android.c), and
+// the SDL thread delivers them from Android_PumpEvents (SDL_androidevents.c,
+// also while it blocks in a pause) through SDL_SendAppEvent, which calls the
+// event watchers and never queues them for SDL_PollEvent (SDL_events.c). So
+// the watch runs on the SDL thread; phase B's lifecycle handling hooks in the
+// same way. The log names the thread to show it.
+SDL_ThreadID g_sdl_main_thread = 0;
+
 bool SDLCALL lifecycle_watch(void*, SDL_Event* ev) {
     switch (ev->type) {
     case SDL_EVENT_TERMINATING:
@@ -326,9 +332,12 @@ bool SDLCALL lifecycle_watch(void*, SDL_Event* ev) {
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
     case SDL_EVENT_DID_ENTER_BACKGROUND:
     case SDL_EVENT_WILL_ENTER_FOREGROUND:
-    case SDL_EVENT_DID_ENTER_FOREGROUND:
-        logf("watch %s", event_name(ev->type));
+    case SDL_EVENT_DID_ENTER_FOREGROUND: {
+        const SDL_ThreadID thread = SDL_GetCurrentThreadID();
+        logf("watch %s on thread %llu (%s)", event_name(ev->type), static_cast<unsigned long long>(thread),
+             thread == g_sdl_main_thread ? "the SDL main thread" : "another thread");
         break;
+    }
     default:
         break;
     }
@@ -346,6 +355,11 @@ int main(int argc, char* argv[]) {
         logf("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
+    g_sdl_main_thread = SDL_GetCurrentThreadID();
+    logf("SDL main thread %llu", static_cast<unsigned long long>(g_sdl_main_thread));
+    std::string args;
+    for (int i = 1; i < argc; ++i) args += std::string(i > 1 ? " [" : "[") + argv[i] + "]";
+    logf("arguments %d: %s", argc - 1, args.empty() ? "none" : args.c_str());
     SDL_AddEventWatch(lifecycle_watch, nullptr);
     log_sdl();
     log_android_displays();
