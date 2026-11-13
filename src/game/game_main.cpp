@@ -530,13 +530,57 @@ std::filesystem::path import_disc(const std::string& source, dw4::game::Settings
         problem = std::string("The chosen file cannot be read: ") + SDL_GetError();
         return {};
     }
-    const Sint64 size = SDL_GetIOSize(in);
-    char magic[4]{};
-    const bool rvz = SDL_ReadIO(in, magic, 4) == 4 && std::memcmp(magic, "RVZ\x01", 4) == 0;
-    SDL_SeekIO(in, 0, SDL_IO_SEEK_SET);
+    // The head first: a wrongly chosen file stops here, before a copy of its
+    // whole size. An ISO: the game id at 0, the GameCube magic at 0x1C. An
+    // RVZ: "RVZ\x01", the ISO's and its own size at 0x24 / 0x2C, the disc's
+    // header at 0x58 (rvz.cpp).
+    std::array<unsigned char, 0x80> head{};
+    std::size_t head_size = 0;
+    while (head_size < head.size()) {
+        const std::size_t got = SDL_ReadIO(in, head.data() + head_size, head.size() - head_size);
+        if (got == 0) break;
+        head_size += got;
+    }
+    auto be32 = [&](std::size_t at) {
+        return (Uint32(head[at]) << 24) | (Uint32(head[at + 1]) << 16) | (Uint32(head[at + 2]) << 8) | Uint32(head[at + 3]);
+    };
+    auto be64 = [&](std::size_t at) { return (Uint64(be32(at)) << 32) | be32(at + 4); };
+    const bool rvz = head_size == head.size() && std::memcmp(head.data(), "RVZ\x01", 4) == 0;
+    const std::size_t disc_at = rvz ? 0x58 : 0;
+    if (head_size < head.size() || be32(disc_at + 0x1C) != 0xC2339F3Du) {
+        SDL_CloseIO(in);
+        problem = "The chosen file is not a GameCube disc image (ISO) or RVZ image.\n\nWIA, CISO and NKit images can be converted to "
+                  "ISO or RVZ in Dolphin (right-click the game > Convert File...).";
+        return {};
+    }
+    if (const std::string id(reinterpret_cast<const char*>(head.data() + disc_at), 6);
+        id != "GDJEB2" || head[disc_at + 6] != 0 || head[disc_at + 7] != 0) {
+        SDL_CloseIO(in);
+        problem = "This disc is " + id + " (revision " + std::to_string(int(head[disc_at + 7])) +
+                  "), not Digimon World 4 USA (GDJEB2, revision 0).";
+        return {};
+    }
+    // The copy's size; a provider that streams through a pipe has none: an
+    // RVZ names its own, an ISO is a whole GameCube disc.
+    Sint64 size = SDL_GetIOSize(in);
+    if (size <= 0) size = rvz ? Sint64(be64(0x2C)) : Sint64(1459978240);
     const auto folder = dw4::game::app_root() / "data";
     std::error_code error;
     std::filesystem::create_directories(folder, error);
+    // Room for the copy (and an RVZ's converted ISO next to it) plus a margin.
+    if (const auto space = std::filesystem::space(folder, error); !error) {
+        const Uint64 needed = Uint64(size) + (rvz ? be64(0x24) : 0) + (Uint64(64) << 20);
+        if (space.available < needed) {
+            SDL_CloseIO(in);
+            problem = "There is not enough free space for the game data: " + std::to_string(needed >> 20) + " MB needed, " +
+                      std::to_string(space.available >> 20) + " MB free.";
+            return {};
+        }
+    }
+    error.clear();
+    // Back to the start; a provider that cannot seek (a pipe) gets the head
+    // written first and the rest copied after it.
+    const bool rewound = SDL_SeekIO(in, 0, SDL_IO_SEEK_SET) == 0;
     const auto image = folder / "dw4.iso";
     const auto copy = folder / (rvz ? "dw4.rvz.part" : "dw4.iso.part");
     std::cout << "import: " << source << " (" << size << " bytes, " << (rvz ? "RVZ" : "disc image") << ") -> " << image.string() << '\n';
@@ -554,6 +598,10 @@ std::filesystem::path import_disc(const std::string& source, dw4::game::Settings
         std::ofstream out(copy, std::ios::binary | std::ios::trunc);
         std::vector<char> buffer(std::size_t(4) << 20);
         Sint64 total = 0;
+        if (!rewound) {
+            out.write(reinterpret_cast<const char*>(head.data()), std::streamsize(head_size));
+            total = Sint64(head_size);
+        }
         for (;;) {
             if (cancel.load()) {
                 problem = "Cancelled.";
@@ -570,7 +618,7 @@ std::filesystem::path import_disc(const std::string& source, dw4::game::Settings
                 break;
             }
             total += Sint64(got);
-            if (size > 0) progress.store(double(total) / double(size));
+            if (size > 0) progress.store(std::min(1.0, double(total) / double(size)));
         }
         done.store(true);
     });
@@ -597,6 +645,11 @@ std::filesystem::path import_disc(const std::string& source, dw4::game::Settings
     if (problem.empty() && error) problem = "Moving the copy to " + image.string() + " failed: " + error.message();
     if (!problem.empty()) {
         std::filesystem::remove(copy, error);
+        return {};
+    }
+    // The copy checked like any game data; an unusable one does not stay.
+    if (problem = check_game_data(image); !problem.empty()) {
+        std::filesystem::remove(image, error);
         return {};
     }
     return image;
