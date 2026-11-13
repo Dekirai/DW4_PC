@@ -9,5 +9,6 @@
 *.patch text eol=lf whitespace=-blank-at-eol
 # Android (docs/ANDROID.md): the Gradle wrapper scripts keep their platform's line ends.
 /android/gradlew text eol=lf
+/android/*.sh text eol=lf
 /android/*.bat text eol=crlf
 /android/*.cmd text eol=crlf

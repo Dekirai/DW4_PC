@@ -1,7 +1,8 @@
 // DW4_PC for Android (docs/ANDROID.md): a Gradle wrapper around the root
-// CMakeLists.txt. --offline works only while the Gradle cache holds the
-// Android Gradle Plugin and its dependencies; one online run fills it
-// ("Gradle offline" in docs/ANDROID.md).
+// CMakeLists.txt. Run it through android/gradlew-dw4.cmd (or gradlew-dw4.sh):
+// DW4_PC's own Gradle user home, %USERPROFILE%\.gradle-dw4, holds the Android
+// Gradle Plugin and its dependencies after one online run, so --offline works
+// ("Gradle user home" in docs/ANDROID.md).
 pluginManagement {
     repositories {
         google()
@@ -18,3 +19,11 @@ dependencyResolutionManagement {
 }
 rootProject.name = 'DW4_PC'
 include ':app'
+
+// A plain gradlew runs in the shared Gradle user home, whose cleanup at the
+// end of a build also deletes other projects' unused caches.
+if (gradle.gradleUserHomeDir.canonicalFile == new File(System.getProperty('user.home'), '.gradle').canonicalFile) {
+    logger.warn("DW4_PC: this build runs in the shared Gradle user home ${gradle.gradleUserHomeDir}, whose " +
+            "30-day cleanup also deletes other projects' caches; use android/gradlew-dw4.cmd or gradlew-dw4.sh " +
+            "(docs/ANDROID.md, \"Gradle user home\")")
+}

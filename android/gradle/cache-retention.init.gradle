@@ -1,10 +1,11 @@
-// Not used by the build. An optional init script for the Gradle user home
-// (docs/ANDROID.md, "Gradle offline"): copied to %USERPROFILE%\.gradle\init.d\
-// it makes Gradle keep downloaded dependencies (the Android Gradle Plugin and
-// its libraries) and wrapper distributions for a year instead of 30 days
-// without use, so a rarely built Android project still builds offline. It
-// applies to every project that uses that Gradle user home. Gradle takes
-// cache settings only from init scripts in the user home's init.d.
+// The cache retention of DW4_PC's own Gradle user home (docs/ANDROID.md,
+// "Gradle user home"). android/gradlew-dw4.cmd and gradlew-dw4.sh copy this
+// file into <that home>/init.d/ before every run; Gradle takes cache settings
+// only from init scripts in the user home's init.d, so the copy in the
+// repository has no effect by itself. Downloaded dependencies (the Android
+// Gradle Plugin and its libraries) and wrapper distributions then stay for a
+// year instead of 30 days without use, so a rarely built Android project
+// still builds offline. Never copied into the shared %USERPROFILE%\.gradle.
 beforeSettings { settings ->
     settings.caches {
         downloadedResources.removeUnusedEntriesAfterDays = 365

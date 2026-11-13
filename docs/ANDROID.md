@@ -40,7 +40,7 @@ moves to Android in phase B.
 | NDK | `ndk;30.0.16248370` (r30) | clang 21.0.0, `Android (16134705, based on r574158c)`, libc++ `_LIBCPP_VERSION` 210000 |
 | CMake | `cmake;3.31.6` (SDK package) | with Ninja 1.12.1 |
 | JDK | Oracle JDK 17.0.12 | `JAVA_HOME=C:\Program Files\Java\jdk-17` |
-| Gradle | 8.9 (wrapper in `android/gradle/wrapper`) | |
+| Gradle | 8.9 (wrapper in `android/gradle/wrapper`) | always through `android/gradlew-dw4.cmd`: DW4_PC's own Gradle user home `%USERPROFILE%\.gradle-dw4` ("Gradle user home") |
 | Android Gradle Plugin | 8.7.3 | needs Gradle 8.9 or newer |
 | Platform / build tools | `platforms;android-35`, `build-tools;34.0.0` | compileSdk and targetSdk 35 |
 | Emulator | 36.6.11, WHPX | |
@@ -62,8 +62,9 @@ ABIs: `arm64-v8a` (the Thor) and `x86_64` (the emulator), `c++_static`.
 | `cmake/android.cmake` | The Android path of the root `CMakeLists.txt`: SDL3 shared, the library `main` |
 | `src/android/probe_main.cpp` | Phase A's device probe (the library `main`) |
 | `android/` | Gradle wrapper project: `settings.gradle`, `build.gradle`, `app/build.gradle`, manifest, resources, `DW4Activity.java` |
+| `android/gradlew-dw4.cmd`, `android/gradlew-dw4.sh` | The Gradle entry points: `gradlew` in DW4_PC's own Gradle user home ("Gradle user home") |
 | `android/ndk-core-check.cmd` | Compiles `dw4_core`, `dw4_engine`, `dw4_online` with the NDK for both ABIs |
-| `android/gradle/cache-retention.init.gradle` | Optional, not used by the build: longer Gradle cache retention for the owner's Gradle user home ("Gradle offline") |
+| `android/gradle/cache-retention.init.gradle` | The cache retention (365 days) that `gradlew-dw4` copies into its Gradle user home's `init.d` before every run |
 
 SDL's Java classes (`org.libsdl.app.*`) are never kept in the repository: the
 Gradle task `copySdlJava` copies them at build time from the same SDL source
@@ -107,16 +108,24 @@ Prerequisites:
    not caught; the copy from a current PC build is the pinned one.) The SDL
    Java classes come from the same directory, so Java and native SDL always
    match.
-3. The Android Gradle Plugin 8.7.3 and its dependencies in the Gradle cache
-   (`%USERPROFILE%\.gradle\caches\modules-2`), see "Gradle offline" below.
+3. The Gradle 8.9 distribution, the Android Gradle Plugin 8.7.3 and its
+   dependencies in DW4_PC's own Gradle user home `%USERPROFILE%\.gradle-dw4`:
+   one online run fills it ("Gradle user home" below).
 
-Then:
+Then, from the repository root (`gradlew-dw4` sets the Gradle user home,
+`JAVA_HOME` if it is not set, and the project directory `android`):
 
-    set JAVA_HOME=C:\Program Files\Java\jdk-17
-    android\gradlew.bat -p android --offline --no-daemon assembleDebug
+    android\gradlew-dw4.cmd --offline --no-daemon assembleDebug
+
+or in Git Bash `sh android/gradlew-dw4.sh --offline --no-daemon assembleDebug`.
+Never run `android\gradlew.bat` directly: it uses the shared
+`%USERPROFILE%\.gradle` (`settings.gradle` warns when a build runs there).
+`android/gradle.properties` sets `android.builder.sdkDownload=false`, so a
+missing SDK package stops the build instead of being downloaded.
 
 The APK is `android/app/build/outputs/apk/debug/app-debug.apk`, signed with
-the SDK's debug key. Release signing comes in phase F: a key of this project
+the SDK's debug key (`%USERPROFILE%\.android\debug.keystore`, which the build
+only reads). Release signing comes in phase F: a key of this project
 kept outside the repository (never another project's key); `.gitignore`
 excludes `*.jks`, `*.keystore`, `*signing*.properties` and
 `*keystore*.properties` (the usual `keystore.properties`).
@@ -125,55 +134,72 @@ The wrapper: `gradle-wrapper.jar` is Gradle 8.9's own (SHA-256 `49849512...`,
 the same file as `lib/plugins/gradle-wrapper-main-8.9.jar` of the 8.9
 distribution), and `gradle-wrapper.properties` carries the distribution's
 published SHA-256 (`distributionSha256Sum`), which the wrapper checks when it
-downloads the distribution (an installed one is not checked again).
+downloads the distribution (an installed one is not checked again); the
+download into DW4_PC's Gradle user home on 13.11.2026 passed that check.
 
-### Gradle offline
+### Gradle user home
 
-**State 13.11.2026:** the Gradle cache does not hold AGP 8.7.3's jars, so
-`--offline` stops at the plugin classpath (124 artifacts:
-`com.android.tools.build:gradle:8.7.3`, `builder`, `bundletool`, `aapt2-proto`,
-`com.android.tools:sdk-common`/`sdklib`/`repository`/`ddmlib` 31.7.3, netty,
-grpc, guava, bouncycastle and others; the execution adds at least
-`com.android.tools.build:aapt2:8.7.3-12006047:windows` and the D8/R8 jar).
-One online Gradle run (owner's approval) fills it; after that the build runs
-offline.
+DW4_PC's Gradle runs use a Gradle user home of their own,
+`%USERPROFILE%\.gradle-dw4` (`DW4_GRADLE_USER_HOME` names another one), never
+the shared `%USERPROFILE%\.gradle`. `android/gradlew-dw4.cmd` and
+`android/gradlew-dw4.sh` set `GRADLE_USER_HOME` to it and copy
+`android/gradle/cache-retention.init.gradle` into its `init.d` before every
+run. Nothing of the shared home is changed (no `init.d` there, no settings).
 
-**Why the cache went empty:** Gradle 8 cleans its user home at most once a
-day, at the end of any build, and deletes downloaded dependencies and wrapper
-distributions that no build used for 30 days. The AGP and AndroidX cache from
-September 2026 (another project's builds) was older than that, so the first
-Gradle 8.9 run of phase A (creating the wrapper, 13.11. 06:05) deleted it; any
-other Gradle run would have done the same. It affects every project on the
-machine that shares `%USERPROFILE%\.gradle`.
+Why: Gradle 8 cleans the user home it runs in at most once a day, at the end
+of a build, and deletes downloaded dependencies and wrapper distributions that
+no build there used for 30 days. In the shared home, a DW4_PC build can delete
+other projects' caches and theirs can delete DW4_PC's. The retention script
+keeps them for 365 days in DW4_PC's home (checked on Gradle 8.9: 365 instead
+of 30; created resources keep Gradle's 7 days), so a rarely built Android
+project still builds offline. A build that does run in the shared home logs a
+warning ("DW4_PC: this build runs in the shared Gradle user home ...").
 
-**Keeping it** (each changes the owner's Gradle setup, so it is the owner's
-choice; nothing in the build does it):
+**The one-time online step (done 13.11.2026, owner's approval):** a fresh
+Gradle user home holds nothing, so its first `gradlew-dw4` run must be online:
 
-1. Longer retention for the shared user home: copy
-   `android/gradle/cache-retention.init.gradle` to
-   `%USERPROFILE%\.gradle\init.d\`. Downloaded dependencies and wrapper
-   distributions then stay for 365 days without use (checked on Gradle 8.9 in
-   a separate user home: 365 instead of 30; created resources keep Gradle's 7
-   days). It applies to every project using that user home. Gradle reads
-   cache settings only from `init.d`; the file in the repository has no
-   effect by itself.
-2. A Gradle user home of its own for DW4_PC, for example
-   `set GRADLE_USER_HOME=%USERPROFILE%\.gradle-dw4` before `gradlew` (or
-   `gradlew -g <dir>`). DW4_PC's runs then never clean the shared cache, and
-   other projects never clean DW4_PC's; the first run in it downloads the
-   Gradle 8.9 distribution and AGP once. Its own cache still expires after
-   30 days without a build unless the init script from 1. goes into its
-   `init.d` as well.
+    android\gradlew-dw4.cmd --no-daemon --info --continue assembleDebug
 
-Without either, a monthly Android build keeps the cache alive.
+It downloads the Gradle 8.9 distribution (`gradle-8.9-bin.zip`, checked
+against `distributionSha256Sum`, unpacked 151 MB; the wrapper deletes the zip
+after unpacking) and the Android Gradle Plugin 8.7.3 with everything it needs
+to assemble a debug APK: 322 files, 104.5 MB (125 jars, 181 POMs, 16 Gradle
+module files; 104 from `dl.google.com`, 218 from `repo.maven.apache.org`),
+among them `com.android.tools.build:gradle:8.7.3`, `builder`, `bundletool`,
+`aapt2:8.7.3-12006047:windows`, `com.android.tools:sdk-common`/`sdklib`/
+`repository`/`ddmlib` 31.7.3, Kotlin stdlib 1.9.20, netty, grpc, guava and
+bouncycastle (`--info` logs each one as `Downloading <url>`; the list of
+13.11. is `work/android_research/gradle_downloaded_urls.txt`, gitignored).
+`--continue` lets independent tasks finish when one fails, so a failing
+native build does not leave execution-time artifacts such as `aapt2`
+undownloaded. The home then holds 488 MB (most of it the unpacked
+distribution and Gradle's transformed jars). From then on every build is
+`--offline`.
 
-Phase A therefore checked the Gradle side in parts: the native libraries came
-from the same root CMake configuration Gradle uses (NDK toolchain file,
-`ANDROID_PLATFORM=android-33`, `ANDROID_STL=c++_static`, `FETCHCONTENT_SOURCE_
-DIR_SDL3`), the version code and the SDL Java copy from `app/build.gradle`'s
-own Groovy code on Gradle 8.9, and the test APK was assembled with the SDK's
-`aapt2`, `javac`, `d8`, `zipalign` and `apksigner` (debug key) from exactly
-the manifest, resources and Java sources in `android/app`.
+Checked on 13.11.2026 after the online step: with `android/.gradle`,
+`android/build`, `android/app/build` and `android/app/.cxx` deleted,
+`android\gradlew-dw4.cmd --offline --no-daemon --info assembleDebug` builds the
+APK from nothing (39 tasks, both ABIs' native builds, 4 min 47 s at
+below-normal priority) with no `Downloading` line and an unchanged
+`modules-2`; `sh android/gradlew-dw4.sh --offline ...` in Git Bash (without
+`JAVA_HOME`) finds the same home. The shared `%USERPROFILE%\.gradle` had no
+file newer than the start of these runs. The warning "This version only
+understands SDK XML versions up to 3 but an SDK XML file of version 4 was
+encountered" comes from the newer SDK packages next to AGP 8.7.3 and does not
+matter.
+
+**Another project's cache (EmuSaveSync):** before DW4_PC had its own home,
+phase A's first Gradle 8.9 run (creating the wrapper, 13.11.2026 06:05) ran in
+the shared `%USERPROFILE%\.gradle`. Its cleanup deleted the AGP and AndroidX
+jars from September 2026 that EmuSaveSync's Android build had left there
+(older than 30 days; any other Gradle run would have done the same). Only
+their metadata remained (`caches/modules-2` 2.5 MB); the `gradle-8.9-bin`
+distribution in `wrapper/dists` and `caches/build-cache-1` stayed.
+EmuSaveSync's next Android build therefore needs network once. DW4_PC never
+runs Gradle in the shared home again, so it cannot happen through DW4_PC a
+second time; whether the shared home gets a retention script of its own is
+EmuSaveSync's owner's choice (the same `cache-retention.init.gradle` in
+`%USERPROFILE%\.gradle\init.d` would do it).
 
 ### NDK compile check
 
