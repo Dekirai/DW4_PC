@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prompt_layout.hpp"
+#include "texture_pack.hpp"
 
 #include "dw4/engine/scene_graph.hpp"
 
@@ -11,6 +12,10 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+
+namespace dw4::engine {
+struct FontImage;
+}
 
 namespace dw4::game {
 
@@ -69,6 +74,16 @@ public:
     void set_prompt_glyphs(const PromptGlyphs& glyphs);
     bool has_prompt_glyphs() const { return glyphs_.valid; }
     const PromptGlyphs& prompt_glyphs() const { return glyphs_; }
+    // Translations (docs/L10N.md 2): the game font whose atlas gets the
+    // composed glyph cells (engine::paint_composed_glyphs) when it uploads,
+    // also into a texture pack's larger font00. Its glyphs are copied; the
+    // atlas uploads again when another font image arrives.
+    void set_font_atlas(const engine::FontImage& font);
+    // The display language's pictures (docs/L10N.md 3), taken instead of the
+    // USA textures of these hashes (a texture pack's replacement of a
+    // language picture by its own hash still applies). The textures of the
+    // old and the new set upload again; empty: the game's own pictures.
+    void set_language_textures(LanguageTextures textures);
     GlRenderer(const GlRenderer&) = delete;
     GlRenderer& operator=(const GlRenderer&) = delete;
 
@@ -128,6 +143,9 @@ private:
         bool nearest = false;
         int width = 0, height = 0;
         std::vector<std::uint8_t> original;
+        // The decoded texture's hash (TexturePack::hash; 0 when none was
+        // needed): a language change uploads the ones it swaps again.
+        std::uint64_t hash = 0;
     };
     // A text line's quads split for the prompts (prompt_layout.hpp): the
     // text without the button glyphs and words (moved where a word picture
@@ -169,6 +187,13 @@ private:
     TexturePack* pack_{};
     PromptSource* prompts_{};
     PromptGlyphs glyphs_;
+    // Translations: the font atlas's image (document, reference) and the
+    // font's glyphs the composed cells are painted from; the language's
+    // pictures by USA hash.
+    std::pair<const void*, std::uint32_t> atlas_key_{};
+    std::unique_ptr<engine::FontImage> atlas_font_;
+    LanguageTextures language_;
+    bool language_hashing_ = false; // (every upload hashes once a language set arrived)
     std::unordered_map<const engine::GeometryData*, PromptSplit> splits_;
     // The title's PRESS START variants by PromptSource::art_key, the latest
     // first (a few kept: switching families back and forth draws none again).

@@ -1,0 +1,8 @@
+# The German language pack's pictures (docs/L10N.md 3), by the USA texture's
+# hash (TexturePack::hash of its decoded pixels). Sources:
+#   disc:<pack>:<hash>  the German original on the player's own disc (ger_pack)
+#   render:<recipe>     drawn at run time with the game font from game.tsv
+# usa hash	image	source
+dce3cec48abddbd1	stmojipnl01.png	disc:ger_pack:a54ea4388dccd54a
+8328a86358ddcecb	bit.png	disc:ger_pack:8891780d65461abd
+82504a8ec6521575	stcngmoji.png	render:travel_dialog

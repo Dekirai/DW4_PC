@@ -4,6 +4,7 @@
 
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/overflow.hpp"
+#include "dw4/i18n/game_text.hpp"
 #include "dw4/packages.hpp"
 
 #include <algorithm>
@@ -655,6 +656,12 @@ void Engine::log(std::string text) {
     std::cerr << "[" << frame_ << "] " << text << '\n';
     log_.push_back(std::move(text));
     while (log_.size() > 400) log_.pop_front();
+}
+
+void Engine::set_display_text(std::shared_ptr<const i18n::GameTextCatalog> catalog) {
+    if (catalog == display_text_) return;
+    display_text_ = std::move(catalog);
+    if (auto* text = get<TextCtlManager>()) text->relayout_all(*this);
 }
 
 void Engine::request_stage(std::string name) {

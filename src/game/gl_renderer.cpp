@@ -2,6 +2,7 @@
 #include "texture_pack.hpp"
 
 #include "dw4/engine/gx_color.hpp"
+#include "dw4/engine/managers.hpp"
 #include "dw4/textures.hpp"
 
 #include <SDL3/SDL.h>
@@ -461,6 +462,38 @@ void GlRenderer::set_prompt_glyphs(const PromptGlyphs& glyphs) {
     splits_.clear();
 }
 
+void GlRenderer::set_font_atlas(const engine::FontImage& font) {
+    if (!font.binding || !font.binding->image) return;
+    const auto key = std::make_pair(static_cast<const void*>(font.binding->image.document()), font.binding->image.reference());
+    if (atlas_font_ && key == atlas_key_) return;
+    atlas_key_ = key;
+    atlas_font_ = std::make_unique<engine::FontImage>();
+    atlas_font_->name = font.name;
+    atlas_font_->line_height = font.line_height;
+    atlas_font_->glyphs = font.glyphs;
+    // (An atlas uploaded before it was known gets its cells now.)
+    if (auto found = textures_.find(key); found != textures_.end()) {
+        if (found->second.id) glDeleteTextures(1, &found->second.id);
+        textures_.erase(found);
+    }
+}
+
+void GlRenderer::set_language_textures(LanguageTextures textures) {
+    // The textures the old or the new set swaps upload again (the first set:
+    // every texture uploaded without its hash).
+    for (auto it = textures_.begin(); it != textures_.end();) {
+        const auto hash = it->second.hash;
+        if ((!language_hashing_ && !hash) || (hash && (language_.contains(hash) || textures.contains(hash)))) {
+            if (it->second.id) glDeleteTextures(1, &it->second.id);
+            it = textures_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    language_ = std::move(textures);
+    language_hashing_ = true;
+}
+
 namespace {
 // The vertex layout of GlRenderer::mesh (52 bytes) on a vertex array.
 template <class Gl>
@@ -709,27 +742,41 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         int width = int(image.width), height = int(image.height);
         const std::uint8_t* pixels = image.rgba.data();
         std::optional<TextureImage> replaced;
-        if (pack_) {
+        // The display language's picture for this texture (docs/L10N.md 3),
+        // by the USA texture's hash; a texture pack then sees the language
+        // picture's own hash.
+        const LanguageTexture* swapped = nullptr;
+        if (pack_ || language_hashing_) {
             // Texture packs: dumps and replacements by pixel hash. CMPR
             // textures keep the hash of the earlier decode with black
             // transparent texels, so existing packs still match them.
-            std::uint64_t hash;
-            if (image.block_compressed) {
-                auto earlier = image.rgba;
-                for (std::size_t i = 0; i + 3 < earlier.size(); i += 4)
-                    if (earlier[i + 3] == 0) earlier[i] = earlier[i + 1] = earlier[i + 2] = 0;
-                hash = TexturePack::hash(earlier.data(), earlier.size(), width, height);
-            } else {
-                hash = TexturePack::hash(pixels, image.rgba.size(), width, height);
+            const std::uint64_t hash = texture_hash(image.rgba, width, height, image.block_compressed);
+            t.hash = hash;
+            if (const auto found = language_.find(hash); found != language_.end() && !found->second.image.rgba.empty()) {
+                swapped = &found->second;
+                width = swapped->image.width;
+                height = swapped->image.height;
+                pixels = swapped->image.rgba.data();
             }
-            const std::string name(binding->image.str(22));
-            pack_->dump(name, pixels, width, height, hash);
-            replaced = pack_->replacement(hash);
-            if (replaced) {
-                width = replaced->width;
-                height = replaced->height;
-                pixels = replaced->rgba.data();
+            if (pack_) {
+                const std::string name(binding->image.str(22));
+                pack_->dump(name, image.rgba.data(), int(image.width), int(image.height), hash);
+                replaced = pack_->replacement(swapped ? swapped->hash : hash);
+                if (replaced) {
+                    width = replaced->width;
+                    height = replaced->height;
+                    pixels = replaced->rgba.data();
+                }
             }
+        }
+        // The game font's atlas (as decoded or a pack's larger one): the
+        // composed glyph cells translations use (docs/L10N.md 2), painted in
+        // the atlas's free area, which English text never samples.
+        std::vector<std::uint8_t> atlas;
+        if (atlas_font_ && key == atlas_key_) {
+            atlas.assign(pixels, pixels + std::size_t(width) * std::size_t(height) * 4);
+            engine::paint_composed_glyphs(atlas, width, height, *atlas_font_);
+            pixels = atlas.data();
         }
         // The title's PRESS START (the USA mojigc.png, or a texture pack's
         // replacement of it): the prompts draw its START with player 1's
@@ -755,7 +802,7 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         // never store mip images (igTextureAttr _imageCount 1, empty
         // _imageMipMaps), so the original's textures stay sharp when shrunk.
         int levels = 0;
-        if (!replaced) {
+        if (!replaced && !swapped) {
             if (const auto mips = binding->texture.ref(16)) {
                 int w = width, h = height;
                 for (const auto& mip : mips.elements()) {

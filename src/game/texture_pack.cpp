@@ -71,6 +71,14 @@ std::uint64_t TexturePack::hash(const std::uint8_t* rgba, std::size_t bytes, int
     return h;
 }
 
+std::uint64_t texture_hash(const std::vector<std::uint8_t>& rgba, int width, int height, bool block_compressed) {
+    if (!block_compressed) return TexturePack::hash(rgba.data(), rgba.size(), width, height);
+    auto earlier = rgba;
+    for (std::size_t i = 0; i + 3 < earlier.size(); i += 4)
+        if (earlier[i + 3] == 0) earlier[i] = earlier[i + 1] = earlier[i + 2] = 0;
+    return TexturePack::hash(earlier.data(), earlier.size(), width, height);
+}
+
 std::string TexturePack::file_name(const std::string& image_name, int width, int height, std::uint64_t hash) {
     char tail[64];
     std::snprintf(tail, sizeof tail, "_%dx%d_%016llx.png", width, height, static_cast<unsigned long long>(hash));

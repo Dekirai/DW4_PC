@@ -19,6 +19,20 @@ struct TextureImage {
     std::vector<std::uint8_t> rgba;
 };
 
+// The display language's pictures (docs/L10N.md 3): what a USA texture shows
+// in that language, by the USA texture's hash. Presentation only.
+struct LanguageTexture {
+    TextureImage image;     // rows in the decoded order, like every texture
+    std::uint64_t hash = 0; // the picture's own hash: a texture pack replaces it by that hash
+    std::string name;       // its image name
+};
+using LanguageTextures = std::unordered_map<std::uint64_t, LanguageTexture>;
+
+// A decoded texture's pack hash (TexturePack::hash of its pixels; CMPR
+// textures keep the hash of the earlier decode with black transparent
+// texels, so existing packs still match them).
+std::uint64_t texture_hash(const std::vector<std::uint8_t>& rgba, int width, int height, bool block_compressed);
+
 class TexturePack {
 public:
     // pack: folder of replacement PNGs (indexed once); dump: folder for
