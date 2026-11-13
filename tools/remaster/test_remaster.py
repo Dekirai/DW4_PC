@@ -11,6 +11,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rmcommon  # noqa: E402
+import build_pack  # noqa: E402
 import textpath  # noqa: E402
 import upscale  # noqa: E402
 
@@ -202,6 +203,72 @@ class FinishingTests(unittest.TestCase):
         hard = np.dstack([((x // 2 + y // 2) % 2).astype(np.float32)] * 3 + [np.ones_like(glow)])
         self.assertLess(rmcommon.hard_edge_fraction(soft, "opaque"), 0.01)
         self.assertGreater(rmcommon.hard_edge_fraction(hard, "opaque"), 0.4)
+
+
+class PackBuildTests(unittest.TestCase):
+    def test_chain_sizes_down_to_one_texel(self):
+        l0 = np.ones((16, 64, 4), np.float32)
+        chain = build_pack.mip_chain(l0, None, "opaque", (False, False))
+        self.assertEqual([x.shape[:2] for x in chain], [(16, 64), (8, 32), (4, 16), (2, 8), (1, 4), (1, 2), (1, 1)])
+        self.assertEqual(len(chain), build_pack.level_count(64, 16))
+
+    def test_given_level_one_is_kept(self):
+        l0 = np.zeros((8, 8, 4), np.float32)
+        l1 = np.full((4, 4, 4), 0.25, np.float32)
+        chain = build_pack.mip_chain(l0, l1, "blend", (False, False))
+        self.assertIs(chain[1], l1)
+        self.assertTrue(np.allclose(chain[2], 0.25))
+
+    def test_wrap_axis_tiles_its_small_levels(self):
+        # A ramp that wraps on s: the last column's level-2 value mixes in the
+        # first columns (as the repeating texture does), clamped it does not.
+        x = np.tile(np.linspace(0, 1, 32, dtype=np.float32), (32, 1))
+        img = np.dstack([x, x, x, np.ones_like(x)])
+        wrapped = build_pack.next_level(img, "opaque", (False, True))
+        clamped = build_pack.next_level(img, "opaque", (False, False))
+        self.assertLess(wrapped[0, -1, 0], clamped[0, -1, 0] - 0.01)
+        self.assertAlmostEqual(float(wrapped[0, 3, 0]), float(clamped[0, 3, 0]), places=5)
+
+    def test_cutout_keeps_binary_alpha_and_coverage(self):
+        rng = np.random.default_rng(3)
+        a = (rng.random((64, 64)) < 0.3).astype(np.float32)  # thin, scattered: a fixed 0.5 would thin it out
+        img = np.dstack([np.full_like(a, 0.5)] * 3 + [a])
+        chain = build_pack.mip_chain(img, None, "cutout", (True, True))
+        for lv in chain[1:5]:
+            self.assertTrue(set(np.unique(lv[..., 3])) <= {0.0, 1.0})
+            self.assertAlmostEqual(build_pack.coverage(lv[..., 3]), build_pack.coverage(a), delta=0.03)
+        fixed = build_pack.next_level(img, "cutout", (True, True))  # share None: threshold 0.5
+        self.assertLess(build_pack.coverage(fixed[..., 3]), 0.2)
+        # Mostly drawn with small holes (a grate): the holes must not close up.
+        a = (rng.random((64, 64)) >= 0.14).astype(np.float32)
+        img = np.dstack([np.full_like(a, 0.5)] * 3 + [a])
+        for lv in build_pack.mip_chain(img, None, "cutout", (True, True))[1:5]:
+            self.assertAlmostEqual(build_pack.coverage(lv[..., 3]), build_pack.coverage(a), delta=0.03)
+
+    def test_colour_under_transparent_texels_does_not_darken(self):
+        img = np.zeros((8, 8, 4), np.float32)
+        img[..., :3] = (1.0, 0.5, 0.0)
+        img[:, :4, 3] = 1.0  # the right half is transparent, its colour filled alike
+        lv = build_pack.next_level(img, "blend", (False, False))
+        self.assertTrue(np.allclose(lv[..., :3], (1.0, 0.5, 0.0), atol=1e-5))
+
+    def test_rgba8_dds_round_trip(self):
+        import tempfile
+        rng = np.random.default_rng(5)
+        levels = [rng.integers(0, 256, (max(1, 8 >> k), max(1, 32 >> k), 4), dtype=np.uint8) for k in range(6)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.dds")
+            build_pack.write_rgba8_dds(path, levels)
+            enc, w, h, n, off, size = build_pack.dds_header(path)
+            self.assertEqual((enc, w, h, n, off), ("rgba8", 32, 8, 6, 128))
+            self.assertEqual(size, off + sum(b for _, _, b in build_pack.level_sizes("rgba8", 32, 8, 6)))
+            back = build_pack.read_rgba8_levels(path)
+        for a, b in zip(levels, back):
+            self.assertTrue(np.array_equal(a, b))
+
+    def test_block_level_sizes(self):
+        self.assertEqual(build_pack.level_sizes("bc7", 8, 4, 4), [(8, 4, 32), (4, 2, 16), (2, 1, 16), (1, 1, 16)])
+        self.assertEqual(build_pack.level_sizes("bc1", 4, 4, 1), [(4, 4, 8)])
 
 
 if __name__ == "__main__":

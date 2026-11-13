@@ -142,6 +142,33 @@ content and source format, not the name alone.
    tiling environment textures): 60 random ones, every flagged one, and the
    curated ones with both variants.
 
+## Release pack
+
+`build_pack.py --final <dir>\out --export <dir>\export --out <dir>\pack\DW4Remaster --report <dir>\pack\verify --texconv <texconv.exe> --bc x`
+turns the full run's `master4x` and `high2x` pictures into one pack of
+format 2 (docs/TEXTURES.md): per texture one DDS file whose level 0 is the
+4x picture (Ultra) and level 1 the 2x picture (High), the rest of the chain
+down to 1 x 1 made by the same Lanczos3 filter (premultiplied, clamped to
+each footprint, cyclic on the axes the export marks as tiling), cut-outs
+binary in every level with the coverage of level 0, no sRGB conversion
+anywhere (the renderer samples stored values). texconv only compresses
+(BC7_UNORM, `-bc x`), keeping the given levels; a texture whose level 0 or 1
+stays below 34 dB in BC7 (noisy pixel art) is stored as RGBA8, like the font
+atlas and PRESS START. Every file is read back (header, length, each level
+decoded against what went in: PSNR, a colour shift of level 0 or 1, the
+cut-out coverage). The pack gets `dw4pack.tsv` (with information columns:
+the level each quality draws, alpha use, wrap, class, method) and a
+`README.txt` (models, licences, personal use only); `--report` gets
+`levels.tsv` (every level's size and error), `coverage.tsv` (every exported
+texture: packed or skipped, and why) and `build.json`. `--resume` goes on
+after an interruption.
+
+The comparison in the game: `game_compare.py run ... --env DW4_TEXTURE_QUALITY=original|high|ultra`
+per quality, then `game_compare.py compare --run Original=DIR --run High=DIR --run Ultra=DIR --out DIR`
+(the frames side by side, crops at 1:1 where Original and Ultra differ
+most, fingerprints checked); `game_compare.py timing --pack Ultra=PACK --pack High=PACK@high ...`
+measures the start window of every stage the script starts.
+
 ## Text path B
 
 `textpath.py` rebuilds lettering instead of letting a model guess it: the

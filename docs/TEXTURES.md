@@ -233,7 +233,9 @@ ac566f5a15c2a226	rgba8	4	11	1024	512	tex/ac566f5a15c2a226.dds	blend
   are. Build them from the 4x picture in the texture's wrap (repeating
   textures wrap, see the export's `tiles` / `uv_edges`), with alpha
   separate and the alpha coverage kept for cut-outs at the material's
-  reference (`tools/remaster/make_dds_pack.py` does this with texconv).
+  reference (`tools/remaster/make_dds_pack.py` does this with texconv,
+  `tools/remaster/build_pack.py` with its own filter, keeping a given 2x
+  level as level 1).
 - Recommended encodings for the PC: BC7 for colour and alpha; BC1 where a
   texture is opaque and BC1 holds it well (a quarter of the memory of
   RGBA8, half of BC7); RGBA8 for the font atlas (`faccbeda501eefc1`) and
@@ -397,6 +399,12 @@ and audio digests with `DW4_TEXTURE_PACK` set as without.
 `make_dds_pack.py` turns such PNGs into a pack of format 2 (BC7 / RGBA8 DDS
 files with their mip chains made by texconv, and the manifest), checking
 every file's header and its first level decoded back against the PNG.
+`build_pack.py` builds the full run's pack: one DDS per texture whose level
+0 is the 4x picture (Ultra) and level 1 the 2x picture of the full run
+(High), the rest of the chain made by the same footprint-clamped Lanczos3
+filter (premultiplied, cyclic on tiling axes, cut-outs binary with the
+coverage of level 0, no sRGB conversion), texconv only compressing (BC7;
+RGBA8 where BC7 would lose too much), every level read back and compared.
 
 ## Reproduce the checks
 
