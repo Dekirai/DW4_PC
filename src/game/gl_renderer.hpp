@@ -104,6 +104,10 @@ public:
     void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
     // Drop all GPU resources (call when the engine changed stage).
     void clear_cache();
+    // The context was lost and a new one is current (Android's
+    // SDL_EVENT_RENDER_DEVICE_RESET): every object is made again, the old
+    // names are forgotten without deleting them.
+    void reset_context();
     // Dev tool (DW4_DEV_IDS, dev_present.hpp): render() draws every item in
     // a flat colour that encodes its position in the draw list (index + 1 in
     // R, G, B), without blending, multisampling or shadow receivers; the
@@ -114,6 +118,7 @@ public:
     struct Impl;
 
 private:
+    void create_objects();
     struct Mesh {
         unsigned vao{}, vbo{}, ibo{};
         int index_count{};

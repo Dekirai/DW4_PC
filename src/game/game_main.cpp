@@ -296,6 +296,29 @@ std::string check_game_data(const std::filesystem::path& path) {
     return {};
 }
 
+// The app's lifecycle (Android; SDL hands these only to event watches, from
+// its Java thread, docs/ANDROID.md): logged. In the background the game
+// loop stands still in SDL_PollEvent and SDL pauses the sound output; a
+// lost OpenGL context comes back as SDL_EVENT_RENDER_DEVICE_RESET
+// (host_event).
+bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
+    const char* what = nullptr;
+    switch (event->type) {
+    case SDL_EVENT_TERMINATING: what = "terminating"; break;
+    case SDL_EVENT_LOW_MEMORY: what = "low memory"; break;
+    case SDL_EVENT_WILL_ENTER_BACKGROUND: what = "entering the background"; break;
+    case SDL_EVENT_DID_ENTER_BACKGROUND: what = "in the background"; break;
+    case SDL_EVENT_WILL_ENTER_FOREGROUND: what = "entering the foreground"; break;
+    case SDL_EVENT_DID_ENTER_FOREGROUND: what = "in the foreground"; break;
+    default: break;
+    }
+    if (what) {
+        std::printf("lifecycle: %s\n", what);
+        std::fflush(stdout);
+    }
+    return true;
+}
+
 // The game's one window with its OpenGL context, ImGui and the fonts. The
 // first start's screens (the disc's copy or conversion), the LAN lobby and
 // the game draw into it (docs/ANDROID.md: Android has one window); whoever
@@ -1355,7 +1378,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             controller_log.reset();
         }
     }
+#ifdef SDL_PLATFORM_ANDROID
+    // Android's Back key reaches the game (host_event: the F1 menu) instead
+    // of closing the app.
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+#endif
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
+    SDL_AddEventWatch(lifecycle_watch, nullptr);
     if (controller_log) controller_log->write(std::string("sdl: started; libusb-1.0.dll ") + (dw4::game::libusb_in_process() ? "in use" : "not in use"));
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;

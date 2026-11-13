@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 
 // (Moved out of game_main.cpp's run() in round O1a: the statements are the
 // loop's own, in their order; see host_view.hpp.)
@@ -89,6 +90,28 @@ void toggle_menu(HostView& view) {
 bool host_event(HostView& view, const SDL_Event& event) {
     auto& settings = view.settings;
     auto& capture = view.capture;
+    // Android: the OpenGL context was lost and SDL made a new one
+    // (SDL_androidevents.c): every GL object again, ImGui's too.
+    if (event.type == SDL_EVENT_RENDER_DEVICE_RESET && view.draw) {
+        std::cout << "lifecycle: the OpenGL context was recreated\n";
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplOpenGL3_Init(gl_is_es() ? "#version 300 es" : "#version 330");
+        if (view.renderer) view.renderer->reset_context();
+        if (view.prompts) view.prompts->reset_context();
+        view.picture.items_current = false;
+        return false;
+    }
+    // Android's Back key (SDL_HINT_ANDROID_TRAP_BACK_BUTTON) opens and closes
+    // the F1 menu; a tap in the window's top right corner does too (the
+    // menus are the only things touch works on, docs/ANDROID.md).
+    if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat) {
+        toggle_menu(view);
+        return false;
+    }
+    if (event.type == SDL_EVENT_FINGER_DOWN && event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) {
+        toggle_menu(view);
+        return false;
+    }
     // Controllers coming and going (player pads only: pad_host.hpp) and
     // real input (the prompts follow player 1's last device).
     if (view.controller_log && event.type == SDL_EVENT_GAMEPAD_REMOVED)

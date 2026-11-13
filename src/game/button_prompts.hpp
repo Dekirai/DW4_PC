@@ -41,6 +41,11 @@ public:
     // the atlases they need drawn and uploaded (a current OpenGL context):
     // only the families on screen are drawn, once per binding change.
     void set_families(const std::array<PadFamily, 4>& families);
+    // The GL context was lost (Android): the pictures are uploaded again.
+    void reset_context() {
+        textures_ = {};
+        uploaded_ = {};
+    }
     PadFamily family(int player = 0) const { return families_[std::size_t(player & 3)]; }
     const Settings* settings() const { return settings_; }
     // A family's atlas texture (0 until it was on screen) and a control's

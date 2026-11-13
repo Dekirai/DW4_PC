@@ -355,7 +355,26 @@ GLenum depth_func(int value) {
 }
 } // namespace
 
-GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
+GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) { create_objects(); }
+
+void GlRenderer::reset_context() {
+    meshes_.clear();
+    splits_.clear();
+    textures_.clear();
+    title_variants_.clear();
+    program_ = white_texture_ = 0;
+    movie_program_ = movie_texture_ = movie_vao_ = 0;
+    movie_width_ = movie_height_ = 0;
+    kept_program_ = kept_texture_ = 0;
+    kept_width_ = kept_height_ = 0;
+    shadow_fbo_ = shadow_texture_ = 0;
+    shadow_width_ = shadow_height_ = 0;
+    shadow_ready_ = false;
+    gl_ = std::make_unique<Impl>();
+    create_objects();
+}
+
+void GlRenderer::create_objects() {
     auto& gl = *gl_;
     const unsigned vs = compile(gl, GL_VERTEX_SHADER, kVertex);
     const unsigned fs = compile(gl, GL_FRAGMENT_SHADER, kFragment);
