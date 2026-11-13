@@ -13,6 +13,9 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
+#ifdef SDL_PLATFORM_ANDROID
+#include <imgui_internal.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -112,17 +115,32 @@ bool host_event(HostView& view, const SDL_Event& event) {
         view.picture.items_current = false;
         return false;
     }
-    // Android's Back key (SDL_HINT_ANDROID_TRAP_BACK_BUTTON) opens and closes
-    // the F1 menu; a tap in the window's top right corner does too (the
-    // menus are the only things touch works on, docs/ANDROID.md).
+#ifdef SDL_PLATFORM_ANDROID
+    // Android only (a PC's browser Back key stays a bindable key, a Windows
+    // touch screen's tap stays a click): the Back key
+    // (SDL_HINT_ANDROID_TRAP_BACK_BUTTON) opens and closes the F1 menu; a
+    // tap in the window's top right corner does too, unless it lands on an
+    // open menu's window (then ImGui gets it; the menus are the only things
+    // touch works on, docs/ANDROID.md).
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat) {
         toggle_menu_by(view, "the Back key");
         return false;
     }
     if (event.type == SDL_EVENT_FINGER_DOWN && event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) {
-        toggle_menu_by(view, "a touch in the top right corner");
-        return false;
+        bool on_menu = false;
+        if (view.show_menu && ImGui::GetCurrentContext()) {
+            const ImVec2 size = ImGui::GetIO().DisplaySize;
+            ImGuiWindow* hovered = nullptr;
+            ImGuiWindow* under_moving = nullptr;
+            ImGui::FindHoveredWindowEx(ImVec2(event.tfinger.x * size.x, event.tfinger.y * size.y), false, &hovered, &under_moving);
+            on_menu = hovered != nullptr;
+        }
+        if (!on_menu) {
+            toggle_menu_by(view, "a touch in the top right corner");
+            return false;
+        }
     }
+#endif
     // Controllers coming and going (player pads only: pad_host.hpp) and
     // real input (the prompts follow player 1's last device).
     if (view.controller_log && event.type == SDL_EVENT_GAMEPAD_REMOVED)

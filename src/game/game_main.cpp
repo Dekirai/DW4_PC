@@ -384,7 +384,15 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
         w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
         w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
     }
-    if (!w.window || !w.context) throw std::runtime_error(SDL_GetError());
+    if (!w.window || !w.context) {
+        // No half-open window stays behind (the next call would return it
+        // without a context): the same error again at the next attempt.
+        const std::string error = SDL_GetError();
+        if (w.window) SDL_DestroyWindow(w.window);
+        w.window = nullptr;
+        w.context = nullptr;
+        throw std::runtime_error(error);
+    }
     SDL_GL_MakeCurrent(w.window, w.context);
     SDL_GL_SetSwapInterval(test_run || !settings.vsync ? 0 : 1);
     if (!test_run && settings.fullscreen) SDL_SetWindowFullscreen(w.window, true);
@@ -919,7 +927,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // The game data's identity the LAN and online peers compare: the same
     // disc (image or extraction, with the same mods) gives the same value on
     // the PC and on Android.
-    std::printf("data: %s, data_hash %016llx\n", options.data.string().c_str(), static_cast<unsigned long long>(data_hash(engine.resources())));
+    std::printf("data: %s, data_hash %016llx\n", reinterpret_cast<const char*>(options.data.u8string().c_str()), static_cast<unsigned long long>(data_hash(engine.resources())));
     // Fast loading (settings.ini [gameplay] loading; --loading; test runs:
     // DW4_FAST_LOADING=1). A stage load latches it (Engine::fast_loading).
     // A choice in the F1 menu replaces the command line's.
@@ -5009,6 +5017,9 @@ int main(int argc, char** argv) {
             std::string_view(argv[i]) == "--export-presence-art")
             interactive = false;
     try {
+#ifdef SDL_PLATFORM_ANDROID
+        if (const std::string problem = dw4::game::app_root_problem(); !problem.empty()) throw std::runtime_error(problem);
+#endif
         Options options;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];

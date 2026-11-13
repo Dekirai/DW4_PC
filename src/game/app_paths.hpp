@@ -19,17 +19,27 @@ inline std::filesystem::path utf8_path(const char* text) {
 // image the first start copies or converts) live in it. The PC: the
 // program's folder (SDL_GetBasePath). Android: the app's external files
 // folder (/storage/emulated/0/Android/data/org.dw4pc.game/files), which a
-// PC reaches over USB for imports and exports; the internal one when
-// external storage is not available. Empty when unknown.
+// PC reaches over USB for imports and exports. Never the internal one
+// instead: that would be a new first start without the player's settings,
+// saves and disc copy (main stops with a message when the external folder
+// cannot be written, app_root_problem). Empty when unknown.
 inline std::filesystem::path app_root() {
 #ifdef SDL_PLATFORM_ANDROID
-    if (SDL_GetAndroidExternalStorageState() & SDL_ANDROID_EXTERNAL_STORAGE_WRITE)
-        if (auto path = detail::utf8_path(SDL_GetAndroidExternalStoragePath()); !path.empty()) return path;
-    return detail::utf8_path(SDL_GetAndroidInternalStoragePath());
+    return detail::utf8_path(SDL_GetAndroidExternalStoragePath());
 #else
     return detail::utf8_path(SDL_GetBasePath());
 #endif
 }
+
+#ifdef SDL_PLATFORM_ANDROID
+// Why the game cannot use app_root() (external storage not mounted or not
+// writable), or empty.
+inline std::string app_root_problem() {
+    if ((SDL_GetAndroidExternalStorageState() & SDL_ANDROID_EXTERNAL_STORAGE_WRITE) && !app_root().empty()) return {};
+    return "The game's folder (Android/data/org.dw4pc.game/files) cannot be written: the device's shared storage is not "
+           "available. The settings, saves and the disc copy live there; start the game again when the storage is back.";
+}
+#endif
 
 // Files no other app or USB host should read: the remembered online login
 // (saves/online), online.log and controllers.log. Android: the app's
