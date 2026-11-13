@@ -7,9 +7,10 @@ native build is the repository's own `CMakeLists.txt` (its `if(ANDROID)` path,
 Snapdragon 8 Gen 2, Adreno 740, Android 13); other devices are not supported
 officially.
 
-Status: **phase A** (toolchain and an empty app). The app's native library is
-still the device probe `src/android/probe_main.cpp`, not the game; the game
-moves to Android in phase B.
+Status: **phase A done** (13.11.2026: toolchain, the Gradle build offline,
+an empty app on the emulator). The app's native library is still the device
+probe `src/android/probe_main.cpp`, not the game; the game moves to Android in
+phase B.
 
 ## Decisions this port follows
 
@@ -245,7 +246,7 @@ the AVD's `config.ini` is a plain number of MB (`4096`, guest `MemTotal`
 
 Install, start, look:
 
-    adb -s emulator-5580 install -r app-debug.apk
+    adb -s emulator-5580 install -r android\app\build\outputs\apk\debug\app-debug.apk
     adb -s emulator-5580 shell am start -W -n org.dw4pc.game/.DW4Activity
     adb -s emulator-5580 shell "am start -n org.dw4pc.game/.DW4Activity --es dw4args '--seconds 10'"
     adb -s emulator-5580 exec-out screencap -p > probe.png
@@ -306,6 +307,21 @@ The screencap shows exactly the two test colours (the triangle 12.6 % of
 the picture, the expected 12.5 %); after HOME and a restart (`LaunchState
 HOT`) the picture is the same. The Thor's own numbers (Adreno 740) come from
 the same probe once it may be installed there.
+
+These first results came from a test APK assembled by hand with the SDK's
+`aapt2`, `javac`, `d8`, `zipalign` and `apksigner` while Gradle could not yet
+build offline. The Gradle-built debug APK (13.11.2026, `--offline` from a
+clean build directory; 7.4 MB, `lib/arm64-v8a` and `lib/x86_64` each with
+`libSDL3.so` and `libmain.so`, versionCode 460000, versionName 0.46.0,
+`DEBUGGABLE`, signed with the SDK's debug key) gives the same: installed
+fresh on `dw4thor33` (`-gpu swiftshader_indirect`, second display), Android
+picks `primaryCpuAbi=x86_64`; it starts cold in 487 ms, the screencap has
+exactly `#2060C0` 87.5 % and `#F0B020` 12.5 %, the same after HOME and a
+restart (`HOT`); the log shows SDL compiled and linked 3.4.16, clang 21.0.0,
+the same paths, GL limits and display list (display 2 1240x1080, flags
+0xc8), all five lifecycle events on the SDL main thread, 16.65-16.97 ms per
+frame, and `dw4args '--seconds 3'` arrives as `arguments 2: [--seconds] [3]`
+and quits after 3.0 s.
 
 Findings for phase B:
 
