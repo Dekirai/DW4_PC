@@ -19,6 +19,8 @@
 #if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
 #define DW4_HAVE_MXCSR 1
+#elif defined(__aarch64__) && (defined(__clang__) || defined(__GNUC__))
+#define DW4_HAVE_FPCR 1
 #endif
 
 namespace dw4::engine {
@@ -51,23 +53,47 @@ constexpr unsigned kMxcsr = 0x1F80u;
 #ifdef DW4_HAVE_MXCSR
 constexpr unsigned kMxcsrControl = 0xFFC0u;
 
-MxcsrGuard::MxcsrGuard() : saved_(_mm_getcsr()) {
+FpEnvGuard::FpEnvGuard() : saved_(_mm_getcsr()) {
     if ((saved_ & kMxcsrControl) != kMxcsr) {
         g_mxcsr_repairs.fetch_add(1, std::memory_order_relaxed);
-        _mm_setcsr(kMxcsr | (saved_ & 0x3Fu));
+        _mm_setcsr(kMxcsr | unsigned(saved_ & 0x3Fu));
     }
 }
-MxcsrGuard::~MxcsrGuard() {
-    if ((saved_ & kMxcsrControl) != kMxcsr) _mm_setcsr(saved_);
+FpEnvGuard::~FpEnvGuard() {
+    if ((saved_ & kMxcsrControl) != kMxcsr) _mm_setcsr(unsigned(saved_));
+}
+#elif defined(DW4_HAVE_FPCR)
+// FPCR bits the simulation depends on: FIZ (0), AH (1), NEP (2), the trap
+// enables IOE..IXE (8-12) and IDE (15), RMode (22-23), FZ (24), DN (25). All
+// zero is the Linux / Android default (round to nearest, IEEE behaviour,
+// exceptions masked); the others (AHP, FZ16, Len, Stride) stay as found.
+// (FIZ, AH and NEP read as zero on cores without FEAT_AFP.)
+constexpr unsigned long long kFpcrControl = (1ull << 0) | (1ull << 1) | (1ull << 2) | (0x1Full << 8) | (1ull << 15) |
+                                            (3ull << 22) | (1ull << 24) | (1ull << 25);
+
+namespace {
+unsigned long long read_fpcr() {
+    unsigned long long value;
+    __asm__ __volatile__("mrs %0, fpcr" : "=r"(value));
+    return value;
+}
+void write_fpcr(unsigned long long value) { __asm__ __volatile__("msr fpcr, %0" : : "r"(value)); }
+} // namespace
+
+FpEnvGuard::FpEnvGuard() : saved_(read_fpcr()) {
+    if (saved_ & kFpcrControl) {
+        g_mxcsr_repairs.fetch_add(1, std::memory_order_relaxed);
+        write_fpcr(saved_ & ~kFpcrControl);
+    }
+}
+FpEnvGuard::~FpEnvGuard() {
+    if (saved_ & kFpcrControl) write_fpcr(saved_);
 }
 #else
-// No MXCSR outside x86 (Android arm64): the guard does nothing and the
-// thread keeps the process default (round to nearest, no flush to zero).
-// The platform-neutral FpEnvGuard (FPCR on AArch64) replaces it in the
-// Android port's phase B (docs/ANDROID.md); online play stays refused on
-// such a build until then (online_cpu_refusal).
-MxcsrGuard::MxcsrGuard() : saved_(kMxcsr) {}
-MxcsrGuard::~MxcsrGuard() = default;
+// Neither MXCSR nor FPCR (another architecture): the guard does nothing and
+// the thread keeps the process default.
+FpEnvGuard::FpEnvGuard() : saved_(kMxcsr) {}
+FpEnvGuard::~FpEnvGuard() = default;
 #endif
 } // namespace detail
 
