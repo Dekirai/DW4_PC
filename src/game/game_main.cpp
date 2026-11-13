@@ -332,6 +332,18 @@ struct GameWindow {
 };
 GameWindow g_game_window;
 
+#ifdef SDL_PLATFORM_ANDROID
+// A lost OpenGL context: SDL makes a new one current before it sends
+// SDL_EVENT_RENDER_DEVICE_RESET (SDL_androidevents.c), the window keeps that
+// handle (run() destroys it at the end). The GL objects: host_event and
+// status_frame.
+bool SDLCALL context_reset_watch(void*, SDL_Event* event) {
+    if (event->type == SDL_EVENT_RENDER_DEVICE_RESET && g_game_window.window)
+        if (SDL_GLContext current = SDL_GL_GetCurrentContext()) g_game_window.context = current;
+    return true;
+}
+#endif
+
 // Opens the window once (SDL's video must be started); test runs open it
 // hidden at 1280x960 (DW4_WINDOW, DW4_WIDESCREEN; DW4_DEV_SETTINGS /
 // DW4_DEV_WINDOW: the settings' window).
@@ -394,6 +406,9 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
         throw std::runtime_error(error);
     }
     SDL_GL_MakeCurrent(w.window, w.context);
+#ifdef SDL_PLATFORM_ANDROID
+    SDL_AddEventWatch(context_reset_watch, nullptr);
+#endif
     SDL_GL_SetSwapInterval(test_run || !settings.vsync ? 0 : 1);
     if (!test_run && settings.fullscreen) SDL_SetWindowFullscreen(w.window, true);
     SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &w.samples);
@@ -441,6 +456,15 @@ bool status_frame(GameWindow& w, const char* title, const std::vector<std::strin
     while (SDL_PollEvent(&event)) {
         ImGui_ImplSDL3_ProcessEvent(&event);
         if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) keep = false;
+#ifdef SDL_PLATFORM_ANDROID
+        // A lost OpenGL context during the first start or the LAN lobby (no
+        // renderer yet): ImGui's GL objects again.
+        if (event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+            std::cout << "lifecycle: the OpenGL context was recreated (status screen)\n";
+            ImGui_ImplOpenGL3_Shutdown();
+            ImGui_ImplOpenGL3_Init("#version 300 es");
+        }
+#endif
     }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -5012,7 +5036,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         ImGui::DestroyContext();
     }
     if (audio) SDL_DestroyAudioStream(audio);
-    if (context) SDL_GL_DestroyContext(context);
+    // (The window's current handle: Android may have replaced the context.)
+    if (context) SDL_GL_DestroyContext(g_game_window.context ? g_game_window.context : context);
     if (window) SDL_DestroyWindow(window);
     SDL_Quit();
     return exit_code;
