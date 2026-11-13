@@ -393,12 +393,18 @@ simulation math is the MSL routines everywhere (a later phase).
 `app_paths.hpp`: `app_root()` is the PC's program folder
 (`SDL_GetBasePath`) and on Android the app's external files folder
 `/storage/emulated/0/Android/data/org.dw4pc.game/files` (settings.ini,
-saves/, mods/, data/). `private_root()` is the same on the PC and the
+saves/, mods/, data/). There is no fallback to the internal folder (it would
+be a new first start without the player's settings, saves and disc copy):
+when the external storage cannot be written at start-up, the game stops with
+a message (`app_root_problem()`). `private_root()` is the same on the PC and the
 internal `/data/data/org.dw4pc.game/files` on Android: the remembered online
 login (`saves/online`), `online.log`, `controllers.log`. Every former
 `SDL_GetBasePath` caller (`game_main.cpp`, `settings.cpp`) goes through
 them; the paths are decoded as UTF-8 everywhere now (before, some callers
-took SDL's UTF-8 text as the ANSI code page). On Android stdout and stderr go
+took SDL's UTF-8 text as the ANSI code page), and the start-up line
+`data: PATH` prints the path as UTF-8 (`path::string()` throws on MSVC for
+characters outside the ANSI code page; the game has no UTF-8 code page
+manifest). On Android stdout and stderr go
 to logcat line by line (tag `DW4`, stderr as warnings), so the game's own
 lines and the error texts before their message boxes are there.
 
@@ -427,11 +433,20 @@ window" on both, starts both players and ends with the same fingerprint.
   `iso;gcm;rvz` Android's picker would hide `.rvz` / `.gcm`, which have no
   MIME type). The picker returns a `content://` URI; `import_disc` reads it
   with `SDL_IOFromFile` (SDL opens content URIs through the
-  `ContentResolver`), copies it into `data/dw4.iso` of the app's folder
+  `ContentResolver`). Before anything is copied it reads the first 0x80
+  bytes and stops on a file that is no GameCube ISO / RVZ (the magic at
+  0x1C; an RVZ's disc header at 0x58) or not GDJEB2 disc 0 revision 0, and
+  when the copy (plus an RVZ's converted ISO, plus 64 MB) does not fit into
+  the free space. A provider that streams through a pipe (no seek back to 0,
+  no size, e.g. a cloud provider: SDL makes such a descriptor a `FILE*`) gets
+  the head written first and the rest after it; the progress then uses the
+  RVZ's own size or a whole GameCube disc (1,459,978,240 bytes). It copies
+  it into `data/dw4.iso` of the app's folder
   (progress and Cancel in the game window; an RVZ image is copied to
   `data/dw4.rvz.part`, converted with the PC's converter, and the copy
   removed), checks it like the PC (`check_game_data`: GDJEB2 revision 0,
-  `ndmw.igb`) and saves the path in settings.ini.
+  `ndmw.igb`; an unusable copy is removed again) and saves the path in
+  settings.ini.
 - Debug builds take `--import-disc PATH` (through the `dw4args` extra) for a
   test of the same import from a plain path, without the picker.
 - Every start logs the game data's identity, `data: PATH, data_hash
@@ -482,13 +497,23 @@ core) and one code path, with these differences on a GLES context
 - `SDL_EVENT_RENDER_DEVICE_RESET` (SDL made a new EGL context after the old
   one was lost): ImGui's OpenGL backend is shut down and started again, the
   renderer forgets every object name and makes its objects again
-  (`GlRenderer::reset_context`), the prompt pictures are uploaded again.
+  (`GlRenderer::reset_context`), the prompt pictures are uploaded again. An
+  Android-only event watch takes SDL's new context handle into the game
+  window (SDL replaces it internally; run() destroys the live one at the
+  end), and `status_frame` (the first start's import, the LAN lobby; no
+  renderer yet) rebuilds ImGui's GL objects itself.
+- A failed GL context closes the window again (`open_game_window`), so a
+  later call does not hand out a window without a context.
 - Android's Back key is trapped (`SDL_HINT_ANDROID_TRAP_BACK_BUTTON`) and
   opens and closes the F1 menu (`SDLK_AC_BACK`), as the controller's View /
   Back button does (the Thor's own controller through SDL's Android gamepad
   backend). A touch in the window's top right corner (x >= 90 %, y <= 12 %)
-  toggles it too; ImGui takes touches as SDL's mouse events, so the menus
-  work by touch. Every toggle logs `menu: open|closed (input)`.
+  toggles it too, unless it lands on an open menu's window (ImGui's hit
+  test, `FindHoveredWindowEx`: then the tap is ImGui's); ImGui takes touches
+  as SDL's mouse events, so the menus work by touch. Both are Android-only
+  (`SDL_PLATFORM_ANDROID`): on the PC a keyboard's or mouse's browser Back
+  key stays a bindable key and a Windows touch screen's tap stays a click.
+  Every toggle logs `menu: open|closed (input)`.
 
 ### Results on the emulator (x86_64, `-gpu swiftshader_indirect`)
 
