@@ -7,6 +7,7 @@
 #include "online/presence.hpp"
 #include "pad_host.hpp"
 #include "switch2_pro.hpp"
+#include "texture_pack.hpp"
 
 #include <SDL3/SDL_hidapi.h>
 #include <SDL3/SDL_opengl.h>
@@ -39,6 +40,8 @@ void PictureState::reset() {
     last_picture_slot = -1;
     ghost_items.clear();
     ghost_shadow = {};
+    documents_digest = 0;
+    documents_count = 0;
 }
 
 LabelMode HostView::label_mode() const {
@@ -326,19 +329,66 @@ void mix_audio(HostView& view, engine::Engine& engine, int frames) {
     if (view.audio_dump_path) view.audio_dump.insert(view.audio_dump.end(), pcm.begin(), pcm.end());
 }
 
+void trace_textures(HostView& view, const std::string& stage) {
+    static const bool trace = std::getenv("DW4_TRACE_TEXTURES") && std::atoi(std::getenv("DW4_TRACE_TEXTURES")) != 0;
+    if (!trace || !view.renderer) return;
+    const auto s = view.renderer->texture_stats();
+    constexpr double mib = 1024.0 * 1024.0;
+    std::printf("textures %s: game %zu (%.1f MiB), pack %zu (%.1f MiB), peak %.1f MiB; uploads %zu (%.1f MiB, %.1f ms, longest pass %.2f ms); "
+                "draws before their pack texture %zu; evicted %zu, failed %zu; scanned %zu images in %.0f ms, loaded %zu in %.0f ms, %zu queued%s%s\n",
+                stage.empty() ? "-" : stage.c_str(), s.originals, double(s.original_bytes) / mib, s.replacements, double(s.replacement_bytes) / mib,
+                double(s.peak_bytes) / mib, s.uploads, double(s.upload_bytes) / mib, s.upload_ms, s.longest_upload_pass_ms, s.missing_draws,
+                s.evictions, s.failed, s.images_scanned, s.scan_ms, s.loads, s.load_ms, s.pending, s.last_error.empty() ? "" : "; last error: ",
+                s.last_error.c_str());
+    if (s.gpu_available_kb >= 0) std::printf("textures %s: GPU memory available %.0f MiB\n", stage.c_str(), double(s.gpu_available_kb) / 1024.0);
+    std::fflush(stdout);
+    view.renderer->reset_texture_stats();
+}
+
 bool note_stage(HostView& view, engine::Engine& engine, GhostFigures* ghosts) {
     auto& picture = view.picture;
     const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+    bool changed = false;
     if (picture.rendered_stage != engine.stage_name() || picture.rendered_serial != serial) {
-        if (view.renderer) view.renderer->clear_cache();
+        if (view.renderer) {
+            trace_textures(view, picture.rendered_stage);
+            view.renderer->clear_cache();
+        }
         picture.rendered_stage = engine.stage_name();
         picture.rendered_serial = serial;
         view.interpolator.reset();
         view.labels.reset();
         if (ghosts) ghosts->clear(); // (a new stage: no figure fades across the load)
-        return true;
+        changed = true;
     }
-    return false;
+    // Texture pack streaming: the documents the engine holds (handed over
+    // when they change: a stage's are scanned and read ahead while it
+    // loads), then this pass's uploads.
+    if (view.renderer) {
+        const auto& files = engine.loaded_files();
+        // (The fonts' document is the text manager's own, not a loaded file.)
+        const auto* text = engine.get<engine::TextCtlManager>();
+        const auto font = text ? text->font_document() : nullptr;
+        std::uint64_t digest = 0xcbf29ce484222325ull;
+        for (const auto& file : files) {
+            digest ^= std::uint64_t(reinterpret_cast<std::uintptr_t>(file.document.get()));
+            digest *= 0x100000001b3ull;
+        }
+        digest ^= std::uint64_t(reinterpret_cast<std::uintptr_t>(font.get()));
+        if (digest != picture.documents_digest || files.size() != picture.documents_count) {
+            std::vector<std::shared_ptr<const IgbDocument>> documents;
+            documents.reserve(files.size() + 1);
+            for (const auto& file : files)
+                if (file.document) documents.push_back(file.document);
+            if (font) documents.push_back(font);
+            view.renderer->stream_textures(&documents);
+            picture.documents_digest = digest;
+            picture.documents_count = files.size();
+        } else {
+            view.renderer->stream_textures(nullptr);
+        }
+    }
+    return changed;
 }
 
 PictureMade make_picture(HostView& view, engine::Engine& engine, int steps, bool smooth_blending) {
@@ -723,6 +773,155 @@ void settings_display_section(HostView& view) {
             }
         }
     }
+}
+
+namespace {
+// A path as UTF-8 for ImGui, and back.
+std::string utf8(const std::filesystem::path& path) {
+    const auto text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+std::filesystem::path from_utf8(const char* text) {
+    const std::string bytes(text);
+    return std::filesystem::path(std::u8string(bytes.begin(), bytes.end()));
+}
+} // namespace
+
+void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
+    auto& settings = view.settings;
+    if (!ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    auto& g = settings.graphics;
+    bool changed = false;
+    const GlRenderer::Caps caps = view.renderer ? view.renderer->caps() : GlRenderer::Caps{};
+    ImGui::PushTextWrapPos(0.0f);
+    {
+        static const char* names[] = {texture_quality_label(TextureQuality::original), texture_quality_label(TextureQuality::high),
+                                      texture_quality_label(TextureQuality::ultra)};
+        int value = int(g.texture_quality);
+        if (ImGui::Combo("Texture quality", &value, names, 3)) {
+            g.texture_quality = TextureQuality(value);
+            changed = true;
+        }
+        if (panel.loading) {
+            ImGui::TextDisabled("Reading the texture pack folder %s ...", utf8(panel.folder).c_str());
+        } else if (panel.pack) {
+            const auto& index = panel.pack->index();
+            if (!index.error.empty())
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "The texture pack is not used: %s", index.error.c_str());
+            else if (index.textures.empty())
+                ImGui::TextDisabled("No texture pack in %s. Original shows the game's own textures; High and Ultra use a pack's "
+                                    "2x or 4x textures when there is one.",
+                                    utf8(panel.folder).c_str());
+            else
+                ImGui::TextDisabled("%s%s%zu pack textures (%s). Original shows the game's own textures; High and Ultra the pack's "
+                                    "2x or 4x level.",
+                                    index.name.c_str(), index.name.empty() ? "" : ": ", index.textures.size(),
+                                    index.format == 2 ? "pack format 2" : "loose PNG / DDS files");
+            // (Files for other devices, such as ASTC for phones: a note, not a fault.)
+            if (!index.other_encodings.empty()) {
+                std::string names;
+                for (const auto& name : index.other_encodings) names += (names.empty() ? "" : ", ") + name;
+                ImGui::TextDisabled("The pack also holds files for other devices (%s); this PC uses its own.", names.c_str());
+            }
+            if (!index.warnings.empty() && ImGui::TreeNode("pack_warnings", "%zu manifest warnings", index.warnings.size())) {
+                for (const auto& w : index.warnings) ImGui::BulletText("%s", w.c_str());
+                ImGui::TreePop();
+            }
+        }
+    }
+    {
+        static const char* names[] = {texture_filter_label(TextureFilter::bilinear), texture_filter_label(TextureFilter::trilinear),
+                                      texture_filter_label(TextureFilter::aniso2),   texture_filter_label(TextureFilter::aniso4),
+                                      texture_filter_label(TextureFilter::aniso8),   texture_filter_label(TextureFilter::aniso16)};
+        int count = 6;
+        if (!caps.anisotropic) count = 2;
+        else
+            while (count > 2 && float(anisotropy(TextureFilter(count - 1))) > caps.max_anisotropy) --count;
+        int value = std::min(int(g.texture_filter), count - 1);
+        if (ImGui::Combo("Texture filtering", &value, names, count)) {
+            g.texture_filter = TextureFilter(value);
+            changed = true;
+        }
+        ImGui::TextDisabled("Bilinear samples the game's textures as the GameCube does (full size only). Trilinear gives them "
+                            "mipmaps (less shimmer on distant floors); anisotropic keeps surfaces at a slant sharp.%s",
+                            caps.anisotropic ? "" : " This GPU offers no anisotropic filtering.");
+    }
+    if (ImGui::SliderFloat("Mip LOD bias", &g.lod_bias, GraphicsOptions::kLodBiasMin, GraphicsOptions::kLodBiasMax, "%+.2f")) changed = true;
+    ImGui::TextDisabled("For mipmapped textures: below 0 sharper (may shimmer), above 0 softer.");
+    {
+        static const char* names[] = {sharpening_label(Sharpening::off), sharpening_label(Sharpening::low), sharpening_label(Sharpening::high)};
+        int value = int(g.sharpening);
+        if (ImGui::Combo("Sharpening", &value, names, 3)) {
+            g.sharpening = Sharpening(value);
+            changed = true;
+        }
+        ImGui::TextDisabled("Contrast adaptive sharpening of the game picture (not the menus).");
+    }
+    {
+        static const char* names[] = {shadow_quality_label(ShadowQuality::original), shadow_quality_label(ShadowQuality::high),
+                                      shadow_quality_label(ShadowQuality::ultra)};
+        int value = int(g.shadow_quality);
+        if (ImGui::Combo("Shadow quality", &value, names, 3)) {
+            g.shadow_quality = ShadowQuality(value);
+            changed = true;
+        }
+        ImGui::TextDisabled("The resolution of the characters' shadow map (the game's own is 128 x 128).");
+    }
+    {
+        static const int sizes[] = {512, 1024, 2048, 4096};
+        // (A value settings.ini set that is none of these shows as itself,
+        // as a fifth entry, until another one is chosen.)
+        std::string other;
+        int value = -1;
+        for (int i = 0; i < 4; ++i)
+            if (g.texture_memory_mb == sizes[i]) value = i;
+        if (value < 0) other = std::to_string(g.texture_memory_mb) + " MiB (settings.ini)";
+        const char* names[] = {"512 MiB", "1 GiB", "2 GiB", "4 GiB", other.c_str()};
+        const int count = value < 0 ? 5 : 4;
+        if (value < 0) value = 4;
+        if (ImGui::Combo("Texture memory", &value, names, count) && value < 4) {
+            g.texture_memory_mb = sizes[value];
+            changed = true;
+        }
+        if (view.renderer) {
+            const auto s = view.renderer->texture_stats();
+            constexpr double mib = 1024.0 * 1024.0;
+            ImGui::TextDisabled("In use: %zu game textures (%.0f MiB), %zu pack textures (%.0f MiB)%s. The least recently drawn "
+                                "textures make room when this fills up.",
+                                s.originals, double(s.original_bytes) / mib, s.replacements, double(s.replacement_bytes) / mib,
+                                s.pending ? ", more loading" : "");
+        }
+    }
+    if (changed) {
+        g = g.clamped();
+        if (view.renderer) view.renderer->set_graphics(g);
+        view.settings_changed = true;
+    }
+    // The pack folder (empty: mods/textures beside the program).
+    {
+        static char folder[1024]{};
+        static bool editing = false;
+        if (!editing) {
+            const std::string text = utf8(settings.texture_pack);
+            std::snprintf(folder, sizeof folder, "%s", text.c_str());
+        }
+        ImGui::InputTextWithHint("Texture pack folder", "mods/textures", folder, sizeof folder);
+        editing = ImGui::IsItemActive();
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            settings.texture_pack = from_utf8(folder);
+            view.settings_changed = true;
+            if (panel.reload) panel.reload();
+        }
+    }
+    if (ImGui::Button("Reload texture pack") && panel.reload) panel.reload();
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
+        view.settings_changed = true;
+        if (panel.reload) panel.reload();
+    }
+    ImGui::TextDisabled("A pack is a folder with a dw4pack.tsv manifest and DDS files, or loose PNG / DDS files named ..._<16 hex "
+                        "digit hash>.png / .dds (docs/TEXTURES.md).");
+    ImGui::PopTextWrapPos();
 }
 
 void settings_audio_section(HostView& view) {

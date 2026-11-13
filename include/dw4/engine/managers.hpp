@@ -1095,6 +1095,10 @@ public:
     // A loaded font ("NORMAL", "MINIMUM"), null before bectext.igb is read:
     // the host's controller prompts read its glyph cells (presentation only).
     const FontImage* font(std::string_view name) const;
+    // The document of the fonts (bectext.igb), null before it is read: the
+    // host's texture pack streaming scans it with the stage's documents
+    // (presentation only).
+    std::shared_ptr<const IgbDocument> font_document() const { return font_document_; }
     // The text line whose node holds a laid-out geometry (its layer, line
     // name and alignment, 0 left, 1 right, 2 center), nullopt for none: the
     // host's controller prompts pick a player's pictures by it and keep the

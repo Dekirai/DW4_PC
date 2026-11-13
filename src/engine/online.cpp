@@ -165,6 +165,12 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_NO_ERROR_BOX", "DW4_OPEN_MENU", "DW4_PRESENCE_ART_ALL", "DW4_PROFILE", "DW4_RENDER",
         "DW4_SCENE_REPORT", "DW4_SEEK_DIRECT", "DW4_SMOKE_STAGES", "DW4_STAGE_STATES",
         "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
+        // a test run's Graphics options and texture streaming switches (graphics_options.hpp, gl_renderer.cpp:
+        // texture quality, filtering, LOD bias, sharpening, shadow map size, texture memory, the CPU decode of
+        // block formats, the upload time per pass, quality changes at given frames and a pack texture's upload
+        // refused as by a driver; presentation only)
+        "DW4_TEXTURE_QUALITY", "DW4_TEXTURE_FILTER", "DW4_LOD_BIAS", "DW4_SHARPEN", "DW4_SHADOW_QUALITY", "DW4_TEXTURE_MEMORY",
+        "DW4_TEXTURE_CPU_DECODE", "DW4_TEXTURE_UPLOAD_MS", "DW4_TEXTURE_QUALITY_AT", "DW4_TEXTURE_TEST_REFUSE",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
         // a test run's controller log and the Switch 2 Pro reader in a test run (pad_usb.hpp: a file about the
