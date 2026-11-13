@@ -296,11 +296,14 @@ def pad_amount(size, wrap):
     return 32 if size >= 32 else max(size, 16)  # small tiling textures: 3 x 3 (or more) copies
 
 
-def pad(img, py, px, wrap_y, wrap_x):
+def pad(img, py, px, wrap_y, wrap_x, edge="edge"):
+    """Padding per axis: cyclic where the axis wraps, else `edge` (numpy's
+    "edge": the border texel repeated; "symmetric": mirrored, for the
+    models, which turn a band of repeated rows into streaks)."""
     width = [(py, py), (0, 0)] + [(0, 0)] * (img.ndim - 2)
-    img = np.pad(img, width, mode="wrap" if wrap_y else "edge")
+    img = np.pad(img, width, mode="wrap" if wrap_y else edge)
     width = [(0, 0), (px, px)] + [(0, 0)] * (img.ndim - 2)
-    return np.pad(img, width, mode="wrap" if wrap_x else "edge")
+    return np.pad(img, width, mode="wrap" if wrap_x else edge)
 
 
 def lanczos4(img, scale=4):

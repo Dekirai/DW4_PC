@@ -17,8 +17,10 @@ the textures an interrupted run finished. Per texture:
   their UV islands (the export's uvmask, when the UVs do not scroll) too;
 * axes padded cyclically only where classify.py's `wrap` says the texture
   tiles there (rmcommon.tiling_axes: `tiles`, or a 3D texture whose picture
-  continues across a UV edge), others by edge extension, so no opposite
-  edge bleeds into the outer rows; the padding is cropped after 4x;
+  continues across a UV edge), others by edge extension (Lanczos) or by
+  mirroring (a model's input: it draws a band of repeated rows as streaks),
+  so no opposite edge bleeds into the outer rows; the padding is cropped
+  after 4x;
 * preprocessing (`pre`): `smooth` takes the steps out of coarse soft alpha
   ramps (blurred, each texel kept within half a step of its level) and
   drops the sharpening; `dither` also blurs the colour's dither lightly;
@@ -219,7 +221,11 @@ def run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra=None, sharpen=Fa
     def crop(x):
         return x[py * SCALE:(py + h) * SCALE, px * SCALE:(px + w) * SCALE]
 
-    cout = crop(sr(pad(cin, py, px, wy, wx)))
+    # Models get mirrored padding on axes that do not wrap: repeated border
+    # rows become streaks the model draws into the outer rows. Lanczos keeps
+    # the edge extension (a clamp).
+    edge = "edge" if sr is lanczos_sr else "symmetric"
+    cout = crop(sr(pad(cin, py, px, wy, wx, edge)))
     if sharpen:
         cout = unsharp(cout)
     if mode == "opaque":
@@ -231,7 +237,8 @@ def run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra=None, sharpen=Fa
         elif mode in ("additive", "ignore", "cutout"):
             aout = crop(lanczos4(apad, SCALE))
         else:
-            aout = crop(alpha_sr(np.repeat(apad[..., None], 3, axis=2))).mean(axis=2)
+            amod = pad(a, py, px, wy, wx, edge)
+            aout = crop(alpha_sr(np.repeat(amod[..., None], 3, axis=2))).mean(axis=2)
             if mode == "blend":
                 # Soft alpha ramps (vignettes, glows: the loading cards draw
                 # enlarged additive copies of a picture whose soft border
