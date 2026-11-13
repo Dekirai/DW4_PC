@@ -39,9 +39,7 @@ namespace dw4::game {
     X(PFNGLGENERATEMIPMAPPROC, GenerateMipmap) X(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers) \
     X(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer) X(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D) \
     X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers) \
-    X(PFNGLBLITFRAMEBUFFERPROC, BlitFramebuffer) X(PFNGLGETSTRINGIPROC, GetStringi) \
-    X(PFNGLGETUNIFORMBLOCKINDEXPROC, GetUniformBlockIndex) X(PFNGLUNIFORMBLOCKBINDINGPROC, UniformBlockBinding) \
-    X(PFNGLBINDBUFFERBASEPROC, BindBufferBase) X(PFNGLBUFFERSUBDATAPROC, BufferSubData)
+    X(PFNGLBLITFRAMEBUFFERPROC, BlitFramebuffer) X(PFNGLGETSTRINGIPROC, GetStringi)
 
 struct GlRenderer::Impl {
 #define DECLARE(type, name) type name{};
@@ -60,7 +58,7 @@ struct GlRenderer::Impl {
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
     int u_texgen{}, u_pixel_center{}, u_normal{};
     int u_id_mode{}, u_id{};
-    int u_depth_clamp{};
+    int u_depth_clamp{}, u_palette_tex{};
     PFNGLUNIFORM2FPROC Uniform2f{};
     // OpenGL ES 3 (the Android port, docs/ANDROID.md) instead of OpenGL 3.3
     // core: the shaders' #version line, no GL_MULTISAMPLE switch, the kept
@@ -69,9 +67,12 @@ struct GlRenderer::Impl {
     // shader clamps z (u_depth_clamp).
     bool gles = gl_is_es();
     bool native_depth_clamp = true;
-    // The skinning palette (64 matrices, std140): a uniform block, since
-    // OpenGL ES guarantees only 256 vertex uniform vectors.
-    unsigned palette_ubo{};
+    // The skinning palette (64 matrices): a 4 x 64 RGBA32F texture the
+    // vertex shader fetches (one row per matrix, one texel per column), not
+    // uniforms: OpenGL ES guarantees only 256 vertex uniform vectors, and
+    // some implementations (SwiftShader) count a uniform block's members
+    // against them too. Texture unit 2.
+    unsigned palette_texture{};
     // The kept picture's framebuffer (keep_picture's blit on OpenGL ES) and
     // the full-screen strips' vertex buffer (attribute 0 enabled: some GL ES
     // drivers draw nothing without one).
@@ -86,9 +87,11 @@ struct GlRenderer::Impl {
     }
     void upload_palette(const std::vector<engine::Mat4>& palette) {
         const auto count = std::min<std::size_t>(palette.size(), 64);
-        BindBuffer(GL_UNIFORM_BUFFER, palette_ubo);
-        BufferSubData(GL_UNIFORM_BUFFER, 0, GLsizeiptr(count * sizeof(engine::Mat4)), palette.front().m.data());
-        BindBuffer(GL_UNIFORM_BUFFER, 0);
+        ActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, palette_texture);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, GLsizei(count), GL_RGBA, GL_FLOAT, palette.front().m.data());
+        ActiveTexture(GL_TEXTURE0);
     }
     // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
     // (unless antialiasing); Dolphin's VertexShaderManager compensates with
@@ -111,7 +114,7 @@ layout(location=5) in vec2 a_indices;
 uniform mat4 u_model, u_view, u_proj;
 uniform mat4 u_normal;
 uniform int u_skinned;
-layout(std140) uniform Palette { mat4 u_palette[64]; };
+uniform sampler2D u_palette_tex;
 uniform mat4 u_tex_matrix;
 uniform int u_texgen;
 uniform int u_use_vcol;
@@ -129,6 +132,11 @@ out vec4 v_color;
 out vec2 v_uv;
 out float v_depth;
 out vec4 v_shadow;
+// The skinning palette's matrix i (Impl::palette_texture).
+mat4 u_palette(int i) {
+    return mat4(texelFetch(u_palette_tex, ivec2(0, i), 0), texelFetch(u_palette_tex, ivec2(1, i), 0),
+                texelFetch(u_palette_tex, ivec2(2, i), 0), texelFetch(u_palette_tex, ivec2(3, i), 0));
+}
 void main() {
     vec4 local = vec4(a_pos, 1.0);
     vec3 normal = a_normal;
@@ -149,11 +157,11 @@ void main() {
         int i0 = int(a_indices.x + 0.5), i1 = int(a_indices.y + 0.5);
         vec4 p = vec4(0.0);
         if (a_weights.x != 0.0) {
-            p = u_palette[i0] * local * a_weights.x;
-            if (a_weights.y != 0.0) p += u_palette[i1] * local * a_weights.y;
+            p = u_palette(i0) * local * a_weights.x;
+            if (a_weights.y != 0.0) p += u_palette(i1) * local * a_weights.y;
         }
         local = vec4(p.xyz, 1.0);
-        normal = mat3(u_palette[i0]) * a_normal;
+        normal = mat3(u_palette(i0)) * a_normal;
     }
     vec4 world = u_model * local;
     v_shadow = u_shadow_matrix * world;
@@ -384,14 +392,18 @@ void GlRenderer::create_objects() {
     gl.LinkProgram(program_);
     int ok = 0;
     gl.GetProgramiv(program_, GL_LINK_STATUS, &ok);
-    if (!ok) throw std::runtime_error("game shader link failed");
+    if (!ok) {
+        char log[2048]{};
+        gl.GetProgramInfoLog(program_, sizeof log, nullptr, log);
+        throw std::runtime_error(std::string("game shader link failed: ") + log);
+    }
     gl.DeleteShader(vs);
     gl.DeleteShader(fs);
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id) U(depth_clamp)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id) U(depth_clamp) U(palette_tex)
 #undef U
     if (gl.gles) {
         int extensions = 0;
@@ -405,17 +417,19 @@ void GlRenderer::create_objects() {
                   << reinterpret_cast<const char*>(glGetString(GL_RENDERER)) << ", depth clamp "
                   << (gl.native_depth_clamp ? "GL_EXT_depth_clamp" : "in the vertex shader") << '\n';
     }
-    gl.GenBuffers(1, &gl.palette_ubo);
-    gl.BindBuffer(GL_UNIFORM_BUFFER, gl.palette_ubo);
-    gl.BufferData(GL_UNIFORM_BUFFER, GLsizeiptr(64 * sizeof(engine::Mat4)), nullptr, GL_DYNAMIC_DRAW);
-    gl.BindBuffer(GL_UNIFORM_BUFFER, 0);
-    gl.BindBufferBase(GL_UNIFORM_BUFFER, 0, gl.palette_ubo);
-    if (const unsigned block = gl.GetUniformBlockIndex(program_, "Palette"); block != GL_INVALID_INDEX)
-        gl.UniformBlockBinding(program_, block, 0);
+    gl.ActiveTexture(GL_TEXTURE2);
+    glGenTextures(1, &gl.palette_texture);
+    glBindTexture(GL_TEXTURE_2D, gl.palette_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 64, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    gl.ActiveTexture(GL_TEXTURE0);
     gl.UseProgram(program_);
     const engine::Mat4 identity{};
     gl.UniformMatrix4fv(gl.u_normal, 1, GL_FALSE, identity.m.data());
     gl.Uniform1i(gl.u_depth_clamp, 0);
+    gl.Uniform1i(gl.u_palette_tex, 2);
     gl.UseProgram(0);
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -435,7 +449,7 @@ GlRenderer::~GlRenderer() {
     if (movie_vao_) gl_->DeleteVertexArrays(1, &movie_vao_);
     if (gl_->strip_vbo) gl_->DeleteBuffers(1, &gl_->strip_vbo);
     if (gl_->kept_fbo) gl_->DeleteFramebuffers(1, &gl_->kept_fbo);
-    if (gl_->palette_ubo) gl_->DeleteBuffers(1, &gl_->palette_ubo);
+    if (gl_->palette_texture) glDeleteTextures(1, &gl_->palette_texture);
     if (movie_program_) gl_->DeleteProgram(movie_program_);
     if (program_) gl_->DeleteProgram(program_);
 }
