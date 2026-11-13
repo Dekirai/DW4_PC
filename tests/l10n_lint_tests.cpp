@@ -149,6 +149,25 @@ void test_lint() {
     // 0.35 wide in a 1.68 field, a German word up to 1.68 fits.
     const auto field = dw4::l10n::lint(source, "\tShort\tKurzzeitiger\n\tLong\tLangzeitigerAlsDasFeldBreitIst\n", fonts);
     check(field.ok == 1 && field.errors == 1, "The field is the budget of a box whose English is narrower");
+
+    // A field that runs under its frame (the enemy info card's description)
+    // is no budget: only the English width counts, also with a source that
+    // still names the field.
+    std::vector<std::string> framed_problems;
+    const auto framed_source = dw4::l10n::read_source_tsv(
+        "id\tenglish\ttranslation\tflags\tclass\twhere\tboxes\tfont\tmax_width\tmax_lines\talign\tfield_width\tcopies\n"
+        "\tShort\t\t\tdialog\ttest/card\tDMINFOFONT02/font02\tNORMAL\t0.5\t1\tC\t1.68\t1\n",
+        framed_problems);
+    check(framed_problems.empty(), "The framed source reads");
+    check(dw4::l10n::lint(framed_source, "\tShort\tKurz\n", fonts).ok == 1, "A text within the English width fits a framed field");
+    check(dw4::l10n::lint(framed_source, "\tShort\tKurzzeitiger\n", fonts).errors == 1,
+          "A text wider than the English is too wide for a framed field, however wide the field");
+    dw4::l10n::Corpus card;
+    card.boxes["DMINFOFONT02/font02"] = {"DMINFOFONT02/font02", "NORMAL", 0, 1.68f};
+    card.texts = {text(u"Short", "dialog", "DMINFOFONT02/font02")};
+    dw4::l10n::compute_budgets(card, fonts);
+    const auto card_source = dw4::l10n::write_source_tsv(card, fonts);
+    check(card_source.find("\tL\t-\t1\n") != std::string::npos, "The export names no framed field: " + card_source);
 }
 
 // The wrap: a translation's own line breaks are kept where the lines then
