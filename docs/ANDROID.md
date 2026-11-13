@@ -482,7 +482,11 @@ core) and one code path, with these differences on a GLES context
   platform (a CPU check, no picture change): it counts the orthographic
   triangles that cross a plane and logs `renderer: depth clamp check: N of
   M orthographic triangles cross the near or far plane` at 1, 10, 100, ...
-  (silent while none does). The renderer logs which clamp it uses.
+  (silent while none does) and the total when the renderer ends. On the PC
+  the route `newgame_dng101b1` (6000 frames, rendered hidden with
+  `DW4_RENDER=1`: the new game's menus and talk, the HUD, the dungeon) ends
+  with `0 of 3442592 orthographic triangles crossed the near or far plane`
+  (13.11.2026). The renderer logs which clamp it uses.
 - `keep_picture`: GLES copies no multisampled framebuffer into a texture;
   the window's picture is blitted (resolved) into the kept texture's
   framebuffer. The PC keeps `glCopyTexSubImage2D`. Android asks for an
