@@ -6,15 +6,20 @@ super-resolution model, Lanczos, or text path B.
         --export E:/DW4Remaster/export --selection E:/DW4Remaster/pilot/selection.tsv \
         --models E:/DW4Remaster/models --out E:/DW4Remaster/pilot/up [--tile 256]
 
-Writes OUT/VARIANT/<export file name>.png (the renderer's pack naming) and
-OUT/VARIANT/metrics.tsv. Per texture:
+The selection is pilot_select.py's TSV or classify.py's classes.tsv (the
+full run: every texture whose `variants` names VARIANT). Writes
+OUT/VARIANT/<export file name>.png (the renderer's pack naming) and
+OUT/VARIANT/metrics.tsv, a line as each texture finishes; --resume skips
+the textures an interrupted run finished. Per texture:
 
 * colours under alpha 0 are filled from their neighbours (push-pull), and
-  characters' texels outside their UV islands (the export's uvmask) too;
+  for 3D skins (characters, bosses, weapons, items) the texels outside
+  their UV islands (the export's uvmask, when the UVs do not scroll) too;
 * axes whose UVs tile or reach a border with a repeat wrap are padded
   cyclically, others by edge extension; the padding is cropped after 4x;
-* atlas cells (font glyphs, UI pictures) are cut out one by one with a
-  transparent border and pasted back, so nothing bleeds between cells;
+* atlas cells (font glyphs, UI pictures, sprite frames) are cut out one by
+  one with a border of their own edge texels and pasted back, so nothing
+  bleeds between cells and pieces that fill their cell keep solid edges;
 * RGB and alpha are upscaled separately (alpha as a grey picture);
 * alpha afterwards: cut-outs are thresholded at the material's alpha
   reference, soft alpha stays soft (Lanczos in gentle ramps, the model's
@@ -241,38 +246,18 @@ def run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra=None, sharpen=Fa
     return np.concatenate([rgb_out, aout[..., None]], axis=2).astype(np.float32)
 
 
-def merge_cells(cells, w, h):
-    """Atlas cells as rectangles: clipped, the whole picture dropped, cells
-    overlapping by more than 2 texels both ways merged into one."""
-    rects = []
-    for _, _, x0, y0, x1, y1 in cells:
-        x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
-        if x1 - x0 < 2 or y1 - y0 < 2 or (x1 - x0) * (y1 - y0) >= 0.9 * w * h:
-            continue
-        rects.append([x0, y0, x1, y1])
-    changed = True
-    while changed:
-        changed = False
-        for i in range(len(rects)):
-            for j in range(i + 1, len(rects)):
-                a, b = rects[i], rects[j]
-                if min(a[2], b[2]) - max(a[0], b[0]) > 2 and min(a[3], b[3]) - max(a[1], b[1]) > 2:
-                    rects[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
-                    del rects[j]
-                    changed = True
-                    break
-            if changed:
-                break
-    return sorted({tuple(r) for r in rects}, key=lambda r: (r[1], r[0]))
+merge_cells = rmcommon.merge_cells
 
 
 def cut_cell(src, rect, mode):
+    """A cell with a border of its own edge texels (colour and alpha): nothing
+    of the neighbouring cells bleeds in, and a cell whose picture reaches its
+    border (window frame pieces drawn side by side) keeps a solid edge
+    instead of fading into an invented transparent margin."""
     x0, y0, x1, y1 = rect
     cell = src[y0:y1, x0:x1]
     b = CELL_BORDER
-    if mode in ("opaque", "ignore"):
-        return pad(cell, b, b, False, False)
-    return np.pad(cell, ((b, b), (b, b), (0, 0)))  # transparent border
+    return pad(cell, b, b, False, False)
 
 
 def paste_cell(out, rect, cell_out):
@@ -288,12 +273,9 @@ def process(src, row, sel, variant, sr, alpha_sr, export_dir, notes):
     spec = VARIANTS[variant]
     cls = sel["class"]
     wrap = wrap_axes(row)
-    valid_extra = None
-    if cls == "character" and row.get("uv_mask", "-") not in ("-", "full"):
-        mask = load_rgba(os.path.join(export_dir, row["uv_mask"]))[..., 0] > 0
-        if mask.shape == src.shape[:2] and mask.any():
-            valid_extra = mask
-            notes.append(f"uv islands {mask.mean():.0%} of texels")
+    valid_extra = rmcommon.uv_island_mask(export_dir, row, cls)
+    if valid_extra is not None:
+        notes.append(f"uv islands {valid_extra.mean():.0%} of texels")
     sharpen = spec.get("sharpen", False)
     h, w = src.shape[:2]
     rects = merge_cells(rmcommon.read_cells(export_dir, row), w, h) if sel["cells"] == "1" else []
@@ -327,13 +309,16 @@ def main():
     ap.add_argument("--models", required=True, help="folder with the model files (MANIFEST.txt)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--tile", type=int, default=256, help="model tile size in source texels (default 256)")
-    ap.add_argument("--only", default="", help="comma-separated slots to process (default: all)")
+    ap.add_argument("--only", default="", help="comma-separated slots or hashes to process (default: all)")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip textures whose picture and metrics line exist already (an interrupted run)")
     args = ap.parse_args()
 
     manifest = rmcommon.read_manifest(args.export)
     selection = rmcommon.read_tsv(args.selection)
     only = set(s for s in args.only.split(",") if s)
-    todo = [s for s in selection if args.variant in s["variants"].split(",") and (not only or s["slot"] in only)]
+    todo = [s for s in selection if args.variant in s["variants"].split(",")
+            and (not only or s["slot"] in only or s["hash"] in only)]
     out_dir = os.path.join(args.out, args.variant)
     os.makedirs(out_dir, exist_ok=True)
     log_path = os.path.join(out_dir, "run.log")
@@ -343,6 +328,24 @@ def main():
         print(msg, flush=True)
         log_file.write(msg + "\n")
         log_file.flush()
+
+    cols = ["slot", "hash", "class", "mode", "wrap", "size", "de_mean", "de_p95", "psnr", "psnr_alpha", "seconds", "notes"]
+    metrics_path = os.path.join(out_dir, "metrics.tsv")
+    done = {}
+    if os.path.exists(metrics_path):
+        done = {r["hash"]: r for r in rmcommon.read_tsv(metrics_path)}
+    redo = {s["hash"] for s in todo}
+    if args.resume:
+        redo = {h for h in redo if h not in done or not os.path.exists(os.path.join(out_dir, manifest[h]["file"]))}
+        todo = [s for s in todo if s["hash"] in redo]
+    # Metrics lines are written as each texture finishes; lines of textures
+    # computed again are replaced, the others kept.
+    with open(metrics_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\t".join(cols) + "\n")
+        for h, r in done.items():
+            if h not in redo:
+                f.write("\t".join(str(r.get(c, "-")) for c in cols) + "\n")
+    metrics_file = open(metrics_path, "a", encoding="utf-8", newline="\n")
 
     spec = VARIANTS[args.variant]
     log(f"== {args.variant} ({time.strftime('%Y-%m-%d %H:%M:%S')}): {len(todo)} textures")
@@ -374,22 +377,22 @@ def main():
              "wrap": ("t" if wy else "") + ("s" if wx else "") or "-", "size": f"{src.shape[1]}x{src.shape[0]}",
              **fid, "seconds": round(dt, 3), "notes": "; ".join(notes) or "-"}
         metrics.append(m)
+        metrics_file.write("\t".join(str(m[c]) for c in cols) + "\n")
+        metrics_file.flush()
         log(f"  {sel['slot']} {row['file']}: {mode}, wrap {m['wrap']}, dE {fid['de_mean']}/{fid['de_p95']}, "
             f"PSNR {fid['psnr']} dB, alpha {fid['psnr_alpha']} dB, {dt:.2f} s; {m['notes']}")
+    metrics_file.close()
     total = time.perf_counter() - t_all
-    info = {"variant": args.variant, "textures": len(todo), "seconds": round(total, 2)}
+    info = {"variant": args.variant, "textures": len(todo), "seconds": round(total, 2),
+            "texture_seconds": round(sum(m["seconds"] for m in metrics), 2)}
     if runner is not None:
         import torch
         info.update({"arch": runner.arch, "precision": runner.requested, "precision_checks": runner.check_results,
                      "max_vram_mib": round(torch.cuda.max_memory_allocated() / 2 ** 20)})
         runner.close()
-    cols = ["slot", "hash", "class", "mode", "wrap", "size", "de_mean", "de_p95", "psnr", "psnr_alpha", "seconds", "notes"]
-    with open(os.path.join(out_dir, "metrics.tsv"), "w", encoding="utf-8", newline="\n") as f:
-        f.write("\t".join(cols) + "\n")
-        for m in metrics:
-            f.write("\t".join(str(m[c]) for c in cols) + "\n")
-    with open(os.path.join(out_dir, "run.json"), "w", encoding="utf-8") as f:
-        json.dump(info, f, indent=1)
+    if todo:  # a resumed run with nothing left keeps the last run's record
+        with open(os.path.join(out_dir, "run.json"), "w", encoding="utf-8") as f:
+            json.dump(info, f, indent=1)
     log(f"== {args.variant}: {len(todo)} textures in {total:.1f} s {json.dumps({k: v for k, v in info.items() if k != 'precision_checks'})}")
 
 

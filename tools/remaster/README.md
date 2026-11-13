@@ -50,7 +50,8 @@ to the import path). They lower their own priority to below normal.
    * axes in the manifest's `tiles` or `uv_edges` are padded cyclically,
      others by edge extension; the padding is cut off after 4x;
    * atlas cells (font glyphs, UI pictures) are cut out one by one with a
-     transparent border and pasted back;
+     border of their own edge texels and pasted back (the pilot used a
+     transparent border, which fades pieces that fill their cell);
    * RGB and alpha are upscaled separately;
    * cut-outs are thresholded at the material's alpha reference (at least
      0.5 where a draw also blends); soft alpha stays soft: Lanczos in gentle
@@ -77,6 +78,59 @@ to the import path). They lower their own priority to below normal.
    dng101b1 load without a pack, with an empty pack and with the pack).
 8. Determinism: `DW4_TEXTURE_PACK=<pack> bash work/dref/checks/det.sh EXE NAME`
    must print the same fingerprint and audio digests as without the pack.
+
+## Full run
+
+The full run uses the settings the pilot ended with: the variant follows
+content and source format, not the name alone.
+
+1. `classify.py --export <dir>\export --out <dir>\out\classes.tsv`: a class
+   and variant for every texture (rules in its docstring), the language
+   (`usa` 1 for what the USA release loads; the others are computed too and
+   marked by `lang`), whether atlas cells are cut out, and whether the
+   texture is curated. `class_overrides.tsv` holds the visual checks (enemy
+   skins, painted pictures and ornaments among the unnamed stage textures,
+   and the few textures whose first result looked wrong). C8 stage textures
+   drawn additively count as glows; stage textures that are flat graphics
+   (many hard jumps between flat areas: panels, signs, LED grids; not
+   cut-outs) go to the 2D model, because PBRify smears pixel art.
+
+   | Class | Variant |
+   | --- | --- |
+   | environment (materials, foliage) | `pbrify_v4` |
+   | env_graphic (flat stage graphics) | `ultrasharp_v2` |
+   | env_glow (additive stage overlays), effect | `lanczos_sharp` |
+   | character, weapon, item, card (BC1 imagery) | `hdcube3` |
+   | boss, portrait (painted) | `hdcube3`, curated against `ultrasharp_v2` |
+   | ui (C8 2D, multi-tone digits), loading, title, decal | `ultrasharp_v2` |
+   | font (font00) | `pathb` (glyphs), `ultrasharp_v2` (button cells) |
+
+2. `upscale.py --variant V --selection <dir>\out\classes.tsv --out <dir>\out\full --resume ...`
+   for `lanczos_sharp`, `pathb`, `ultrasharp_v2`, `hdcube3`, `pbrify_v4`
+   (one model at a time; each takes the textures whose `variants` name it).
+   Cells are cut out with a border of their own edge texels (pieces that
+   fill their cell keep solid edges), and 3D skins (characters, bosses,
+   weapons, items) are filled outside their UV islands.
+3. `finalize.py --export ... --classes ... --up <dir>\out\full --out <dir>\out`:
+   `master4x\<hash>.png` (4x RGBA), `high2x\<hash>.png` (2x: Lanczos3 on
+   premultiplied colour, wrap-aware, clamped to each 4 x 4 footprint so no
+   ringing halo appears; cut-outs stay binary with their coverage),
+   `report.tsv` (class, variant, CIEDE2000 before and after correction,
+   alpha PSNR, seam check, flags, seconds) and `report.json` (counts,
+   palette group check). Soft alpha whose 4x result misses the source's
+   coverage by more than 0.08 (a model that made a half-transparent outline
+   or shadow solid) takes the Lanczos alpha there. Curation blends the alternative in through a
+   feathered mask where the base lost detail the alternative kept (per
+   texel CIEDE2000 against the source). Colour correction where the mean
+   CIEDE2000 exceeds 3 (not for cards, whose redraw look is intended): the
+   low-passed difference to the source (sigma 2 texels, 1 when needed) is
+   added back, for all palette variants of a group alike, and kept only
+   when it lowers the mean noticeably.
+4. `contact_sheets.py --report <dir>\out\report.tsv --classes ... --final <dir>\out --up <dir>\out\full --out <dir>\out\sheets`:
+   six textures per sheet (original and final, crops of 32 x 32 texels at
+   8x: original, Lanczos, final, and the corner where four copies meet for
+   tiling environment textures): 60 random ones, every flagged one, and the
+   curated ones with both variants.
 
 ## Text path B
 

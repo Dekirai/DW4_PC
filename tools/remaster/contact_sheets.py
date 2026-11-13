@@ -269,15 +269,161 @@ def palette_check(pair, manifest, up_dir, export_dir, variant, out_path):
     return {"src_mean": src_diff[..., :3].mean() * 255, "out_mean": out_diff[..., :3].mean() * 255, "alpha_max": alpha_same * 255}
 
 
+# ------------------------------------------------------- full-run sheets
+
+UPRIGHT_FULL = UPRIGHT | {"portrait", "decal"}
+SHEET_PIC = 240  # pixels per picture column
+
+
+def _tile(img, size, mode, upright, checker=8):
+    disp = composite(img, mode, checker)
+    if upright:
+        disp = disp[::-1]
+    return to_pil(fit(disp, size, size))
+
+
+def report_row(d, sheet, y, rep, cls_row, row, export_dir, final_dir, extra, f_s, size=SHEET_PIC):
+    """One texture: original | final (full pictures), then crops of 32 x 32
+    source texels at 8x: original (nearest), Lanczos, final, and the corner
+    where four copies meet (tiling environment) or a second detail; `extra`
+    adds more crops (the curated variants)."""
+    src = load_rgba(os.path.join(export_dir, "textures", row["file"]))
+    mode = alpha_mode(row)
+    cls = cls_row["class"]
+    upright = cls in UPRIGHT_FULL
+    final = load_rgba(os.path.join(final_dir, row["hash"] + ".png"))
+    h, w = src.shape[:2]
+    cw, ch = min(32, w), min(32, h)
+    wy, wx = wrap_axes(row)
+    seam = (wy or wx) and cls in ("environment", "env_glow")
+    centres = detail_centres(src, cw, ch, 2)
+    x = GUTTER
+    flagged = rep["flags"] not in ("-", "", "curated")
+    lines = [f"{row['hash']}  {row['width']}x{row['height']} {row['format']}",
+             row["names"][:34],
+             f"class {cls} ({cls_row['lang'][:20]})",
+             rep["variant"][:38],
+             f"mode {mode}, wrap {rep['wrap']}, cells {rep['cells']}",
+             f"dE {rep['de_raw']}/{rep['p95_raw']} -> {rep['de']}/{rep['p95']}",
+             f"alpha {rep['psnr_alpha']} dB; seam {rep['seam']}"[:44],
+             f"fix: {rep['colour_fix']}"[:44],
+             f"flags: {rep['flags']}"[:44]]
+    for i, t in enumerate(lines):
+        colour = (255, 230, 120) if i == 0 else ((255, 140, 140) if i == len(lines) - 1 and flagged else (210, 210, 210))
+        d.text((x, y + 4 + i * 19), t, fill=colour, font=f_s)
+    x += 300
+    for label, pic in (("original", nearest(src, 4)), ("final 4x", final)):
+        sheet.paste(_tile(pic, size, mode, upright, 16), (x, y + 20))
+        d.text((x, y + 2), label, fill=(255, 255, 255), font=f_s)
+        x += size + GUTTER
+
+    def crop(img, cx, cy, tiled=False):
+        part = img[::-1] if upright else img
+        if tiled:
+            return crop4(part, 0, 0, cw, ch, tiled=True)
+        return crop4(part, cx, h - cy if upright else cy, cw, ch)
+
+    cx, cy = centres[0]
+    items = [("orig", crop(nearest(src, 4), cx, cy)), ("Lanczos", crop(rmcommon.lanczos4(src, 4), cx, cy)),
+             ("final", crop(final, cx, cy))]
+    if seam:
+        items.append(("final, 2x2 tiled corner", crop(final, 0, 0, tiled=True)))
+    else:
+        items.append(("final, detail 2", crop(final, *centres[1])))
+    items += extra(lambda img: crop(img, cx, cy))
+    for label, pic in items:
+        disp = composite(pic, mode, 8)
+        zoomed = cv2.resize(disp, (size, int(size * ch / cw)), interpolation=cv2.INTER_NEAREST)
+        sheet.paste(to_pil(zoomed), (x, y + 20))
+        d.text((x, y + 2), label[:30], fill=(255, 255, 255), font=f_s)
+        x += size + GUTTER
+
+
+def report_sheets(args):
+    """Full-run sheets, --rows textures each: a random sample, every flagged
+    texture, and the curated ones with their base and alternative."""
+    import random
+    manifest = rmcommon.read_manifest(args.export)
+    classes = {r["hash"]: r for r in rmcommon.read_tsv(args.classes)}
+    report = [r for r in rmcommon.read_tsv(args.report) if "missing" not in r["flags"] and r.get("variant", "-") != "-"]
+    final_dir = os.path.join(args.final, "master4x")
+    rng = random.Random(args.seed)
+    pool = [r for r in report if not args.usa_only or r["usa"] == "1"]
+    picks = rng.sample(pool, min(args.random, len(pool)))
+    flagged = [r for r in report if r["flags"] not in ("-", "", "curated")]
+    flagged.sort(key=lambda r: (r["class"], -float(r["de"] or 0)))  # like with like, worst first
+    curated = [r for r in report if "curated" in r["flags"].split(",")]
+    sets = [("random", picks, False), ("flagged", flagged, False), ("curated", curated, True)]
+    if args.only_set:
+        sets = [s for s in sets if s[0] in args.only_set.split(",")]
+    if args.only:  # just these textures, in one set
+        keep = set(args.only.split(","))
+        sets = [("selected", [r for r in report if r["hash"] in keep], False)]
+    os.makedirs(args.out, exist_ok=True)
+    f_s, f_l = font(15), font(20)
+    size = SHEET_PIC
+    compare = [v for v in args.compare.split(",") if v]
+    for name, rows, with_variants in sets:
+        ncols = 6 + (2 if with_variants else len(compare))
+        width = GUTTER + 300 + ncols * (size + GUTTER)
+        per = args.rows
+        pages = (len(rows) + per - 1) // per
+        for page in range(pages):
+            chunk = rows[page * per:(page + 1) * per]
+            row_h = size + 30
+            sheet = Image.new("RGB", (width, 36 + len(chunk) * (row_h + GUTTER)), BG)
+            d = ImageDraw.Draw(sheet)
+            d.text((GUTTER, 6), f"DW4 remaster full run - {name} {page + 1}/{pages}: crops of 32 x 32 texels at 8x "
+                   f"(4x pixels shown 2x)", fill=(255, 230, 120), font=f_l)
+            for i, rep in enumerate(chunk):
+                cls_row = classes[rep["hash"]]
+                row = manifest[rep["hash"]]
+
+                def extra(crop, cls_row=cls_row, row=row, with_variants=with_variants):
+                    out = []
+                    for v in ((cls_row["model"], cls_row["alt"]) if with_variants else compare):
+                        p = os.path.join(args.up, v, row["file"])
+                        if v != "-" and os.path.exists(p):
+                            out.append((v, crop(load_rgba(p))))
+                    return out
+                report_row(d, sheet, 36 + i * (row_h + GUTTER), rep, cls_row, row, args.export, final_dir, extra, f_s,
+                           size)
+            path = os.path.join(args.out, f"{name}_{page + 1:02d}.png")
+            sheet.save(path)
+            print(f"{path}: {len(chunk)} textures", flush=True)
+    with open(os.path.join(args.out, "sheets.tsv"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("set\tsheet\thash\tnames\tclass\tflags\n")
+        for name, rows, _ in sets:
+            for i, r in enumerate(rows):
+                f.write(f"{name}\t{i // args.rows + 1}\t{r['hash']}\t{r['names']}\t{r['class']}\t{r['flags']}\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--export", required=True)
-    ap.add_argument("--selection", required=True)
-    ap.add_argument("--up", required=True)
+    ap.add_argument("--selection", help="pilot: the selection TSV")
+    ap.add_argument("--up", required=True, help="upscale.py's output folder")
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-width", type=int, default=4096)
     ap.add_argument("--palette-variant", default="pbrify_v4", help="model shown in the palette variant check")
+    ap.add_argument("--report", help="full run: finalize.py's report.tsv (sheets of random, flagged and curated textures)")
+    ap.add_argument("--classes", help="full run: classify.py's classes.tsv")
+    ap.add_argument("--final", help="full run: finalize.py's output folder (with master4x/)")
+    ap.add_argument("--random", type=int, default=60, help="full run: random textures shown (default 60)")
+    ap.add_argument("--rows", type=int, default=6, help="full run: textures per sheet (default 6)")
+    ap.add_argument("--seed", type=int, default=4, help="full run: random seed")
+    ap.add_argument("--usa-only", action="store_true", help="full run: random picks among USA textures only")
+    ap.add_argument("--only-set", default="", help="full run: comma-separated sets (random, flagged, curated)")
+    ap.add_argument("--only", default="", help="full run: comma-separated hashes, shown as the set 'selected'")
+    ap.add_argument("--compare", default="", help="full run: variants shown next to the final crop (not curated sets)")
     args = ap.parse_args()
+    if args.report:
+        if not (args.classes and args.final):
+            ap.error("--report needs --classes and --final")
+        report_sheets(args)
+        return
+    if not args.selection:
+        ap.error("--selection or --report is required")
     manifest = rmcommon.read_manifest(args.export)
     selection = rmcommon.read_tsv(args.selection)
     variants = sorted({v for s in selection for v in s["variants"].split(",")})

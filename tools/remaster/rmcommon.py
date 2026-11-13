@@ -149,6 +149,51 @@ def wrap_axes(row):
     return ("t" in axes, "s" in axes)
 
 
+def merge_cells(cells, w, h):
+    """Atlas cells as rectangles: clipped, the whole picture dropped, cells
+    overlapping by more than 2 texels both ways merged into one."""
+    rects = []
+    for _, _, x0, y0, x1, y1 in cells:
+        x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+        if x1 - x0 < 2 or y1 - y0 < 2 or (x1 - x0) * (y1 - y0) >= 0.9 * w * h:
+            continue
+        rects.append([x0, y0, x1, y1])
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(rects)):
+            for j in range(i + 1, len(rects)):
+                a, b = rects[i], rects[j]
+                if min(a[2], b[2]) - max(a[0], b[0]) > 2 and min(a[3], b[3]) - max(a[1], b[1]) > 2:
+                    rects[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+                    del rects[j]
+                    changed = True
+                    break
+            if changed:
+                break
+    return sorted({tuple(r) for r in rects}, key=lambda r: (r[1], r[0]))
+
+
+def edge_stats(src, mode):
+    """(hard, flat): shares of neighbouring texel pairs whose visible
+    luminance (colour times alpha for blended and additive textures) jumps
+    by more than 35 % of the picture's range, and by less than 2 %. Glows
+    and soft gradients have almost no hard jumps; pixel art and flat
+    graphics (screens, panels, signs, lettering) have many hard jumps
+    between flat areas; natural materials (rock, ground, bark) have few of
+    either."""
+    a = src[..., 3:4]
+    vis = src[..., :3] if mode in ("opaque", "ignore") else src[..., :3] * a
+    y = vis @ np.array([0.299, 0.587, 0.114], np.float32)
+    rng = max(float(np.percentile(y, 99) - np.percentile(y, 1)), 0.05)
+    jumps = np.concatenate([np.abs(np.diff(y, axis=1)).ravel(), np.abs(np.diff(y, axis=0)).ravel()]) / rng
+    return float((jumps > 0.35).mean()), float((jumps < 0.02).mean())
+
+
+def hard_edge_fraction(src, mode):
+    return edge_stats(src, mode)[0]
+
+
 # ------------------------------------------------------------- preprocessing
 
 def fill_under(rgb, valid):
@@ -329,3 +374,178 @@ def fidelity(src, out, mode, mask=None):
     amse = float(((sa - box_down(oa)) ** 2).mean())
     return {"de_mean": round(de_mean, 3), "de_p95": round(de_p95, 3), "psnr": round(psnr(mse), 2),
             "psnr_alpha": round(psnr(amse), 2)}
+
+
+# ------------------------------------------------------------ finishing steps
+
+UV_ISLAND_CLASSES = {"character", "boss", "weapon", "item"}
+
+
+def uv_island_mask(export_dir, row, cls):
+    """The texels the meshes' UVs cover (the export's uvmask) for 3D skins
+    whose UVs do not scroll, or None: upscale.py fills everything else from
+    the islands, and the fidelity check counts only the islands."""
+    if cls not in UV_ISLAND_CLASSES or row.get("uv_mask", "-") in ("-", "full") or row.get("uv_motion", "-") != "-":
+        return None
+    mask = load_rgba(os.path.join(export_dir, row["uv_mask"]))[..., 0] > 0
+    h, w = int(row["height"]), int(row["width"])
+    if mask.shape != (h, w) or not 0.05 <= mask.mean() <= 0.98:
+        return None
+    return mask
+
+
+def visible_pair(src, out, mode):
+    """(source colour, result shrunk back 4x by area means, weights) as the
+    player sees them: additive textures as colour times alpha over black,
+    blended ones alpha-weighted (the colour where the result is visible)."""
+    sa = src[..., 3]
+    oa = out[..., 3]
+    if mode == "additive":
+        return src[..., :3] * sa[..., None], box_down(out[..., :3] * oa[..., None]), np.ones_like(sa)
+    if mode in ("opaque", "ignore"):
+        return src[..., :3], box_down(out[..., :3]), np.ones_like(sa)
+    pa = box_down(out[..., :3] * oa[..., None])
+    da = box_down(oa)
+    d = np.where(da[..., None] > 1e-4, pa / np.maximum(da, 1e-4)[..., None], box_down(out[..., :3]))
+    return src[..., :3], d, sa
+
+
+def local_de(src, out, mode):
+    """CIEDE2000 per source texel between the source and the result shrunk back."""
+    s, d, _ = visible_pair(src, out, mode)
+    return delta_e2000(srgb_to_lab(s), srgb_to_lab(d)).astype(np.float32)
+
+
+def _blur_weighted(x, w, sigma, wrap):
+    """Gaussian blur of x weighted by w (normalised convolution), with the
+    texture's wrap on each axis; texels without weight nearby get the push-pull fill."""
+    wy, wx = wrap
+    r = int(np.ceil(3 * sigma)) + 1
+    xp = pad(x * w[..., None], r, r, wy, wx)
+    wp = pad(w, r, r, wy, wx)
+    num = cv2.GaussianBlur(xp, (0, 0), sigma)
+    den = cv2.GaussianBlur(wp, (0, 0), sigma)
+    num, den = num[r:-r, r:-r], den[r:-r, r:-r]
+    ok = den > 1e-3
+    out = np.where(ok[..., None], num / np.maximum(den, 1e-3)[..., None], 0.0).astype(np.float32)
+    if not ok.all() and ok.any():
+        out = fill_under(out, ok)
+    return out
+
+
+def colour_fix(src, out, mode, wrap, mask=None, sigma=2.0, strength=1.0):
+    """Gentle colour correction of a 4x result: the difference between the
+    source and the result shrunk back (per texel, as the player sees it),
+    low-passed with a Gaussian of `sigma` source texels and added back at 4x.
+    The model's detail inside each texel stays; only slow colour and
+    brightness shifts (a model's brightening, saturation) go."""
+    s, d, w = visible_pair(src, out, mode)
+    if mask is not None:
+        w = w * mask
+    resid = _blur_weighted((s - d).astype(np.float32), w.astype(np.float32), sigma, wrap)
+    h, wd = resid.shape[:2]
+    wy, wx = wrap
+    p = 2
+    rp = pad(resid, p, p, wy, wx)
+    up = cv2.resize(rp, (rp.shape[1] * 4, rp.shape[0] * 4), interpolation=cv2.INTER_LINEAR)
+    up = up[p * 4:(p + h) * 4, p * 4:(p + wd) * 4] * strength
+    res = out.copy()
+    if mode == "additive":
+        a = out[..., 3:4]
+        vis = np.clip(out[..., :3] * a + up, 0.0, 1.0)
+        res[..., :3] = np.where(a > 1.0 / 255.0, np.clip(vis / np.maximum(a, 1.0 / 255.0), 0.0, 1.0), out[..., :3])
+    else:
+        res[..., :3] = np.clip(out[..., :3] + up, 0.0, 1.0)
+    return res
+
+
+def keep_alpha_coverage(src_a, a4, wrap, tol=0.08, span=0.12):
+    """Soft alpha of a 4x result checked against the source's coverage:
+    where the result shrunk back by 4 x 4 area means misses the source alpha
+    by more than `tol` (a model that turned a half-transparent margin, a
+    soft dark outline or a shadow, into solid alpha), the Lanczos alpha
+    takes over, blended in smoothly over `span`; edges the model drew where
+    the source has them stay sharp."""
+    h, w = src_a.shape
+    wy, wx = wrap
+    py, px = pad_amount(h, wy), pad_amount(w, wx)
+    lz = lanczos4(pad(src_a[..., None], py, px, wy, wx), 4)[..., 0][py * 4:(py + h) * 4, px * 4:(px + w) * 4]
+    err = np.abs(box_down(a4) - src_a)
+    wgt = np.clip((err - tol) / span, 0.0, 1.0).astype(np.float32)
+    wgt = cv2.dilate(wgt, np.ones((3, 3), np.uint8))
+    p = 2
+    wp = cv2.GaussianBlur(pad(wgt, p, p, wy, wx), (0, 0), 0.7)
+    w4 = cv2.resize(wp, ((w + 2 * p) * 4, (h + 2 * p) * 4), interpolation=cv2.INTER_LINEAR)[p * 4:-p * 4, p * 4:-p * 4]
+    w4 = np.clip(w4, 0.0, 1.0)
+    return (a4 * (1.0 - w4) + lz * w4).astype(np.float32), float(wgt.mean())
+
+
+def _lanczos3_half_weights():
+    d = np.arange(-5, 7, dtype=np.float64)  # input texel 2j + d contributes to output texel j
+    t = (d - 0.5) / 2.0
+    w = np.sinc(t) * np.sinc(t / 3.0)
+    return d.astype(int), (w / w.sum()).astype(np.float32)
+
+
+def _down2_axis(x, axis, wrap):
+    offs, wts = _lanczos3_half_weights()
+    n = x.shape[axis]
+    p = 6
+    width = [(0, 0)] * x.ndim
+    width[axis] = (p, p)
+    xp = np.pad(x, width, mode="wrap" if wrap else "edge")
+    m = n // 2
+    out = np.zeros(x.shape[:axis] + (m,) + x.shape[axis + 1:], np.float32)
+    lo = np.full_like(out, np.inf)
+    hi = np.full_like(out, -np.inf)
+    for o, wgt in zip(offs, wts):
+        idx = np.arange(m) * 2 + o + p
+        part = np.take(xp, idx, axis=axis)
+        out += wgt * part
+        if -1 <= o <= 2:  # the 4-texel footprint bounds the ringing
+            lo = np.minimum(lo, part)
+            hi = np.maximum(hi, part)
+    return np.clip(out, lo, hi)
+
+
+def down2(x, wrap):
+    """Half size with a Lanczos3 filter (wrap-aware per axis), each output
+    clamped to the range of its 4 x 4 input footprint (no ringing haloes)."""
+    wy, wx = wrap
+    return _down2_axis(_down2_axis(x.astype(np.float32), 0, wy), 1, wx)
+
+
+def downscale2x(img, mode, wrap):
+    """The 2x level from a 4x result: premultiplied colour (what blending
+    and bilinear filtering mix), alpha alike; cut-outs stay binary with
+    their coverage (threshold 0.5 of the filtered mask); colour under alpha
+    0 keeps the straight filtered colour (the fill), so filtering at the
+    edges reads no black."""
+    rgb, a = img[..., :3], img[..., 3]
+    if mode in ("opaque", "ignore"):
+        rgb2 = down2(rgb, wrap)
+        a2 = np.ones(rgb2.shape[:2], np.float32) if mode == "opaque" else np.clip(down2(a[..., None], wrap)[..., 0], 0, 1)
+        return np.concatenate([np.clip(rgb2, 0, 1), a2[..., None]], axis=2)
+    a2 = np.clip(down2(a[..., None], wrap)[..., 0], 0.0, 1.0)
+    pm = down2(rgb * a[..., None], wrap)
+    straight = down2(rgb, wrap)
+    rgb2 = np.where(a2[..., None] > 1.0 / 255.0, pm / np.maximum(a2, 1.0 / 255.0)[..., None], straight)
+    if mode == "cutout":
+        a2 = (a2 >= 0.5).astype(np.float32)
+    return np.concatenate([np.clip(rgb2, 0, 1), a2[..., None]], axis=2).astype(np.float32)
+
+
+def border_jump(img, mode, axis, mask=None):
+    """Mean jump of the visible colour across the wrap border on an axis
+    (0: between the last and the first row, t; 1: columns, s). A 4x result
+    that wraps like its source jumps there at most about as much as the
+    source does between its last and first texel; more is a seam. `mask`
+    (source texels, e.g. the UV islands) limits it to border positions
+    drawn on both sides."""
+    vis = img[..., :3] * img[..., 3:4] if mode in ("additive", "blend", "cutout") else img[..., :3]
+    d = np.abs(vis[0] - vis[-1]).mean(axis=-1) if axis == 0 else np.abs(vis[:, 0] - vis[:, -1]).mean(axis=-1)
+    if mask is None:
+        return float(d.mean())
+    m = (mask[0] & mask[-1]) if axis == 0 else (mask[:, 0] & mask[:, -1])
+    m = np.repeat(m, d.shape[0] // m.shape[0]).astype(np.float32)
+    return float((d * m).sum() / m.sum()) if m.sum() > 0 else 0.0

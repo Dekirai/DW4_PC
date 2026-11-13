@@ -152,6 +152,57 @@ class PipelineTests(unittest.TestCase):
         # A gentle ramp (1/15 a texel) takes the Lanczos alpha, not the steepened one.
         np.testing.assert_allclose(out[..., 3], lan[..., 3], atol=1e-6)
 
+    def test_cells_keep_a_solid_edge(self):
+        # A frame piece that fills its cell: its border must not fade out.
+        src = np.zeros((16, 16, 4), np.float32)
+        src[:, :8] = (1.0, 0.0, 0.0, 1.0)
+        cell = upscale.cut_cell(src, (0, 0, 8, 16), "blend")
+        self.assertEqual(cell.shape, (16 + 2 * upscale.CELL_BORDER, 8 + 2 * upscale.CELL_BORDER, 4))
+        self.assertEqual(float(cell[..., 3].min()), 1.0)  # no transparent margin, no bleed from the right half
+
+
+class FinishingTests(unittest.TestCase):
+    def test_down2_keeps_flat_colour_and_wraps(self):
+        flat = np.full((16, 8, 3), 0.3, np.float32)
+        np.testing.assert_allclose(rmcommon.down2(flat, (False, False)), 0.3, atol=1e-6)
+        stripes = np.zeros((8, 16, 1), np.float32)
+        stripes[:, ::4] = 1.0  # period 4: a 2x level of it is periodic as well
+        d = rmcommon.down2(stripes, (False, True))
+        self.assertEqual(d.shape, (4, 8, 1))
+        np.testing.assert_allclose(d[:, 0], d[:, 2], atol=1e-5)  # the left edge sees the right one (wrap)
+
+    def test_downscale2x_cutout_stays_binary_and_keeps_coverage(self):
+        img = np.zeros((32, 32, 4), np.float32)
+        img[..., :3] = 0.6
+        img[8:24, 8:24, 3] = 1.0
+        d = rmcommon.downscale2x(img, "cutout", (False, False))
+        self.assertEqual(set(np.unique(d[..., 3]).tolist()), {0.0, 1.0})
+        self.assertAlmostEqual(float(d[..., 3].mean()), float(img[..., 3].mean()), delta=0.02)
+        np.testing.assert_allclose(d[..., :3], 0.6, atol=1e-5)  # no dark fringe from colour under alpha 0
+
+    def test_colour_fix_removes_a_slow_shift_and_keeps_detail(self):
+        rng = np.random.default_rng(3)
+        src = np.concatenate([rng.uniform(0.3, 0.7, (16, 16, 3)), np.ones((16, 16, 1))], axis=2).astype(np.float32)
+        detail = rng.uniform(-0.05, 0.05, (64, 64, 1)).astype(np.float32)
+        out = rmcommon.nearest(src, 4).copy()
+        out[..., :3] = np.clip(out[..., :3] + 0.12 + detail, 0, 1)  # brightened, with fine detail
+        before = rmcommon.fidelity(src, out, "opaque")["de_mean"]
+        fixed = rmcommon.colour_fix(src, out, "opaque", (False, False), sigma=2.0)
+        self.assertGreater(before, 5.0)
+        self.assertLess(rmcommon.fidelity(src, fixed, "opaque")["de_mean"], 1.5)
+
+        def high_pass(x):  # what is left inside each 4 x 4 block
+            return x[..., 0] - rmcommon.nearest(rmcommon.box_down(x[..., :1]), 4)[..., 0]
+        self.assertGreater(np.corrcoef(high_pass(fixed).ravel(), high_pass(out).ravel())[0, 1], 0.95)
+
+    def test_hard_edge_fraction(self):
+        y, x = np.mgrid[0:32, 0:32]
+        glow = np.exp(-((x - 16) ** 2 + (y - 16) ** 2) / 60.0).astype(np.float32)
+        soft = np.dstack([glow, glow, glow, np.ones_like(glow)])
+        hard = np.dstack([((x // 2 + y // 2) % 2).astype(np.float32)] * 3 + [np.ones_like(glow)])
+        self.assertLess(rmcommon.hard_edge_fraction(soft, "opaque"), 0.01)
+        self.assertGreater(rmcommon.hard_edge_fraction(hard, "opaque"), 0.4)
+
 
 if __name__ == "__main__":
     unittest.main()
