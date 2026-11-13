@@ -338,6 +338,10 @@ StageSnapshot decode_snapshot(std::span<const std::uint8_t> bytes) {
     StateArchive archive(bytes);
     StageSnapshot snapshot;
     serialize_snapshot(archive, snapshot);
+    // (Every caller hands over exactly one snapshot. Since a version reads
+    // its predecessor, bytes left over mean another version's state under
+    // this version number: refused, never half read; round I1b's integration.)
+    if (!archive.at_end()) throw std::runtime_error("save state from another version (bytes left over)");
     return snapshot;
 }
 

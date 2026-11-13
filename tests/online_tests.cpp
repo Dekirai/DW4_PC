@@ -110,6 +110,16 @@ void snapshot_bytes() {
     const auto from43 = decode_snapshot(v43);
     check(from43.random_wait_min == 0.0f && from43.stage == "dng101b1" && from43.personal[2] == personal && from43.online == s.online,
           "a version 43 snapshot loads, its minimum 0");
+    // A 44 state under the number 43 (four bytes left over) is refused, never half read.
+    auto relabelled = bytes;
+    relabelled[0] = 43;
+    bool refused43 = false;
+    try {
+        (void)decode_snapshot(relabelled);
+    } catch (const std::exception&) {
+        refused43 = true;
+    }
+    check(refused43, "bytes left over after a snapshot are refused");
     // A version 42 state no longer loads.
     auto old = bytes;
     old[0] = 42;
