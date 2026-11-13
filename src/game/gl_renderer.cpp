@@ -117,8 +117,17 @@ struct GlRenderer::Impl {
     // equals GL_DEPTH_CLAMP's per-pixel clamp only for triangles that lie
     // wholly on one side of the near and of the far plane. Counts the
     // orthographic triangles that cross one, logged at 1, 10, 100, ...
+    // and as a total at the end.
     bool check_depth_clamp = std::getenv("DW4_CHECK_DEPTH_CLAMP") != nullptr;
     std::uint64_t clamp_checked{}, clamp_crossing{}, clamp_report{1};
+    Impl() = default;
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    ~Impl() {
+        if (check_depth_clamp)
+            std::cout << "renderer: depth clamp check: " << clamp_crossing << " of " << clamp_checked
+                      << " orthographic triangles crossed the near or far plane\n";
+    }
     void check_clamp(const engine::GeometryData& g, const engine::Mat4& mvp) {
         auto side = [&](std::uint32_t index) {
             if (index >= g.positions.size()) return 0;
