@@ -120,7 +120,6 @@ struct GlRenderer::Impl {
     // and as a total at the end.
     bool check_depth_clamp = std::getenv("DW4_CHECK_DEPTH_CLAMP") != nullptr;
     std::uint64_t clamp_checked{}, clamp_crossing{}, clamp_report{1};
-    Impl() = default;
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
     ~Impl() {
