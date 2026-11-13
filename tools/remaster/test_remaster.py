@@ -108,6 +108,60 @@ class SmoothingAndMaskTests(unittest.TestCase):
         self.assertTrue(np.all(np.abs(s * 255 - q) <= 18.0 + 1e-3))
         self.assertLess(np.abs(np.diff(s, axis=0)).max(), np.abs(np.diff(a, axis=0)).max())
 
+    def test_stepped_ramp_smoothed_pattern_not(self):
+        import classify
+        y, x = np.mgrid[0:32, 0:32]
+        lv = np.array([0, 36, 72, 108, 144, 180, 216], np.float32) / 255.0
+        ramp = np.zeros((32, 32, 4), np.float32)
+        ramp[..., :3] = 1.0
+        ramp[..., 3] = lv[np.clip((x + y // 8) // 5, 0, 6)]  # a glow's stepped ramp: plateaus 5 texels wide
+        self.assertTrue(classify.stepped_alpha(ramp))
+        # A pattern in the same kind of levels (heat haze): streaks 3 texels
+        # wide, each one level from its neighbours (a random walk over the
+        # blobs). It passes the staircase tests; only its fine detail tells.
+        r = np.random.default_rng(11)
+        g = np.zeros((32, 11), int)
+        g[0, 0] = 3
+        for j in range(32):
+            for i in range(11):
+                if i or j:
+                    c = (g[j, i - 1] if i else g[j - 1, i]) + int(r.integers(-1, 2))
+                    if j and abs(c - g[j - 1, i]) > 1:
+                        c = g[j - 1, i] + int(np.sign(c - g[j - 1, i]))
+                    g[j, i] = min(max(c, 1), 6)
+        pattern = ramp.copy()
+        pattern[..., 3] = np.append(lv, 252 / 255.0)[np.repeat(g, 3, axis=1)[:, :32]]
+        self.assertGreater(classify.fine_detail_share(pattern[..., 3], (True, True)), classify.STEPPED_FINE)
+        self.assertFalse(classify.stepped_alpha(pattern, (True, True)))
+        fine = classify.STEPPED_FINE
+        try:
+            classify.STEPPED_FINE = 1.0
+            self.assertTrue(classify.stepped_alpha(pattern, (True, True)))
+        finally:
+            classify.STEPPED_FINE = fine
+
+    def test_texture_override_columns(self):
+        import classify
+        auto = ("lanczos_sharp", "smooth", (True, False), "t: tiles")
+        m, p, w, note, reg = classify.apply_override({"model": "-", "pre": "none", "wrap": "-", "region": "-"}, *auto)
+        self.assertEqual((m, p, w, reg), ("lanczos_sharp", "-", (True, False), None))
+        m, p, w, note, reg = classify.apply_override({"model": "lanczos", "pre": "-", "wrap": "none",
+                                                      "region": "ultrasharp_v2:0,16,32,32"}, *auto)
+        self.assertEqual((m, p, w, reg), ("lanczos", "smooth", (False, False), ("ultrasharp_v2", (0, 16, 32, 32))))
+        self.assertIn("override none", note)
+        self.assertEqual(classify.apply_override({"wrap": "st"}, *auto)[2], (True, True))
+        with self.assertRaises(ValueError):
+            classify.parse_region("ultrasharp_v2:0,16,32")
+
+    def test_region_paste_takes_the_rectangle(self):
+        import finalize
+        base = np.zeros((16, 16, 4), np.float32)
+        alt = np.ones((16, 16, 4), np.float32)
+        out = finalize.region_paste(base, alt, (0, 2, 4, 4))
+        self.assertEqual(float(out[8:16, 0:16].min()), 1.0)
+        self.assertEqual(float(out[:8].max()), 0.0)
+        self.assertEqual(float(base.max()), 0.0)  # the input stays as it was
+
     def test_cutout_mask_from_source_shape(self):
         import upscale
         src = np.zeros((8, 8, 4), np.float32)

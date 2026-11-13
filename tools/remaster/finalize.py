@@ -19,6 +19,9 @@ Per texture:
   against the source more than DETAIL_GAIN lower, and the base's above
   DETAIL_FLOOR), the alternative is blended in through a feathered mask;
   `--curation` (hash, choice base|alt|merge, gain) overrides it per texture;
+* region (classes.tsv `region`, from texture_overrides.tsv): a rectangle
+  of source texels taken from a second variant (UI symbols beside a noise
+  field that only Lanczos keeps clean);
 * soft rims (ui, decal): where the source alpha is partial (the soft dark
   shadow or outline of HUD digits and lettering, a decal's anti-aliased
   rim) and next to it, alpha and colour come from the Lanczos 4x of the
@@ -35,10 +38,13 @@ Per texture:
   margin, a soft outline or shadow, solid), the Lanczos alpha takes over;
 * colour fidelity: the result shrunk back 4x by area means against the
   source, as the player sees it (CIEDE2000 mean / 95th percentile, PSNR);
-* colour correction where the mean exceeds FIX_ABOVE (not for cards, whose
+* colour correction where the mean exceeds FIX_FROM (not for cards, whose
   redraw look is intended): the low-passed difference to the source is
   added back (sigma 2 texels; 1 texel when that is not enough), for all
-  palette variants of a group alike;
+  palette variants of a group alike; FIX_FROM lies below the flag's
+  FIX_ABOVE, so a result that ends up just under the flag (better edges)
+  keeps its correction; not for `pre` smooth or dither (their distance to
+  the source is the dequantising, which a correction would undo);
 * seams (3D classes): on axes padded cyclically, the jump of the result
   across the wrap border against the source's jump there;
 * flags: de_raw>3, de>3 (still, after the correction), p95>12,
@@ -62,8 +68,10 @@ import numpy as np  # noqa: E402
 from rmcommon import (alpha_mode, colour_fix, downscale2x, fidelity, keep_alpha_coverage, load_rgba,  # noqa: E402
                       local_de, nearest, save_rgba, border_jump, uv_island_mask, wrap_axes)
 
-FIX_ABOVE = 3.0  # mean CIEDE2000 above which the colour is corrected
+FIX_ABOVE = 3.0  # mean CIEDE2000 above which a texture is flagged (de_raw>3, de>3)
+FIX_FROM = 2.5  # ... and above which the colour is corrected
 FIX_TARGET = 2.5  # the gentler correction is kept when it reaches this
+DEQUANTISED = {"smooth", "dither"}  # pre steps whose distance to the source is intended: no correction
 MIN_GAIN = 0.25  # a correction that lowers the mean by less is not applied
 DETAIL_GAIN = 2.0  # curation: the alternative's per-texel dE this much lower ...
 DETAIL_FLOOR = 4.0  # ... where the base's is above this
@@ -98,6 +106,14 @@ def curated_merge(src, base, alt, mode, mask, gain):
     if mode == "cutout":
         out[..., 3] = (out[..., 3] >= 0.5).astype(np.float32)
     return out.astype(np.float32), float(m.mean()), m
+
+
+def region_paste(out, alt, rect, scale=4):
+    """The rectangle (x0, y0, x1, y1 in source texels) of `alt` pasted into `out`."""
+    x0, y0, x1, y1 = rect
+    res = out.copy()
+    res[y0 * scale:y1 * scale, x0 * scale:x1 * scale] = alt[y0 * scale:y1 * scale, x0 * scale:x1 * scale]
+    return res
 
 
 def lanczos_ref(src, row, mode, wrap):
@@ -182,7 +198,7 @@ def main():
         row = manifest[c["hash"]]
         g = row["palette_group"]
         m = metrics.get(c["model"], {}).get(c["hash"])
-        if g not in ("-", "") and m and c["colour_fix"] == "1" and float(m["de_mean"]) > FIX_ABOVE:
+        if g not in ("-", "") and m and c["colour_fix"] == "1" and float(m["de_mean"]) > FIX_FROM:
             group_fix[g] = True
 
     d4 = os.path.join(args.out, "master4x")
@@ -234,6 +250,16 @@ def main():
                     variant = c["model"] + " (curated: base)"
             else:
                 flags.append("missing_alt")
+        if c.get("region", "-") not in ("-", ""):
+            rvar, _, rect = c["region"].partition(":")
+            x0, y0, x1, y1 = (int(v) for v in rect.split(","))
+            reg_path = os.path.join(args.up, rvar, row["file"])
+            if os.path.exists(reg_path):
+                out = region_paste(out, load_rgba(reg_path), (x0, y0, x1, y1))
+                variant += f" + {rvar} ({x0},{y0})-({x1},{y1})"
+                model_s += float(metrics.get(rvar, {}).get(h, {}).get("seconds", 0) or 0)
+            else:
+                flags.append("missing_region")
         lz = None
         panel = row["names"].startswith(PANEL_PREFIX)
         if mode == "blend" and c["class"] in SOFT_RIM_CLASSES and not panel:
@@ -253,9 +279,14 @@ def main():
         fid = raw
         if raw["de_mean"] > FIX_ABOVE:
             flags.append("de_raw>3")
-        want_fix = c["colour_fix"] == "1" and (raw["de_mean"] > FIX_ABOVE or group_fix[row["palette_group"]])
+        want_fix = c["colour_fix"] == "1" and (raw["de_mean"] > FIX_FROM or group_fix[row["palette_group"]])
         if c["colour_fix"] != "1" and raw["de_mean"] > FIX_ABOVE:
             notes.append("redraw look kept (card)")
+        if want_fix and c.get("pre", "-") in DEQUANTISED:
+            # Its distance to the source is the intended dequantising: a
+            # correction would add the steps back.
+            want_fix = False
+            notes.append(f"no colour correction (pre {c['pre']}: dequantised on purpose)")
         if want_fix:
             best = None
             for sigma in (2.0, 1.0):
