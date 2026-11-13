@@ -7,10 +7,10 @@ native build is the repository's own `CMakeLists.txt` (its `if(ANDROID)` path,
 Snapdragon 8 Gen 2, Adreno 740, Android 13); other devices are not supported
 officially.
 
-Status: **phase A done** (13.11.2026: toolchain, the Gradle build offline,
-an empty app on the emulator). The app's native library is still the device
-probe `src/android/probe_main.cpp`, not the game; the game moves to Android in
-phase B.
+Status: **phase B in progress** (13.11.2026): the game itself runs on the
+emulator up to the title screen with sound, from the first start's file
+picker on ("Phase B" below). Phase A (toolchain, the Gradle build offline, the
+device probe) is done.
 
 ## Decisions this port follows
 
@@ -60,8 +60,10 @@ ABIs: `arm64-v8a` (the Thor) and `x86_64` (the emulator), `c++_static`.
 | Path | Contents |
 | --- | --- |
 | `cmake/third_party.cmake` | The FetchContent sources (SDL3, imgui, pl_mpeg, stb, zstd) for the PC and the Android build: one list; checks a local SDL copy against the pinned version |
-| `cmake/android.cmake` | The Android path of the root `CMakeLists.txt`: SDL3 shared, the library `main` |
-| `src/android/probe_main.cpp` | Phase A's device probe (the library `main`) |
+| `cmake/android.cmake` | The Android path of the root `CMakeLists.txt`: SDL3 shared, the PC's target `dw4_game` as `libmain.so`, the floating-point flags |
+| `src/game/app_paths.hpp` | `app_root()` and `private_root()`: the game's folders on each platform |
+| `src/game/platform_android.cpp` | Android only: stdout and stderr into logcat (tag `DW4`) |
+| `src/android/probe_main.cpp` | Phase A's device probe (`-DDW4_ANDROID_PROBE=ON` builds it as `libmain.so` instead of the game) |
 | `android/` | Gradle wrapper project: `settings.gradle`, `build.gradle`, `app/build.gradle`, manifest, resources, `DW4Activity.java` |
 | `android/gradlew-dw4.cmd`, `android/gradlew-dw4.sh` | The Gradle entry points: `gradlew` in DW4_PC's own Gradle user home ("Gradle user home") |
 | `android/ndk-core-check.cmd` | Compiles `dw4_core`, `dw4_engine`, `dw4_online` with the NDK for both ABIs |
@@ -346,6 +348,190 @@ Findings for phase B:
 - No depth clamp and no BC formats on either GPU; ASTC LDR everywhere.
 - The emulator's keyboard appears as a gamepad ("qwerty2", 0x0627:0x0001);
   BACK arrives as the key "AC Back".
+
+## Phase B: the game on Android (13.11.2026)
+
+### Build
+
+- `cmake/android.cmake` turns the root `CMakeLists.txt`'s own game target
+  `dw4_game` into the shared library `libmain.so` (`OUTPUT_NAME main`):
+  SDL3 shared, `OpenGL::GL` an interface target on `GLESv3` and `EGL`, no
+  tests (`BUILD_TESTING` off), the Android parts added after the target
+  exists (`cmake_language(DEFER)`: `platform_android.cpp`, `android`, `log`).
+  `game_main.cpp` includes `SDL_main.h` on Android only, so `main` is the
+  `SDL_main` SDLActivity calls. Gradle builds only `dw4_game`
+  (`targets 'dw4_game'`), with every third-party source from the PC build's
+  `_deps` (`FETCHCONTENT_SOURCE_DIR_*`).
+- The root `CMakeLists.txt` changes only under `if(ANDROID)` / `NOT ANDROID`:
+  SDL static on the PC only, `find_package(OpenGL)` on the PC only,
+  `add_library(dw4_game SHARED)` instead of `add_executable`, the
+  `DW4_PC.exe` install rule on the PC only. The Windows libraries were
+  already under `if(WIN32)`.
+- Clang flags on `dw4_core`, `dw4_engine`, `dw4_online` and `dw4_game`:
+  `-ffp-contract=off -fno-fast-math -fsigned-char` (no fused multiply-adds
+  as MSVC x64, `char` signed as on x86). `dw4_game` also gets
+  `-Wno-error=format-security` (the NDK's default error; the F1 menu's
+  wrapped text helpers pass literal formats through a variadic lambda).
+- Data Overflow builds unchanged (it reaches the paths through
+  `program_dir()`, which is `app_root()` now).
+
+### Floating-point environment
+
+`FpEnvGuard` (`src/engine/online_detail.hpp`, `online.cpp`) replaces the
+x86-only MXCSR guard at every simulation entry (`MxcsrGuard` stays as its
+name for the call sites): MXCSR 0x1F80 on x86 / x86-64 as before; on
+AArch64 FPCR with RMode round to nearest, FZ, FIZ, DN, AH, NEP and every
+trap enable off, put back on exit. `Engine::mxcsr_repairs()` counts either;
+`tests/online_tests.cpp` checks FPCR on AArch64 the way it checks MXCSR on
+x86. Online play stays refused on Android (`online_cpu_refusal`) until the
+simulation math is the MSL routines everywhere (a later phase).
+
+### Paths and logs
+
+`app_paths.hpp`: `app_root()` is the PC's program folder
+(`SDL_GetBasePath`) and on Android the app's external files folder
+`/storage/emulated/0/Android/data/org.dw4pc.game/files` (settings.ini,
+saves/, mods/, data/). `private_root()` is the same on the PC and the
+internal `/data/data/org.dw4pc.game/files` on Android: the remembered online
+login (`saves/online`), `online.log`, `controllers.log`. Every former
+`SDL_GetBasePath` caller (`game_main.cpp`, `settings.cpp`) goes through
+them; the paths are decoded as UTF-8 everywhere now (before, some callers
+took SDL's UTF-8 text as the ANSI code page). On Android stdout and stderr go
+to logcat line by line (tag `DW4`, stderr as warnings), so the game's own
+lines and the error texts before their message boxes are there.
+
+### The one window
+
+`open_game_window()` opens the game's window with its OpenGL context, ImGui
+and fonts once; whoever needs it first opens it and the game keeps it (on
+Android SDL has exactly one window):
+
+- the RVZ conversion's progress (before: its own SDL window and renderer),
+- the LAN lobby of `--host` / `--join` (before: its own window "Digimon World
+  4 PC - Online"); a test run draws it only with `DW4_RENDER=1`, hidden,
+- Android's first-start import.
+
+`status_frame()` draws one ImGui panel (lines, a progress bar, Cancel) in
+it. Checked on the PC: a hidden LAN session (`--host` and `--join` on
+127.0.0.1, `DW4_RENDER=1`, 120 frames) logs "the lobby drew in the game
+window" on both, starts both players and ends with the same fingerprint.
+
+### The first start and the disc
+
+- The PC is unchanged: a message box (disc image or extracted folder), the
+  file or folder dialog, an RVZ converted once into `data/`.
+- Android: the message box offers the disc image only (SDL has no folder
+  picker there), then `SDL_ShowOpenFileDialog` with the filter `*` (with
+  `iso;gcm;rvz` Android's picker would hide `.rvz` / `.gcm`, which have no
+  MIME type). The picker returns a `content://` URI; `import_disc` reads it
+  with `SDL_IOFromFile` (SDL opens content URIs through the
+  `ContentResolver`), copies it into `data/dw4.iso` of the app's folder
+  (progress and Cancel in the game window; an RVZ image is copied to
+  `data/dw4.rvz.part`, converted with the PC's converter, and the copy
+  removed), checks it like the PC (`check_game_data`: GDJEB2 revision 0,
+  `ndmw.igb`) and saves the path in settings.ini.
+- Debug builds take `--import-disc PATH` (through the `dw4args` extra) for a
+  test of the same import from a plain path, without the picker.
+- Every start logs the game data's identity, `data: PATH, data_hash
+  0123456789abcdef` (the value LAN and online peers compare).
+
+### Renderer on OpenGL ES 3.0
+
+`gl_renderer.cpp` keeps one set of shader sources (written for OpenGL 3.3
+core) and one code path, with these differences on a GLES context
+(`gl_is_es()`, the `GL_VERSION` string):
+
+- `compile()` swaps the `#version 330 core` line for `#version 300 es` with
+  `precision highp float; precision highp int; precision highp sampler2D;`
+  (the alpha test compares 8-bit values; mediump is 10 bits on the NVIDIA
+  host GPU). ImGui's backend gets `#version 300 es`.
+- The skinning palette (64 matrices) is a 4 x 64 `RGBA32F` texture on unit 2
+  that the vertex shader reads with `texelFetch` (exact floats), on the PC
+  too. Neither plain uniforms (about 295 vectors, GLES guarantees 256) nor
+  a uniform block works on the emulator: SwiftShader counts a block's
+  members against the 256 vertex uniform vectors ("Vertex shader active
+  uniforms exceed GL_MAX_VERTEX_UNIFORM_VECTORS (256)").
+- Depth clamping: `GL_DEPTH_CLAMP` where the context has it (OpenGL 3.3, or
+  `GL_EXT_depth_clamp` on GLES); otherwise the vertex shader clamps
+  `gl_Position.z` into `[-w, w]` (`u_depth_clamp`), which only the
+  orthographic 2D layers use (all their vertices in front of the near
+  plane, so the per-vertex clamp equals the per-pixel one). The renderer
+  logs which one it uses.
+- `keep_picture`: GLES copies no multisampled framebuffer into a texture;
+  the window's picture is blitted (resolved) into the kept texture's
+  framebuffer. The PC keeps `glCopyTexSubImage2D`. Android asks for an
+  RGBA8 surface (the blit needs the texture's format).
+- No `GL_MULTISAMPLE` switches on GLES (multisampling follows the surface).
+- `read_depth` returns nothing on GLES (no depth read-back in ES 3.0): the
+  overhead name tags never hide behind the scene there yet (phase C).
+- `GL_SRC_ALPHA_SATURATE` is a source factor only on GLES; as a destination
+  (never seen; GX has no such factor) it becomes `ONE` with one log line.
+- The full-screen strips (movie, kept picture) draw with attribute 0 enabled
+  on a small buffer (the emulator's translator draws nothing without one).
+- A failed shader link names the driver's reason.
+
+### Lifecycle and input
+
+- An `SDL_AddEventWatch` logs `lifecycle: entering the background / in the
+  background / low memory / entering the foreground / in the foreground /
+  terminating` (SDL hands these only to watches). In the background the game
+  loop stands in `SDL_PollEvent` (SDL's `ANDROID_BLOCK_ON_PAUSE`) and SDL
+  pauses the sound output.
+- `SDL_EVENT_RENDER_DEVICE_RESET` (SDL made a new EGL context after the old
+  one was lost): ImGui's OpenGL backend is shut down and started again, the
+  renderer forgets every object name and makes its objects again
+  (`GlRenderer::reset_context`), the prompt pictures are uploaded again.
+- Android's Back key is trapped (`SDL_HINT_ANDROID_TRAP_BACK_BUTTON`) and
+  opens and closes the F1 menu (`SDLK_AC_BACK`), as the controller's View /
+  Back button does (the Thor's own controller through SDL's Android gamepad
+  backend). A touch in the window's top right corner (x >= 90 %, y <= 12 %)
+  toggles it too; ImGui takes touches as SDL's mouse events, so the menus
+  work by touch. Every toggle logs `menu: open|closed (input)`.
+
+### Results on the emulator (x86_64, `-gpu swiftshader_indirect`)
+
+- First start from a clean app (`pm clear`): the message box, "Disc
+  image..." opens Android's picker (DocumentsUI, logged `first start: the
+  file picker`); a copy of the disc image pushed to `/sdcard/Download`
+  (never the user's folder itself) picked there arrives as
+  `content://com.android.providers.downloads.documents/document/msf%3A...`,
+  1459978240 bytes, copied in about 25 s with the progress in the game
+  window, checked, saved.
+- `data: /storage/emulated/0/Android/data/org.dw4pc.game/files/data/dw4.iso,
+  data_hash 1c693d45198dd6c1`: the same value the PC logs for the same
+  image and for the Dolphin extraction.
+- The renderer: `OpenGL ES 3.0 (OpenGL ES 3.0 SwiftShader 4.0.0.1) on
+  Android Emulator OpenGL ES Translator (Google SwiftShader), depth clamp in
+  the vertex shader`. The logos, the opening movie and the title screen
+  (`stagis10`) draw; about 25-40 ms per frame on SwiftShader.
+- Sound: `dumpsys audio` lists the app's AAudio player (usage MEDIA) as
+  `started`; `dumpsys media.audio_flinger` shows its track active on the
+  speaker output (48000 Hz, stereo, 16 bit, no underruns) with the output's
+  frames written growing.
+- The F1 menu: by touch (the corner), by Android's Back key
+  (`input keyevent KEYCODE_BACK`), and by a controller: a virtual Xbox 360
+  pad made through `/dev/uinput` (root on the emulator image;
+  `work/android_research/emulator/vpad.c`) appears as "Xbox 360 Controller"
+  045e:028e in SDL's Android gamepad backend, and its View button opens and
+  closes the menu. A touch switches the menu's tabs.
+- HOME and back (`LaunchState HOT`): the lifecycle lines in order, the game
+  goes on drawing (no black picture, no new context needed).
+- The emulator's own keyboard ("qwerty2") counts as a controller for SDL
+  but has no View / Back button in its gamepad mapping; `input gamepad
+  keyevent` comes from the virtual keyboard device, not a controller.
+
+### Open for phase C (and later)
+
+- Depth read-back for the name tags on GLES; GL error checks in a debug
+  walk through the menus.
+- ImGui's size on the Thor's 400 dpi screen (the menus are drawn at 1x),
+  fullscreen without the status bar (immersive mode), a visible menu button
+  for touch.
+- Pausing the sound and saving settings when going to the background;
+  `LOW_MEMORY` (the texture cache).
+- A context loss is handled but was not provoked on the emulator.
+- The RVZ import was not run on the emulator (no RVZ of the game); it uses
+  the PC's converter on the copied file.
 
 ## Compile status (NDK clang 21, phase A)
 
