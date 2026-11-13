@@ -723,3 +723,65 @@ Connecting it:
 After that (with approval): install the probe APK for the real Adreno 740
 limits, then phase E0's focus spike (does a touch on the lower screen take the
 controller focus away in AYN's Focus Mode "Auto").
+
+### Read-only results on the user's Thor (13.11.2026)
+
+`adb devices -l`: `product:kalama model:AYN_Thor device:kalama`. Windows
+showed the Thor as `USB\VID_18D1&PID_4EE1` (MTP only) until USB debugging was
+on; Windows' own driver was enough for ADB, no Google USB driver needed.
+Output in `work/android_research/thor/` (gitignored; it holds the serial).
+
+| | |
+| --- | --- |
+| System | Android 13 (API 33), build `Thor_V1.0.0.377_20260206`, security patch 2024-01-01, locale `de-DE` |
+| SoC / GPU | QCS8550 (`kalama`, the Snapdragon 8 Gen 2 family), Adreno; `ro.opengles.version` 196610 = **OpenGL ES 3.2** (+ AEP), Vulkan 1.3 (`vulkan.level=1`) |
+| ABIs | `arm64-v8a` (32-bit `armeabi-v7a` too) |
+| Frame pacing | `vendor.perf.framepacing.enable=1` |
+
+**Displays** (`dumpsys display`, `cmd display get-displays`):
+
+| id | name | logical size | panel | refresh | flags | touch |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | "Integrierter Bildschirm" (built-in) | 1920 x 1080 (rotation 1) | 1080 x 1920 portrait, 369 dpi, HDR (420 nits) | mode 1 = 60 Hz now, mode 2 = 120 Hz (default mode) | SECURE, TRUSTED | `fts_ts`, viewport INTERNAL |
+| **4** | "Screen-2" | 1240 x 1080 (rotation 1) | 1080 x 1240 portrait, 369 dpi | mode 4 = 60 Hz now, mode 3 = 120 Hz (default mode) | SECURE, **PRESENTATION**, TRUSTED | `fts_ts_3`, viewport EXTERNAL |
+
+- The lower screen's display id is **4** on the Thor (2 on the AVD
+  `dw4thor33`). Phase E must find it through
+  `DisplayManager.getDisplays(DISPLAY_CATEGORY_PRESENTATION)` and the
+  `DisplayListener`, never by a fixed id.
+- Both panels are portrait panels the system rotates to landscape; the
+  logical sizes above are what an app sees.
+- Both run at 60 Hz in this state although 120 Hz modes exist; the game runs
+  at its own 60 (frame pacing, gate 2) and should ask for the 60 Hz mode
+  (`preferredDisplayModeId`) rather than rely on the current one.
+
+**Input devices** (`dumpsys input`):
+
+- **"Odin Controller"**: USB HID `2020:0111` (bus 3), classes KEYBOARD |
+  GAMEPAD | JOYSTICK | EXTERNAL, controller number 1, key layout
+  `/system/usr/keylayout/Vendor_2020_Product_0111.kl`:
+  - buttons: `BUTTON_A` 0x130, `BUTTON_B` 0x131, `BUTTON_C` 0x132,
+    `BUTTON_X` 0x133, `BUTTON_Y` 0x134, `BUTTON_Z` 0x135, `L1`/`R1`
+    0x136/0x137, `L2`/`R2` 0x138/0x139, `SELECT` 0x13a, `START` 0x13b,
+    `MODE` 0x13c, `THUMBL`/`THUMBR` 0x13d/0x13e; `DPAD_UP/DOWN/LEFT/RIGHT`
+    0x220-0x223; `HOME` 0x66, `BACK` 0x9e, `APP_SWITCH` 0x244, volume keys.
+  - axes reported: `X`/`Y` (left stick), `Z`/`RZ` (right stick), raw
+    -32767..32767, flat 15; `GAS`/`BRAKE` (analog triggers, raw 0..32767);
+    `HAT_X`/`HAT_Y` (D-pad, -1..1). The layout also names RX/RY/THROTTLE/
+    RUDDER/WHEEL, which this controller does not report.
+  - So the triggers come both as buttons (L2/R2) and as analog axes; SDL's
+    Android joystick path sees a standard gamepad. The pad family code
+    (`src/game/pad_family.cpp`) has no entry for `2020:0111` yet: phase E
+    adds a "Thor" family (button labels per AYN's layout setting) instead of
+    Generic.
+- **"ODIN Station Virtual Mouse"**: the same USB id (version 0x00c8),
+  CURSOR_ICON | EXTERNAL: AYN's mouse emulation. The game ignores mouse
+  input from it.
+- Touch: `fts_ts` (upper screen, display 0) and `fts_ts_3` (lower screen,
+  display 4, EXTERNAL viewport).
+- `gpio-keys`: volume, HOME, FOCUS, CAMERA; `pmic_pwrkey`, `pmic_resin`,
+  `hall_switch` (lid/cover), headset jack.
+
+Not yet known (needs an installed APK, with approval): the real GL limits and
+compressed formats (ASTC is expected on Adreno), how SDL names the controller,
+and the Focus Mode behaviour of the lower screen's touch.
