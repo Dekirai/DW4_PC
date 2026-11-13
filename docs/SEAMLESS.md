@@ -12970,8 +12970,12 @@ scenarios drive the box's actions through the online script.
   member uploads its own load snapshot of the visit and is the uploader;
   chunks of anybody else are dropped (no longer a protocol error).
 - **Scenarios:** W10 checks the prompt after the removal; W11r (new) takes
-  the lobby's return mat through the gate form with real clients. The runs
-  and the regression: the notes.
+  the lobby's return mat through the gate form with real clients. On the
+  merged build S22b (no `statehash_mismatch` any more), W1, W2b, W4c, W7e,
+  W10, W10d, W11r and W31 passed; ctest 66/66, server unit 551 and
+  integration 150 (3 skipped), det.sh 4004f056 / 396cb219, r25c 10 of 10
+  (1,748,011 frames), the save state suite 17 of 17. The rest of the
+  round's and I1a's scenarios on the merged build are open (the notes).
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
