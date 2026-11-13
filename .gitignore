@@ -54,3 +54,16 @@ __pycache__/
 *.pfx
 *.p12
 *.key
+
+# Android (docs/ANDROID.md): Gradle and native build outputs, the local SDK
+# and dependency paths (android/local.properties).
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
+# Signing keys and their settings never enter the repository (phase F keeps
+# the release key outside it; debug builds use the SDK's debug key).
+*.jks
+*.keystore
+*signing*.properties

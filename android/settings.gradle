@@ -1,0 +1,18 @@
+// DW4_PC for Android (docs/ANDROID.md): a Gradle wrapper around the root
+// CMakeLists.txt. Builds offline from the local Gradle cache (--offline).
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'DW4_PC'
+include ':app'

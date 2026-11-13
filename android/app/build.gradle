@@ -1,0 +1,112 @@
+// DW4_PC for Android (docs/ANDROID.md). The native code is the repository's
+// own root CMakeLists.txt (its if(ANDROID) path, cmake/android.cmake); this
+// file only wraps it into an APK with SDL's Java side.
+plugins {
+    id 'com.android.application'
+}
+
+// The repository root: android/ sits in it.
+def repoRoot = rootProject.projectDir.parentFile
+
+// One version for PC and Android: project(DW4_PC VERSION MAJOR.MINOR.PATCH)
+// in the root CMakeLists.txt is the versionName, and the versionCode is
+// MAJOR*10000000 + MINOR*10000 + PATCH*100 + BUILD, so 0.46.0 is 460000.
+// BUILD (0..99, default 0) is -Pdw4.build=N for a rebuild of one version.
+def cmakeLists = new File(repoRoot, 'CMakeLists.txt').getText('UTF-8')
+def versionMatch = cmakeLists =~ /project\(\s*DW4_PC\s+VERSION\s+(\d+)\.(\d+)\.(\d+)/
+if (!versionMatch.find()) {
+    throw new GradleException("${repoRoot}/CMakeLists.txt has no 'project(DW4_PC VERSION x.y.z' line")
+}
+def vMajor = versionMatch.group(1) as int
+def vMinor = versionMatch.group(2) as int
+def vPatch = versionMatch.group(3) as int
+def vBuild = (project.findProperty('dw4.build') ?: '0') as int
+if (vMajor > 209 || vMinor > 999 || vPatch > 99 || vBuild < 0 || vBuild > 99) {
+    throw new GradleException("version ${vMajor}.${vMinor}.${vPatch} build ${vBuild} does not fit the versionCode scheme")
+}
+def dw4VersionName = "${vMajor}.${vMinor}.${vPatch}"
+def dw4VersionCode = vMajor * 10000000 + vMinor * 10000 + vPatch * 100 + vBuild
+
+// The third-party sources without network: the PC build's FetchContent copies
+// (build/Release/_deps by default). A worktree or another checkout names the
+// directory in local.properties (dw4.depsDir=C:/.../build/Release/_deps) or
+// with -Pdw4.depsDir=...; nothing in it is ever written.
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+def depsDir = new File((project.findProperty('dw4.depsDir') ?: localProperties.getProperty('dw4.depsDir')
+        ?: new File(repoRoot, 'build/Release/_deps').path) as String)
+def sdlSource = new File(depsDir, 'sdl3-src')
+if (!new File(sdlSource, 'android-project/app/src/main/java/org/libsdl/app/SDLActivity.java').isFile()) {
+    throw new GradleException("No SDL source tree at ${sdlSource}: build the PC version once (its FetchContent " +
+            "fills build/Release/_deps) or set dw4.depsDir in android/local.properties (docs/ANDROID.md)")
+}
+def forwardSlashes = { File f -> f.absolutePath.replace('\\', '/') }
+
+// SDL's Java classes from the same SDL source tree as libSDL3.so, copied at
+// build time and never kept in the repository: SDLActivity refuses to start
+// when its version and the native library's differ.
+def sdlJavaDir = layout.buildDirectory.dir('generated/sdl3-java').get().asFile
+def copySdlJava = tasks.register('copySdlJava', Sync) {
+    from new File(sdlSource, 'android-project/app/src/main/java')
+    into sdlJavaDir
+}
+
+android {
+    namespace 'org.dw4pc.game'
+    compileSdk 35
+    ndkVersion '30.0.16248370'
+
+    defaultConfig {
+        applicationId 'org.dw4pc.game'
+        // Android 13, the AYN Thor's system; officially only the Thor.
+        minSdk 33
+        targetSdk 35
+        versionCode dw4VersionCode
+        versionName dw4VersionName
+        ndk {
+            // arm64-v8a for the Thor, x86_64 for the emulator.
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static',
+                        "-DFETCHCONTENT_SOURCE_DIR_SDL3=${forwardSlashes(sdlSource)}",
+                        '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'
+                targets 'main'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDir sdlJavaDir
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        // Debug builds carry the debug key. Release signing (an own key kept
+        // outside the repository, never another project's) comes in phase F.
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn copySdlJava
+}

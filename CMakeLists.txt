@@ -140,6 +140,16 @@ else()
 endif()
 string(REPLACE ";" "," DW4_PINS_JOINED "${DW4_PIN_LIST}")
 
+# Android (docs/ANDROID.md): android/ is only the Gradle wrapper around this
+# file. cmake/android.cmake builds the app's native library "main" with SDL3
+# as libSDL3.so. dw4_core, dw4_engine and dw4_online above are configured on
+# Android too (android/ndk-core-check.cmd builds them) but nothing links them
+# yet; the PC tools, tests and the game below are not part of it yet.
+if(ANDROID)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/android.cmake)
+  return()
+endif()
+
 # Development tools: IGB inspection and logical resource catalog.
 add_executable(dw4_inspect tools/dw4_inspect.cpp)
 target_link_libraries(dw4_inspect PRIVATE dw4_core)
@@ -291,36 +301,14 @@ if(BUILD_TESTING)
 endif()
 
 if(DW4_BUILD_APP)
-  include(FetchContent)
-  # Exact upstream commits and SHA-256 archives. No prebuilt game binaries.
+  # Exact upstream commits and SHA-256 archives (cmake/third_party.cmake, the
+  # same list as the Android build). No prebuilt game binaries.
   set(SDL_SHARED OFF CACHE BOOL "" FORCE)
   set(SDL_STATIC ON CACHE BOOL "" FORCE)
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_TESTS OFF CACHE BOOL "" FORCE)
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-  FetchContent_Declare(SDL3
-    URL https://codeload.github.com/libsdl-org/SDL/zip/fa2c02bb6e21974a89ea9824bc53c9932abe5f9c
-    URL_HASH SHA256=ab7a774d41332dc73e6cad6ed9cb14b91cb1de76497dca116be7080f069a703a
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  FetchContent_Declare(imgui_src
-    URL https://codeload.github.com/ocornut/imgui/zip/f1cc2ae15e53a861a874c3034aae6798fde194ab
-    URL_HASH SHA256=008e1f3398e1c6e4d317ae4a05d2dec597bd360f4f3717b1d96e9edb66dba34f
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # MPEG-1 video of the Sofdec movies (single header, no CMake project).
-  FetchContent_Declare(pl_mpeg_src
-    URL https://codeload.github.com/phoboslab/pl_mpeg/zip/c871f2be022ece7ef4f64230b4fb8e1fb9eb6023
-    URL_HASH SHA256=67dd194f9de4af65937c057cf630e5e189e163a0ed9f489de2fcc75ee2117daf
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # PNG reading and writing for texture packs and dumps (single headers).
-  FetchContent_Declare(stb_src
-    URL https://codeload.github.com/nothings/stb/zip/2c980bb59875b0d32144a71867fbdebb2f77cd20
-    URL_HASH SHA256=8e59f72b0780690cda64726804269f638a3be77b9d1506ea95f443f7964bccf0
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # Zstandard decoding for RVZ disc images (decoder sources only).
-  FetchContent_Declare(zstd_src
-    URL https://codeload.github.com/facebook/zstd/zip/refs/tags/v1.5.6
-    URL_HASH SHA256=3b1c3b46e416d36931efd34663122d7f51b550c87f74de2d38249516fe7d8be5
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/third_party.cmake)
   # SDL without libusb (docs/ROUND_SW2WIN_NOTES.md): the port reads the
   # controllers SDL 3.4.16 reaches only through libusb itself, the Switch 2
   # Pro Controller (switch2_pro.cpp: Windows' own HID driver for its input,

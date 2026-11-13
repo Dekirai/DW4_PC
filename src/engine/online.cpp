@@ -16,7 +16,10 @@
 #include <cstdlib>
 #include <sstream>
 #include <stdexcept>
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
+#define DW4_HAVE_MXCSR 1
+#endif
 
 namespace dw4::engine {
 
@@ -44,6 +47,8 @@ void engine_destroyed(bool online) {
 // masked: the MXCSR of a fresh Windows x64 thread. Only the control bits
 // (6-15) count; bits 0-5 are the sticky exception flags any arithmetic sets.
 constexpr unsigned kMxcsr = 0x1F80u;
+
+#ifdef DW4_HAVE_MXCSR
 constexpr unsigned kMxcsrControl = 0xFFC0u;
 
 MxcsrGuard::MxcsrGuard() : saved_(_mm_getcsr()) {
@@ -55,6 +60,15 @@ MxcsrGuard::MxcsrGuard() : saved_(_mm_getcsr()) {
 MxcsrGuard::~MxcsrGuard() {
     if ((saved_ & kMxcsrControl) != kMxcsr) _mm_setcsr(saved_);
 }
+#else
+// No MXCSR outside x86 (Android arm64): the guard does nothing and the
+// thread keeps the process default (round to nearest, no flush to zero).
+// The platform-neutral FpEnvGuard (FPCR on AArch64) replaces it in the
+// Android port's phase B (docs/ANDROID.md); online play stays refused on
+// such a build until then (online_cpu_refusal).
+MxcsrGuard::MxcsrGuard() : saved_(kMxcsr) {}
+MxcsrGuard::~MxcsrGuard() = default;
+#endif
 } // namespace detail
 
 int Engine::live_engines() { return detail::g_live_engines; }
