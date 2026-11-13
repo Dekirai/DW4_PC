@@ -1282,15 +1282,19 @@ bool Session::apply_events(bool replaying) {
                   replaying ? " (replay)" : "");
             if (!replaying) log("join: slot %d joined at tick %u (present %x)", slot, tick_, unsigned(present_));
             if (!replaying) trace_dump_until_ = tick_ + 900; // (DW4_TRACE_TICKSTATE_EVERY, development builds)
-            if (!replaying && slot != slot_) notice(slot_name(slot) + " joined");
+            // (No toast: the relay's WORLD_NOTICE says "<name> joined." when a
+            // member takes a seat, "<name> went to <stage>." when one comes from
+            // another stage of the instance (19.5.6). The stage group's own
+            // "<name> joined" was a rooms leftover: the host got both, or "A
+            // player joined" for a member INSTANCE_INFO no longer listed; round
+            // I1b's integration.)
             if (slot == slot_ && mode_ == Mode::observing) become_member(now_);
             break;
         case w::EventKind::leave:
             trace("leave applied inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot);
             if (!replaying) log("leave: slot %d left at tick %u", slot, tick_);
-            // (Only for a member that was there: a joiner whose carry every
-            // engine dropped never was.)
-            if (!replaying && slot != slot_ && (present_ & (1u << slot))) notice(slot_name(slot) + " left");
+            // (No toast, as for a JOIN: WORLD_NOTICE's "<name> left." or
+            // "<name> went to <stage>." tells it, 19.5.6.)
             engine_.remove_player(slot);
             present_ = std::uint8_t(present_ & ~(1u << slot));
             slot_members_[std::size_t(slot)] = kNoMember;

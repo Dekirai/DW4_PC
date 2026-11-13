@@ -124,10 +124,19 @@ void solo_join_fork() {
     check(a.engine.net_fingerprint() != 0 && a.session->tick() > 1500, "A played on");
     check(world.hub.late_pads == late_after_join, "with the delay from the round trip plus the playout tick no pad is late (" +
                                                       std::to_string(world.hub.late_pads - late_after_join) + ")");
+    // (Round I1b's integration: the stage group's JOIN says nothing; the relay's
+    // WORLD_NOTICE joined is the one "<name> joined." of 19.5.6, which this
+    // fake hub sends only below. Before, A got "lee joined" from the JOIN too.)
     const auto notices_a = a.session->take_notices();
     bool joined = false;
     for (const auto& n : notices_a) joined |= n.find("joined") != std::string::npos;
-    check(joined, "A is told about the joiner");
+    check(!joined, "no join toast from the stage group's JOIN");
+    world.hub.send(1, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::joined, 2, "lee", 0, {}}), world.now);
+    world.run(0.2);
+    const auto told = a.session->take_notices();
+    check(std::count(told.begin(), told.end(), std::string("lee joined.")) == 1 &&
+              std::none_of(told.begin(), told.end(), [](const std::string& n) { return n == "lee joined" || n == "A player joined"; }),
+          "A is told about the joiner once: \"lee joined.\"");
     // B forks away (an exit-type fork): both sides go on alone.
     // The fork executes on a multiple of 60 (a pad sampled at tick t runs at
     // t + d): the two sides' net fingerprints differ from the fork tick on,
