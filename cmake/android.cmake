@@ -63,6 +63,17 @@ if(NOT TARGET OpenGL::GL)
   set_target_properties(OpenGL::GL PROPERTIES INTERFACE_LINK_LIBRARIES "GLESv3;EGL")
 endif()
 
+# The root CMakeLists.txt's add_executable(dw4_game ...) line stays the PC's
+# (branches that add a game source change only that line): here it makes the
+# shared library SDLActivity loads instead. Every other target is unchanged.
+macro(add_executable name)
+  if("${name}" STREQUAL "dw4_game")
+    add_library(${name} SHARED ${ARGN})
+  else()
+    _add_executable(${name} ${ARGN})
+  endif()
+endmacro()
+
 # After the root CMakeLists.txt made dw4_game: the name SDLActivity loads,
 # the Android parts, the floating-point flags.
 function(dw4_android_game)
