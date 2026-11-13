@@ -1,7 +1,13 @@
 # W5 (19.24 W5 without friends). fix-019: the moderator c who takes the gate while a's Private instance runs gets his own
 # (no staff bypass for the automatic join; before, he joined a's instance and his story was replaced by a's).
+# Round I1b (found by the int-i1b test matrix): c's gate form lists a's Private row, which only the staff bypass shows; it is
+# never preselected (19.7.2 / 19.7.3: the cursor stays on New instance). c takes the preselection (autochoice cursor: a
+# moderator who simply plays and presses A). With autochoice first c chose the row himself, which I1b allows as an audited
+# staff join (19.7.2: "m is staff and chooses the row himself"), so the fix-019 checks below need c's cursor answer.
 a: online-script: step .* log: nobody joined
 b: online-script: step .* log: b alone
+c: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=new preselected=new
+c: online-trace: prompt answer choice=new
 c: online-script: step .* log: c alone
 relay: instance_start .*visibility=private
 !relay: instance_join .*how=join

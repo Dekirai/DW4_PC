@@ -1,5 +1,5 @@
 {
-  "desc": "a Private: b (no friend) gets no row and a NEW; a moderator c sees a's row marked Private and, playing, gets an instance of its own (fix-019: no staff bypass for the automatic join)",
+  "desc": "a Private: b (no friend) gets no row and a NEW; a moderator c sees a's row marked Private and, playing, gets an instance of its own (fix-019: no staff bypass for the automatic join; I1b: the row only the staff bypass shows is never preselected and c takes the preselection, autochoice cursor)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -56,7 +56,8 @@
       "script": "c.script",
       "card": "k5",
       "start": 6,
-      "role": "moderator"
+      "role": "moderator",
+      "autochoice": "cursor"
     }
   ]
 }
