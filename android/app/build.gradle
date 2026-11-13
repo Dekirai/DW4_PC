@@ -44,6 +44,16 @@ if (!new File(sdlSource, 'android-project/app/src/main/java/org/libsdl/app/SDLAc
             "fills build/Release/_deps) or set dw4.depsDir in android/local.properties (docs/ANDROID.md)")
 }
 def forwardSlashes = { File f -> f.absolutePath.replace('\\', '/') }
+// The game's other third-party sources from the same _deps directory
+// (FETCHCONTENT_SOURCE_DIR_<NAME>, cmake/third_party.cmake).
+def fetchContentDirs = ['IMGUI_SRC': 'imgui_src-src', 'PL_MPEG_SRC': 'pl_mpeg_src-src', 'STB_SRC': 'stb_src-src',
+                        'ZSTD_SRC': 'zstd_src-src'].collect { name, dir ->
+    def source = new File(depsDir, dir)
+    if (!source.isDirectory()) {
+        throw new GradleException("No ${dir} at ${source}: build the PC version once (docs/ANDROID.md)")
+    }
+    "-DFETCHCONTENT_SOURCE_DIR_${name}=${forwardSlashes(source)}".toString()
+}
 
 // SDL's Java classes from the same SDL source tree as libSDL3.so, copied at
 // build time and never kept in the repository: SDLActivity refuses to start
@@ -72,10 +82,11 @@ android {
         }
         externalNativeBuild {
             cmake {
-                arguments '-DANDROID_STL=c++_static',
-                        "-DFETCHCONTENT_SOURCE_DIR_SDL3=${forwardSlashes(sdlSource)}",
-                        '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'
-                targets 'main'
+                arguments(*(['-DANDROID_STL=c++_static',
+                              "-DFETCHCONTENT_SOURCE_DIR_SDL3=${forwardSlashes(sdlSource)}".toString(),
+                              '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'] + fetchContentDirs))
+                // The game as libmain.so (cmake/android.cmake).
+                targets 'dw4_game'
             }
         }
     }

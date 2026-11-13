@@ -141,13 +141,12 @@ endif()
 string(REPLACE ";" "," DW4_PINS_JOINED "${DW4_PIN_LIST}")
 
 # Android (docs/ANDROID.md): android/ is only the Gradle wrapper around this
-# file. cmake/android.cmake builds the app's native library "main" with SDL3
-# as libSDL3.so. dw4_core, dw4_engine and dw4_online above are configured on
-# Android too (android/ndk-core-check.cmd builds them) but nothing links them
-# yet; the PC tools, tests and the game below are not part of it yet.
+# file. cmake/android.cmake turns the game below into the app's native
+# library libmain.so with SDL3 as libSDL3.so (DW4_BUILD_APP on, no tests;
+# Gradle builds only dw4_game). Its DW4_ANDROID_APP=OFF builds only the
+# portable libraries above (android/ndk-core-check.cmd).
 if(ANDROID)
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/android.cmake)
-  return()
 endif()
 
 # Development tools: IGB inspection and logical resource catalog.
@@ -303,8 +302,10 @@ endif()
 if(DW4_BUILD_APP)
   # Exact upstream commits and SHA-256 archives (cmake/third_party.cmake, the
   # same list as the Android build). No prebuilt game binaries.
+  if(NOT ANDROID) # (Android: libSDL3.so, cmake/android.cmake)
   set(SDL_SHARED OFF CACHE BOOL "" FORCE)
   set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  endif()
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_TESTS OFF CACHE BOOL "" FORCE)
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -336,7 +337,9 @@ if(DW4_BUILD_APP)
   target_include_directories(zstd_encoder PUBLIC ${ZSTD_LIB})
   target_compile_definitions(zstd_encoder PRIVATE ZSTD_DISABLE_ASM)
   target_link_libraries(zstd_encoder PUBLIC zstd_decoder)
+  if(NOT ANDROID) # (Android: OpenGL::GL is GLESv3 and EGL, cmake/android.cmake)
   find_package(OpenGL REQUIRED)
+  endif()
   add_library(imgui STATIC
     ${imgui_src_SOURCE_DIR}/imgui.cpp
     ${imgui_src_SOURCE_DIR}/imgui_draw.cpp
@@ -346,7 +349,13 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/pad_usb.cpp src/game/switch2_pro.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
+  # (Android: the library libmain.so SDLActivity loads, cmake/android.cmake.)
+  if(ANDROID)
+    add_library(dw4_game SHARED)
+  else()
+    add_executable(dw4_game)
+  endif()
+  target_sources(dw4_game PRIVATE src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/pad_usb.cpp src/game/switch2_pro.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
@@ -424,7 +433,9 @@ if(DW4_BUILD_APP)
     add_test(NAME save_store COMMAND dw4_save_store_tests)
   endif()
   # The release's single entry point is DW4_PC.exe (dw4_game in the build).
+  if(NOT ANDROID)
   install(PROGRAMS $<TARGET_FILE:dw4_game> DESTINATION . RENAME DW4_PC${CMAKE_EXECUTABLE_SUFFIX})
+  endif()
   install(FILES ${SDL3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL.txt)
   install(FILES ${imgui_src_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME imgui.txt)
   install(FILES ${stb_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME stb.txt)

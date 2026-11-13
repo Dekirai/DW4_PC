@@ -1,4 +1,5 @@
 #include "settings.hpp"
+#include "app_paths.hpp"
 
 #include "dw4/pad.hpp"
 
@@ -111,10 +112,8 @@ void drop_defaults_in_use(std::array<std::array<T, Settings::kKeysPerButton>, kP
     }
 }
 
-std::filesystem::path program_folder() {
-    const char* base = SDL_GetBasePath();
-    return base ? std::filesystem::path(base) : std::filesystem::path();
-}
+// (On Android the app's external files folder, app_paths.hpp.)
+std::filesystem::path program_folder() { return app_root(); }
 
 } // namespace
 

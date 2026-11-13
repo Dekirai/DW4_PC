@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace dw4::game {
 
@@ -37,7 +38,10 @@ namespace dw4::game {
     X(PFNGLBLENDFUNCSEPARATEPROC, BlendFuncSeparate) X(PFNGLBLENDEQUATIONPROC, BlendEquation) \
     X(PFNGLGENERATEMIPMAPPROC, GenerateMipmap) X(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers) \
     X(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer) X(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D) \
-    X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers)
+    X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers) \
+    X(PFNGLBLITFRAMEBUFFERPROC, BlitFramebuffer) X(PFNGLGETSTRINGIPROC, GetStringi) \
+    X(PFNGLGETUNIFORMBLOCKINDEXPROC, GetUniformBlockIndex) X(PFNGLUNIFORMBLOCKBINDINGPROC, UniformBlockBinding) \
+    X(PFNGLBINDBUFFERBASEPROC, BindBufferBase) X(PFNGLBUFFERSUBDATAPROC, BufferSubData)
 
 struct GlRenderer::Impl {
 #define DECLARE(type, name) type name{};
@@ -56,7 +60,36 @@ struct GlRenderer::Impl {
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
     int u_texgen{}, u_pixel_center{}, u_normal{};
     int u_id_mode{}, u_id{};
+    int u_depth_clamp{};
     PFNGLUNIFORM2FPROC Uniform2f{};
+    // OpenGL ES 3 (the Android port, docs/ANDROID.md) instead of OpenGL 3.3
+    // core: the shaders' #version line, no GL_MULTISAMPLE switch, the kept
+    // picture by a blit, no depth read. Depth clamping is the context's own
+    // where it has it (OpenGL 3.3, GL_EXT_depth_clamp), else the vertex
+    // shader clamps z (u_depth_clamp).
+    bool gles = gl_is_es();
+    bool native_depth_clamp = true;
+    // The skinning palette (64 matrices, std140): a uniform block, since
+    // OpenGL ES guarantees only 256 vertex uniform vectors.
+    unsigned palette_ubo{};
+    // The kept picture's framebuffer (keep_picture's blit on OpenGL ES) and
+    // the full-screen strips' vertex buffer (attribute 0 enabled: some GL ES
+    // drivers draw nothing without one).
+    unsigned kept_fbo{}, strip_vbo{};
+    void set_depth_clamp(bool on) {
+        if (native_depth_clamp) {
+            if (on) glEnable(GL_DEPTH_CLAMP);
+            else glDisable(GL_DEPTH_CLAMP);
+        } else {
+            Uniform1i(u_depth_clamp, on ? 1 : 0);
+        }
+    }
+    void upload_palette(const std::vector<engine::Mat4>& palette) {
+        const auto count = std::min<std::size_t>(palette.size(), 64);
+        BindBuffer(GL_UNIFORM_BUFFER, palette_ubo);
+        BufferSubData(GL_UNIFORM_BUFFER, 0, GLsizeiptr(count * sizeof(engine::Mat4)), palette.front().m.data());
+        BindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
     // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
     // (unless antialiasing); Dolphin's VertexShaderManager compensates with
     // pixel_center_correction = 7/12 - 1/2, moving every vertex 1/12 of a
@@ -78,7 +111,7 @@ layout(location=5) in vec2 a_indices;
 uniform mat4 u_model, u_view, u_proj;
 uniform mat4 u_normal;
 uniform int u_skinned;
-uniform mat4 u_palette[64];
+layout(std140) uniform Palette { mat4 u_palette[64]; };
 uniform mat4 u_tex_matrix;
 uniform int u_texgen;
 uniform int u_use_vcol;
@@ -91,6 +124,7 @@ uniform vec3 u_light_ambient;
 uniform vec4 u_diffuse;
 uniform mat4 u_shadow_matrix;
 uniform vec2 u_pixel_center;
+uniform int u_depth_clamp;
 out vec4 v_color;
 out vec2 v_uv;
 out float v_depth;
@@ -128,6 +162,9 @@ void main() {
     gl_Position = u_proj * eye;
     // GX pixel centre at 7/12 (see Impl::pixel_center): GL y points up.
     gl_Position.xy += gl_Position.w * u_pixel_center;
+    // Depth clamping without GL_DEPTH_CLAMP (OpenGL ES): z into the clip
+    // volume instead of clipping (the 2D layers in front of their near plane).
+    if (u_depth_clamp != 0) gl_Position.z = clamp(gl_Position.z, -gl_Position.w, gl_Position.w);
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
         // GX channel as Alchemy sets it up (800F6DC0): the material colour
@@ -243,8 +280,19 @@ out vec4 o_color;
 void main() { o_color = vec4(texture(u_tex, v_uv).rgb, 1.0); }
 )";
 
+// The shaders are written for OpenGL 3.3 core; on OpenGL ES 3 their
+// "#version 330 core" line becomes ES 3.00 with high precision (the alpha
+// test compares 8-bit values: mediump is too coarse on some GPUs).
+constexpr std::string_view kCoreHeader = "#version 330 core\n";
+constexpr const char* kEsHeader = "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n";
+
 unsigned compile(GlRenderer::Impl& gl, unsigned type, const char* source) {
     const unsigned shader = gl.CreateShader(type);
+    std::string es_source;
+    if (gl.gles && std::string_view(source).substr(0, kCoreHeader.size()) == kCoreHeader) {
+        es_source = kEsHeader + std::string(source + kCoreHeader.size());
+        source = es_source.c_str();
+    }
     gl.ShaderSource(shader, 1, &source, nullptr);
     gl.CompileShader(shader);
     int ok = 0;
@@ -257,7 +305,15 @@ unsigned compile(GlRenderer::Impl& gl, unsigned type, const char* source) {
     return shader;
 }
 
-GLenum blend_factor(int value) {
+GLenum blend_factor(int value, bool destination = false, bool gles = false) {
+    // (OpenGL ES 3 takes SRC_ALPHA_SATURATE as a source factor only; GX has
+    // no such factor, the IG enum's 10 is not known to occur.)
+    if (value == 10 && destination && gles) {
+        static bool noted = false;
+        if (!noted) std::cerr << "renderer: SRC_ALPHA_SATURATE as a destination blend factor (OpenGL ES: ONE)\n";
+        noted = true;
+        return GL_ONE;
+    }
     switch (value) {
     case 0: return GL_ZERO;
     case 1: return GL_ONE;
@@ -272,6 +328,25 @@ GLenum blend_factor(int value) {
     case 10: return GL_SRC_ALPHA_SATURATE;
     default: return GL_ONE;
     }
+}
+
+// The full-screen strips' vertex array (their shaders use gl_VertexID):
+// attribute 0 on a four-vertex buffer, unused by the shaders.
+void strip_vao(GlRenderer::Impl& gl, unsigned& vao) {
+    gl.GenVertexArrays(1, &vao);
+    gl.BindVertexArray(vao);
+    if (!gl.strip_vbo) {
+        const float corners[8] = {0, 0, 1, 0, 0, 1, 1, 1};
+        gl.GenBuffers(1, &gl.strip_vbo);
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.strip_vbo);
+        gl.BufferData(GL_ARRAY_BUFFER, sizeof corners, corners, GL_STATIC_DRAW);
+    } else {
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.strip_vbo);
+    }
+    gl.EnableVertexAttribArray(0);
+    gl.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
+    gl.BindVertexArray(0);
+    gl.BindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 GLenum depth_func(int value) {
@@ -297,11 +372,31 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id) U(depth_clamp)
 #undef U
+    if (gl.gles) {
+        int extensions = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &extensions);
+        gl.native_depth_clamp = false;
+        for (int i = 0; i < extensions; ++i)
+            if (const auto* name = reinterpret_cast<const char*>(gl.GetStringi(GL_EXTENSIONS, GLuint(i)));
+                name && std::string_view(name) == "GL_EXT_depth_clamp")
+                gl.native_depth_clamp = true;
+        std::cout << "renderer: " << reinterpret_cast<const char*>(glGetString(GL_VERSION)) << " on "
+                  << reinterpret_cast<const char*>(glGetString(GL_RENDERER)) << ", depth clamp "
+                  << (gl.native_depth_clamp ? "GL_EXT_depth_clamp" : "in the vertex shader") << '\n';
+    }
+    gl.GenBuffers(1, &gl.palette_ubo);
+    gl.BindBuffer(GL_UNIFORM_BUFFER, gl.palette_ubo);
+    gl.BufferData(GL_UNIFORM_BUFFER, GLsizeiptr(64 * sizeof(engine::Mat4)), nullptr, GL_DYNAMIC_DRAW);
+    gl.BindBuffer(GL_UNIFORM_BUFFER, 0);
+    gl.BindBufferBase(GL_UNIFORM_BUFFER, 0, gl.palette_ubo);
+    if (const unsigned block = gl.GetUniformBlockIndex(program_, "Palette"); block != GL_INVALID_INDEX)
+        gl.UniformBlockBinding(program_, block, 0);
     gl.UseProgram(program_);
     const engine::Mat4 identity{};
     gl.UniformMatrix4fv(gl.u_normal, 1, GL_FALSE, identity.m.data());
+    gl.Uniform1i(gl.u_depth_clamp, 0);
     gl.UseProgram(0);
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -319,6 +414,9 @@ GlRenderer::~GlRenderer() {
     if (kept_texture_) glDeleteTextures(1, &kept_texture_);
     if (kept_program_) gl_->DeleteProgram(kept_program_);
     if (movie_vao_) gl_->DeleteVertexArrays(1, &movie_vao_);
+    if (gl_->strip_vbo) gl_->DeleteBuffers(1, &gl_->strip_vbo);
+    if (gl_->kept_fbo) gl_->DeleteFramebuffers(1, &gl_->kept_fbo);
+    if (gl_->palette_ubo) gl_->DeleteBuffers(1, &gl_->palette_ubo);
     if (movie_program_) gl_->DeleteProgram(movie_program_);
     if (program_) gl_->DeleteProgram(program_);
 }
@@ -338,7 +436,7 @@ void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, con
         int ok = 0;
         gl.GetProgramiv(movie_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("movie shader link failed");
-        if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
+        if (!movie_vao_) strip_vao(gl, movie_vao_);
         glGenTextures(1, &movie_texture_);
     }
     glBindTexture(GL_TEXTURE_2D, movie_texture_);
@@ -382,11 +480,26 @@ void GlRenderer::keep_picture(int window_width, int window_height) {
         kept_width_ = window_width;
         kept_height_ = window_height;
     }
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, window_width, window_height);
+    if (!gl_->gles) {
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, window_width, window_height);
+        return;
+    }
+    // OpenGL ES copies no multisampled framebuffer into a texture: the
+    // window's picture is blitted (resolved) into the texture's framebuffer.
+    auto& gl = *gl_;
+    if (!gl.kept_fbo) gl.GenFramebuffers(1, &gl.kept_fbo);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, gl.kept_fbo);
+    gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, kept_texture_, 0);
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    gl.BlitFramebuffer(0, 0, window_width, window_height, 0, 0, window_width, window_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 std::optional<float> GlRenderer::read_depth(int x, int y, int window_width, int window_height) {
     if (x < 0 || y < 0 || x >= window_width || y >= window_height) return std::nullopt;
+    // (OpenGL ES reads no depth buffer: no tag hides behind the scene yet,
+    // docs/ANDROID.md phase C.)
+    if (gl_->gles) return std::nullopt;
     for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {
     }
     float depth = 1.0f;
@@ -411,7 +524,7 @@ bool GlRenderer::draw_kept_picture(int window_width, int window_height) {
         gl.GetProgramiv(kept_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("kept picture shader link failed");
     }
-    if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
+    if (!movie_vao_) strip_vao(gl, movie_vao_);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
@@ -857,8 +970,7 @@ void GlRenderer::render_shadow_map() {
         if (!m || !m->index_count) continue;
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         if (item.palette && !item.palette->empty()) {
-            const auto count = std::min<std::size_t>(item.palette->size(), 64);
-            gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
+            gl.upload_palette(*item.palette);
             gl.Uniform1i(gl.u_skinned, 1);
         } else {
             gl.Uniform1i(gl.u_skinned, 0);
@@ -872,7 +984,7 @@ void GlRenderer::render_shadow_map() {
         const auto& s = item.state;
         if (s.blend_enabled) {
             glEnable(GL_BLEND);
-            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst, true, gl.gles), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             gl.BlendEquation(GL_FUNC_ADD);
         } else {
             glDisable(GL_BLEND);
@@ -933,7 +1045,7 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     glEnable(GL_BLEND);
     gl.BlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ZERO, GL_ONE);
     gl.BlendEquation(GL_FUNC_ADD);
-    glDisable(GL_DEPTH_CLAMP);
+    gl.set_depth_clamp(false);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
     gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, camera.view.m.data());
     gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, camera.projection.m.data());
@@ -981,9 +1093,9 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     if (!id_pass_) render_shadow_map();
     // Dev item-id pass: no blending and no multisampling (every sample of a
     // pixel gets the item's exact number), no shadow receivers.
-    const bool multisample = glIsEnabled(GL_MULTISAMPLE);
+    const bool multisample = !gl.gles && glIsEnabled(GL_MULTISAMPLE);
     if (id_pass_) {
-        glDisable(GL_MULTISAMPLE);
+        if (!gl.gles) glDisable(GL_MULTISAMPLE);
         glDisable(GL_DITHER);
     }
     // Widescreen: perspective projections keep their vertical field of view
@@ -1083,8 +1195,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         // 2D layers (orthographic, e.g. the FONT camera with near 10) place
         // geometry in front of the near plane (item names at z -5); GX draws
         // it, so clamp depth there instead of clipping.
-        if (proj(2, 3) == 0.0f && proj(3, 3) == 1.0f) glEnable(GL_DEPTH_CLAMP);
-        else glDisable(GL_DEPTH_CLAMP);
+        gl.set_depth_clamp(proj(2, 3) == 0.0f && proj(3, 3) == 1.0f);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         // The modelview flush 800F805C (via 800F84EC) loads the position
         // matrix and, as the normal matrix, the transpose of its inverse:
@@ -1107,8 +1218,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const int texgen = s.texcoord_source == 2 && m->has_normals ? 2 : 0;
         gl.Uniform1i(gl.u_texgen, texgen);
         if (item.palette && !item.palette->empty()) {
-            const auto count = std::min<std::size_t>(item.palette->size(), 64);
-            gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
+            gl.upload_palette(*item.palette);
             gl.Uniform1i(gl.u_skinned, 1);
         } else {
             gl.Uniform1i(gl.u_skinned, 0);
@@ -1204,7 +1314,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             // item adds (the igBlendFunctionAttr equation is dropped, see the
             // blend_function case in scene_graph.cpp).
             glEnable(GL_BLEND);
-            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst, true, gl.gles), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             gl.BlendEquation(GL_FUNC_ADD);
         } else {
             glDisable(GL_BLEND);
@@ -1242,7 +1352,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         glScissor(wide.x, wide.y, wide.width, wide.height);
         render_shadow_receivers(camera);
     }
-    glDisable(GL_DEPTH_CLAMP);
+    gl.set_depth_clamp(false);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
@@ -1264,6 +1374,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             ++it;
         }
     }
+}
+
+bool gl_is_es() {
+    const auto* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    return version && std::string_view(version).rfind("OpenGL ES", 0) == 0;
 }
 
 } // namespace dw4::game

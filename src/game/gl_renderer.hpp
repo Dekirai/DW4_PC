@@ -57,6 +57,10 @@ public:
                                int& out_width, int& out_height) const = 0;
 };
 
+// The current context is OpenGL ES (the Android port) rather than desktop
+// OpenGL (its GL_VERSION string).
+bool gl_is_es();
+
 class GlRenderer {
 public:
     GlRenderer();

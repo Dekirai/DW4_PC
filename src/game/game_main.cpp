@@ -33,6 +33,7 @@
 #include "online_ui.hpp"
 #include "online_ui_script.hpp"
 #include "title_entry.hpp"
+#include "app_paths.hpp"
 #include "online/lobby.hpp"
 #include "online/title_driver.hpp"
 #include "online_achievements.hpp"
@@ -51,6 +52,10 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
+#ifdef SDL_PLATFORM_ANDROID
+// (SDLActivity calls SDL_main in libmain.so: main below is renamed to it.)
+#include <SDL3/SDL_main.h>
+#endif
 // (Data Overflow's meta file of lane F, round O1b, once merged: the records
 // page reads its Data Records, SURVIVAL.md 9.2.)
 #if __has_include("overflow_profile.hpp")
@@ -68,6 +73,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -106,6 +112,7 @@ struct Options {
     std::string import_boxes;
     int import_slot = 0;
     std::filesystem::path convert_from, convert_to; // --convert-rvz IN OUT
+    std::string import_disc; // --import-disc PATH (Android debug builds): the first start's import of PATH
     // Online co-op: --host (with --players, --port, --net-delay) or --join ADDRESS[:PORT].
     bool net_host{};
     std::string net_join;
@@ -289,9 +296,163 @@ std::string check_game_data(const std::filesystem::path& path) {
     return {};
 }
 
+// The game's one window with its OpenGL context, ImGui and the fonts. The
+// first start's screens (the disc's copy or conversion), the LAN lobby and
+// the game draw into it (docs/ANDROID.md: Android has one window); whoever
+// needs it first opens it, run() keeps it to the end.
+struct GameWindow {
+    SDL_Window* window = nullptr;
+    SDL_GLContext context = nullptr;
+    int samples = 0;
+    ImFont* tag_font = nullptr;  // the overhead name tags' font (also the online screens' headings)
+    ImFont* body_font = nullptr; // the online screens' text over the title
+};
+GameWindow g_game_window;
+
+// Opens the window once (SDL's video must be started); test runs open it
+// hidden at 1280x960 (DW4_WINDOW, DW4_WIDESCREEN; DW4_DEV_SETTINGS /
+// DW4_DEV_WINDOW: the settings' window).
+GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings& settings) {
+    if (g_game_window.window) return g_game_window;
+    auto& w = g_game_window;
+#ifdef SDL_PLATFORM_ANDROID
+    // OpenGL ES 3.0 (gl_renderer.cpp's GLES path) on an RGBA8 surface (the
+    // kept picture's blit needs its texture's format).
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+#else
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    if (test_run) flags |= SDL_WINDOW_HIDDEN;
+    // Multisampling is chosen with the window (settings.ini msaa, read at
+    // start-up); without support the window opens without it.
+    // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings);
+    // with DW4_DEV_SETTINGS / DW4_DEV_WINDOW the settings' msaa.
+    const int msaa = test_run && !dev_window
+                         ? (std::getenv("DW4_MSAA") ? std::atoi(std::getenv("DW4_MSAA")) : 0)
+                         : settings.msaa;
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
+    // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
+    // unless DW4_WIDESCREEN=1.
+    // (DW4_DEV_SETTINGS / DW4_DEV_WINDOW: the settings' window.)
+    int window_width = test_run && !dev_window ? 1280 : settings.width;
+    int window_height = test_run && !dev_window ? 960 : settings.height;
+    if (test_run && !dev_window) {
+        if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
+        settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
+    }
+    w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+    w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
+    if (!w.context && msaa > 1) {
+        if (w.window) SDL_DestroyWindow(w.window);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+        w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
+    }
+    if (!w.window || !w.context) throw std::runtime_error(SDL_GetError());
+    SDL_GL_MakeCurrent(w.window, w.context);
+    SDL_GL_SetSwapInterval(test_run || !settings.vsync ? 0 : 1);
+    if (!test_run && settings.fullscreen) SDL_SetWindowFullscreen(w.window, true);
+    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &w.samples);
+    // (OpenGL ES has no switch: multisampling follows the surface.)
+    if (w.samples > 1 && !dw4::game::gl_is_es()) glEnable(GL_MULTISAMPLE);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+    ImGui_ImplSDL3_InitForOpenGL(w.window, w.context);
+    ImGui_ImplOpenGL3_Init(dw4::game::gl_is_es() ? "#version 300 es" : "#version 330");
+    // The menus keep ImGui's own font (the first one added is the
+    // default); the overhead name tags take a bold system face when
+    // there is one (Segoe UI Bold, Arial Bold: readable over any
+    // background at their small size), else ImGui's scalable one.
+    auto& fonts = *ImGui::GetIO().Fonts;
+    fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
+    if (const char* windows = std::getenv("WINDIR"))
+        for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
+            const auto file = std::filesystem::path(windows) / "Fonts" / face;
+            std::error_code error;
+            if (!w.tag_font && std::filesystem::is_regular_file(file, error)) w.tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+        }
+    if (!w.tag_font) w.tag_font = fonts.AddFontDefaultVector();
+    // The online screens over the title: a regular system face beside
+    // the bold one (Segoe UI, Arial), else ImGui's scalable one.
+    if (const char* windows = std::getenv("WINDIR"))
+        for (const char* face : {"segoeui.ttf", "arial.ttf"}) {
+            const auto file = std::filesystem::path(windows) / "Fonts" / face;
+            std::error_code error;
+            if (!w.body_font && std::filesystem::is_regular_file(file, error)) w.body_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+        }
+    if (!w.body_font) w.body_font = fonts.AddFontDefaultVector();
+    return w;
+}
+
+// One frame of a screen in the game window before the game runs (the first
+// start's copy or conversion, the LAN lobby): a panel with the lines, a
+// progress bar when progress >= 0, and a Cancel button. False once the
+// player cancels or closes the window.
+bool status_frame(GameWindow& w, const char* title, const std::vector<std::string>& lines, double progress) {
+    bool keep = true;
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        ImGui_ImplSDL3_ProcessEvent(&event);
+        if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) keep = false;
+    }
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(display.x - 32.0f, 560.0f), 0.0f), ImGuiCond_Always);
+    ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+    for (const auto& line : lines) ImGui::TextWrapped("%s", line.c_str());
+    if (progress >= 0.0) ImGui::ProgressBar(float(std::clamp(progress, 0.0, 1.0)), ImVec2(-1.0f, 0.0f));
+    if (ImGui::Button("Cancel")) keep = false;
+    ImGui::End();
+    ImGui::Render();
+    int width = 0, height = 0;
+    SDL_GetWindowSizeInPixels(w.window, &width, &height);
+    glViewport(0, 0, width, height);
+    glClearColor(24.0f / 255.0f, 28.0f / 255.0f, 40.0f / 255.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    SDL_GL_SwapWindow(w.window);
+    return keep;
+}
+
+// A long job (the worker) with its progress shown in the game window until
+// it ends; the player's Cancel sets `cancel`. Without a window it only waits.
+void show_progress(GameWindow* w, const char* title, const std::string& line, std::atomic<double>& progress, std::atomic<bool>& cancel,
+                   std::atomic<bool>& done) {
+    while (!done.load()) {
+        if (w) {
+            if (!status_frame(*w, title, {line}, progress.load())) cancel.store(true);
+        } else {
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+                if (event.type == SDL_EVENT_QUIT) cancel.store(true);
+        }
+        SDL_Delay(16);
+    }
+}
+
 // An RVZ image becomes a plain disc image once, in data/ next to the program
-// (a window shows the progress; closing it cancels). Returns the problem.
-std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem::path& iso) {
+// (the game window shows the progress when `ui` is set, Cancel or closing it
+// cancels). Returns the problem.
+std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem::path& iso, dw4::game::Settings* ui) {
     std::atomic<double> progress{0.0};
     std::atomic<bool> cancel{false}, done{false};
     std::string result;
@@ -299,49 +460,134 @@ std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem:
         result = dw4::game::convert_rvz(rvz, iso, &progress, &cancel);
         done.store(true);
     });
-    SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", 520, 96, 0);
-    SDL_Renderer* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
-    while (!done.load()) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event))
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancel.store(true);
-        if (renderer) {
-            SDL_SetRenderDrawColor(renderer, 24, 28, 40, 255);
-            SDL_RenderClear(renderer);
-            SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
-            SDL_RenderDebugText(renderer, 16, 16, "Preparing the game data from the RVZ image (once)...");
-            const SDL_FRect frame{16, 48, 488, 24};
-            SDL_RenderRect(renderer, &frame);
-            const SDL_FRect bar{18, 50, float(484.0 * std::clamp(progress.load(), 0.0, 1.0)), 20};
-            SDL_SetRenderDrawColor(renderer, 80, 160, 255, 255);
-            SDL_RenderFillRect(renderer, &bar);
-            SDL_RenderPresent(renderer);
+    GameWindow* window = nullptr;
+    if (ui && SDL_Init(SDL_INIT_VIDEO)) {
+        try {
+            window = &open_game_window(false, false, *ui);
+        } catch (const std::exception&) {
+            window = nullptr;
         }
-        SDL_Delay(16);
     }
+    show_progress(window, "Digimon World 4 PC", "Preparing the game data from the RVZ image (once)...", progress, cancel, done);
     worker.join();
-    if (renderer) SDL_DestroyRenderer(renderer);
-    if (window) SDL_DestroyWindow(window);
     return result;
 }
 
 // RVZ data: the converted image next to the program, converting it first
-// when needed. Other paths come back unchanged.
-std::filesystem::path resolve_rvz(const std::filesystem::path& path, std::string& problem) {
+// when needed (`ui`: shown in the game window). Other paths come back
+// unchanged.
+std::filesystem::path resolve_rvz(const std::filesystem::path& path, std::string& problem, dw4::game::Settings* ui = nullptr) {
     if (!dw4::game::is_rvz(path)) return path;
-    std::filesystem::path base;
-    if (const char* program = SDL_GetBasePath()) base = program;
+    const std::filesystem::path base = dw4::game::app_root();
     const auto iso = base / "data" / (path.stem().string() + ".iso");
     std::error_code error;
     if (std::filesystem::is_regular_file(iso, error)) return iso;
-    problem = prepare_rvz(path, iso);
+    problem = prepare_rvz(path, iso, ui);
     return problem.empty() ? iso : std::filesystem::path();
 }
 
+#ifdef SDL_PLATFORM_ANDROID
+// Android's first start (docs/ANDROID.md, The disc): the image the player
+// chose in the system's file picker (a content:// URI, which SDL_IOFromFile
+// opens; a debug build's --import-disc takes a plain path the same way) is
+// copied once into data/ of the app's folder, an RVZ image converted to
+// ISO on the way (the RVZ copy removed after). The game reads data/dw4.iso
+// from then on. Returns it, or empty and the problem.
+std::filesystem::path import_disc(const std::string& source, dw4::game::Settings& settings, std::string& problem) {
+    SDL_IOStream* in = SDL_IOFromFile(source.c_str(), "rb");
+    if (!in) {
+        problem = std::string("The chosen file cannot be read: ") + SDL_GetError();
+        return {};
+    }
+    const Sint64 size = SDL_GetIOSize(in);
+    char magic[4]{};
+    const bool rvz = SDL_ReadIO(in, magic, 4) == 4 && std::memcmp(magic, "RVZ\x01", 4) == 0;
+    SDL_SeekIO(in, 0, SDL_IO_SEEK_SET);
+    const auto folder = dw4::game::app_root() / "data";
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    const auto image = folder / "dw4.iso";
+    const auto copy = folder / (rvz ? "dw4.rvz.part" : "dw4.iso.part");
+    std::cout << "import: " << source << " (" << size << " bytes, " << (rvz ? "RVZ" : "disc image") << ") -> " << image.string() << '\n';
+    GameWindow* window = nullptr;
+    if (SDL_Init(SDL_INIT_VIDEO)) {
+        try {
+            window = &open_game_window(false, false, settings);
+        } catch (const std::exception& failed) {
+            std::cerr << "import: no window (" << failed.what() << ")\n";
+        }
+    }
+    std::atomic<double> progress{0.0};
+    std::atomic<bool> cancel{false}, done{false};
+    std::thread worker([&] {
+        std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+        std::vector<char> buffer(std::size_t(4) << 20);
+        Sint64 total = 0;
+        for (;;) {
+            if (cancel.load()) {
+                problem = "Cancelled.";
+                break;
+            }
+            const std::size_t got = SDL_ReadIO(in, buffer.data(), buffer.size());
+            if (got == 0) {
+                if (SDL_GetIOStatus(in) != SDL_IO_STATUS_EOF) problem = std::string("Reading the chosen file failed: ") + SDL_GetError();
+                break;
+            }
+            out.write(buffer.data(), std::streamsize(got));
+            if (!out) {
+                problem = "Writing " + copy.string() + " failed (is there enough free space?).";
+                break;
+            }
+            total += Sint64(got);
+            if (size > 0) progress.store(double(total) / double(size));
+        }
+        done.store(true);
+    });
+    show_progress(window, "Digimon World 4 PC", rvz ? "Copying the RVZ image into the game's folder (once)..." : "Copying the disc image into the game's folder (once)...",
+                  progress, cancel, done);
+    worker.join();
+    SDL_CloseIO(in);
+    if (problem.empty() && rvz) {
+        const auto converted = folder / "dw4.iso.part";
+        progress.store(0.0);
+        done.store(false);
+        std::thread converter([&] {
+            problem = dw4::game::convert_rvz(copy, converted, &progress, &cancel);
+            done.store(true);
+        });
+        show_progress(window, "Digimon World 4 PC", "Preparing the game data from the RVZ image (once)...", progress, cancel, done);
+        converter.join();
+        std::filesystem::remove(copy, error);
+        if (problem.empty()) std::filesystem::rename(converted, image, error);
+        else std::filesystem::remove(converted, error);
+    } else if (problem.empty()) {
+        std::filesystem::rename(copy, image, error);
+    }
+    if (problem.empty() && error) problem = "Moving the copy to " + image.string() + " failed: " + error.message();
+    if (!problem.empty()) {
+        std::filesystem::remove(copy, error);
+        return {};
+    }
+    return image;
+}
+#endif
+
 // First start without game data: ask for the disc image or extraction folder.
+// (Android: a disc image only, SDL has no folder picker there; the result is
+// a content:// URI, import_disc copies it.)
 std::filesystem::path choose_game_data() {
     if (!SDL_Init(SDL_INIT_VIDEO)) return {};
+#ifdef SDL_PLATFORM_ANDROID
+    const SDL_MessageBoxButtonData buttons[] = {
+        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Disc image..."},
+        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+    };
+    const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "Digimon World 4 PC",
+                                 "Choose your Digimon World 4 (USA) disc image (.iso / .gcm, or Dolphin's .rvz). "
+                                 "It is copied into the game's folder once (an .rvz converted), so the picked "
+                                 "file can go afterwards.",
+                                 2, buttons, nullptr};
+#else
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Disc image..."},
         {0, 2, "Extracted folder..."},
@@ -352,6 +598,7 @@ std::filesystem::path choose_game_data() {
                                  "Dolphin's .rvz, converted once) or a Dolphin extraction folder. The choice is "
                                  "saved in settings.ini.",
                                  3, buttons, nullptr};
+#endif
     int choice = 0;
     if (!SDL_ShowMessageBox(&box, &choice) || choice == 0) return {};
     // The dialog may answer from another thread.
@@ -364,9 +611,16 @@ std::filesystem::path choose_game_data() {
         if (files && files[0]) r->path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(files[0])));
         r->done.store(true);
     };
+#ifdef SDL_PLATFORM_ANDROID
+    // ("*": Android's picker knows no MIME type for .rvz / .gcm and would hide them.)
+    static const SDL_DialogFileFilter filters[] = {{"All files", "*"}};
+    std::cout << "first start: the file picker\n";
+    SDL_ShowOpenFileDialog(callback, &result, nullptr, filters, 1, nullptr, false);
+#else
     static const SDL_DialogFileFilter filters[] = {{"GameCube disc image", "iso;gcm;rvz"}, {"All files", "*"}};
     if (choice == 1) SDL_ShowOpenFileDialog(callback, &result, nullptr, filters, 2, nullptr, false);
     else SDL_ShowOpenFolderDialog(callback, &result, nullptr, nullptr, false);
+#endif
     while (!result.done.load()) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {}
@@ -488,11 +742,9 @@ std::string card_names(const std::vector<dw4::game::CardFile>& files) {
     return names.empty() ? "-" : names;
 }
 
-// The program's folder ("" when unknown).
-std::filesystem::path program_dir() {
-    const char* base = SDL_GetBasePath();
-    return base ? std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(base))) : std::filesystem::path();
-}
+// The program's folder ("" when unknown); on Android the app's external
+// files folder (app_paths.hpp).
+std::filesystem::path program_dir() { return dw4::game::app_root(); }
 
 // The online account's achievements of a room (online_achievements.hpp):
 // their own HTTPS worker with the room's login, the account's profile in
@@ -631,8 +883,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (const char* folder = std::getenv("DW4_MODS")) mods_root = folder;
     } else {
         std::error_code error;
-        if (const char* program = SDL_GetBasePath(); program && std::filesystem::is_directory(std::filesystem::path(program) / "mods", error))
-            mods_root = std::filesystem::path(program) / "mods";
+        if (const auto program = program_dir(); !program.empty() && std::filesystem::is_directory(program / "mods", error))
+            mods_root = program / "mods";
         else
             mods_root = "mods";
     }
@@ -641,6 +893,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
     engine.set_resource_overrides(mod_folders);
     for (const auto& mod : mods)
         if (mod.enabled && mod.problem.empty()) std::cout << "mod: " << mod.name << " " << mod.version << " (" << mod.file_count << " files)\n";
+    // The game data's identity the LAN and online peers compare: the same
+    // disc (image or extraction, with the same mods) gives the same value on
+    // the PC and on Android.
+    std::printf("data: %s, data_hash %016llx\n", options.data.string().c_str(), static_cast<unsigned long long>(data_hash(engine.resources())));
     // Fast loading (settings.ini [gameplay] loading; --loading; test runs:
     // DW4_FAST_LOADING=1). A stage load latches it (Engine::fast_loading).
     // A choice in the F1 menu replaces the command line's.
@@ -777,8 +1033,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::string status, shown;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(options.smoke_frames ? 1 : 30);
         SDL_Init(SDL_INIT_VIDEO);
-        SDL_Window* lobby_window = options.smoke_frames ? nullptr : SDL_CreateWindow("Digimon World 4 PC - Online", 560, 96, 0);
-        SDL_Renderer* lobby_renderer = lobby_window ? SDL_CreateRenderer(lobby_window, nullptr) : nullptr;
+        // (In the game window; a test run's only with DW4_RENDER=1, hidden.)
+        const bool lobby_draws = !options.smoke_frames || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0);
+        GameWindow* lobby_window = lobby_draws ? &open_game_window(options.smoke_frames != 0, dev_window, settings) : nullptr;
         bool cancelled = false;
         while (!net.lobby(start, status, error)) {
             if (!error.empty()) break;
@@ -786,18 +1043,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 std::cout << "online: " << status << '\n';
                 shown = status;
             }
-            SDL_Event event;
-            while (SDL_PollEvent(&event))
-                if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancelled = true;
-            if (lobby_renderer) {
-                SDL_SetRenderDrawColor(lobby_renderer, 24, 28, 40, 255);
-                SDL_RenderClear(lobby_renderer);
-                SDL_SetRenderDrawColor(lobby_renderer, 230, 230, 230, 255);
+            if (lobby_window) {
                 const std::string where = options.net_host ? "Hosting on port " + std::to_string(options.net_port)
                                                            : "Joining " + options.net_join + ":" + std::to_string(options.net_port);
-                SDL_RenderDebugText(lobby_renderer, 16, 20, where.c_str());
-                SDL_RenderDebugText(lobby_renderer, 16, 52, status.c_str());
-                SDL_RenderPresent(lobby_renderer);
+                if (!status_frame(*lobby_window, "Digimon World 4 PC - Online", {where, status}, -1.0)) cancelled = true;
+            } else {
+                SDL_Event event;
+                while (SDL_PollEvent(&event))
+                    if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancelled = true;
             }
             if (cancelled || std::chrono::steady_clock::now() > deadline) {
                 error = cancelled ? "Cancelled." : "Nobody joined in time.";
@@ -805,8 +1058,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             SDL_Delay(10);
         }
-        if (lobby_renderer) SDL_DestroyRenderer(lobby_renderer);
-        if (lobby_window) SDL_DestroyWindow(lobby_window);
+        if (lobby_window) std::cout << "online: the lobby drew in the game window\n";
         if (!error.empty()) throw std::runtime_error("online: " + error);
         const auto& started = net.start();
         first_stage = started.stage;
@@ -881,9 +1133,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
     };
     if (options.online_calibrate) return calibrate(options.online_calibrate, 1e9).ok ? 0 : 1;
     // The remembered login and the online character's account folders
-    // (saves/online beside the program; --online-folder in test runs).
+    // (saves/online beside the program, on Android in the app's private
+    // folder; --online-folder in test runs).
     const auto online_folder = options.smoke_frames && !options.online_folder.empty() ? options.online_folder
-                               : (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "saves" / "online";
+                               : (dw4::game::private_root().empty() ? std::filesystem::path(".") : dw4::game::private_root()) / "saves" / "online";
     // Opens a room's session (the command line's room before the game loop,
     // the one the title's Online screens or F1 Online prepared during it):
     // the replay rate calibration (a hidden replay, one engine at a time),
@@ -1087,7 +1340,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     const char* controller_log_file = options.smoke_frames ? std::getenv("DW4_CONTROLLER_LOG") : nullptr;
     if (draw && (!options.smoke_frames || (controller_log_file && *controller_log_file))) {
         controller_log.emplace();
-        const auto folder = program_dir().empty() ? std::filesystem::path(".") : program_dir();
+        const auto folder = dw4::game::private_root().empty() ? std::filesystem::path(".") : dw4::game::private_root();
         if (controller_log->open(options.smoke_frames ? std::filesystem::u8path(controller_log_file) : folder / "saves" / "controllers.log")) {
             int sdl_version = SDL_GetVersion();
             controller_log->write(std::string("DW4_PC ") + DW4_PC_VERSION + ", SDL " + std::to_string(SDL_VERSIONNUM_MAJOR(sdl_version)) + "." +
@@ -1110,75 +1363,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
     ImFont* body_font = nullptr; // the online screens' text over the title
     int samples = 0;
     if (draw) {
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
-        if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
-        // Multisampling is chosen with the window (settings.ini msaa, read at
-        // start-up); without support the window opens without it.
-        // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings);
-        // with DW4_DEV_SETTINGS / DW4_DEV_WINDOW the settings' msaa.
-        const int msaa = options.smoke_frames && !dev_window
-                             ? (std::getenv("DW4_MSAA") ? std::atoi(std::getenv("DW4_MSAA")) : 0)
-                             : settings.msaa;
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
-        // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
-        // unless DW4_WIDESCREEN=1.
-        // (DW4_DEV_SETTINGS / DW4_DEV_WINDOW: the settings' window.)
-        int window_width = options.smoke_frames && !dev_window ? 1280 : settings.width;
-        int window_height = options.smoke_frames && !dev_window ? 960 : settings.height;
-        if (options.smoke_frames && !dev_window) {
-            if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
-            settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
-        }
-        window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
-        context = window ? SDL_GL_CreateContext(window) : nullptr;
-        if (!context && msaa > 1) {
-            if (window) SDL_DestroyWindow(window);
-            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-            window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
-            context = window ? SDL_GL_CreateContext(window) : nullptr;
-        }
-        if (!window || !context) throw std::runtime_error(SDL_GetError());
-        SDL_GL_MakeCurrent(window, context);
-        SDL_GL_SetSwapInterval(options.smoke_frames || !settings.vsync ? 0 : 1);
-        if (!options.smoke_frames && settings.fullscreen) SDL_SetWindowFullscreen(window, true);
-        SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
-        if (samples > 1) glEnable(GL_MULTISAMPLE);
-
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGui::GetIO().IniFilename = nullptr;
-        ImGui::StyleColorsDark();
-        ImGui_ImplSDL3_InitForOpenGL(window, context);
-        ImGui_ImplOpenGL3_Init("#version 330");
-        // The menus keep ImGui's own font (the first one added is the
-        // default); the overhead name tags take a bold system face when
-        // there is one (Segoe UI Bold, Arial Bold: readable over any
-        // background at their small size), else ImGui's scalable one.
-        auto& fonts = *ImGui::GetIO().Fonts;
-        fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
-        if (const char* windows = std::getenv("WINDIR"))
-            for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
-                const auto file = std::filesystem::path(windows) / "Fonts" / face;
-                std::error_code error;
-                if (!tag_font && std::filesystem::is_regular_file(file, error)) tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
-            }
-        if (!tag_font) tag_font = fonts.AddFontDefaultVector();
-        // The online screens over the title: a regular system face beside
-        // the bold one (Segoe UI, Arial), else ImGui's scalable one.
-        if (const char* windows = std::getenv("WINDIR"))
-            for (const char* face : {"segoeui.ttf", "arial.ttf"}) {
-                const auto file = std::filesystem::path(windows) / "Fonts" / face;
-                std::error_code error;
-                if (!body_font && std::filesystem::is_regular_file(file, error)) body_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
-            }
-        if (!body_font) body_font = fonts.AddFontDefaultVector();
+        // (The first start's screens or the LAN lobby may have opened it.)
+        auto& opened = open_game_window(options.smoke_frames != 0, dev_window, settings);
+        window = opened.window;
+        context = opened.context;
+        samples = opened.samples;
+        tag_font = opened.tag_font;
+        body_font = opened.body_font;
     }
 
     // Audio: the SoundManager's streams go to the default playback device
@@ -1287,8 +1478,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // mods/dump/textures. Test runs use neither.
         dw4::game::TexturePack texture_pack;
         auto mods_folder = [&](const char* sub) {
-            std::filesystem::path base;
-            if (const char* program = SDL_GetBasePath()) base = program;
+            const std::filesystem::path base = program_dir();
             std::error_code error;
             if (!base.empty() && std::filesystem::is_directory(base / "mods", error)) return base / "mods" / sub;
             return std::filesystem::path("mods") / sub;
@@ -1529,7 +1719,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const bool trace_events = options.smoke_frames && std::getenv("DW4_TRACE_EVENTS");
         std::filesystem::path profile_path;
         if (!options.smoke_frames) {
-            if (const char* program = SDL_GetBasePath()) profile_path = std::filesystem::path(program) / "saves" / "profile.dat";
+            if (const auto program = program_dir(); !program.empty()) profile_path = program / "saves" / "profile.dat";
         } else if (const char* file = std::getenv("DW4_PROFILE")) {
             profile_path = file;
         }
@@ -1876,7 +2066,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         double accumulator = 0;
         // State files live in saves/states next to the program (not in test runs).
         std::filesystem::path state_dir;
-        if (const char* program = SDL_GetBasePath()) state_dir = std::filesystem::path(program) / "saves" / "states";
+        if (const auto program = program_dir(); !program.empty()) state_dir = program / "saves" / "states";
         auto state_path = [&](std::size_t slot) { return state_dir / ("state" + std::to_string(slot + 1) + ".dw4state"); };
         if (!options.smoke_frames && !state_dir.empty())
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
@@ -4779,6 +4969,9 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef SDL_PLATFORM_ANDROID
+    dw4::game::route_output_to_logcat();
+#endif
     // Test runs and the converter never open dialogs (they run unattended).
     bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
     for (int i = 1; i < argc; ++i)
@@ -4869,6 +5062,7 @@ int main(int argc, char** argv) {
             else if (arg == "--online-ui") options.online_ui = next();
             else if (arg == "--online-folder") options.online_folder = next();
             else if (arg == "--load-state") options.load_state = next();
+            else if (arg == "--import-disc") options.import_disc = next();
             else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--overflow-run") {
                 // KEY=VALUE tokens up to the next option (overflow_run.hpp).
@@ -4933,12 +5127,30 @@ int main(int argc, char** argv) {
         if (options.data.empty()) options.data = settings.data;
         // First start: pick and check the disc image or extraction, then
         // remember it.
+#ifdef SDL_PLATFORM_ANDROID
+        // (A debug build's --import-disc PATH: the first start's import of a
+        // file the picker cannot be driven to in a test, docs/ANDROID.md.)
+        if (!options.import_disc.empty()) {
+            SDL_Init(SDL_INIT_VIDEO);
+            std::string problem;
+            auto imported = import_disc(options.import_disc, settings, problem);
+            if (problem.empty()) problem = check_game_data(imported);
+            if (!problem.empty()) throw std::runtime_error(problem);
+            settings.data = imported;
+            settings.save();
+            options.data = imported;
+        }
+#endif
         if (options.data.empty() && !options.smoke_frames) {
             for (;;) {
                 auto chosen = choose_game_data();
                 if (chosen.empty()) return 1;
                 std::string problem;
-                chosen = resolve_rvz(chosen, problem);
+#ifdef SDL_PLATFORM_ANDROID
+                chosen = import_disc(chosen.string(), settings, problem);
+#else
+                chosen = resolve_rvz(chosen, problem, &settings);
+#endif
                 if (problem.empty()) problem = check_game_data(chosen);
                 if (problem.empty()) {
                     settings.data = chosen;
@@ -4953,7 +5165,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("no --data given and " + settings.file.string() + " has no [data] path");
         {
             std::string problem;
-            options.data = resolve_rvz(options.data, problem);
+            options.data = resolve_rvz(options.data, problem, interactive ? &settings : nullptr);
             if (problem.empty()) problem = check_game_data(options.data);
             if (!problem.empty()) throw std::runtime_error(problem);
         }
