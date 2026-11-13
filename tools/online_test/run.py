@@ -36,7 +36,7 @@ reason, and a run with a SKIP exits with 3 unless --allow-skip), "fake_presence"
 world clients that go from the title to the hub stage S and send PRESENCE there, W19), "fake_guests" ({"count": N,
 "after": "CLIENT: REGEX", "stage": S, "friend_of": CLIENT}: N fake world clients that go home and then to S once CLIENT's log
 shows REGEX, W29; with "friend_of" each befriends that client first (fix-019: a guest's NEW is a friend's without the prompt);
-FakeClient's client mode after the relay lane: world tickets, protocol 49; their accounts are {id:fp1}, {id:fg1}, ...),
+FakeClient's client mode after the relay lane: world tickets, the world's protocol; their accounts are {id:fp1}, {id:fg1}, ...),
 "frame_times" (notes each client's pictures per second and longest passes), a client's "play_args" (instead of
 --online-play: W22's protocol 48 client opens a room the old way) and "refused": true (the client must be turned away
 at its start: its error exit is expected, running its script is a problem).
@@ -110,7 +110,7 @@ BELOW_NORMAL = 0x00004000
 NO_WINDOW = 0x08000000
 NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP: the server's own group (the harness never shares its console signals)
 PROTOCOL, DATA_HASH = 43, 1
-WORLD_PROTOCOL = 49  # the world's protocol (SEAMLESS.md 19.18): the fake world clients and the --fake scenarios speak it
+WORLD_PROTOCOL = 50  # the world's protocol (SEAMLESS.md 19.18; 50 since round I1b, 49 before): the fake world clients and the --fake scenarios speak it
 
 # The stand-in engine's timing for every client of a scenario (simulation: all must agree).
 ENTRY, DEPART = 120, 120
@@ -451,7 +451,7 @@ def stop_server(stack, base):
 
 def run_scenario(stack, sc, api, relay_port, pin, diag):
     """A --fake scenario in the world: its own server (a fresh process and database, as every game scenario), one account
-    per fake client, each enters the world with a ticket of POST /world/ticket (FakeClient's client mode, protocol 49) at
+    per fake client, each enters the world with a ticket of POST /world/ticket (FakeClient's client mode, the world's protocol) at
     the title (stage "") and plays its script's exits; the relay's matching makes the instances (a NEW, a co-arrival, the
     automatic join of I1a)."""
     tag = sc["name"].lower() + secrets.token_hex(2)
@@ -904,7 +904,7 @@ def is_seeded(sc, c):
 def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH, context=None,
                             friend=None):
     """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
-    protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
+    the world's protocol, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
     fake's engine is the stand-in (FakeEngine), never a real game: it must never share a stage group with a game client
     (the fingerprints would differ), so W29's fake guests arrive where nobody of the host's instance is (a guest's NEW).
     friend: (username, token) of an account the fake befriends before it starts (its request, that account's accept): I1a's

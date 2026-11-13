@@ -12178,9 +12178,10 @@ means round I1a):
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
-| W10 | I1b | a removes b: b goes home; b's prompt and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
+| W10 | I1b | a removes b: b goes home; b's prompt (its PLAN after the removal: no row, the cursor on *New instance*; the integration's check) and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
 | W10s | I1a | (fix-019's refix) staff remove b while it catches up (a classic JOIN, `Instances:CheckpointJoins` off, b replaying at 200 steps a second) to join a's stage group in stag0102; a leaves the stage during the catch-up: b's fallback is a stage group of nobody's instance (BARRIER_OK `wid` 0, no story, `fallback_home`), HOME at once (`home_req` *staff*), b answers it and goes home by a DISSOLVE with the replace; never `instance_join how=join` for b; the admin's call names the relay's run (run.py `{run}`) |
 | W11 | I1a / I1b | (changed in round 72; decision 41) a lone host moving inside his area: a (alone in its instance) takes stag0101's exit to dng101b1 where c's instance has a stage group: no prompt, a's instance goes on with a (a new stage group of it), a sees none of c's members. W11b (I1b): a quest board's start the census cannot name, with a running instance there: the loading-screen prompt; *B* takes a back into the lobby next to the board, on its own story |
+| W11r | I1b | (round I1b's integration) the lobby's return mat (stagML11 mate02) through the gate form with real clients: b powers stag0202's Security Gate (matx01) in its own instance and goes home by the gate disc (GATESTAGE stag0202 point 2); a's instance plays in stag0202; b's return mat's *Yes* is held for PLAN purpose return mat, OPTIONS list a's row with a here (preselected), and A joins a there |
 | W12 | I1 | settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, no randomizer) joins: in the instance b's engine is Hard / 1 / randomizer, at home Normal / 0 / none |
 | W13 | I3 | quest help: a on board quest 1 (stag0401 point 3); b without the quest travels to a: at the quest's end b is home with its own 409, 376-381 and COUNTER 2 and no reward; a gets the reward |
 | W14 | I3 | browser travel: b joins a in dng101b1 through the NPC; spawn within 3 units of a; a in a pit or mid-jump: b appears at a's last safe position without waiting; next to fighting enemies: recorded; every member of a's stage group defeated: the join waits (no rescue join); under 1.0 s at any visit length (J's measure); a failure after the restore (a test hook) puts b back in its lobby from the kept snapshot |
@@ -12766,7 +12767,8 @@ pass, plus the I1a scenarios again (with `DW4_ONLINE_AUTOCHOICE=first`),
 the regression, ctest, the server's tests and online off; a DW4Online
 release with the migration and the new protocol exists.
 The user's steps (19.22 step 7): a fresh backup in HeidiSQL,
-`Play:MinimumProtocol` 49 (I1's protocol), the server release, the client release,
+`Play:MinimumProtocol` 50 (I1b's protocol; 49 was I1a's), the server release
+DW4Online 0.2.0 (migration 0014, DEPLOY.md 9.3), the client release,
 together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
@@ -12925,10 +12927,51 @@ quest*; decision 45); (2) the stamp to control takes 3.3-3.4 s, not under
 two seconds (above): accepted (decision 44; it may be shortened later);
 (3) the host's question's hint "A: Yes   B: No" on the loading screen
 (19.5.6): with the controller's button pictures since the integration
-("{A}: Yes   {B}: No", the port UI's placeholders).
+("{A} Yes   {B} No", the port UI's placeholders).
 Not built: a UI scenario of the *Go along* box (the half second, the
 cursor below the box, *B: Close*, *A: Cancel* by the controller); the
 scenarios drive the box's actions through the online script.
+
+*Integrated (2026-11-12 / 13, branch `int-i1b` from main 463c7a5b; notes
+`docs/ROUND_INT_I1B_NOTES.md`): DW4Online 0.2.0, protocol 50, schema 14.*
+
+- **The merges** (moderation, prompt, go along, in that order) keep
+  fix-019's fixes and the lanes': `TakeSeat`'s bool with `Unseatable`,
+  `SendRemovedHome` and `RedecideCoArrivals`; `FallbackHome`;
+  `OnForeignStory` with `DetachedFrom`; *Here* only from the stage groups
+  that stay at the stage; `ContextOf` after `FallbackHome`; staff ordinary
+  players except their own prompt choice. A removed member's held arrival
+  goes home from its barrier, a fresh one waiting for its JOIN of that
+  instance too (the moderation lane's rule; fix-019's refix had let it
+  decide again alone; its invariants stay). The moderation lane's reports
+  are migration **0014** (0013 went live with 0.1.7 and keeps its
+  checksum).
+- **fix-019's part of I1b:** (a) the stage snapshot keeps
+  `ActionManager::random_wait_min_` (`kSnapshotVersion` 44, a 43 state
+  loads with 0); the same check over the tick state set five more values
+  a stage load left over to their defaults at the stage's start; protocol
+  50; (b) `staffChoice` in the prompt's candidates, never preselected nor
+  automatic; (c) *Arriving now* (decision 46, 19.7.2).
+- **Decisions 44-47** (19.1): the GO's 3.3-3.4 s accepted, a context change
+  after the stamp as built, *Arriving now* built, the prompt review's
+  finding 8 accepted.
+- **Fixed on the way:** `RoomHub.BecomeMember` stamps the hub's `now` (the
+  unit test that failed within 17 minutes of a reboot); a story write with
+  its history runs again as a MariaDB deadlock victim (W28's lost session
+  start); the stage group's own join / leave toasts are gone beside
+  WORLD_NOTICE's (19.5.6); every I1b hint shows the controller's button
+  pictures (19.5.6); the Switch 2 Pro reader matches replies by their
+  command (the owner's hardware test).
+- **W7e fixed:** a sealed NEW whose snapshot uploader (the lowest slot)
+  dropped before its BARRIER_OK stayed without the load snapshot for good,
+  so a later JOIN ended HoldExpired. Now the relay asks the connected member
+  in the lowest slot (SNAPSHOT_ASK 0x9C, protocol 50: inst | visit) once the
+  visit is 2 s old and the uploader left the visit or its connection; that
+  member uploads its own load snapshot of the visit and is the uploader;
+  chunks of anybody else are dropped (no longer a protocol error).
+- **Scenarios:** W10 checks the prompt after the removal; W11r (new) takes
+  the lobby's return mat through the gate form with real clients. The runs
+  and the regression: the notes.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
