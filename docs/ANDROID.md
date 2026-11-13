@@ -365,10 +365,13 @@ Findings for phase B:
   (`targets 'dw4_game'`), with every third-party source from the PC build's
   `_deps` (`FETCHCONTENT_SOURCE_DIR_*`).
 - The root `CMakeLists.txt` changes only under `if(ANDROID)` / `NOT ANDROID`:
-  SDL static on the PC only, `find_package(OpenGL)` on the PC only,
-  `add_library(dw4_game SHARED)` instead of `add_executable`, the
+  SDL static on the PC only, `find_package(OpenGL)` on the PC only, the
   `DW4_PC.exe` install rule on the PC only. The Windows libraries were
-  already under `if(WIN32)`.
+  already under `if(WIN32)`. Its `add_executable(dw4_game ...)` line is the
+  PC's own, unchanged (branches that add a game source change only that
+  line): `cmake/android.cmake` overrides `add_executable` for the one target
+  `dw4_game`, which becomes `add_library(dw4_game SHARED ...)` there; every
+  other target goes to the built-in command (`_add_executable`).
 - Clang flags on `dw4_core`, `dw4_engine`, `dw4_online` and `dw4_game`:
   `-ffp-contract=off -fno-fast-math -fsigned-char` (no fused multiply-adds
   as MSVC x64, `char` signed as on x86). `dw4_game` also gets
