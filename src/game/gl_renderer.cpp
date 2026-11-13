@@ -112,6 +112,32 @@ struct GlRenderer::Impl {
     // to GL_TEXTURE_2D. (The PC copies the window directly.)
     unsigned resolve_fbo{}, resolve_texture{};
     int resolve_width{}, resolve_height{};
+    // DW4_CHECK_DEPTH_CLAMP=1 (any platform, a CPU check that changes no
+    // picture): the vertex shader's clamp (GLES without GL_EXT_depth_clamp)
+    // equals GL_DEPTH_CLAMP's per-pixel clamp only for triangles that lie
+    // wholly on one side of the near and of the far plane. Counts the
+    // orthographic triangles that cross one, logged at 1, 10, 100, ...
+    bool check_depth_clamp = std::getenv("DW4_CHECK_DEPTH_CLAMP") != nullptr;
+    std::uint64_t clamp_checked{}, clamp_crossing{}, clamp_report{1};
+    void check_clamp(const engine::GeometryData& g, const engine::Mat4& mvp) {
+        auto side = [&](std::uint32_t index) {
+            if (index >= g.positions.size()) return 0;
+            const auto& p = g.positions[index];
+            const float z = p.x * mvp(0, 2) + p.y * mvp(1, 2) + p.z * mvp(2, 2) + mvp(3, 2);
+            const float w = p.x * mvp(0, 3) + p.y * mvp(1, 3) + p.z * mvp(2, 3) + mvp(3, 3);
+            return z < -w ? -1 : z > w ? 1 : 0;
+        };
+        for (std::size_t i = 0; i + 2 < g.indices.size(); i += 3) {
+            ++clamp_checked;
+            const int a = side(g.indices[i]), b = side(g.indices[i + 1]), c = side(g.indices[i + 2]);
+            if (a == b && b == c) continue;
+            if (++clamp_crossing == clamp_report) {
+                std::cout << "renderer: depth clamp check: " << clamp_crossing << " of " << clamp_checked
+                          << " orthographic triangles cross the near or far plane\n";
+                clamp_report *= 10;
+            }
+        }
+    }
     void copy_window_es(int x, int y, int width, int height) {
         GLint bound = 0;
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
@@ -1941,6 +1967,8 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         // geometry in front of the near plane (item names at z -5); GX draws
         // it, so clamp depth there instead of clipping.
         gl.set_depth_clamp(proj(2, 3) == 0.0f && proj(3, 3) == 1.0f);
+        if (gl.check_depth_clamp && proj(2, 3) == 0.0f && proj(3, 3) == 1.0f && item.geometry && !(item.palette && !item.palette->empty()))
+            gl.check_clamp(*item.geometry, item.model * view * proj);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         // The modelview flush 800F805C (via 800F84EC) loads the position
         // matrix and, as the normal matrix, the transpose of its inverse:
