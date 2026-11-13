@@ -613,8 +613,12 @@ renderer section). Checked:
   the texture and graphics tests); `det.sh` twice on an exe copy,
   `4004f056` / `396cb219` in both runs both times; the depth clamp check
   on `newgame_dng101b1` (renderer section): 0 crossing triangles.
-- `git merge-tree` of feat-android with main, feat-l10n and int-i1b: no
-  conflict (CMake keeps main's `add_executable(dw4_game ...)` line).
+- `git merge-tree` of feat-android with main, int-i1b and feat-remaster:
+  no conflict (CMake keeps main's `add_executable(dw4_game ...)` line).
+  With feat-l10n: exactly the five conflicts main itself has with it
+  (CMakeLists.txt, gl_renderer.cpp/.hpp, texture_pack.cpp/.hpp: main's
+  texture streaming against l10n's texture swaps); feat-android before
+  the main merge (e934cd39) had none with it.
 - The emulator (SwiftShader, the Gradle APK built offline, both ABIs with
   the new code): the title with the same `data_hash 1c693d45198dd6c1`;
   a tap in the top right corner opens and a second one closes the menu;
