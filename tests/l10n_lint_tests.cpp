@@ -210,12 +210,88 @@ void test_wrap() {
     check(card_report.errors == 1 && card_report.ok == 1 && card_report.rows[0].detail.find("2 lines, the box shows 1") != std::string::npos,
           "A one-line memory card text may not take two lines: " + card_report.rows[0].detail);
 }
+
+// Structure the wrap keeps: a text's edges (leading / trailing {BR}s and
+// spaces), a database text's heading line (techniques) or all its lines
+// (equipment); lines count up to the last one that shows something; edge
+// {BR}s that differ from the English text and an id row without a content
+// row are warnings.
+void test_structure() {
+    using dw4::l10n::Verdict;
+    using dw4::l10n::WrapMode;
+    const auto normal = synthetic_font("NORMAL", 1.0f);
+    const auto minimum = synthetic_font("MINIMUM", 0.66f);
+    const dw4::l10n::Fonts fonts{normal.get(), minimum.get()};
+    check(dw4::l10n::wrap_mode("db_txt", "db:pcTech:TXT") == WrapMode::keep_header &&
+              dw4::l10n::wrap_mode("db_explanation", "db:shinka:EXPLANATION") == WrapMode::keep_header &&
+              dw4::l10n::wrap_mode("db_txt", "db:weapon:TXT") == WrapMode::keep_lines &&
+              dw4::l10n::wrap_mode("db_txt", "db:abChip:NAME;db:abChip:TXT") == WrapMode::keep_lines &&
+              dw4::l10n::wrap_mode("db_txt", "db:conItem:TXT") == WrapMode::free && dw4::l10n::wrap_mode("dialog", "db:pcTech:TXT") == WrapMode::free,
+          "Database texts keep their heading or all their lines");
+    check(dw4::l10n::ink_text(u" Ab  cd \r\nEf ", 0) == u" Ab  cd\r\nEf" && dw4::l10n::ink_text(u"Ab ", 1) == u"Ab " &&
+              dw4::l10n::ink_text(u"Ab ", 2) == u"Ab ",
+          "A left-aligned line's trailing spaces show no ink; centred and right-aligned text keeps them");
+    check(dw4::l10n::visible_lines({1.0f, 0.5f, 0.0f}) == 2 && dw4::l10n::visible_lines({0.0f, 1.0f}) == 2 &&
+              dw4::l10n::visible_lines({0.0f}) == 1,
+          "Lines count up to the last one with something on it");
+
+    dw4::l10n::Corpus corpus;
+    corpus.boxes["INFO/font00"] = {"INFO/font00", "NORMAL", 0, 1.0f};
+    corpus.boxes["db:pcTech:TXT"] = {"db:pcTech:TXT", "NORMAL", 0, 0.0f};
+    corpus.boxes["db:weapon:TXT"] = {"db:weapon:TXT", "NORMAL", 0, 0.0f};
+    corpus.texts = {text(u"Head line\r\nA text below it\r\nEnd.", "dialog", "INFO/font00"), text(u"Last words.\r\n", "dialog", "INFO/font00"),
+                    text(u"MP 8 Head\r\nRemoves the rest\r\nfor all nearby", "db_txt", "db:pcTech:TXT"),
+                    text(u"Need Skill 1\r\nAxe of metal\r\nMods:", "db_txt", "db:weapon:TXT")};
+    dw4::l10n::compute_budgets(corpus, fonts);
+    check(corpus.boxes["INFO/font00"].max_lines == 3 && corpus.boxes["db:pcTech:TXT"].max_lines == 3, "A trailing {BR} adds no line");
+    std::vector<std::string> problems;
+    const auto source = dw4::l10n::read_source_tsv(dw4::l10n::write_source_tsv(corpus, fonts), problems);
+    check(source.rows.at(u"Last words.\r\n").max_lines == 3, "The source row carries the box's lines");
+    const std::string catalog =
+        "\tLast words.{BR}\tLetzte Worte und noch mehr Text dazu da{BR}\n"                                // 1: wrapped, its {BR} kept
+        "\tMP 8 Head{BR}Removes the rest{BR}for all nearby\tMP 8 Kopf{BR}Abc def{BR}ghj klm{BR}nop\n"       // 2: the heading kept
+        "\tNeed Skill 1{BR}Axe of metal{BR}Mods:\tAb Skill 1{BR}Axt aus sehr viel Metall und mehr{BR}Sockel:\n" // 3: lines never joined
+        "\tHead line{BR}A text below it{BR}End.\tKopf{BR}Text.\n"                                         // 4: fits
+        "stag0001/mswkTXT0001\tHead line{BR}A text below it{BR}End.\tKopf{BR}Anders.\n"                    // 5: id row, content row 4
+        "stag0001/mswkTXT0002\tLast words.{BR}\tLetzt.{BR}\n";                                            // 6: id row, content row 1
+    const auto report = dw4::l10n::lint(source, catalog, fonts);
+    auto row_at = [&](std::size_t line) -> const dw4::l10n::LintRow& {
+        for (const auto& row : report.rows)
+            if (row.line == line) return row;
+        throw std::runtime_error("no lint row for line " + std::to_string(line));
+    };
+    check(row_at(1).verdict == Verdict::error && row_at(1).suggestion == "Letzte Worte{BR}und noch mehr{BR}Text dazu da{BR}",
+          "The wrap keeps a trailing {BR}: " + row_at(1).suggestion);
+    check(row_at(2).verdict == Verdict::error && row_at(2).detail.find("4 lines, the box shows 3") != std::string::npos &&
+              row_at(2).suggestion == "MP 8 Kopf{BR}Abc def ghj klm{BR}nop",
+          "A technique keeps its heading line, the rest is one paragraph: " + row_at(2).suggestion);
+    check(row_at(3).verdict == Verdict::error && row_at(3).suggestion.empty(), "Equipment lines are never joined: no suggestion");
+    check(row_at(4).verdict == Verdict::ok && row_at(5).verdict == Verdict::ok && row_at(6).verdict == Verdict::ok,
+          "Id rows whose English text has a content row are fine: " + row_at(5).detail + row_at(6).detail);
+
+    // Edge {BR}s that differ, an id row alone.
+    const auto edges = dw4::l10n::lint(source,
+                                       "\tLast words.{BR}\tLetzt.\n"
+                                       "stag0001/mswkTXT0001\tHead line{BR}A text below it{BR}End.\tKopf{BR}Anders.\n",
+                                       fonts);
+    check(edges.warnings == 2 && edges.rows.size() == 2 && edges.rows[0].detail.find("{BR}s") != std::string::npos &&
+              edges.rows[1].detail.find("without a content row") != std::string::npos,
+          "A lost trailing {BR} and an id row without a content row are warnings");
+    // A trailing space in a left-aligned box: 1.38 of ink (1.48 with the space) in a 1.43 box.
+    const auto space = dw4::l10n::lint(source, "\tLast words.{BR}\tAbcdefghjklmno {BR}\n", fonts);
+    check(space.ok == 1 && space.errors == 0, "A left-aligned line's trailing space does not count against its budget");
+    // The wrap keeps a leading {BR} too (a line of the box: two are left).
+    const auto lead = dw4::l10n::lint(source, "\tLast words.{BR}\t{BR}Letzte Worte und noch mehr{BR}\n", fonts);
+    check(lead.rows.size() == 1 && lead.rows[0].suggestion == "{BR}Letzte Worte{BR}und noch mehr{BR}",
+          "The wrap keeps a leading {BR}: " + (lead.rows.empty() ? std::string() : lead.rows[0].suggestion));
+}
 } // namespace
 
 int main() {
     try {
         test_lint();
         test_wrap();
+        test_structure();
     } catch (const std::exception& error) {
         std::cerr << "l10n lint test failed after " << checks << " checks: " << error.what() << '\n';
         return 1;

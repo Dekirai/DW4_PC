@@ -479,11 +479,14 @@ void GlRenderer::set_font_atlas(const engine::FontImage& font) {
 }
 
 void GlRenderer::set_language_textures(LanguageTextures textures) {
-    // The textures the old or the new set swaps upload again (the first set:
-    // every texture uploaded without its hash).
+    // Uploads hash their pixels only while a set swaps pictures (English and
+    // a pack without pictures cost nothing). The textures the old or the new
+    // set swaps upload again; a set that starts hashing also uploads again
+    // every texture that was uploaded without its hash.
+    const bool hashing = !textures.empty();
     for (auto it = textures_.begin(); it != textures_.end();) {
         const auto hash = it->second.hash;
-        if ((!language_hashing_ && !hash) || (hash && (language_.contains(hash) || textures.contains(hash)))) {
+        if ((hashing && !language_hashing_ && !hash) || (hash && (language_.contains(hash) || textures.contains(hash)))) {
             if (it->second.id) glDeleteTextures(1, &it->second.id);
             it = textures_.erase(it);
         } else {
@@ -491,7 +494,7 @@ void GlRenderer::set_language_textures(LanguageTextures textures) {
         }
     }
     language_ = std::move(textures);
-    language_hashing_ = true;
+    language_hashing_ = hashing;
 }
 
 namespace {

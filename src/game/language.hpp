@@ -76,7 +76,8 @@ private:
         LanguageTextures textures;
         bool textures_built = false;
     };
-    bool load(Pack& pack, std::string& message);
+    bool load(Pack& pack, std::string& message);       // (never throws)
+    bool load_files(Pack& pack, std::string& message); // (load's body)
     void build_textures(Pack& pack, engine::Engine& engine);
     void note(std::string text) { notes_.push_back(std::move(text)); }
 

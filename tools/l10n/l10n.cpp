@@ -128,6 +128,42 @@ std::vector<float> measure(const engine::FontImage& font, std::u16string_view te
     return widths;
 }
 
+int visible_lines(const std::vector<float>& widths) {
+    std::size_t lines = widths.size();
+    while (lines > 1 && widths[lines - 1] <= 0.0f) --lines;
+    return int(lines);
+}
+
+std::u16string ink_text(std::u16string_view text, int align) {
+    if (align != 0) return std::u16string(text);
+    std::u16string out;
+    std::size_t spaces = 0; // (held until something follows on the line)
+    for (const char16_t c : text) {
+        if (c == u' ') {
+            ++spaces;
+            continue;
+        }
+        if (c != u'\r' && c != u'\n') out.append(spaces, u' ');
+        spaces = 0;
+        out.push_back(c);
+    }
+    return out;
+}
+
+WrapMode wrap_mode(std::string_view text_class, std::string_view boxes) {
+    if (text_class != "db_txt" && text_class != "db_explanation") return WrapMode::free;
+    for (const auto box : split(boxes, ';')) {
+        // A heading over running text: "MP 8 Heal Skill Up" (techniques),
+        // "Blunt Skills Specialist" (Digivolutions).
+        if (box.starts_with("db:pcTech:") || box.starts_with("db:shinka:")) return WrapMode::keep_header;
+        // Fixed lines: requirement / text / "Mods:" (equipment), value /
+        // slots / data (chips).
+        if (box.starts_with("db:weapon:") || box.starts_with("db:armor1:") || box.starts_with("db:armor2:") || box.starts_with("db:abChip:"))
+            return WrapMode::keep_lines;
+    }
+    return WrapMode::free;
+}
+
 Corpus read_research(const std::filesystem::path& folder, std::vector<std::string>& problems) {
     Corpus corpus;
     std::map<std::u16string, std::size_t> index;
@@ -221,6 +257,10 @@ Corpus read_research(const std::filesystem::path& folder, std::vector<std::strin
                 // status window's folders; subwnd_shop.cpp, subwnd.cpp).
                 static const std::set<std::string> items = {"weapon", "armor1", "armor2", "abChip", "conItem", "impItem", "insItem"};
                 if (items.contains(table_name)) box.field_width = column == "NAME" ? 1.68f : column == "TXT" ? 3.52f : 0.0f;
+                // An MP technique's text: the same description box
+                // (subwnd_skill.cpp: STWINFONT29/font000). Its name also
+                // stands in the dungeon panel's narrower list: no field.
+                if (table_name == "pcTech" && column == "TXT") box.field_width = 3.52f;
                 corpus.boxes.emplace(key, box);
             }
             std::string text_class = "db_" + column;
@@ -257,9 +297,9 @@ void compute_budgets(Corpus& corpus, const Fonts& fonts) {
             auto& box = corpus.boxes[key];
             const auto* font = fonts.of(box.style);
             if (!font) continue;
-            const auto widths = measure(*font, text.english);
+            const auto widths = measure(*font, ink_text(text.english, box.align));
             for (const float width : widths) box.max_width = std::max(box.max_width, width);
-            box.max_lines = std::max(box.max_lines, int(widths.size()));
+            box.max_lines = std::max(box.max_lines, visible_lines(widths));
         }
 }
 
@@ -402,30 +442,75 @@ bool wrap_words(const engine::FontImage& font, std::u16string_view text, float s
     return true;
 }
 
-// The text wrapped greedily into lines that fit: its own line breaks kept
-// (structure such as a heading line or options, each line wrapped on its
-// own), else the whole text as one paragraph (its breaks become spaces);
-// empty when a word is too wide or the lines are too many either way.
-std::u16string rewrap(const engine::FontImage& font, std::u16string_view text, float squeeze, float max_width, int max_lines) {
-    auto joined = [](const std::vector<std::u16string>& lines) {
-        std::u16string text;
-        for (std::size_t i = 0; i < lines.size(); ++i) text += (i ? u"\r\n" : u"") + lines[i];
-        return text;
-    };
-    auto fits = [&](const std::vector<std::u16string>& lines) { return max_lines <= 0 || int(lines.size()) <= max_lines; };
-    std::vector<std::u16string> lines;
-    bool wrapped = true;
-    for (std::size_t start = 0; wrapped;) {
+// The text's lines (split at its line breaks, CR LF or a lone CR / LF).
+std::vector<std::u16string_view> own_lines(std::u16string_view text) {
+    std::vector<std::u16string_view> lines;
+    for (std::size_t start = 0;;) {
         const auto end = text.find_first_of(u"\r\n", start);
-        wrapped = wrap_words(font, text.substr(start, end == std::u16string_view::npos ? end : end - start), squeeze, max_width, lines);
+        lines.push_back(text.substr(start, end == std::u16string_view::npos ? end : end - start));
         if (end == std::u16string_view::npos) break;
         start = end + (text.substr(end).starts_with(u"\r\n") ? 2 : 1);
     }
+    return lines;
+}
+
+// The text wrapped greedily into lines that fit. Its edges (leading and
+// trailing spaces and line breaks: structure, a vertically placed box) stay
+// as they are. Its own line breaks are kept first (structure such as a
+// heading line or options; a line that fits stays as it is, a longer one is
+// wrapped on its own); when that is too many lines, the free mode wraps the
+// whole text as one paragraph (its breaks become spaces), keep_header the
+// lines after the first one, keep_lines gives up. Empty when nothing fits.
+// (A line's width is its ink: ink_text with the box's alignment.)
+std::u16string rewrap(const engine::FontImage& font, std::u16string_view text, float squeeze, float max_width, int max_lines, WrapMode mode,
+                      int align) {
+    const auto first = text.find_first_not_of(u" \r\n");
+    if (first == std::u16string_view::npos) return {};
+    const auto last = text.find_last_not_of(u" \r\n");
+    const std::u16string_view lead = text.substr(0, first), trail = text.substr(last + 1), core = text.substr(first, last + 1 - first);
+    // (Leading breaks are lines of the box; trailing ones show nothing.)
+    const int lead_lines = int(own_lines(lead).size()) - 1;
+    const int core_lines = max_lines > 0 ? max_lines - lead_lines : 0;
+    if (max_lines > 0 && core_lines <= 0) return {};
+    auto fits = [&](const std::vector<std::u16string>& lines) { return core_lines <= 0 || int(lines.size()) <= core_lines; };
+    auto joined = [&](const std::vector<std::u16string>& lines) {
+        std::u16string out(lead);
+        for (std::size_t i = 0; i < lines.size(); ++i) out += (i ? u"\r\n" : u"") + lines[i];
+        return out + std::u16string(trail);
+    };
+    auto fits_width = [&](std::u16string_view line) {
+        const auto widths = measure(font, ink_text(line, align), squeeze);
+        return widths.empty() || widths[0] <= max_width + 1e-4f;
+    };
+    const auto parts = own_lines(core);
+    std::vector<std::u16string> lines;
+    bool wrapped = true;
+    for (const auto part : parts) {
+        if (fits_width(part)) lines.emplace_back(part);
+        else if (!(wrapped = wrap_words(font, part, squeeze, max_width, lines))) break;
+    }
     if (wrapped && fits(lines)) return joined(lines);
+    if (mode == WrapMode::keep_lines) return {};
     lines.clear();
-    if (text.find_first_not_of(u" \r\n") == std::u16string_view::npos || !wrap_words(font, text, squeeze, max_width, lines) || !fits(lines))
-        return {};
+    std::u16string_view rest = core;
+    if (mode == WrapMode::keep_header && parts.size() > 1) {
+        if (!fits_width(parts[0])) return {};
+        lines.emplace_back(parts[0]);
+        rest = core.substr(std::size_t(parts[1].data() - core.data()));
+    }
+    if (!wrap_words(font, rest, squeeze, max_width, lines) || !fits(lines)) return {};
     return joined(lines);
+}
+
+// The line breaks at a text's start and end.
+std::pair<int, int> edge_breaks(std::u16string_view text) {
+    int lead = 0, trail = 0;
+    for (std::size_t i = 0; i < text.size() && (text[i] == u' ' || text[i] == u'\r' || text[i] == u'\n'); ++i)
+        if (text[i] == u'\n' || (text[i] == u'\r' && (i + 1 >= text.size() || text[i + 1] != u'\n'))) ++lead;
+    for (std::size_t i = text.size(); i > 0 && (text[i - 1] == u' ' || text[i - 1] == u'\r' || text[i - 1] == u'\n'); --i)
+        if (text[i - 1] == u'\n' || (text[i - 1] == u'\r' && (i >= text.size() || text[i] != u'\n'))) ++trail;
+    if (text.find_first_not_of(u" \r\n") == std::u16string_view::npos) trail = 0;
+    return {lead, trail};
 }
 
 } // namespace
@@ -489,20 +574,25 @@ LintReport lint(const SourceTable& source, std::string_view catalog_tsv, const F
             // The lines: the box's, but a memory card text keeps its English
             // line count (its box's next line is often the other half of the
             // sentence, CHRSELFONT06 font000 / font001, or the options).
+            // (Lines count up to the last one that shows something: a
+            // trailing line break adds none.)
             int max_lines = box->max_lines;
             if (box->text_class == "memcard") {
-                const int english_lines = std::max(1, int(measure(*font, entry.english).size()));
+                const int english_lines = visible_lines(measure(*font, entry.english));
                 max_lines = max_lines > 0 ? std::min(max_lines, english_lines) : english_lines;
             }
-            const auto widths = measure(*font, entry.text, entry.squeeze);
+            // (A left-aligned line's trailing spaces show nothing.)
+            const auto ink = ink_text(entry.text, box->align);
+            const auto widths = measure(*font, ink, entry.squeeze);
             const float widest = widths.empty() ? 0.0f : *std::max_element(widths.begin(), widths.end());
             row.widest = budget > 0 ? widest / budget : 0;
-            const bool too_many = max_lines > 0 && int(widths.size()) > max_lines;
+            const int lines = visible_lines(widths);
+            const bool too_many = max_lines > 0 && lines > max_lines;
             if (too_many)
-                problems.push_back(std::to_string(widths.size()) + " lines, the box shows " + std::to_string(max_lines) +
+                problems.push_back(std::to_string(lines) + " lines, the box shows " + std::to_string(max_lines) +
                                    (max_lines < box->max_lines ? " (a memory card text keeps the English lines)" : ""));
             if (budget > 0 && widest > budget + 1e-4f) {
-                const auto plain = measure(*font, entry.text);
+                const auto plain = measure(*font, ink);
                 const float plain_widest = plain.empty() ? 0.0f : *std::max_element(plain.begin(), plain.end());
                 const float needed = budget / plain_widest;
                 char text[160];
@@ -518,17 +608,25 @@ LintReport lint(const SourceTable& source, std::string_view catalog_tsv, const F
                 problems.push_back(text);
             }
             if ((too_many || (budget > 0 && widest > budget + 1e-4f)) && budget > 0) {
-                const auto wrapped = rewrap(*font, entry.text, entry.squeeze, budget, max_lines);
+                const auto wrapped = rewrap(*font, entry.text, entry.squeeze, budget, max_lines, wrap_mode(box->text_class, box->boxes), box->align);
                 if (!wrapped.empty()) row.suggestion = i18n::encode_tokens(wrapped);
             }
             // Worth a look (shown as it is).
             if (digits_of(entry.english) != digits_of(entry.text)) notes.push_back("the numbers differ from the English text's");
             if (!entry.english.empty() && entry.english.back() == u':' && (entry.text.empty() || entry.text.back() != u':'))
                 notes.push_back("the English text ends in ':' (the game appends a value there)");
+            if (edge_breaks(entry.english) != edge_breaks(entry.text))
+                notes.push_back("the English text starts or ends with other {BR}s (keep them: they place the text in its box)");
         } else if (!box) {
             notes.push_back("not in the English corpus (stale, or a text the game composes)");
             ++report.not_in_corpus;
         }
+        // An id row is used only while the engine knows the line's pack
+        // string; a line rebuilt from a save state, a seamless join or a
+        // rerun has no index and shows the content row (docs/L10N.md 2).
+        if (i18n::id_kind(entry.id) == i18n::IdKind::pack && !parsed.catalog->find(entry.english))
+            notes.push_back("an id row without a content row for its English text: lines rebuilt from a save state, a co-op join or a rerun "
+                            "show English until the next TEXTSET (add a row with an empty id)");
         if (!problems.empty()) {
             row.verdict = squeeze_needed && problems.size() == 1 ? Verdict::needs_squeeze : Verdict::error;
         } else if (!notes.empty()) {

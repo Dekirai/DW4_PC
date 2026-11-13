@@ -212,6 +212,44 @@ void test_language_ini() {
     check(problems.size() == 2, "The folder without language.ini and the second 'de' are reported: " + std::to_string(problems.size()));
     check(dw4::i18n::discover_languages(root / "missing").empty(), "A missing lang/ folder lists nothing");
     std::filesystem::remove_all(root, ec);
+
+    // Folder and file names outside the ANSI code page (MSVC's narrow path
+    // conversions throw for them): a pack in such a folder still loads, one
+    // without language.ini is reported by its UTF-8 name, neither stops the
+    // others, and a game file name in UTF-8 resolves to the right file.
+    using dw4::i18n::path_from_utf8;
+    using dw4::i18n::path_to_utf8;
+    const auto wide = std::filesystem::temp_directory_path() / "dw4_i18n_tests_lang_utf8";
+    std::filesystem::remove_all(wide, ec);
+    const auto ja = wide / path_from_utf8("日本語");
+    std::filesystem::create_directories(ja);
+    std::filesystem::create_directories(wide / path_from_utf8("中文"));
+    std::filesystem::create_directories(wide / "de");
+    std::ofstream(ja / "language.ini") << "[language]\ncode=ja\nname=日本語\n[files]\ngame=テキスト.tsv\n";
+    std::ofstream(ja / path_from_utf8("テキスト.tsv")) << "id\tenglish\ttranslation\n";
+    std::ofstream(wide / "de" / "language.ini") << "[language]\ncode=de\n";
+    // A language.ini over 64 KB is refused before it is read.
+    std::filesystem::create_directories(wide / "xl");
+    std::ofstream(wide / "xl" / "language.ini") << "[language]\ncode=xl\n" << std::string(70 * 1024, ';') << "\n";
+    problems.clear();
+    std::vector<dw4::i18n::LanguageInfo> packs;
+    bool threw = false;
+    try {
+        packs = dw4::i18n::discover_languages(wide, &problems);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    check(!threw, "Discovery never throws for a folder name outside the ANSI code page");
+    check(packs.size() == 2 && packs[0].code == "de" && packs[1].code == "ja", "Both usable packs are found: " + std::to_string(packs.size()));
+    check(packs.size() == 2 && path_to_utf8(packs[1].folder.filename()) == "日本語" && packs[1].name == "日本語", "The UTF-8 folder is recorded");
+    check(packs.size() == 2 && std::filesystem::is_regular_file(packs[1].folder / path_from_utf8(packs[1].game_file)),
+          "A UTF-8 game file name resolves to its file");
+    const bool reported = std::any_of(problems.begin(), problems.end(), [](const std::string& p) { return p == "中文: no language.ini"; });
+    const bool too_large =
+        std::any_of(problems.begin(), problems.end(), [](const std::string& p) { return p.starts_with("xl: language.ini is larger"); });
+    check(reported && too_large && problems.size() == 2, "The folder without language.ini (by its UTF-8 name) and the large ini are reported");
+    check(path_to_utf8(path_from_utf8("Übersetzung/ß")) == "Übersetzung/ß", "UTF-8 survives the trip through a path");
+    std::filesystem::remove_all(wide, ec);
 }
 
 void test_texture_rules() {

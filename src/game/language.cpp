@@ -15,22 +15,23 @@
 namespace dw4::game {
 namespace {
 
-// A pack file's bytes (bounded: a catalog of the whole game is a few MB).
-bool read_file(const std::filesystem::path& path, std::string& text, std::string& message) {
+// A pack file's bytes (bounded: a catalog of the whole game is a few MB);
+// name is the file's name for the message (UTF-8, from language.ini).
+bool read_file(const std::filesystem::path& path, std::string_view name, std::string& text, std::string& message) {
     std::error_code error;
     const auto size = std::filesystem::file_size(path, error);
     if (error) {
-        message = path.filename().string() + " cannot be read";
+        message = std::string(name) + " cannot be read";
         return false;
     }
     if (size > 64u * 1024u * 1024u) {
-        message = path.filename().string() + " is larger than 64 MB";
+        message = std::string(name) + " is larger than 64 MB";
         return false;
     }
     std::ifstream in(path, std::ios::binary);
     text.assign(std::size_t(size), '\0');
-    if (!in.read(text.data(), std::streamsize(size))) {
-        message = path.filename().string() + " cannot be read";
+    if (!in || !in.read(text.data(), std::streamsize(size))) {
+        message = std::string(name) + " cannot be read";
         return false;
     }
     return true;
@@ -50,7 +51,11 @@ void Languages::discover(const std::filesystem::path& lang_root) {
     std::vector<std::string> problems;
     for (auto& info : i18n::discover_languages(lang_root, &problems)) {
         std::error_code error;
-        const bool texts = std::filesystem::is_regular_file(info.folder / info.game_file, error);
+        bool texts = false;
+        try {
+            texts = std::filesystem::is_regular_file(info.folder / i18n::path_from_utf8(info.game_file), error);
+        } catch (const std::exception&) {
+        }
         entries_.push_back({info.code, info.name, texts});
         Pack pack;
         pack.info = std::move(info);
@@ -68,16 +73,28 @@ std::vector<std::string> Languages::take_notes() {
 }
 
 bool Languages::load(Pack& pack, std::string& message) {
-    const std::string& code = pack.info.code;
     pack.catalog.reset();
     pack.rules = {};
     pack.textures.clear();
     pack.textures_built = false;
+    try {
+        return load_files(pack, message);
+    } catch (const std::exception&) {
+        // (A path the file system refuses; MSVC's message is in the ANSI code page.)
+        pack.catalog.reset();
+        pack.rules = {};
+        message = "the pack's files cannot be read";
+        return false;
+    }
+}
+
+bool Languages::load_files(Pack& pack, std::string& message) {
+    const std::string& code = pack.info.code;
     std::error_code error;
-    const auto game_path = pack.info.folder / pack.info.game_file;
+    const auto game_path = pack.info.folder / i18n::path_from_utf8(pack.info.game_file);
     if (std::filesystem::is_regular_file(game_path, error)) {
         std::string text;
-        if (!read_file(game_path, text, message)) return false;
+        if (!read_file(game_path, pack.info.game_file, text, message)) return false;
         auto parsed = i18n::GameTextCatalog::parse(text);
         pack.catalog = parsed.catalog;
         note(code + ": " + pack.info.game_file + " " + std::to_string(parsed.accepted) + " texts, " + std::to_string(parsed.rejected) +
@@ -98,10 +115,10 @@ bool Languages::load(Pack& pack, std::string& message) {
         note(code + ": no " + pack.info.game_file + " (the game text stays English, only the pictures change)");
     }
     if (!pack.info.textures_file.empty()) {
-        const auto textures_path = pack.info.folder / pack.info.textures_file;
+        const auto textures_path = pack.info.folder / i18n::path_from_utf8(pack.info.textures_file);
         if (std::filesystem::is_regular_file(textures_path, error)) {
             std::string text;
-            if (!read_file(textures_path, text, message)) return false;
+            if (!read_file(textures_path, pack.info.textures_file, text, message)) return false;
             pack.rules = i18n::parse_texture_rules(text);
             for (const auto& problem : pack.rules.problems) note(code + ": " + pack.info.textures_file + " " + problem);
         }

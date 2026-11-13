@@ -9,6 +9,7 @@
 #include "dw4/i18n/game_text.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -58,6 +59,22 @@ struct Fonts {
 // Every line's width (its right edge, after the squeeze) as the engine lays
 // the text out in that font.
 std::vector<float> measure(const engine::FontImage& font, std::u16string_view text, float squeeze = 1.0f);
+// The lines a box shows of measured widths: up to the last one with
+// something on it (a trailing line break adds none; at least 1).
+int visible_lines(const std::vector<float>& widths);
+// The text as far as it shows ink: for a left-aligned box (align 0) every
+// line's trailing spaces are dropped (they move nothing); centred and
+// right-aligned text keeps them. Budgets and the lint measure this.
+std::u16string ink_text(std::u16string_view text, int align);
+
+// How the lint's wrap suggestion may move a text's own line breaks when
+// keeping them gives too many lines: free (the whole text as one
+// paragraph), keep_header (the first line stays, the rest is one
+// paragraph: an MP technique's "MP 8 Heal Skill Up"), keep_lines (never:
+// equipment and chip texts, one fact per line). By the text's class and
+// boxes (a source row's columns).
+enum class WrapMode : std::uint8_t { free, keep_header, keep_lines };
+WrapMode wrap_mode(std::string_view text_class, std::string_view boxes);
 
 // The research inventory (work/l10n_research/text: usa_pack_text_widths.tsv,
 // out/lines.tsv, usa_db_text.tsv, aus_card_text.tsv) as a corpus; the dev
@@ -94,7 +111,8 @@ enum class Verdict : std::uint8_t {
     squeezed,      // fits with its squeeze flag (0.90..0.99, the last resort)
     needs_squeeze, // fits only squeezed and has no (or too weak a) squeeze flag: an error
     error,         // does not fit, broken tokens, a glyph the font lacks, too many lines ...
-    warning,       // shown, but worth a look (numbers changed, a ':' ending lost, not in the corpus)
+    warning,       // shown, but worth a look (numbers changed, a ':' ending lost, other edge {BR}s, an id row
+                   // without a content row, not in the corpus)
 };
 const char* verdict_name(Verdict verdict);
 struct LintRow {
@@ -104,7 +122,9 @@ struct LintRow {
     std::string text;        // token form
     std::string detail;
     // A greedy rewrap that fits (token form), if one does: the translation's
-    // own line breaks kept, else the whole text wrapped as one paragraph.
+    // edges (leading / trailing spaces and {BR}s) and own line breaks kept,
+    // else as its WrapMode allows (the whole text as one paragraph, the
+    // heading line kept, or none).
     std::string suggestion;
     float widest = 0;        // the widest line against the budget (1 = exactly full)
 };

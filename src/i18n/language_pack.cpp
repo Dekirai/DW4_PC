@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <fstream>
-#include <sstream>
 
 namespace dw4::i18n {
 namespace {
@@ -21,10 +20,14 @@ bool valid_code(std::string_view code) {
     return std::all_of(code.begin(), code.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
 }
 
-// A file name inside the pack folder (no folders, no parent references).
+// A file name inside the pack folder (no folders, no parent references, no
+// control characters; UTF-8 beyond ASCII is fine: it is used as a UTF-8 path).
 bool plain_file_name(std::string_view name) {
     if (name.empty() || name.size() > 64 || name == "." || name == "..") return false;
-    return std::none_of(name.begin(), name.end(), [](char c) { return c == '/' || c == '\\' || c == ':' || c < 0x20; });
+    return std::none_of(name.begin(), name.end(), [](char c) {
+        const auto byte = static_cast<unsigned char>(c);
+        return c == '/' || c == '\\' || c == ':' || byte < 0x20 || byte == 0x7f;
+    });
 }
 
 } // namespace
@@ -71,40 +74,84 @@ std::optional<LanguageInfo> parse_language_ini(std::string_view text, std::strin
     return info;
 }
 
+std::filesystem::path path_from_utf8(std::string_view text) {
+    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+}
+
+std::string path_to_utf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
 std::vector<LanguageInfo> discover_languages(const std::filesystem::path& lang_root, std::vector<std::string>* problems) {
+    constexpr std::size_t kMaxFolders = 256;
+    constexpr std::uintmax_t kMaxIni = 64 * 1024;
     std::vector<LanguageInfo> found;
-    std::error_code error;
-    if (!std::filesystem::is_directory(lang_root, error)) return found;
-    // (By folder name: the first of two packs for one code is the same on every run.)
+    auto report = [&](const std::string& message) {
+        if (problems) problems->push_back(message);
+    };
     std::vector<std::filesystem::path> folders;
-    for (const auto& entry : std::filesystem::directory_iterator(lang_root, error))
-        if (entry.is_directory(error)) folders.push_back(entry.path());
+    try {
+        std::error_code error;
+        if (!std::filesystem::is_directory(lang_root, error)) return found;
+        std::filesystem::directory_iterator entry(lang_root, error);
+        for (const std::filesystem::directory_iterator end; !error && entry != end; entry.increment(error)) {
+            std::error_code kind;
+            if (!entry->is_directory(kind)) continue;
+            if (folders.size() == kMaxFolders) {
+                report("more than " + std::to_string(kMaxFolders) + " folders: the rest are left out");
+                break;
+            }
+            folders.push_back(entry->path());
+        }
+    } catch (const std::exception&) {
+        report("the folder cannot be listed");
+    }
+    // (By folder name: the first of two packs for one code is the same on every run.)
     std::sort(folders.begin(), folders.end());
     for (const auto& folder : folders) {
-        const auto ini_path = folder / "language.ini";
-        std::ifstream in(ini_path, std::ios::binary);
-        if (!in) {
-            if (problems) problems->push_back(folder.filename().string() + ": no language.ini");
-            continue;
+        // Each folder on its own: one that cannot be read (a name outside
+        // UTF-8, an ini that vanished) is reported and the rest still load.
+        std::string name = "(a folder whose name is not valid UTF-16)";
+        try {
+            name = path_to_utf8(folder.filename());
+            const auto ini_path = folder / "language.ini";
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(ini_path, error)) {
+                report(name + ": no language.ini");
+                continue;
+            }
+            const auto size = std::filesystem::file_size(ini_path, error);
+            if (error) {
+                report(name + ": language.ini cannot be read");
+                continue;
+            }
+            if (size > kMaxIni) {
+                report(name + ": language.ini is larger than 64 KB");
+                continue;
+            }
+            std::string text(std::size_t(size), '\0');
+            std::ifstream in(ini_path, std::ios::binary);
+            if (!in || !in.read(text.data(), std::streamsize(size))) {
+                report(name + ": language.ini cannot be read");
+                continue;
+            }
+            std::string why;
+            auto info = parse_language_ini(text, name, &why);
+            if (!info) {
+                report(name + ": " + why);
+                continue;
+            }
+            if (std::any_of(found.begin(), found.end(), [&](const LanguageInfo& other) { return other.code == info->code; })) {
+                report(name + ": a second pack for '" + info->code + "'");
+                continue;
+            }
+            info->folder = folder;
+            found.push_back(std::move(*info));
+        } catch (const std::exception&) {
+            // (MSVC's message is in the ANSI code page: not shown.)
+            report(name + ": skipped, its name or language.ini cannot be read");
         }
-        std::ostringstream text;
-        text << in.rdbuf();
-        if (text.str().size() > 64 * 1024) {
-            if (problems) problems->push_back(folder.filename().string() + ": language.ini is too large");
-            continue;
-        }
-        std::string why;
-        auto info = parse_language_ini(text.str(), folder.filename().string(), &why);
-        if (!info) {
-            if (problems) problems->push_back(folder.filename().string() + ": " + why);
-            continue;
-        }
-        if (std::any_of(found.begin(), found.end(), [&](const LanguageInfo& other) { return other.code == info->code; })) {
-            if (problems) problems->push_back(folder.filename().string() + ": a second pack for '" + info->code + "'");
-            continue;
-        }
-        info->folder = folder;
-        found.push_back(std::move(*info));
     }
     std::sort(found.begin(), found.end(), [](const LanguageInfo& a, const LanguageInfo& b) { return a.code < b.code; });
     return found;

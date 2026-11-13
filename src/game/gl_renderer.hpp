@@ -193,7 +193,7 @@ private:
     std::pair<const void*, std::uint32_t> atlas_key_{};
     std::unique_ptr<engine::FontImage> atlas_font_;
     LanguageTextures language_;
-    bool language_hashing_ = false; // (every upload hashes once a language set arrived)
+    bool language_hashing_ = false; // (uploads hash while a set with pictures is active)
     std::unordered_map<const engine::GeometryData*, PromptSplit> splits_;
     // The title's PRESS START variants by PromptSource::art_key, the latest
     // first (a few kept: switching families back and forth draws none again).

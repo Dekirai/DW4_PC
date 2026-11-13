@@ -41,7 +41,9 @@ struct LanguageInfo {
 std::optional<LanguageInfo> parse_language_ini(std::string_view text, std::string_view folder_name, std::string* error = nullptr);
 
 // The language packs below a lang/ folder (sorted by code; English is not
-// listed). Folders without a usable language.ini are skipped and reported.
+// listed). Folders without a usable language.ini (missing, larger than
+// 64 KB, unreadable, a name the file system cannot give as UTF-8 ...) are
+// skipped and reported; a broken pack never stops the others. Never throws.
 std::vector<LanguageInfo> discover_languages(const std::filesystem::path& lang_root, std::vector<std::string>* problems = nullptr);
 
 // textures.tsv: "<usa hash> <TAB> <image name> <TAB> <source>" per line,
@@ -68,5 +70,12 @@ struct TextureRules {
 TextureRules parse_texture_rules(std::string_view text);
 
 std::optional<std::uint64_t> parse_hash16(std::string_view text);
+
+// UTF-8 text to and from file system paths. (The narrow path conversions of
+// MSVC use the ANSI code page and throw for a name outside it, e.g. a
+// lang/日本語 folder on a German Windows.) path_from_utf8 throws for invalid
+// UTF-8; path_to_utf8 throws for a name that is not valid UTF-16.
+std::filesystem::path path_from_utf8(std::string_view text);
+std::string path_to_utf8(const std::filesystem::path& path);
 
 } // namespace dw4::i18n
