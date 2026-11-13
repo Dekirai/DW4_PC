@@ -237,8 +237,9 @@ ac566f5a15c2a226	rgba8	4	11	1024	512	tex/ac566f5a15c2a226.dds	blend
   export's and the dumps' PNGs (some text stands upside down there): do not
   flip them. Alpha is straight (not premultiplied).
 - The mip chain is the pack builder's: the loader draws the levels as they
-  are. Build them from the 4x picture in the texture's wrap (repeating
-  textures wrap, see the export's `tiles` / `uv_edges`), with alpha
+  are. Build them from the 4x picture in the texture's wrap (textures that
+  repeat wrap: the export's `tiles`, and `uv_edges` only where the picture
+  continues across that border, `rmcommon.tiling_axes`), with alpha
   separate and the alpha coverage kept for cut-outs at the material's
   reference (`tools/remaster/make_dds_pack.py` does this with texconv,
   `tools/remaster/build_pack.py` with its own filter, keeping a given 2x
@@ -402,7 +403,7 @@ Manifest columns:
 | `pack_names` | Names under which a `beTextureCtrl` pack offers it (`lh_pack`, `ls_pack`, the language packs); scene sets that ask for the name draw it. |
 | `uv_range` | Union of the drawn UV boxes (after texture transforms), `u0..u1,v0..v1`. |
 | `tiles` | Axes on which a draw's UVs leave the picture by more than a texel (and 1 %) with a repeat wrap: the picture repeats within a face. |
-| `uv_edges` | Axes on which drawn UVs reach a border (within a texel) or cross it with a repeat wrap: bilinear filtering reads the opposite edge there, and faces side by side with border-to-border UVs tile the picture. Pad these axes cyclically before upscaling. |
+| `uv_edges` | Axes on which drawn UVs reach a border (within a texel) or cross it with a repeat wrap: bilinear filtering reads the opposite edge there, and faces side by side with border-to-border UVs may tile the picture. Pad such an axis cyclically before upscaling only where the picture continues across the border (3D textures; `tools/remaster` `rmcommon.tiling_axes`): a light beam whose first row is black, a skin whose UV islands touch the border or a HUD piece would get its opposite edge blended into its outer rows. |
 | `uv_motion` | `scroll` (an interpolated UV transform sequence), `keys` (a stepped one), `texgen` (sphere map), `particle` (moving particle UVs). |
 | `atlas` | `font:<name>:<glyphs>`, `grid:<x>x<y>` (particle sprite sheets), `quads:<n>` (distinct sprite rectangles, not just the whole picture); cells in `atlas/`. |
 | `uv_mask` | `uvmask/<hash>.png`, `full` (repeating or moving UVs reach everything) or `-`. |
