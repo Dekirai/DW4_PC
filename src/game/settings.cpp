@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -314,6 +315,39 @@ Settings Settings::parse(IniFile document) {
     settings.menu_buttons =
         ini.get_or("gamepad", "menu_buttons", "layout") == "bindings" ? MenuButtons::bindings : MenuButtons::layout;
     settings.gc_adapter = ini.get_bool("gamepad", "gc_adapter", settings.gc_adapter);
+    {
+        // (A value this build does not read keeps the default.)
+        auto& g = settings.graphics;
+        if (const auto v = ini.get("graphics", "texture_quality"))
+            if (const auto q = parse_texture_quality(*v)) g.texture_quality = *q;
+        if (const auto v = ini.get("graphics", "texture_filter"))
+            if (const auto f = parse_texture_filter(*v)) g.texture_filter = *f;
+        if (const auto v = ini.get("graphics", "lod_bias"))
+            if (const auto b = parse_lod_bias(*v)) g.lod_bias = *b;
+        if (const auto v = ini.get("graphics", "sharpening"))
+            if (const auto sh = parse_sharpening(*v)) g.sharpening = *sh;
+        if (const auto v = ini.get("graphics", "shadow_quality"))
+            if (const auto q = parse_shadow_quality(*v)) g.shadow_quality = *q;
+        g.texture_memory_mb = ini.get_int("graphics", "texture_memory", g.texture_memory_mb);
+        g = g.clamped();
+        // A settings.ini written before the Graphics options (its [window]
+        // stored, no [graphics] key): the F1 preset it was set to stays
+        // what it shows. Original takes the game's own textures and
+        // shadows, Modernized the pack's 4x level, 16x anisotropic
+        // filtering and the 4x shadow map; any other choice keeps the
+        // defaults (Custom either way).
+        bool graphics_stored = false;
+        for (const char* key : {"texture_quality", "texture_filter", "lod_bias", "sharpening", "shadow_quality", "texture_memory"})
+            if (ini.get("graphics", key)) graphics_stored = true;
+        if (!graphics_stored && ini.get("window", "width")) {
+            const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 && !settings.skip_intro &&
+                                  !settings.fast_loading && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
+                                  settings.damage_taken == 100 && settings.rand_seed == 0;
+            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
+                                    settings.fast_loading;
+            if (original || modernized) g = preset_graphics(modernized, g);
+        }
+    }
     settings.texture_pack = ini.get_or("mods", "textures", "");
     settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);
     {
@@ -404,7 +438,19 @@ void Settings::store() {
     ini_.set("gamepad", "wii_driver", wii_driver == WiiDriver::on ? "on" : wii_driver == WiiDriver::off ? "off" : "auto");
     ini_.set("gamepad", "menu_buttons", menu_buttons == MenuButtons::bindings ? "bindings" : "layout");
     ini_.set_bool("gamepad", "gc_adapter", gc_adapter);
-    if (!texture_pack.empty()) ini_.set("mods", "textures", texture_pack.string());
+    {
+        const auto g = graphics.clamped();
+        ini_.set("graphics", "texture_quality", texture_quality_name(g.texture_quality));
+        ini_.set("graphics", "texture_filter", texture_filter_name(g.texture_filter));
+        char bias[16];
+        std::snprintf(bias, sizeof bias, "%.2f", double(g.lod_bias));
+        ini_.set("graphics", "lod_bias", bias);
+        ini_.set("graphics", "sharpening", sharpening_name(g.sharpening));
+        ini_.set("graphics", "shadow_quality", shadow_quality_name(g.shadow_quality));
+        ini_.set_int("graphics", "texture_memory", g.texture_memory_mb);
+    }
+    // (Empty: the default folder; a cleared folder is written empty.)
+    if (!texture_pack.empty() || ini_.get("mods", "textures")) ini_.set("mods", "textures", texture_pack.string());
     ini_.set_bool("mods", "dump_textures", dump_textures);
     {
         std::string list;

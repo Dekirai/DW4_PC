@@ -205,7 +205,7 @@ void Languages::build_textures(Pack& pack, engine::Engine& engine) {
                             continue;
                         }
                         const auto image = decode_igb_texture(document, info.reference_index);
-                        const auto hash = texture_hash(image.rgba, int(image.width), int(image.height), image.block_compressed);
+                        const auto hash = TexturePack::image_hash(image);
                         if (hash != (*it)->source_hash) {
                             ++it;
                             continue;

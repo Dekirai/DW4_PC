@@ -99,7 +99,7 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | `include/dw4/engine`, `src/engine` | `dw4_engine`: frame step, messenger and demo manager, Lua host, scene graph, and the reconstructed managers (stage loader, scene/layer/camera, model control, actions, text, menus, title, character select, floor mats, collision) |
 | `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping, settings and the F1 menu, the save store and GC save import, online sessions, Discord Rich Presence, name tags, achievements |
 | `server/DW4Online` | The online backend (ASP.NET Core + MariaDB: accounts, online character, cloud save, achievements, rooms, relay, website), its tests and deployment kit; built with `dotnet`, separate from the CMake build |
-| `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `verify_game.py` (read-only ISO identification) |
+| `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `dw4_texpack` (texture export for pack authors), `remaster/` (4x upscaling pipeline for texture packs), `verify_game.py` (read-only ISO identification) |
 | `tests` | Asset-free tests for the core formats and tools |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
 
@@ -683,17 +683,73 @@ F1 menu lists the mods and switches them on or off for the next start
 (`[mods] disabled=id,...`). Online sessions only accept machines whose game
 data, mods included, match.
 
+### Graphics options
+
+F1 > Settings > Graphics (settings.ini `[graphics]`; every change applies at
+once, nothing reaches the game itself, so online partners may differ):
+
+- *Texture quality*: Original (the game's own textures), High (a texture
+  pack's 2x level) or Ultra (its 4x level, the default; without a pack both
+  show the game's textures). It changes the running stage too: the pack's
+  textures come in within a few frames.
+- *Texture filtering*: Bilinear (the GameCube's sampling, the default),
+  Trilinear (mipmaps for the game's textures: less shimmer on distant
+  floors) or Anisotropic 2x to 16x (slanted surfaces stay sharp).
+- *Mip LOD bias* (-2 .. 2) for mipmapped textures.
+- *Sharpening*: Off, Low or High, a contrast adaptive sharpening pass over
+  the game picture (not the menus).
+- *Shadow quality*: Original (the game's 128 x 128 shadow map), High (4x)
+  or Ultra (8x the texels per side: sharper character shadows).
+- *Texture memory*: 512 MiB to 4 GiB for textures; past it the least
+  recently drawn ones make room.
+
+The *Original* preset sets all of them to the GameCube's look; *Modernized*
+picks Ultra, Anisotropic 16x and the High shadow map. A settings.ini from
+before these options keeps the preset it showed (Original or Modernized
+graphics). Test runs read no
+settings.ini and take `DW4_TEXTURE_QUALITY`, `DW4_TEXTURE_FILTER`,
+`DW4_LOD_BIAS`, `DW4_SHARPEN`, `DW4_SHADOW_QUALITY` and `DW4_TEXTURE_MEMORY`
+([TEXTURES.md](docs/TEXTURES.md), *Graphics options*).
+
 ### Texture packs
+
+A texture pack is a folder (F1 > Settings > Graphics > *Texture pack
+folder*, default `mods/textures`, settings.ini `[mods] textures`; *Reload
+texture pack* applies changes while playing, the folder read in the
+background while the game runs on). Two layouts work:
+
+- **Pack format 2**: a manifest `dw4pack.tsv` lists per texture hash its
+  files (BC7, BC3, BC1 or RGBA8 DDS files with their mip chains, or PNG),
+  each file's scale over the original and its levels; one 4x file serves
+  Ultra and High. The format, the encodings and the rules a pack builder
+  follows are in [TEXTURES.md](docs/TEXTURES.md) (*Texture packs: format 2*).
+- **Loose files** (format 1): a PNG (or DDS) of any size whose name ends in
+  `_<hash>.png` up to 8 folders below the folder replaces that texture (a
+  folder of more than 200,000 files and folders is not read as a pack).
+
+Pack textures load on a background thread: while a stage loads its
+textures are read ahead, and until a replacement is on the GPU the game's
+own texture is drawn, so no frame waits for a file. Identical textures load
+once and stay in memory across stages within the *Texture memory* budget.
 
 With *Dump textures* in the F1 menu (or `[mods] dump_textures=true`) every
 decoded texture is written once to `mods/dump/textures` as
-`<name>_<width>x<height>_<hash>.png`. A PNG of any size whose name ends in the
-same `_<hash>.png` anywhere below `mods/textures` (or the `[mods] textures`
-folder) replaces that texture; *Reload texture pack* applies changes while
-playing. The hash of a CMPR texture is taken with its transparent texels black
-(as decoded before the GX average colour was kept there), so older packs still
-match. `mods` is looked up next to the program first, then in the working
-folder. Test runs take `DW4_TEXTURE_PACK=dir` and `DW4_DUMP_TEXTURES=dir`.
+`<name>_<width>x<height>_<hash>.png`, the name a replacement needs. The hash
+of a CMPR texture is taken with its transparent texels black (as decoded
+before the GX average colour was kept there), so older packs still match.
+`mods` is looked up next to the program first, then in the working folder.
+Test runs take `DW4_TEXTURE_PACK=dir` and `DW4_DUMP_TEXTURES=dir`;
+`DW4_TRACE_TEXTURES=1` prints each stage's texture memory and streaming
+figures.
+
+For pack authors, the development tool `dw4_texpack export --data ROOT --out
+DIR` writes every texture of the game data at once (not only those a play
+session draws) under the same names, with a manifest of formats, palette
+variants, alpha, materials, languages, stages, UV use and atlas cells
+([TEXTURES.md](docs/TEXTURES.md)). Keep its output on your machine.
+`tools/remaster` turns that export into a 4x pack with super-resolution
+models and an edge reconstruction for lettering, and compares the result in
+hidden game runs ([tools/remaster/README.md](tools/remaster/README.md)).
 
 `tools/verify_game.py` checks an ISO or extraction against the expected
 `main.dol` SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` without copying data.
