@@ -119,6 +119,15 @@ content and source format, not the name alone.
    | ui (C8 2D, multi-tone digits), loading, title, decal | `ultrasharp_v2` |
    | font (font00) | `pathb` (glyphs), `ultrasharp_v2` (button cells) |
 
+   It also writes per texture the tiling decision `wrap` (an axis wraps
+   where the export's `tiles` names it, or for 3D classes where `uv_edges`
+   names it and the picture continues across that border; everything else
+   is padded by edge extension, so no opposite edge bleeds into the outer
+   rows) and the preprocessing `pre` (`smooth` for glows whose soft alpha
+   is a staircase of 5-8 levels: dequantised, no sharpening; `denoise` for
+   decals). `texture_overrides.tsv` sets the variant or `pre` of single
+   textures after a visual review (`dither`, `mask_nearest`, a model).
+
 2. `upscale.py --variant V --selection <dir>\out\classes.tsv --out <dir>\out\full --resume ...`
    for `lanczos_sharp`, `pathb`, `ultrasharp_v2`, `hdcube3`, `pbrify_v4`
    (one model at a time; each takes the textures whose `variants` name it).
@@ -139,12 +148,24 @@ content and source format, not the name alone.
    CIEDE2000 exceeds 3 (not for cards, whose redraw look is intended): the
    low-passed difference to the source (sigma 2 texels, 1 when needed) is
    added back, for all palette variants of a group alike, and kept only
-   when it lowers the mean noticeably.
+   when it lowers the mean noticeably. Soft rims (ui, decal): where the
+   source alpha is partial, alpha and colour come from Lanczos (soft digit
+   shadows, no white decal outline); HUD panels `stpnlwn*` keep their
+   colour tables by nearest neighbour; `curation.tsv` holds per-texture
+   curation choices (read by default).
 4. `contact_sheets.py --report <dir>\out\report.tsv --classes ... --final <dir>\out --up <dir>\out\full --out <dir>\out\sheets`:
    six textures per sheet (original and final, crops of 32 x 32 texels at
    8x: original, Lanczos, final, and the corner where four copies meet for
    tiling environment textures): 60 random ones, every flagged one, and the
    curated ones with both variants.
+5. A correction round: copy `outull` to a new folder, drop the textures
+   to compute again from its `metrics.tsv` files, `upscale.py ... --resume`
+   per variant, `finalize.py --only ...` (keep a copy of the earlier
+   `master4x` first), then `compare_sheets.py --before <copy> --after
+   <dir>\out\master4x --list <hash TSV> --out <dir>\out\sheets\<round>`
+   (original, before, after and the most changed crops), and rebuild the
+   pack with `build_pack.py --resume` after removing those hashes from the
+   report folder's `done.tsv`.
 
 ## Release pack
 
