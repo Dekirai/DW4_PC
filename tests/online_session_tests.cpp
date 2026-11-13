@@ -85,6 +85,28 @@ std::function<std::uint32_t(const fake::Client&)> press_in(std::map<std::string,
     };
 }
 
+// Round I1b's integration (W7e): SNAPSHOT_ASK for the current visit uploads the
+// engine's load snapshot again (the relay's named uploader dropped before its
+// upload); an ask for another visit uploads nothing.
+void snapshot_ask() {
+    World world;
+    auto& a = world.add("kim", 1);
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "snapshot ask: A reaches stag0101 solo");
+    world.run(1);
+    const auto inst = a.session->inst();
+    auto& hub_inst = world.hub.instances[inst];
+    check(!hub_inst.snapshot.empty(), "snapshot ask: A uploaded its load snapshot");
+    const auto size = hub_inst.snapshot.size();
+    hub_inst.snapshot.clear();
+    world.hub.send(1, w::Type::snapshot_ask, w::encode(w::SnapshotAsk{inst, a.session->visit() + 1}), world.now);
+    world.run(0.3);
+    check(hub_inst.snapshot.empty(), "snapshot ask: an ask for another visit uploads nothing");
+    world.hub.send(1, w::Type::snapshot_ask, w::encode(w::SnapshotAsk{inst, a.session->visit()}), world.now);
+    world.run(0.3);
+    check(hub_inst.snapshot.size() == size, "snapshot ask: the visit's load snapshot uploaded again (" + std::to_string(hub_inst.snapshot.size()) + " bytes)");
+}
+
 void print_log(const fake::Hub& hub) {
     for (const auto& line : hub.log_lines) std::cout << "  hub: " << line << '\n';
 }
@@ -2463,6 +2485,7 @@ int main(int argc, char** argv) {
     try {
         std::cout << "solo, join, fork\n";
         solo_join_fork();
+        snapshot_ask();
         presence_tracks();
         presence2_tracks();
         presence2_session();

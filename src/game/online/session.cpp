@@ -699,6 +699,21 @@ void Session::handle(const w::Frame& frame, double now) {
         send(w::Type::pong, w::encode(w::Pong{m.nonce, ms}));
         break;
     }
+    case w::Type::snapshot_ask: {
+        // Protocol 50 (round I1b's integration, W7e): the visit's load snapshot
+        // never came (its uploader, the lowest slot, dropped before its
+        // BARRIER_OK): this member uploads its own, the engine's stage
+        // snapshot of the same load (6.8), and is the visit's uploader now.
+        const auto m = w::decode_snapshot_ask(p);
+        if (m.inst == inst_ && m.visit == visit_ && !hub_ && inst_ != 0 && (mode_ == Mode::solo || mode_ == Mode::sealed)) {
+            uploader_slot_ = slot_;
+            const auto raw = engine_.snapshot_bytes(false);
+            for (const auto& c : w::make_chunks(inst_, visit_, raw)) send(w::Type::snapshot, w::encode(c));
+            trace("snapshot asked inst=%u visit=%u bytes=%zu", inst_, visit_, raw.size());
+            log("snapshot: the relay asked for the visit's load snapshot (its uploader left): %zu bytes sent", raw.size());
+        }
+        break;
+    }
     case w::Type::checkpoint_ask: {
         const auto m = w::decode_checkpoint_ask(p);
         if (m.inst == inst_ && m.visit == visit_ && (mode_ == Mode::solo || mode_ == Mode::sealed) && !hub_) {

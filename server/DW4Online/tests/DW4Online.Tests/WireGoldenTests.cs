@@ -134,6 +134,8 @@ public class WireGoldenTests
             ["Options"] = 0x91,
             // Round I1b's go along (19.30.5).
             ["Offer"] = 0x9B,
+            // Round I1b's integration (protocol 50, W7e): the visit's load snapshot asked of another member.
+            ["SnapshotAsk"] = 0x9C,
         };
         Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
         foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));

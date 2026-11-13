@@ -24,6 +24,9 @@ public interface IMembershipLog
 public sealed partial class RoomHub
 {
     private static readonly double Freq = Stopwatch.Frequency;
+    /// <summary>The replacement of a load snapshot uploader that left (W7e) waits until the visit is this old: an uploader's short
+    /// reconnect at the stage load keeps its upload.</summary>
+    private const double SnapshotAskGraceMs = 2000;
     private readonly RelayOptions _relay;
     private readonly SealingOptions _sealing;
     private readonly InstanceOptions _inst;
@@ -746,7 +749,14 @@ public sealed partial class RoomHub
     private void OnSnapshot(HubMember m, SnapshotMsg msg, long now)
     {
         if (Mine(m, msg.Inst, msg.Visit) is not { } i || !i.Logged) return;
-        if (i.Snapshot.Uploader is { } up && up != m) throw new ProtocolException("only the instance's leader uploads the snapshot");
+        if (i.Snapshot.Uploader is { } up && up != m)
+        {
+            // (A member the relay no longer asks: the uploader it named before it asked another one (W7e), which reconnected and
+            // uploads after all, or a client that is not the uploader. Its chunks are dropped; before round I1b's integration this
+            // was a protocol error, which would end a reconnected first uploader's connection.)
+            Count("snapshot_not_uploader");
+            return;
+        }
         if (i.Snapshot.AddChunk(msg.Total, msg.Offset, msg.Chunk))
         {
             Note("snapshot", i, ("bytes", msg.Total));
@@ -3204,6 +3214,18 @@ public sealed partial class RoomHub
             Count("checkpoint_upload_abandoned");
             i.Upload = null;
             i.AskedDonor = null;
+        }
+        // Round I1b's integration (W7e): the load snapshot's uploader (the lowest slot of the NEW) left the visit, or its connection,
+        // before its upload was complete: nobody would ever upload it and every JOIN of this stage group would wait for good. The
+        // connected member in the lowest slot is asked (SNAPSHOT_ASK) and uploads its own load snapshot of the visit.
+        if (i.Logged && !i.Snapshot.Complete && i.Snapshot.Uploader is { } uploader && Ms(now - i.VisitStartedAt) >= SnapshotAskGraceMs &&
+            (!uploader.Connected || uploader.Instance is not { } where || (where != i && !where.Snapshot.SharesWith(i.Snapshot))) &&
+            i.Slots.FirstOrDefault(x => x is { Connected: true } && x != uploader && x.Instance == i) is { } next)
+        {
+            i.Snapshot.Reassign(next);
+            next.Peer?.Send(new SnapshotAskMsg(i.Id, i.Visit).Frame());
+            Count("snapshot_asked");
+            Note("snapshot_ask", i, ("member", next.Index), ("slot", next.Slot), ("instead_of", uploader.Index));
         }
         // Round J: while joinable, the donor uploads a checkpoint now and then (resyncs, a donor that does not answer); not in a
         // solo-led visit (round J's review: nobody to resync, and a join asks for a fresh one anyway).

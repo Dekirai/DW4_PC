@@ -629,6 +629,10 @@ void messages() {
         check(bad.reason == w::CheckpointBadReason::topology && bad.section == "journal", "CHECKPOINT_BAD round trip");
         const auto ask = w::decode_checkpoint_ask(w::encode(w::CheckpointAsk{1, 2, 0, 1}));
         check(ask.inst == 1 && ask.visit == 2 && ask.flags == 1, "CHECKPOINT_ASK round trip");
+        // SNAPSHOT_ASK (protocol 50, round I1b's integration, W7e): the relay's bytes (SnapshotAskTests).
+        check(std::uint8_t(w::Type::snapshot_ask) == 0x9C && std::string(w::type_name(w::Type::snapshot_ask)) == "SNAPSHOT_ASK", "SNAPSHOT_ASK is 0x9C");
+        check(hex(w::encode(w::SnapshotAsk{7, 3})) == "07000000" "03000000", "golden SNAPSHOT_ASK");
+        check(w::decode_snapshot_ask(w::encode(w::SnapshotAsk{7, 3})) == (w::SnapshotAsk{7, 3}), "SNAPSHOT_ASK round trip");
         w::Ready ready{1, 2, 3, 4, 5, {6}};
         check(w::decode_ready(w::encode(ready)).flags == 0 && w::encode(ready).size() == 29, "READY without flags as before");
         ready.flags = w::Ready::from_checkpoint;
@@ -662,7 +666,7 @@ void messages() {
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
                        "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD PLAN CHOICE INSTANCE_OP REPORT WELCOME SEALED LIVE JOIN_REQ "
                        "BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 OPTIONS "
-                       "CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE MEMBER_INFO OFFER",
+                       "CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE MEMBER_INFO OFFER SNAPSHOT_ASK",
               "type registry: " + known);
         check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
         // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).

@@ -424,6 +424,22 @@ public sealed record CheckpointAskMsg(uint Inst, uint Visit, uint Tick, byte Fla
     public byte[] Frame() => new WireWriter(Msg.CheckpointAsk).U32(Inst).U32(Visit).U32(Tick).U8(Flags).Frame();
 }
 
+/// <summary>SNAPSHOT_ASK (protocol 50, round I1b's integration, W7e): inst | visit. The receiver uploads its load snapshot of that visit
+/// (SNAPSHOT chunks) and is the visit's uploader from now on: the one the relay named (the lowest slot) left the visit, or its
+/// connection, before the upload was complete.</summary>
+public sealed record SnapshotAskMsg(uint Inst, uint Visit)
+{
+    public static SnapshotAskMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new SnapshotAskMsg(r.U32(), r.U32());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.SnapshotAsk).U32(Inst).U32(Visit).Frame();
+}
+
 /// <summary>JOIN_AT: the solo leader's answer to JOIN_REQ: from tick J the instance is sealed and the JOIN applies.</summary>
 public sealed record JoinAtMsg(uint Inst, uint Visit, uint Tick)
 {

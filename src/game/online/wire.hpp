@@ -143,6 +143,9 @@ enum class Type : std::uint8_t {
     member_info = 0x97,
     // round I1b's go along (19.30.5, 19.18): a go-along offer for this member
     offer = 0x9B,
+    // protocol 50 (round I1b's integration, W7e): upload the visit's load
+    // snapshot now (its uploader left before it was complete)
+    snapshot_ask = 0x9C,
 };
 const char* type_name(Type type) noexcept;
 
@@ -405,6 +408,10 @@ struct CheckpointAsk { // inst | visit | u32 tick (0: the next state-safe tick) 
     std::uint8_t flags{};
     static constexpr std::uint8_t periodic = 1;  // with the next STATEHASH
     static constexpr std::uint8_t diagnosis = 2;
+};
+struct SnapshotAsk {   // inst | visit (protocol 50: the relay asks this member for the visit's load snapshot)
+    std::uint32_t inst{}, visit{};
+    bool operator==(const SnapshotAsk&) const = default;
 };
 struct JoinAt {        // inst | visit | u32 tick J
     std::uint32_t inst{}, visit{}, tick{};
@@ -823,6 +830,8 @@ StateHash decode_statehash(std::span<const std::uint8_t>);
 Checkpoint decode_checkpoint(std::span<const std::uint8_t>);
 CheckpointBad decode_checkpoint_bad(std::span<const std::uint8_t>);
 CheckpointAsk decode_checkpoint_ask(std::span<const std::uint8_t>);
+std::vector<std::uint8_t> encode(const SnapshotAsk&);
+SnapshotAsk decode_snapshot_ask(std::span<const std::uint8_t>);
 State decode_state(std::span<const std::uint8_t>);
 Intent decode_intent(std::span<const std::uint8_t>);
 Presence decode_presence(std::span<const std::uint8_t>, bool with_member);

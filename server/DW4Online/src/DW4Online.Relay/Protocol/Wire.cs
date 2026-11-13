@@ -109,6 +109,9 @@ public static class Msg
     public const byte MemberInfo = 0x97;
     /// <summary>Round I1b (protocol 49, 19.30.5): a go-along offer for the receiver (open, changed, closed).</summary>
     public const byte Offer = 0x9B;
+    /// <summary>Protocol 50 (round I1b's integration, W7e): upload the visit's load snapshot now (its uploader left before the upload
+    /// was complete).</summary>
+    public const byte SnapshotAsk = 0x9C;
 
     public static string Name(byte type) => type switch
     {
@@ -121,7 +124,7 @@ public static class Msg
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
         Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", Report => "REPORT", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
-        MemberInfo => "MEMBER_INFO", Plan => "PLAN", Choice => "CHOICE", Options => "OPTIONS", Offer => "OFFER",
+        MemberInfo => "MEMBER_INFO", Plan => "PLAN", Choice => "CHOICE", Options => "OPTIONS", Offer => "OFFER", SnapshotAsk => "SNAPSHOT_ASK",
         _ => "0x" + type.ToString("X2"),
     };
 }

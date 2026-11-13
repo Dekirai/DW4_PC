@@ -33,6 +33,7 @@ const char* type_name(Type type) noexcept {
     case Type::checkpoint: return "CHECKPOINT";
     case Type::checkpoint_bad: return "CHECKPOINT_BAD";
     case Type::checkpoint_ask: return "CHECKPOINT_ASK";
+    case Type::snapshot_ask: return "SNAPSHOT_ASK";
     case Type::instance_op: return "INSTANCE_OP";
     case Type::report: return "REPORT";
     case Type::plan: return "PLAN";
@@ -713,6 +714,21 @@ CheckpointAsk decode_checkpoint_ask(std::span<const std::uint8_t> b) {
     m.visit = r.u32();
     m.tick = r.u32();
     m.flags = r.u8();
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const SnapshotAsk& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    return std::move(w.out);
+}
+SnapshotAsk decode_snapshot_ask(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    SnapshotAsk m;
+    m.inst = r.u32();
+    m.visit = r.u32();
     r.end();
     return m;
 }

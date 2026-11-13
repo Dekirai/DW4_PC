@@ -441,6 +441,17 @@ public sealed class SnapshotStore
     private SnapshotStore(Upload upload) => _u = upload;
 
     public HubMember? Uploader { get => _u.Uploader; set => _u.Uploader = value; }
+
+    /// <summary>Another member uploads (round I1b's integration, W7e: the named uploader left before the upload was complete): a part
+    /// the old one sent is dropped, the new one starts at offset 0.</summary>
+    public void Reassign(HubMember uploader)
+    {
+        if (Complete) return;
+        _u.Uploader = uploader;
+        _u.Buffer = null;
+        _u.Total = 0;
+        _u.Received = 0;
+    }
     public byte[]? Bytes => _u.Bytes;
     public bool Complete => _u.Bytes is not null;
     public Dictionary<int, ulong> Hashes { get; } = [];
