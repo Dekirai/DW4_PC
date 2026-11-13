@@ -42,6 +42,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -59,7 +60,9 @@ inline constexpr const char* kSwitch2PadName = "Nintendo Switch 2 Pro Controller
 // A command is an 8-byte header (command, 0x91, 0x00 for USB, subcommand,
 // 0x00, data length, 0x00, 0x00) and its data. A reply echoes the command
 // and subcommand with 0x01 in its second byte (the controller's direction)
-// and an acknowledgement in its sixth (0xF8 on USB).
+// and an acknowledgement in its sixth (0xF8 on USB). (The owner's controller
+// answered 01/01 and 08/02 with 0x04 in the second byte, 2026-11-12: a reply
+// is any packet whose second byte lacks the host's request bit 0x80.)
 struct Switch2Command {
     const char* name; // what the log calls it
     std::vector<std::uint8_t> bytes;
@@ -78,10 +81,12 @@ inline constexpr std::size_t kSwitch2FlashReply = 0x50, kSwitch2FlashData = 0x10
 
 struct Switch2Reply {
     std::uint8_t command = 0, subcommand = 0, status = 0;
-    bool from_device = false; // the second byte is 0x01
+    bool from_device = false; // the second byte lacks the request bit 0x80 (0x01; 0x04 seen; a command has 0x91)
 };
 std::optional<Switch2Reply> parse_switch2_reply(const std::uint8_t* data, std::size_t size);
-// Whether a reply answers a command (same command and subcommand, from the device).
+// Whether a reply answers a command (same command and subcommand, from the
+// device). Replies are matched by these ids, not by their order: a reply that
+// comes after its wait is a late reply of its own command, not the next one's.
 bool switch2_reply_matches(const Switch2Reply& reply, const std::vector<std::uint8_t>& command);
 
 // ---- Stick calibration (the flash)
@@ -295,6 +300,7 @@ public:
     static constexpr std::chrono::milliseconds kRetry{2000};       // opening again
     static constexpr std::chrono::milliseconds kLostPause{1000};   // a lost channel: opening again (unless unplugged)
     static constexpr int kStartTries = 3;                          // start sequences before no_reports
+    static constexpr int kLateReplies = 10;                        // late replies taken while one command waits for its own
     static constexpr std::chrono::seconds kRateWindow{2};
 
 private:
@@ -306,8 +312,16 @@ private:
     void read(Clock::time_point now);
     void report(const std::uint8_t* data, std::size_t size, Clock::time_point now);
     void lost(const Switch2IoResult& result, const std::string& where, Clock::time_point now);
+    // Sends a command and reads its reply (got 0: none within kReplyWait).
+    // `late` (optional) takes a reply that is not this command's: true when it
+    // was the late reply of an earlier command (the read then goes on for this
+    // one's, at most kLateReplies times); false keeps it as the reply read.
+    using LateReply = std::function<bool(const std::uint8_t*, std::size_t)>;
     bool exchange(const std::vector<std::uint8_t>& command, std::uint8_t* reply, std::size_t reply_size, std::size_t& got,
-                  Switch2IoResult& sent);
+                  Switch2IoResult& sent, const LateReply& late = {});
+    // Reads one reply (SDL's RecvBulkData: 64 bytes at a time until a short
+    // packet); false when the controller is lost (`result` says).
+    bool receive_reply(std::uint8_t* reply, std::size_t reply_size, std::size_t& got, Switch2IoResult& result);
     void send_led(Clock::time_point now);
 
     Switch2Platform& platform_;

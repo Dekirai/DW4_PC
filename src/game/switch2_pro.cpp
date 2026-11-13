@@ -104,7 +104,7 @@ std::optional<Switch2Reply> parse_switch2_reply(const std::uint8_t* data, std::s
     if (!data || size < 8) return std::nullopt;
     Switch2Reply reply;
     reply.command = data[0];
-    reply.from_device = data[1] == 0x01;
+    reply.from_device = (data[1] & 0x80) == 0; // (0x91: the host's request on USB)
     reply.subcommand = data[3];
     reply.status = data[5];
     return reply;
@@ -514,17 +514,14 @@ void Switch2Machine::open(Clock::time_point now) {
     }
 }
 
-bool Switch2Machine::exchange(const std::vector<std::uint8_t>& command, std::uint8_t* reply, std::size_t reply_size, std::size_t& got,
-                              Switch2IoResult& sent) {
+bool Switch2Machine::receive_reply(std::uint8_t* reply, std::size_t reply_size, std::size_t& got, Switch2IoResult& result) {
     got = 0;
-    sent = commands_->send(command.data(), command.size());
-    if (sent.io != Switch2Io::ok) return false;
     // SDL's RecvBulkData: 64 bytes at a time until a short packet.
     while (got < reply_size) {
         const std::size_t chunk = std::min<std::size_t>(64, reply_size - got);
         const Switch2IoResult r = commands_->receive(reply + got, chunk, kReplyWait);
         if (r.io == Switch2Io::gone) {
-            sent = r;
+            result = r;
             return false;
         }
         if (r.io != Switch2Io::ok) break;
@@ -532,6 +529,25 @@ bool Switch2Machine::exchange(const std::vector<std::uint8_t>& command, std::uin
         if (r.bytes < chunk) break;
     }
     return true;
+}
+
+bool Switch2Machine::exchange(const std::vector<std::uint8_t>& command, std::uint8_t* reply, std::size_t reply_size, std::size_t& got,
+                              Switch2IoResult& sent, const LateReply& late) {
+    got = 0;
+    sent = commands_->send(command.data(), command.size());
+    if (sent.io != Switch2Io::ok) return false;
+    for (int lates = 0;; ++lates) {
+        std::fill(reply, reply + reply_size, std::uint8_t(0));
+        if (!receive_reply(reply, reply_size, got, sent)) return false;
+        if (!got || !late || lates >= kLateReplies) return true;
+        const auto parsed = parse_switch2_reply(reply, got);
+        if (parsed && switch2_reply_matches(*parsed, command)) return true;
+        // (A reply an earlier command's wait missed: that command's, and this
+        // one's may still come. Round I1b's integration, the owner's hardware
+        // test: 0C/02 answered after its 100 ms, so 11/01 read 0C/02's reply
+        // and 0A/08 read 11/01's, each "not its reply".)
+        if (!late(reply, got)) return true;
+    }
 }
 
 void Switch2Machine::start(Clock::time_point now, bool read_flash, bool verbose) {
@@ -606,24 +622,55 @@ void Switch2Machine::start(Clock::time_point now, bool read_flash, bool verbose)
                  : ""));
     }
     const auto commands = switch2_start_commands();
+    auto step_name = [&](std::size_t i) {
+        return "start " + std::to_string(i + 1) + "/" + std::to_string(commands.size()) + " " + commands[i].name;
+    };
     int answered = 0;
+    // The commands still without their reply: a reply that comes after its
+    // command's wait is matched to it by its ids when a later command reads it
+    // (or at the end), never taken as the later command's.
+    std::vector<std::size_t> unanswered;
+    const LateReply late = [&](const std::uint8_t* data, std::size_t size) {
+        const auto parsed = parse_switch2_reply(data, size);
+        if (!parsed) return false;
+        for (auto it = unanswered.begin(); it != unanswered.end(); ++it) {
+            if (!switch2_reply_matches(*parsed, commands[*it].bytes)) continue;
+            ++answered;
+            if (verbose) log(step_name(*it) + ": its reply came late: " + hex_bytes(data, size, 12));
+            unanswered.erase(it);
+            return true;
+        }
+        return false;
+    };
     for (std::size_t i = 0; i < commands.size(); ++i) {
         const auto& command = commands[i];
-        const std::string step = "start " + std::to_string(i + 1) + "/" + std::to_string(commands.size()) + " " + command.name;
-        reply.fill(0);
-        if (!exchange(command.bytes, reply.data(), 64, got, sent)) return abort(step);
+        const std::string step = step_name(i);
+        if (!exchange(command.bytes, reply.data(), 64, got, sent, late)) return abort(step);
         const auto parsed = parse_switch2_reply(reply.data(), got);
         const bool matches = got && parsed && switch2_reply_matches(*parsed, command.bytes);
         answered += matches ? 1 : 0;
+        if (!matches) unanswered.push_back(i);
         if (!verbose) continue;
         std::string line = step + ": ";
-        if (!got) line += "no reply";
+        if (!got) line += "no reply within " + std::to_string(kReplyWait.count()) + " ms";
         else {
             line += "reply " + hex_bytes(reply.data(), got, 12);
             if (!matches) line += " (not its reply)";
         }
         log(line);
     }
+    // The late replies still on their way (one wait each; the first without
+    // one ends it), so none is read as the player lights' reply.
+    for (std::size_t tries = unanswered.size(); tries > 0 && !unanswered.empty(); --tries) {
+        if (!receive_reply(reply.data(), 64, got, sent)) return abort("the late replies");
+        if (!got) break;
+        if (!late(reply.data(), got)) {
+            if (verbose) log("start: a reply of no start command: " + hex_bytes(reply.data(), got, 12));
+            break;
+        }
+    }
+    if (verbose)
+        for (const std::size_t i : unanswered) log(step_name(i) + ": no reply");
     if (!verbose) log("start sequence sent again: " + std::to_string(answered) + " of " + std::to_string(commands.size()) + " commands answered");
     status_.started = true;
     ++status_.starts;
@@ -640,7 +687,20 @@ void Switch2Machine::send_led(Clock::time_point now) {
     std::array<std::uint8_t, 64> reply{};
     std::size_t got = 0;
     Switch2IoResult sent;
-    if (!exchange(command, reply.data(), 16, got, sent)) {
+    // (A start command's reply that came after the start's last wait is not
+    // the lights' reply.)
+    const auto start = switch2_start_commands();
+    const LateReply late = [&](const std::uint8_t* data, std::size_t size) {
+        const auto parsed = parse_switch2_reply(data, size);
+        if (!parsed) return false;
+        for (const auto& c : start)
+            if (switch2_reply_matches(*parsed, c.bytes)) {
+                log(std::string("start ") + c.name + ": its reply came late: " + hex_bytes(data, size, 12));
+                return true;
+            }
+        return false;
+    };
+    if (!exchange(command, reply.data(), 16, got, sent, late)) {
         if (sent.io == Switch2Io::gone) return lost(sent, "player lights", now);
         log("player lights: could not be sent: " + switch2_io_text(sent));
         led_sent_ = player_; // (not again and again)

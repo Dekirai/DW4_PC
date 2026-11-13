@@ -24,6 +24,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -308,7 +309,19 @@ struct FakeController {
     std::map<std::uint32_t, std::array<std::uint8_t, 0x40>> flash;
     // What happened.
     std::vector<std::vector<std::uint8_t>> sent;
-    std::deque<std::uint8_t> reply_bytes;
+    // The replies waiting in interface 1's bulk IN pipe, one transfer each (a
+    // read takes at most one: the rest of a long one comes with the next read).
+    std::deque<std::vector<std::uint8_t>> replies_waiting;
+    // A controller that answers some commands late or not at all (by command
+    // << 8 | subcommand): the reply's second byte and how many commands later
+    // it comes (0 at once, 1 with the next command's, -1 never). The owner's
+    // controller of 2026-11-12: kOwnersReplies.
+    struct Scripted {
+        std::uint8_t second = 0x01;
+        int later = 0;
+    };
+    std::map<int, Scripted> scripted;
+    std::vector<std::pair<int, std::vector<std::uint8_t>>> deferred; // (commands left, the reply)
     bool started = false;
     int reports = 0;
     std::uint32_t timer = 0;
@@ -377,9 +390,22 @@ public:
             c_.started = true;
             c_.stall_until_restart = false;
         }
+        // Late replies of earlier commands come first (they were on their way).
+        for (auto it = c_.deferred.begin(); it != c_.deferred.end();) {
+            if (--it->first > 0) {
+                ++it;
+                continue;
+            }
+            c_.replies_waiting.push_back(std::move(it->second));
+            it = c_.deferred.erase(it);
+        }
         if (!c_.replies) return {Switch2Io::ok, 0, size};
+        FakeController::Scripted plan;
+        if (size >= 8)
+            if (const auto it = c_.scripted.find(data[0] << 8 | data[3]); it != c_.scripted.end()) plan = it->second;
+        if (plan.later < 0) return {Switch2Io::ok, 0, size};
         // The reply: the command and subcommand, 0x01, an acknowledgement.
-        std::vector<std::uint8_t> reply{data[0], 0x01, 0x00, data[3], 0x00, 0xf8, 0x00, 0x00};
+        std::vector<std::uint8_t> reply{data[0], plan.second, 0x00, data[3], 0x00, 0xf8, 0x00, 0x00};
         if (data[0] == 0x02 && data[3] == 0x01) {
             const std::uint32_t address = std::uint32_t(data[12]) | std::uint32_t(data[13]) << 8 | std::uint32_t(data[14]) << 16 |
                                           std::uint32_t(data[15]) << 24;
@@ -389,7 +415,8 @@ public:
         } else {
             reply.insert(reply.end(), {0x01, 0x00, 0x00, 0x00});
         }
-        c_.reply_bytes.insert(c_.reply_bytes.end(), reply.begin(), reply.end());
+        if (plan.later > 0) c_.deferred.emplace_back(plan.later, std::move(reply));
+        else c_.replies_waiting.push_back(std::move(reply));
         return {Switch2Io::ok, 0, size};
     }
     Switch2IoResult receive(std::uint8_t* buffer, std::size_t size, milliseconds) override {
@@ -401,17 +428,17 @@ public:
         if (slow.count()) std::this_thread::sleep_for(slow);
         std::lock_guard lock(c_.mutex);
         if (c_.unplugged) return {Switch2Io::gone, 22, 0};
-        if (c_.reply_bytes.empty()) return {Switch2Io::timeout, 121, 0};
-        std::size_t n = 0;
-        while (n < size && !c_.reply_bytes.empty()) {
-            buffer[n++] = c_.reply_bytes.front();
-            c_.reply_bytes.pop_front();
-        }
+        if (c_.replies_waiting.empty()) return {Switch2Io::timeout, 121, 0};
+        auto& front = c_.replies_waiting.front();
+        const std::size_t n = std::min(size, front.size());
+        std::copy(front.begin(), front.begin() + std::ptrdiff_t(n), buffer);
+        front.erase(front.begin(), front.begin() + std::ptrdiff_t(n));
+        if (front.empty()) c_.replies_waiting.pop_front();
         return {Switch2Io::ok, 0, n};
     }
     void flush() override {
         std::lock_guard lock(c_.mutex);
-        c_.reply_bytes.clear();
+        c_.replies_waiting.clear();
     }
     std::string describe() const override { return "fake WinUSB, bulk out 0x02, bulk in 0x82"; }
 
@@ -674,13 +701,97 @@ void machine_lost_channel() {
     fill_flash(stale);
     std::vector<std::uint8_t> left_over{0x03, 0x01, 0x00, 0x0d, 0x00, 0xf8, 0x00, 0x00};
     left_over.resize(64, 0x5a);
-    stale.reply_bytes.assign(left_over.begin(), left_over.end());
+    stale.replies_waiting.push_back(left_over);
     platform.plug(stale);
     Switch2Machine flushed(platform, stale.found());
     Driver f{flushed};
     f.until(Switch2State::running, 10);
     check(has_line(f.log, "sticks: left factory, right factory calibration"), "the calibration read right\n" + joined(f.log));
     check(!has_line(f.log, "not its reply") && !has_line(f.log, "unexpected reply"), "every reply the command's own\n" + joined(f.log));
+}
+
+// The owner's controller (his hardware test of 2026-11-12): 0C/02 and 11/01
+// answered after their 100 ms (each one with the next command), 0A/08 not at
+// all, 01/01 and 08/02 with 0x04 in the second byte. The reader before round
+// I1b's integration read one reply per command in order and logged 07 01 ...,
+// "no reply" (0C/02), 0c 01 00 02 ..., 11 01 ..., 0c 01 00 04 ..., 01 01 00
+// 0c ..., 01 04 00 01 ..., 08 04 00 02 ..., 03 01 00 0a ..., 03 01 00 0d ...
+// ("not its reply" from 11/01 on).
+void owners_replies(FakeController& c) {
+    c.scripted[0x0c02] = {0x01, 1};
+    c.scripted[0x1101] = {0x01, 1};
+    c.scripted[0x0a08] = {0x01, -1};
+    c.scripted[0x0101] = {0x04, 0};
+    c.scripted[0x0802] = {0x04, 0};
+}
+
+void machine_late_replies() {
+    // The fake hands out the owner's sequence to a reader that reads one
+    // reply per command (the old reader's way).
+    {
+        FakeController c;
+        owners_replies(c);
+        FakeCommands pipe(c);
+        std::vector<std::string> seen;
+        for (const auto& command : switch2_start_commands()) {
+            check(pipe.send(command.bytes.data(), command.bytes.size()).io == Switch2Io::ok, "the fake takes the command");
+            std::array<std::uint8_t, 64> reply{};
+            const auto r = pipe.receive(reply.data(), reply.size(), Switch2Machine::kReplyWait);
+            char text[16];
+            std::snprintf(text, sizeof text, "%02x %02x %02x %02x", reply[0], reply[1], reply[2], reply[3]);
+            seen.push_back(r.io == Switch2Io::ok ? std::string(text) : std::string("none"));
+        }
+        const std::vector<std::string> owners{"07 01 00 01", "none",        "0c 01 00 02", "11 01 00 01", "0c 01 00 04",
+                                              "01 01 00 0c", "01 04 00 01", "08 04 00 02", "03 01 00 0a", "03 01 00 0d"};
+        check(seen == owners, "the fake replies in the owner's order\n" + joined(seen));
+    }
+    FakePlatform platform;
+    FakeController c;
+    fill_flash(c);
+    owners_replies(c);
+    c.held.a = true;
+    platform.plug(c);
+    Switch2Machine machine(platform, c.found());
+    Driver d{machine};
+    d.until(Switch2State::running, 10);
+    const auto& log = d.log;
+    // Each reply matched to its own command by its ids: a late one is its own
+    // command's, never the next command's.
+    check(!has_line(log, "not its reply") && !has_line(log, "no start command"), "no reply taken for another command's\n" + joined(log));
+    check(has_line(log, "start 1/10 07/01 (unknown purpose): reply 07 01 00 01 00 f8 00 00"), "07/01 answered\n" + joined(log));
+    check(has_line(log, "start 2/10 0C/02 feature output mask 0x27: no reply within 100 ms"), "0C/02: nothing in its wait");
+    check(has_line(log, "start 2/10 0C/02 feature output mask 0x27: its reply came late: 0c 01 00 02 00 f8 00 00"), "0C/02's late reply its own");
+    check(has_line(log, "start 3/10 11/01 (unknown purpose): its reply came late: 11 01 00 01 00 f8 00 00"), "11/01's late reply its own");
+    check(has_line(log, "start 4/10 0A/08 rumble data: no reply within 100 ms"), "0A/08: nothing in its wait");
+    check(std::count_if(log.begin(), log.end(), [](const std::string& line) { return line.ends_with("start 4/10 0A/08 rumble data: no reply"); }) == 1,
+          "0A/08 never answered: said once at the end");
+    check(has_line(log, "start 5/10 0C/04 enable features 0x27: reply 0c 01 00 04 00 f8 00 00"), "0C/04 its own reply");
+    check(has_line(log, "start 6/10 01/0C (unknown purpose): reply 01 01 00 0c 00 f8 00 00"), "01/0C its own reply");
+    check(has_line(log, "start 7/10 01/01 enable rumble: reply 01 04 00 01 00 f8 00 00"), "01/01's reply with 0x04 its own");
+    check(has_line(log, "start 8/10 08/02 grip buttons: reply 08 04 00 02 00 f8 00 00"), "08/02's reply with 0x04 its own");
+    check(has_line(log, "start 9/10 03/0A report format 0x05: reply 03 01 00 0a 00 f8 00 00"), "03/0A its own reply");
+    check(has_line(log, "start 10/10 03/0D start output: reply 03 01 00 0d 00 f8 00 00"), "03/0D its own reply");
+    // It plays as before: the same 15 commands in order, the calibration, the controls.
+    {
+        std::lock_guard lock(c.mutex);
+        check(c.sent.size() == 15, "15 commands: " + std::to_string(c.sent.size()));
+        const auto start = switch2_start_commands();
+        for (std::size_t i = 0; i < start.size(); ++i) check(c.sent[5 + i] == start[i].bytes, std::string("in order: ") + start[i].name);
+    }
+    check(has_line(log, "sticks: left factory, right factory calibration"), "the calibration read");
+    check(machine.controls() && (machine.controls()->buttons & switch2_button::a), "A held");
+    // The player lights read their own reply.
+    machine.set_player(0);
+    d.steps(2);
+    check(has_line(d.log, "player lights of player 1: reply 09 01 00 07"), "the lights' own reply\n" + joined(d.log));
+    // A later start (after three without reports: one line) counts the late replies as answered.
+    {
+        std::lock_guard lock(c.mutex);
+        c.report_after_start = false;
+        c.stall_until_restart = true;
+    }
+    for (int i = 0; i < 400 && !has_line(d.log, "start sequence sent again"); ++i) d.steps(1, milliseconds(100));
+    check(has_line(d.log, "start sequence sent again: 9 of 10 commands answered"), "a later start: 9 of 10 (0A/08 never)\n" + joined(d.log));
 }
 
 void machine_other_program() {
@@ -1296,6 +1407,7 @@ int main() {
         machine_other_program();
         machine_driver_states();
         machine_start_failures();
+        machine_late_replies();
         windows_platform();
         // No real controller of this PC takes part (every backend but the
         // virtual one off), and no visible window.
