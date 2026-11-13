@@ -474,9 +474,15 @@ core) and one code path, with these differences on a GLES context
 - Depth clamping: `GL_DEPTH_CLAMP` where the context has it (OpenGL 3.3, or
   `GL_EXT_depth_clamp` on GLES); otherwise the vertex shader clamps
   `gl_Position.z` into `[-w, w]` (`u_depth_clamp`), which only the
-  orthographic 2D layers use (all their vertices in front of the near
-  plane, so the per-vertex clamp equals the per-pixel one). The renderer
-  logs which one it uses.
+  orthographic 2D layers use. The per-vertex clamp equals GL_DEPTH_CLAMP's
+  per-pixel one only for triangles wholly on one side of the near and of
+  the far plane (orthographic: depth is linear across the triangle); a
+  triangle that crosses one gets a different depth inside. That this never
+  happens is an assumption that `DW4_CHECK_DEPTH_CLAMP=1` checks on any
+  platform (a CPU check, no picture change): it counts the orthographic
+  triangles that cross a plane and logs `renderer: depth clamp check: N of
+  M orthographic triangles cross the near or far plane` at 1, 10, 100, ...
+  (silent while none does). The renderer logs which clamp it uses.
 - `keep_picture`: GLES copies no multisampled framebuffer into a texture;
   the window's picture is blitted (resolved) into the kept texture's
   framebuffer. The PC keeps `glCopyTexSubImage2D`. Android asks for an
@@ -486,9 +492,26 @@ core) and one code path, with these differences on a GLES context
   overhead name tags never hide behind the scene there yet (phase C).
 - `GL_SRC_ALPHA_SATURATE` is a source factor only on GLES; as a destination
   (never seen; GX has no such factor) it becomes `ONE` with one log line.
-- The full-screen strips (movie, kept picture) draw with attribute 0 enabled
-  on a small buffer (the emulator's translator draws nothing without one).
+- The full-screen strips (movie, kept picture, sharpening) draw with
+  attribute 0 enabled on a small buffer (the emulator's translator draws
+  nothing without one).
 - A failed shader link names the driver's reason.
+- With main's texture streaming and Graphics options (merged 13.11.2026,
+  main bb95abb5): the Sharpening option copies the window's picture; on
+  GLES the multisampled window is resolved first by a blit (the same
+  rectangle on both sides, as GLES wants it) into a window-sized texture
+  and copied from there (`Impl::copy_window_es`), and `GL_DEPTH_CLAMP` is
+  only switched where the context has it. Texture packs: BC7 needs OpenGL
+  4.2 or a BPTC extension, BC1 / BC3 `GL_EXT_texture_compression_s3tc`
+  (`caps_`); Adreno has neither, so the loading thread decodes the pack's
+  DDS files to RGBA8 (the path `DW4_TEXTURE_CPU_DECODE=1` tests on the
+  PC). Anisotropic filtering follows `GL_EXT_texture_filter_anisotropic`;
+  sampler objects and the LOD bias in the shader are GLES 3.0 already.
+- `reset_context()` (a lost context) also forgets the samplers, the game's
+  and the pack's textures, refused uploads, the upload in progress and the
+  sharpening objects, and starts the loading thread again with the same
+  configuration; the pack's textures come again as they are drawn
+  (untested: no context loss could be provoked).
 
 ### Lifecycle and input
 
@@ -585,7 +608,21 @@ dialogs (not the game's).
   for touch.
 - Pausing the sound and saving settings when going to the background;
   `LOW_MEMORY` (the texture cache).
-- A context loss is handled but was not provoked on the emulator.
+- A context loss is handled but was not provoked on the emulator (nor the
+  texture pack streaming after one).
+- Measure on the Thor (correct, possibly expensive on a tiler):
+  `keep_picture` blits the whole (with msaa=4 multisampled) window every
+  frame, an extra resolve in the middle of the frame after which ImGui
+  loads the tiles again (alternatives: keep only when a stall is likely,
+  or every few frames); the skinning palette goes up with
+  `glTexSubImage2D` per skinned item into the one texture earlier draws of
+  the frame still read, which drivers answer by copying the texture
+  (alternative: all of the frame's palettes in one larger texture, one
+  upload, a row offset per draw). The Sharpening option adds a second
+  resolve and copy on GLES.
+- Texture packs on the Thor: CPU-decoded RGBA8 needs 4x (BC7) to 8x (BC1)
+  the memory of the compressed files; an ASTC pack or a lower default
+  quality on GLES would be the way, if needed.
 - The RVZ import was not run on the emulator (no RVZ of the game); it uses
   the PC's converter on the copied file.
 
