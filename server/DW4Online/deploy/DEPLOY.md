@@ -831,13 +831,14 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    same path, so nothing else changes. Settings that a release asks for go into `config\appsettings.Production.json`
    before the start: an update from release 0.1.0 (its example file had 43) sets `Play:MinimumProtocol` and
    `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core,
-   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since release 0.1.7, the online world, section 9.2:
-   the code refuses anything below 49 whatever the file says); the room story settings work with
+   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since release 0.1.7, the online world, section 9.2,
+   50 since release 0.2.0, round I1b, section 9.3: the code refuses anything below the current floor whatever the file says); the room story settings work with
    their defaults (section 10). A release that raises the protocol goes on the server first and the game client after
    it: an older relay (0.1.5, minimum 47) admits a 48 client but checks its READY at the check tick only when the
    donor's report happens to be there already; a relay with `Play:MinimumProtocol` 48 asks older clients to update.
    Release 0.1.7 (the world, protocol 49) is different: its relay speaks only 49, so a 48 client cannot play until the
-   players have the new game client (section 9.2: the server first, the client release right after it).
+   players have the new game client (section 9.2: the server first, the client release right after it). Release 0.2.0
+   (protocol 50, section 9.3) is the same: its relay speaks only 50.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
 way), restore the backup from step 2 into `dw4online` first (the old build refuses a database that is newer than
@@ -1006,9 +1007,10 @@ with a later release that also grants `CREATE VIEW`; until then the queries abov
 ### 9.2 Migration 0013 `world` (round I1): the rooms give way to the online world
 
 Which releases carry which migration: 0.1.6 brought 0012 (section 9.1, schema 12), 0.1.7 brings 0013 (schema 13); 0.1.8
-and 0.1.9 add none. The project's server went 0.1.4 (schema 11) -> 0.1.6 (0012 applied at its start) -> 0.1.7 (0013)
--> 0.1.8 -> 0.1.9; a server that skips 0.1.6 applies 0012 and 0013 in one start of 0.1.7 or later (both with the same
-backup first, section 8, and the `CREATE VIEW` right below before it).
+and 0.1.9 add none; 0.2.0 brings 0014 (section 9.3, schema 14). The project's server went 0.1.4 (schema 11) -> 0.1.6
+(0012 applied at its start) -> 0.1.7 (0013) -> 0.1.8 -> 0.1.9 -> 0.2.0 (0014); a server that skips releases applies
+the missing migrations in one start (all with the same backup first, section 8, and the `CREATE VIEW` right below
+before it).
 
 The release with migration 0013 (DW4Online 0.1.7) replaces rooms by the online world (SEAMLESS.md 19): the game's *Play* enters the
 world, a player's lobby is always his own, and taking the gate to an area where a visible instance runs puts him into
@@ -1024,9 +1026,8 @@ What the migration does (it runs at the start, or with `migrate` in the console,
 | `instance_history`, `instance_history_members` (new tables) | every instance (host, first stage, visibility, difficulty, settings, start, end and why) and who was in it when; kept 90 days (`World:HistoryDays`) |
 | `accounts.last_seen_at`, `achievement_unlocks.instance_id`, `speedrun_times.instance_id` (new columns) | "last online" for friends; the instance an unlock or a best time came from (older rows keep `room_id`) |
 | `online_story_history.reason` | gains the value `mirror` (shared progress, a later round) |
-| `player_reports` (new table) | *Report player* (round I1b): who reported whom, the reason from a fixed list (griefing, cheating, name, other; no free text), from the game or the API, the instance both played in, open or done and by which moderator; staff handle them on the website's *Admin > Reports* |
 | data | each room host's newest room settings become his `online_prefs` (camera, light, fast loading, randomizer); nothing of a room's story is copied to its guests (a player who was only a guest starts the world with an empty story, as decided) |
-| views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit`, `v_player_reports` | read-only tables with user names for HeidiSQL |
+| views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit` | read-only tables with user names for HeidiSQL |
 | `rooms`, `room_members` | stay as they are, read-only; a later release drops them |
 
 **The one new right.** The views need the right `CREATE VIEW`. Root has it (section 2.1: nothing to do). The service
@@ -1076,17 +1077,61 @@ SELECT a.username, p.default_visibility, p.camera_mode, p.light_mode, p.fast_loa
 -- 3. Later: who played where (the views show user names; open one in the tree and use its Data tab, or query it).
 SELECT * FROM v_instance_history ORDER BY started_at DESC LIMIT 50;   -- host, area, players, minutes, end_reason
 SELECT * FROM v_staff_audit ORDER BY at DESC LIMIT 50;               -- what moderators did and looked at
-SELECT * FROM v_player_reports WHERE state = 'open' ORDER BY created_at DESC;  -- the players' open reports, newest first
 SELECT * FROM v_friends ORDER BY friends_since DESC;
 SELECT * FROM v_friend_requests ORDER BY created_at DESC;
 SELECT * FROM v_blocks ORDER BY created_at DESC;
 ```
 
 Look, do not edit: the relay writes `instance_history` and its members through a queue while instances run, and the
-website shows them. Reports are handled on the website (*Admin > Reports*, *Done*), not in HeidiSQL: the website writes
-the audit row (`report_handled`) and the handler's name with it. Editing `online_prefs` by hand is harmless (the next login reads it); keep `randomizer_seed` empty
+website shows them. Editing `online_prefs` by hand is harmless (the next login reads it); keep `randomizer_seed` empty
 or between 1 and 4294967295 and `randomizer_modes` as the table comment says (the table refuses other values).
 A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; instances it hosted keep their row.
+
+### 9.3 Migration 0014 `reports` (round I1b, DW4Online 0.2.0): the arrival prompt, go along, removal and reports
+
+Release 0.2.0 carries round I1b of the online world (SEAMLESS.md 19.25): the arrival prompt at the gate and the return
+mat (choosing among the area's instances, *Arriving now* included), *Go along* into a dungeon, the host's *Remove* that
+binds at every decision, and *Report player*. Its relay speaks only protocol **50** (the client's stage snapshot keeps
+one more engine value, so 49 and 50 engines would play apart): **install the server first, then publish the client
+release of the same round**; until the players have it, their game says the client is outdated.
+
+What migration 0014 adds (it runs at the start, or with `migrate` in the console, section 8; well under a second):
+
+| Object | What |
+| --- | --- |
+| `player_reports` (new table) | *Report player*: who reported whom, the reason from a fixed list (griefing, cheating, name, other; no free text), from the game or the API (`source`), the instance both played in (NULL when none, or after the history was pruned), open or done and by which moderator and when; a comment on every column; a reporter's rows go with his account, rows about a deleted account keep its id |
+| view `v_player_reports` | the reports with user names for HeidiSQL |
+
+No new right: the view needs `CREATE VIEW`, which section 9.2 granted for 0013 (the migrator checks it first and changes
+nothing without it; then run section 9.2's two `GRANT` lines and `migrate` again). 0013 stays exactly as it went live
+with 0.1.7 (its checksum is unchanged), and `v_staff_audit` stays 0013's.
+
+**The settings.** In `config\appsettings.Production.json`, before the start: `Play:MinimumProtocol` to **50** and
+`Play:CurrentProtocol` to **50** (the server refuses anything below 50 anyway; set it so the file says what happens).
+The new relay options have code defaults and need no line: `World:ArrivalPrompt` (true), `World:OptionsRefreshMs`
+(1000), `World:OfferReopenSeconds` (120), `World:AnswerNoticeSeconds` (20), `World:GoAlongWaitSeconds` (60),
+`World:RemovedBarMinutes` (10), `Reports:PerDay` (10), `Reports:RepeatHours` (24), `RateLimits:ReportsPerMinute` (10).
+Never set the test options (`World:TestHooks`, `World:TestGoHook*`, `World:TestGoBarrierHoldMs`, `World:TestJoinHoldMs`,
+`World:TestDropPlans`) on the live server.
+
+**The update** is section 8 with these steps in this order: (1) the backup (section 7; the migration's way back), (2)
+the settings above, (3) the server release 0.2.0 (`migrate`: "... done in N s: schema 14", `Start-Service`;
+`/api/v1/status` says `"version":"0.2.0"` and `"minimumProtocol":50`), (4) the client release for the players. The
+way back is section 8's rollback with the backup of step 1 (0.1.9 refuses schema 14).
+
+The check in HeidiSQL after the update (as root or `dw4backup`, database `dw4online`, a *Query* tab, F9):
+
+```sql
+-- 1. The migration is applied: the top row is 14 "reports".
+SELECT version, description, applied_at FROM schema_version ORDER BY version DESC LIMIT 3;
+
+-- 2. Later: the players' open reports, newest first (user names; handle them on the website, not here).
+SELECT * FROM v_player_reports WHERE state = 'open' ORDER BY created_at DESC;
+```
+
+Reports are handled on the website (*Admin > Reports*, *Done* / *Reopen*), not in HeidiSQL: the website writes the audit
+row (`report_handled`, `report_reopened`) and the handler's name with it. A report about a moderator's own account is
+shown to him without its reporter and instance, and only another moderator can close it.
 
 ## 10. Operating notes
 

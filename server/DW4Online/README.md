@@ -21,7 +21,7 @@ client side of every call over WinHTTP. The room service of the releases before 
 | `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one hub for the world, one connection per member, stage groups as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery, the presence fan-out: PRESENCE and since round 60 PRESENCE2 for the ghost figures of the lobby, with its bounds and token bucket, SEAMLESS.md 12.1), `World` (the user's instances: matching, seats, the end with HOME, the host's grace, SEAMLESS.md 19), HMAC world tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, friends (with the online preferences and "Recently played with"), profiles, achievements, instances, admin (accounts, instances), privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0013 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0014 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, the world with the real relay and fake clients, website forms, end to end on real Kestrel). |
 | `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
@@ -130,7 +130,7 @@ and user secrets (Development) work as usual.
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `StoryHistoryRevisions` (100: the newest revisions of an account's online story kept in full, online_story_history), `StoryHistoryMinutes` (10: older room revisions are kept as the first of every this many minutes), `StoryHistoryDays` (90: how long those and the session starts, resets and restores stay), `StoryHistorySessions` (20: the newest session starts, resets and restores stay for good), `StoryCounterSaveSeconds` (60: a room story revision that changed only counters is written at most this often per account), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
 | `World` | (round I1, SEAMLESS.md 19.17.5) `DataHashes` (empty = any game data; a list admits only those: `/world/enter` 409 `unsupported_data`, the relay `ERR data`), `RankedDataHashes` (empty = every data hash counts for achievements; `Rooms:RankedDataHashes` is read as it for one release), `HistoryDays` (90: `instance_history`), `RecentlyPlayedDays` (30); the relay's own keys of the same section (members, instances, the host's grace, presence) are the relay's (`WorldHubOptions`). |
-| `Play` | `RequireWorld` (true: unlocks, stats and state achievements need the account in the world within the last minute, the relay's play context; `RequireRoom` is read as it for one release), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`; the code refuses below the world's protocol 49 whatever `MinimumProtocol` says, and `/status` announces the effective minimum), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"), `ClearStoryWaitSeconds` (30: a story clear reported in a room counts when the room's story holds that difficulty's clear flag; the server waits this long for it). |
+| `Play` | `RequireWorld` (true: unlocks, stats and state achievements need the account in the world within the last minute, the relay's play context; `RequireRoom` is read as it for one release), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`; the code refuses below the world's protocol 50 (DW4Online 0.2.0, round I1b; 49 before) whatever `MinimumProtocol` says, and `/status` announces the effective minimum), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"), `ClearStoryWaitSeconds` (30: a story clear reported in a room counts when the room's story holds that difficulty's clear flag; the server waits this long for it). |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs); `SocialPerMinute` 60 (per account: friend requests and answers, blocks, player cards), `FriendListSeconds` 2 (one `GET /friends` per account per this many seconds; 0 = no limit), `WebSocialPerMinute` 60 (per account, the friend and block buttons of the website, POSTs only). |
 | `Friends` | `RequestsPerHour` (20) and `RequestsPerDay` (100) per sender (counted in memory), `MaxPendingOut` (50: open requests a player sees as sent), `MaxPendingIn` (100: open requests that reach a player at a time; further ones wait their turn), `MaxFriends` (200), `MaxBlocks` (500), `RequestDays` (30: pending and declined requests expire, then the hourly housekeeping deletes them). See "Friends and blocks". |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
@@ -209,8 +209,9 @@ SEAMLESS.md 19.11; plain columns with a comment on each for HeidiSQL); 0013 `wor
 `online_prefs` (the visibility a player's instances start with, invites, whereabouts, toasts and the host settings; the
 room hosts' newest room settings carried over), `instance_history` + `instance_history_members` (written by the relay's
 queue, 90 days), `accounts.last_seen_at`, `instance_id` on `achievement_unlocks` and `speedrun_times`, the story history
-reason `mirror`, `player_reports` (round I1b's *Report player*), and the views `v_friends`, `v_friend_requests`,
-`v_blocks`, `v_instance_history`, `v_staff_audit`, `v_player_reports`. The
+reason `mirror`, and the views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit`;
+0014 `reports` (round I1b, DW4Online 0.2.0, DEPLOY.md 9.3): `player_reports` (*Report player*) and the view
+`v_player_reports` (0013 went live with 0.1.7 and keeps its checksum). The
 views need `CREATE VIEW` (DEPLOY.md 9.2): a migration's `-- Requires:` line names such rights, and the migrator refuses
 before it changes anything when the database user lacks one. `rooms` and `room_members` are read-only since 0013.
 
@@ -484,9 +485,10 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
 
 - Game client: round S1 built the WinHTTP client with pinning, the DPAPI token and the DW4R2 client
   (`src/game/online`); round I1a's client lane its world session (*Play*, the own lobby, instances, *Leave instance*;
-  SEAMLESS.md 19.21). Next rounds (19.25): I1b (the arrival prompt, removal and reports), I2 (friends in the game), I3
-  (the instance browser and travel), I4 (parties); UDP for INPUT / SEALED stays open (the S1 loss matrix, SEAMLESS.md
-  6.4).
+  SEAMLESS.md 19.21); round I1b (DW4Online 0.2.0, protocol 50) the arrival prompt (PLAN / OPTIONS / CHOICE, *Arriving
+  now*), go along (OFFER / INTENT 4 / GO), the removal binding at every decision and *Report player* (REPORT). Next
+  rounds (19.25): I2 (friends in the game), I3 (the instance browser and travel), I4 (parties); UDP for INPUT / SEALED
+  stays open (the S1 loss matrix, SEAMLESS.md 6.4).
   For the IP phase it talks to `https://88.198.52.221:8443` (a Traefik holds 443 there, DEPLOY.md 4.1) and pins the
   two SPKI pins of the server's TLS keys (in use and
   spare; `deploy/tls-key.ps1` makes the keys and their certificates, `deploy/print-pins.ps1` writes the pins for the

@@ -379,22 +379,50 @@ own Digimon turns see-through).
 
 **Instances.** Leaving your lobby for a field or a dungeon (the lobby gate,
 a quest board, the return mat) puts you into an *instance* of that stage's
-area: a running one or a new one that you host. Until the arrival prompt
-comes (round I1b), the choice is automatic and cautious: you join a running
-instance only when it is a friend's (its host is your friend, or friends of
-yours play in it) or when players of it play at the very stage you arrive in
-(not a group of it that is just leaving), and only when its visibility lets you in (*Public*; *Friends* for the host's
-friends; *Private* for nobody else, moderators who simply play included). A
-stranger's instance elsewhere in the area is never chosen for you. Otherwise
-you start a new instance with your default visibility and host it ("New
-instance (Public). View: Online menu"); players who take the same gate within
-a few seconds of you arrive together. A join says "You joined Kim's instance.
-Kim is in <stage>. Leave: Online menu". An instance belongs to its area (a
-region of the map); inside it everyone travels freely, with their own camera:
-members in the same field, dungeon or boss stage play one shared stage
-instance (up to four, shared enemies and drops), a member who arrives later
-joins it mid-stage, and exits and the gate disc take only the members who
-say yes.
+area: a running one or a new one that you host. When instances you may see
+run in the area, the **arrival prompt** asks which (round I1b): while you
+confirm the gate's destination (or the return mat's *Yes*) the game asks the
+server first and shows the rows over the gate's menu: each instance with its
+host, where the host is, *Here (n)* for players at the very stage you arrive
+in, its story point, ping and settings, and states such as *Boss fight*
+(choosing it waits for the fight's end), *Loading*, *Arriving now* (its
+players are on their way to that stage: you join them there), *Full* or
+*Story not here yet* (greyed). The cursor starts on the row the server
+suggests: a friend's instance, or one with players at your
+arrival stage; otherwise on **New instance**, with Left/Right choosing its
+visibility (*Public*, *Friends*, *Private*; remembered as your default). A
+chooses, X shows a row's members, B keeps you standing at the gate (the
+pictures are those of your controller). If the answer cannot come in time,
+the same prompt appears on the loading screen, with B taking you back to the
+lobby. Players who take the same gate within a few seconds of you arrive
+together (also two who both choose *New instance*). Without anything to
+choose you start a new instance with your default visibility and host it
+("New instance (Public). View: Online menu"). Only instances whose
+visibility lets you in are listed (*Public*; *Friends* for the host's
+friends; *Private* for nobody else; a moderator sees every instance in the
+prompt as his own choice, never in an automatic join). An instance belongs to
+its area (a region of the map); inside it everyone travels freely, with their
+own camera: members in the same field, dungeon or boss stage play one shared
+stage instance (up to four, shared enemies and drops), a member who arrives
+later joins it mid-stage, and exits and the gate disc take only the members
+who say yes.
+
+**Go along.** When members of your instance go into a dungeon while you are
+in a field, a line at the top asks "Kim went into Ancient Ruins B1. Go
+along?" for 20 s; the F1 menu's button opens the *Instance* page, whose *Go
+along* box sends you after them (to the floor where the first of them is,
+waiting while that floor is in a boss fight or loading) or closes the
+question. "Going along..." follows; B on a loading screen that waits too
+long takes you back to the lobby (the host is asked "End the instance for
+everyone?" first).
+
+**Removing and reporting.** On the *Instance* page every other member's row
+opens a player card: **Report** with a reason (griefing, cheating, name,
+other; "Report sent. Thank you.", a daily limit per player) for everyone,
+and for the host (and a moderator playing) **Remove** ("Remove Kim from your
+instance? They can't rejoin it for a while."): the removed player goes home
+on his own story and the instance is hidden from him for a while. Moderators
+work off the reports on the server's website (*Admin > Reports*).
 
 **The instance's story is its host's.** A guest plays the host's story (its
 chapter, quests and opened ways) with his own level, items, Bits and
@@ -457,10 +485,10 @@ rotated at about 1 MB; a second game started from the same folder writes
 
 Known limits:
 
-- The arrival prompt (choosing among the area's instances at the gate) and
-  the instance browser come with later rounds; until then the automatic
-  choice above decides, so friends meet by taking the gate into the area of
-  the friend's instance, or by arriving together.
+- The instance browser (joining a friend wherever he is) and parties come
+  with later rounds; until then friends meet by taking the gate into the
+  area of the friend's instance (the arrival prompt lists it), or by
+  arriving together.
 - Camera tours and tutorials on mats, the shaking mats and the story scenes
   still pause the whole stage instance (every member in it), as in local
   co-op; only the status window, NPC talks and the map recorders are each
