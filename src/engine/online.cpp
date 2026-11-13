@@ -171,6 +171,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         // refused as by a driver; presentation only)
         "DW4_TEXTURE_QUALITY", "DW4_TEXTURE_FILTER", "DW4_LOD_BIAS", "DW4_SHARPEN", "DW4_SHADOW_QUALITY", "DW4_TEXTURE_MEMORY",
         "DW4_TEXTURE_CPU_DECODE", "DW4_TEXTURE_UPLOAD_MS", "DW4_TEXTURE_QUALITY_AT", "DW4_TEXTURE_TEST_REFUSE",
+        // the renderer's check of the depth clamp emulation (gl_renderer.cpp, docs/ANDROID.md: a CPU count of
+        // crossing orthographic triangles, logged; presentation only)
+        "DW4_CHECK_DEPTH_CLAMP",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
         // a test run's controller log and the Switch 2 Pro reader in a test run (pad_usb.hpp: a file about the
