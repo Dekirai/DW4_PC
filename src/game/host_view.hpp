@@ -29,6 +29,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -44,6 +45,7 @@ class ButtonPrompts;
 class GcAdapter;
 class GhostFigures;
 class Switch2Reader;
+class TexturePack;
 namespace online {
 struct RemoteSample;
 }
@@ -85,6 +87,10 @@ struct PictureState {
     // address). Empty in a Data Overflow run.
     std::vector<engine::DrawItem> ghost_items;
     engine::ShadowFrame ghost_shadow;
+    // The engine's documents as last handed to the renderer for texture
+    // streaming (a digest of their addresses; note_stage).
+    std::uint64_t documents_digest{};
+    std::size_t documents_count{};
     void reset();
 };
 
@@ -227,8 +233,15 @@ void mix_audio(HostView& view, engine::Engine& engine, int frames);
 // Every stage load, also of the same stage (the texture cache is keyed by
 // document addresses, which a new load may reuse): the renderer's cache,
 // smooth motion, the name tags and the story's ghost figures (`ghosts`; none
-// in a run) start over. True when it did.
+// in a run) start over. True when it did. Every pass it also hands the
+// renderer the engine's documents for texture pack streaming (scanned and
+// read ahead while a stage loads) and lets it upload what was read
+// (GlRenderer::stream_textures). DW4_TRACE_TEXTURES=1: a line per stage
+// with its texture memory and streaming figures.
 bool note_stage(HostView& view, engine::Engine& engine, GhostFigures* ghosts = nullptr);
+// DW4_TRACE_TEXTURES=1: the texture line of `stage` (note_stage prints it
+// at every stage change, the story loop once more at its end).
+void trace_textures(HostView& view, const std::string& stage);
 enum class PictureMade { kept, drawn, traversed };
 // The draw list of this pass (drawn: view.picture.items, which the caller
 // may still add 2D items to), or without pictures the traversal of it; a
@@ -297,6 +310,15 @@ void pace_presents(HostView& view);
 
 // ---- The F1 menu's settings sections (inside the Settings tab)
 void settings_display_section(HostView& view);
+// Graphics: texture quality, filtering, LOD bias, sharpening, shadow
+// quality, texture memory and the texture pack (`pack`: its folder, null
+// without a renderer; `reload` reads the folder again).
+struct TexturePackPanel {
+    const TexturePack* pack = nullptr;
+    std::filesystem::path folder;  // the folder in use
+    std::function<void()> reload;  // TexturePack::configure + GlRenderer::set_texture_pack
+};
+void settings_graphics_section(HostView& view, const TexturePackPanel& panel);
 void settings_audio_section(HostView& view);
 // `discord_status`: DiscordPresence::status(), "off" without one.
 void settings_presence_section(HostView& view, const char* discord_status);

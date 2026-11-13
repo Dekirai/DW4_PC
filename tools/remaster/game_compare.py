@@ -10,8 +10,11 @@ and the longest frame of a stage start.
   compare  side-by-side pictures of two runs' screenshots (and crops where
            they differ most), and whether their fingerprints agree:
              game_compare.py compare --a DIR --b DIR --out DIR [--label-a ..] [--label-b ..]
-  timing   the longest pass of a stage's load (DW4_TRACE_LOADTIME), a few
-           runs each without a pack, with an empty pack and with the pack:
+  timing   the longest pass of a stage's load and of its start window (the
+           load and 600 steps after it, DW4_TRACE_LOADTIME) with the texture
+           figures (DW4_TRACE_TEXTURES), a few runs each without a pack, with
+           an empty pack and with each pack (--pack DIR or LABEL=DIR, again
+           for more; LABEL=DIR@high draws the pack's 2x level):
              game_compare.py timing --exe EXE --data DATA --script SCRIPT --pack PACK --out DIR
 
 Runs are started at below-normal priority without a console window, in
@@ -71,7 +74,9 @@ def fingerprints(text):
 
 def cmd_run(args):
     frames = [int(f) for f in args.frames.split(",") if f]
-    code, text = start_game(args.exe, args.data, args.script, args.out, args.length, args.size, args.pack, frames)
+    extra = dict(item.split("=", 1) for item in args.env or [])
+    code, text = start_game(args.exe, args.data, args.script, args.out, args.length, args.size, args.pack[-1] if args.pack else None, frames,
+                            extra)
     shots = 0
     for f in frames:
         bmp = os.path.join(args.out, f"shot_{f}.bmp")
@@ -151,29 +156,46 @@ def cmd_timing(args):
     os.makedirs(args.out, exist_ok=True)
     empty = os.path.join(args.out, "empty_pack")
     os.makedirs(empty, exist_ok=True)
-    cases = [("no pack", None, {"DW4_RENDER": "1"}), ("empty pack", empty, {}), ("pilot pack", args.pack, {})]
+    cases = [("no pack", None, {"DW4_RENDER": "1"}), ("empty pack", empty, {})]
+    for item in args.pack or []:
+        label, _, path = item.rpartition("=") if "=" in item else ("pack", "", item)
+        path, _, quality = path.partition("@")
+        cases.append((label, path, {"DW4_TEXTURE_QUALITY": quality} if quality else {}))
     pattern = re.compile(r"loadtime %s\S*: .*loop ([\d.]+) ms \(longest pass ([\d.]+) ms\)" % re.escape(args.stage))
+    window = re.compile(r"loadtime window %s: longest pass ([\d.]+) ms \(texture work ([\d.]+) ms\).*most texture work in a pass ([\d.]+) ms"
+                        % re.escape(args.stage))
+    figures = re.compile(r"^textures %s: game \d+ \(([\d.]+) MiB\), pack \d+ \(([\d.]+) MiB\), peak ([\d.]+) MiB" % re.escape(args.stage),
+                         re.M)
     result = {}
     for rep in range(args.repeat):
         for label, pack, env in cases:
             out = os.path.join(args.out, f"{label.replace(' ', '_')}_{rep + 1}")
-            env = dict(env, DW4_TRACE_LOADTIME="2")
+            env = dict(env, DW4_TRACE_LOADTIME="2", DW4_TRACE_TEXTURES="1")
             code, text = start_game(args.exe, args.data, args.script, out, args.length, args.size, pack, None, env)
             m = pattern.search(text)
             passes = sorted((float(x) for x in re.findall(r"load pass ([\d.]+) ms", text)), reverse=True)
+            w = window.search(text)
+            f = figures.search(text)
             entry = {"exit": code, "loop_ms": float(m.group(1)) if m else None, "longest_ms": float(m.group(2)) if m else None,
+                     "window_longest_ms": float(w.group(1)) if w else None, "window_texture_ms": float(w.group(2)) if w else None,
+                     "window_texture_max_ms": float(w.group(3)) if w else None,
+                     "texture_peak_mib": float(f.group(3)) if f else None,
                      "top_passes_ms": passes[:3], "fingerprints": len(fingerprints(text))}
             result.setdefault(label, []).append(entry)
             print(f"{label} run {rep + 1}: {entry}", flush=True)
     summary = {}
     for label, entries in result.items():
         longest = [e["longest_ms"] for e in entries if e["longest_ms"] is not None]
+        windowed = [e["window_longest_ms"] for e in entries if e["window_longest_ms"] is not None]
         summary[label] = {"longest_ms_median": statistics.median(longest) if longest else None,
-                          "longest_ms_max": max(longest) if longest else None, "runs": entries}
+                          "longest_ms_max": max(longest) if longest else None,
+                          "window_ms_median": statistics.median(windowed) if windowed else None,
+                          "window_ms_max": max(windowed) if windowed else None, "runs": entries}
     with open(os.path.join(args.out, "timing.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)
     for label, s in summary.items():
-        print(f"{label}: longest pass at the {args.stage} start median {s['longest_ms_median']} ms, max {s['longest_ms_max']} ms")
+        print(f"{label}: longest pass of the {args.stage} load median {s['longest_ms_median']} ms, max {s['longest_ms_max']} ms; "
+              f"of its start window median {s['window_ms_median']} ms, max {s['window_ms_max']} ms")
     return 0
 
 
@@ -186,10 +208,11 @@ def main():
         p.add_argument("--data", required=True)
         p.add_argument("--script", required=True)
         p.add_argument("--out", required=True)
-        p.add_argument("--pack", default=None)
+        p.add_argument("--pack", action="append", default=None)
         p.add_argument("--size", default="3840x2160")
         p.add_argument("--length", type=int, default=6000)
     sub.choices["run"].add_argument("--frames", required=True)
+    sub.choices["run"].add_argument("--env", action="append", help="VAR=VALUE for the run (Graphics options: DW4_TEXTURE_QUALITY ...)")
     sub.choices["timing"].add_argument("--repeat", type=int, default=3)
     sub.choices["timing"].add_argument("--stage", default="dng101b1")
     p = sub.add_parser("compare")

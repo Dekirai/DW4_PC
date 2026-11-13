@@ -1,18 +1,28 @@
 #pragma once
 
+#include "graphics_options.hpp"
 #include "prompt_layout.hpp"
 
 #include "dw4/engine/scene_graph.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
+namespace dw4 {
+class IgbDocument;
+}
+
 namespace dw4::game {
+
+class TextureStreamer;
+struct TexturePayload;
 
 struct Viewport {
     int x{}, y{}, width{}, height{};
@@ -61,8 +71,54 @@ class GlRenderer {
 public:
     GlRenderer();
     ~GlRenderer();
-    // Texture dumps and replacements (null for none); clear_cache() reloads.
-    void set_texture_pack(TexturePack* pack) { pack_ = pack; }
+    // Texture dumps and replacements (null for none). Setting it again
+    // (after TexturePack::configure) drops the pack's textures and streams
+    // from the pack's new index.
+    void set_texture_pack(TexturePack* pack);
+    // The Graphics options (graphics_options.hpp), applied from the next
+    // frame: samplers, the game's own mipmaps, the pack level, the memory
+    // budget, sharpening and the shadow map size.
+    void set_graphics(const GraphicsOptions& options);
+    const GraphicsOptions& graphics() const { return graphics_; }
+    // Once per pass, before drawing (note_stage): the documents the engine
+    // holds (null: the same as last time; new ones are scanned and their
+    // pack textures read ahead, while a stage loads), the uploads of
+    // replacements read meanwhile within the pass's time budget, and the
+    // texture memory budget's evictions.
+    void stream_textures(const std::vector<std::shared_ptr<const IgbDocument>>* documents);
+    // What the GPU offers for packs and filtering.
+    struct Caps {
+        bool bc1{}, bc3{}, bc7{}, anisotropic{};
+        bool memory_info{}; // GL_NVX_gpu_memory_info (the free GPU memory in the texture figures)
+        float max_anisotropy = 1.0f;
+        int max_texture_size = 2048;
+    };
+    const Caps& caps() const { return caps_; }
+    // Texture memory and streaming figures (F1 menu, DW4_TRACE_TEXTURES);
+    // the peak and the per-stage counts restart with reset_texture_stats().
+    struct TextureStats {
+        std::size_t originals{}, replacements{};
+        std::size_t original_bytes{}, replacement_bytes{}, peak_bytes{};
+        std::size_t uploads{}, upload_bytes{};
+        double upload_ms{}, longest_upload_pass_ms{};
+        std::size_t missing_draws{}; // draws that showed the original while the pack's texture was not there yet
+        std::size_t evictions{}, failed{};
+        std::size_t pending{};       // scans and loads queued
+        std::size_t images_scanned{}, loads{};
+        double scan_ms{}, load_ms{};
+        long long gpu_available_kb = -1; // GL_NVX_gpu_memory_info, -1 without it
+        std::string last_error;
+    };
+    TextureStats texture_stats() const;
+    void reset_texture_stats();
+    // The main thread's texture work since the last call (decoding and
+    // uploading the game's own textures, the pack's uploads), in ms: the
+    // stage start window of DW4_TRACE_LOADTIME shows it for its longest pass.
+    double take_pass_texture_ms() {
+        const double ms = pass_texture_ms_;
+        pass_texture_ms_ = 0;
+        return ms;
+    }
     // The controller prompts (null: the game's own pictures everywhere).
     void set_prompts(PromptSource* source) { prompts_ = source; }
     // The game font's glyph cells (once the engine loaded its font).
@@ -98,7 +154,10 @@ public:
     std::optional<float> read_depth(int x, int y, int window_width, int window_height);
     // The projected shadow drawn with the next render (null: none).
     void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
-    // Drop all GPU resources (call when the engine changed stage).
+    // Drop the stage's GPU resources (call when the engine changed stage):
+    // geometry and the textures' records by document. Textures known by
+    // their pixel hash (the pack's and the game's own, when a pack streams)
+    // stay until the memory budget evicts them.
     void clear_cache();
     // Dev tool (DW4_DEV_IDS, dev_present.hpp): render() draws every item in
     // a flat colour that encodes its position in the draw list (index + 1 in
@@ -119,16 +178,60 @@ private:
     };
     void release(Mesh& mesh);
     std::uint64_t frame_{};
-    struct Texture {
+    // A GL texture object: a game texture (by its pixel hash when a pack
+    // streams, else owned by its binding's record) or a pack's replacement
+    // (by the pack hash).
+    struct GpuTexture {
         unsigned id{};
-        bool alpha{};
+        std::size_t bytes{};
+        std::uint64_t last_frame{};
+        int levels = 1;                 // 1: the full-size image only (sampled as GX does)
+        std::uint64_t slot{};           // the budget's id
+        int width{}, height{};
+        std::vector<std::uint8_t> rgba; // level 0 (the title's PRESS START replacement)
+    };
+    // A texture binding's record (by document and reference, until the
+    // stage changes): its sampler, its hashes and its texture.
+    struct Texture {
+        const engine::Attribute* binding{};
+        int wrap_s{}, wrap_t{}, min_filter{};
+        bool mag_nearest{};
+        bool keyed{};                         // the hashes are known
+        bool scanned{};                       // ... from the loading thread's scan
+        std::uint64_t pack_hash{}, pixel_hash{};
+        std::uint32_t width{}, height{};      // the original's size
+        bool in_pack{};
+        bool authored_mips{};                 // IGB mip images (never in this game's data): not shared
+        bool failed{};
+        std::uint64_t asked_frame{};
+        GpuTexture owned;                     // the original when not shared by hash
         // The title's PRESS START texture (its decoded pixels for the
         // prompt variants, and whether it is magnified nearest).
         bool title_press = false;
         bool nearest = false;
-        int width = 0, height = 0;
+        int width_px = 0, height_px = 0;
         std::vector<std::uint8_t> original;
     };
+    // The texture a draw shows: the pack's replacement once it is uploaded,
+    // else the game's own (decoded now if no record holds it); `replaced`
+    // says which. Null when the texture cannot be decoded.
+    const GpuTexture* resolve(Texture& texture, bool& replaced);
+    const GpuTexture* upload_original(Texture& texture);
+    // A replacement going up in bands of rows over one or more passes
+    // (stream_textures): its payload, its texture, the level and row next.
+    struct Upload;
+    void begin_upload(TexturePayload payload);
+    bool continue_upload(std::chrono::steady_clock::time_point deadline);
+    void finish_upload();
+    unsigned sampler(const Texture& texture, const GpuTexture& gpu);
+    void drop_samplers();
+    void drop_originals();
+    void drop_replacements();
+    void configure_streamer();
+    bool streaming() const;
+    void delete_texture(GpuTexture& texture);
+    void note_bytes();
+    void sharpen(const Viewport& area);
     // A text line's quads split for the prompts (prompt_layout.hpp): the
     // text without the button glyphs and words (moved where a word picture
     // closed its row up), and the pictures' quads in the atlas; its line's
@@ -147,9 +250,9 @@ private:
     };
     const PromptSplit* prompt_split(const engine::GeometryData* geometry);
     void release(PromptSplit& split);
-    unsigned title_texture(const Texture& texture);
+    unsigned title_texture(const Texture& texture, const GpuTexture* replacement);
     const Mesh* mesh(const engine::GeometryData* geometry);
-    const Texture* texture(const engine::Attribute* binding);
+    Texture* texture(const engine::Attribute* binding);
     void render_shadow_map();
     void render_shadow_receivers(const engine::FrameCamera& camera);
 
@@ -157,6 +260,23 @@ private:
     unsigned program_{};
     std::unordered_map<const engine::GeometryData*, Mesh> meshes_;
     std::map<std::pair<const void*, std::uint32_t>, Texture> textures_;
+    std::unordered_map<std::uint64_t, GpuTexture> originals_;    // the game's textures by pixel hash
+    std::unordered_map<std::uint64_t, GpuTexture> replacements_; // the pack's by pack hash
+    std::unordered_map<std::uint64_t, bool> failed_uploads_;     // pack hashes the GPU refused
+    std::unordered_map<unsigned, unsigned> samplers_;            // by sampler key
+    std::unique_ptr<TextureStreamer> streamer_;
+    std::unique_ptr<Upload> upload_;
+    GraphicsOptions graphics_;
+    Caps caps_;
+    bool cpu_decode_{};               // DW4_TEXTURE_CPU_DECODE: block formats decoded on the CPU (test of that path)
+    double upload_budget_ms_ = 1.5;   // uploads per pass (DW4_TEXTURE_UPLOAD_MS)
+    std::uint64_t next_slot_ = 1;
+    double pass_texture_ms_{};
+    int trace_{}; // DW4_TRACE_TEXTURES (2: every texture drawn before its pack texture was there)
+    std::size_t owned_bytes_{};
+    TextureStats stats_;
+    unsigned sharpen_program_{}, sharpen_texture_{};
+    int sharpen_width_{}, sharpen_height_{};
     unsigned white_texture_{};
     const engine::ShadowFrame* shadow_{};
     unsigned movie_program_{}, movie_texture_{}, movie_vao_{};
@@ -164,7 +284,7 @@ private:
     unsigned kept_program_{}, kept_texture_{};
     int kept_width_{}, kept_height_{};
     unsigned shadow_fbo_{}, shadow_texture_{};
-    int shadow_width_{}, shadow_height_{};
+    int shadow_width_{}, shadow_height_{}, shadow_border_{};
     bool shadow_ready_{};
     TexturePack* pack_{};
     PromptSource* prompts_{};

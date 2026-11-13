@@ -152,6 +152,176 @@ one implementation; the renderer and `dw4_texpack` both call it. Any change
 to the decoders or to this rule changes the hashes and invalidates every
 pack; `tests/texpack_tests.cpp` pins three values.
 
+## Texture packs: format 2
+
+A texture pack is a folder (F1 > Settings > Graphics > *Texture pack
+folder*, settings.ini `[mods] textures`, default `mods/textures`; test runs
+`DW4_TEXTURE_PACK`). Two layouts are read:
+
+- **Format 2**: the folder holds `dw4pack.tsv`, a manifest that lists per
+  texture hash the files that hold it, their encodings, scales and mip
+  levels. Only the files it names are used.
+- **Format 1** (loose files, as before): without a manifest, every file
+  below the folder whose name ends in `_<16 hex digits>.png` (or `.dds`)
+  replaces the texture of that hash, at any size. One file per hash.
+
+`src/game/texture_pack.hpp` reads both; `tests/graphics_tests.cpp` checks
+the manifest, the DDS headers, the decoders, the file choice and the loader
+with valid and malformed synthetic input.
+
+### The manifest (dw4pack.tsv)
+
+UTF-8 text (a BOM is allowed), LF or CRLF line ends, fields separated by
+one TAB each, at most 64 MiB and 1,000,000 rows.
+
+1. The first non-empty line is `#dw4pack<TAB>2` (a space instead of the TAB
+   is accepted). A higher number is a newer format: the pack is not used and
+   the F1 menu says why. Lower numbers and anything else refuse it too.
+2. Further lines starting with `#` are directives or comments:
+   `#name<TAB>text` names the pack in the F1 menu; other `#` lines are
+   comments.
+3. The first other line is the column header. The columns are found by
+   name, in any order; unknown columns are ignored (a builder may add its
+   own, such as `alpha` or `model`). Required: `hash`, `encoding`, `scale`,
+   `levels`, `file`. Optional: `width`, `height`.
+4. Every further line is one file of one texture. A texture may have up to
+   16 rows (encodings, scales).
+
+| Column | Value |
+| --- | --- |
+| `hash` | The texture's pack hash (*Texture pack hash* above), 16 hex digits, either case. |
+| `encoding` | `bc7`, `bc3`, `bc1` or `rgba8` (a DDS file), or `png` (a PNG file of one level). An encoding this build does not read (a later one, such as `astc6x6` for GLES devices) is skipped without error, with one warning per name. |
+| `scale` | The first level's size over the original texture's, the same in both directions: 1, 2, 4, 8 or 16. |
+| `levels` | The levels the file holds, 1..15; level *k* has the scale `scale / 2^k` (a PNG: 1). |
+| `width`, `height` | The first level's size in texels (empty or 0: not given). When given, the file must match. |
+| `file` | The file's path relative to the pack folder, `/` as separator. No drive, no root, no `..` component, no control characters or `: * ? " < > \|`. |
+
+A malformed row is skipped with a warning (the F1 menu lists them): a hash
+that is not 16 hex digits, a scale outside 1..16 or not a power of two, a
+level count outside 1..15, a width or height that is not 1..16384, an unsafe
+path, fewer fields than the header, or a second row with the same hash,
+encoding and scale.
+
+```
+#dw4pack	2
+#name	DW4 Remaster
+hash	encoding	scale	levels	width	height	file	alpha
+05f8453aab0ffa8d	bc7	4	11	1024	512	tex/05f8453aab0ffa8d.dds	opaque
+05f8453aab0ffa8d	astc6x6	4	11	1024	512	gles/05f8453aab0ffa8d.ktx2	opaque
+ac566f5a15c2a226	rgba8	4	11	1024	512	tex/ac566f5a15c2a226.dds	blend
+```
+
+### The files
+
+- **DDS** (`bc7`, `bc3`, `bc1`, `rgba8`): one 2D texture, no cube map,
+  array or volume. Either the DX10 header with the DXGI format 98 / 99 / 97
+  (BC7), 77 / 78 / 76 (BC3), 71 / 72 / 70 (BC1), 28 / 29 / 27 (R8G8B8A8) or
+  87 / 91 / 90 (B8G8R8A8), or the legacy header with the FourCC `DXT1`
+  (BC1), `DXT5` (BC3) or 32-bit RGBA / BGRA masks with alpha. sRGB formats
+  are read as their UNORM formats: the game samples texel values as stored,
+  as GX does, so a pack stores the values it wants drawn (no sRGB
+  conversion). Level *k* is `max(1, size >> k)` texels per side; block
+  formats store 4x4 blocks with partial blocks rounded up; every level the
+  header declares must be in the file. At most 16384 texels per side, 15
+  levels and 512 MiB per file.
+- **PNG** (`png`): one level; the loader makes the mip chain (2x2 boxes,
+  colours weighted by alpha, cut-outs keep a binary alpha).
+- Rows run in the order the game's decoder delivers them, as in the
+  export's and the dumps' PNGs (some text stands upside down there): do not
+  flip them. Alpha is straight (not premultiplied).
+- The mip chain is the pack builder's: the loader draws the levels as they
+  are. Build them from the 4x picture in the texture's wrap (repeating
+  textures wrap, see the export's `tiles` / `uv_edges`), with alpha
+  separate and the alpha coverage kept for cut-outs at the material's
+  reference (`tools/remaster/make_dds_pack.py` does this with texconv).
+- Recommended encodings for the PC: BC7 for colour and alpha; BC1 where a
+  texture is opaque and BC1 holds it well (a quarter of the memory of
+  RGBA8, half of BC7); RGBA8 for the font atlas (`faccbeda501eefc1`) and
+  the title's PRESS START (`ac566f5a15c2a226`), whose pixels the game reads
+  back for the controller prompts (a compressed one is decoded on the CPU
+  for that).
+- For GLES devices (Android, Adreno: no BC7 in GLES), a pack adds rows of
+  an ASTC encoding (KTX2 files) beside the BC rows; a loader that reads them
+  picks them by the same rules. The PC loader skips them.
+
+### Quality levels and the file choice
+
+*Texture quality* Ultra draws a pack's scale 4, High its scale 2, Original
+no pack at all. Per texture the loader takes the file and the first level
+whose scale is the quality's; without one the closest scale below it; else
+the smallest above it. Among equals it prefers an encoding the GPU reads,
+then BC7, BC3, BC1, RGBA8, PNG. The levels above the chosen one are not
+read from the disk. So one 4x BC7 file with its whole chain serves Ultra
+(level 0) and High (level 1); a pack may also give a separate 2x file (a
+2x row of another encoding, or a smaller one for memory). Loose files
+(format 1) take their scale from their size over the original's.
+
+A GPU without an encoding (no `GL_ARB_texture_compression_bptc`, no
+`GL_EXT_texture_compression_s3tc`) gets the levels decoded to RGBA8 on the
+loading thread: BC7 bit exact after the Khronos Data Format Specification
+(`tests/graphics_tests.cpp` checks every mode and partition against
+DirectXTex's decoder), BC1 / BC3 after Direct3D's rules.
+
+### Streaming
+
+`src/game/texture_stream.hpp` and `GlRenderer::stream_textures`:
+
+- **Read ahead while a stage loads.** Every pass the host hands the
+  renderer the documents the engine holds (`Engine::loaded_files` and the
+  fonts' document). A loading thread at below-normal priority scans each
+  new document once (decodes and hashes its images, as the renderer would)
+  and reads the pack files of the hashes it finds, during the loading
+  screen. Payloads wait in memory for the upload (at most 256 MiB of read
+  ahead).
+- **Never a blocked frame.** A texture is drawn with the game's own picture
+  until its replacement is on the GPU; a draw that finds none asks for it
+  ahead of the read-ahead work. The main thread uploads within 1.5 ms per
+  pass (`DW4_TEXTURE_UPLOAD_MS`), into immutable storage in bands of rows
+  (256 KiB), so a large texture spreads over several passes; it is drawn
+  once complete.
+- **A cache by hash.** Identical textures upload once, the pack's by their
+  pack hash, the game's own by their pixel hash while a pack streams; they
+  stay across stage changes (a stage visited again draws at once).
+- **A memory budget.** Past *Texture memory* the least recently drawn
+  textures go (never one drawn in the last two frames); a replacement that
+  went is read again when it is drawn again.
+- **Presentation only.** Nothing of it reaches the simulation, the tick
+  state, saves, snapshots or the online wire; texture packs stay out of the
+  mods hash, so online partners may use different packs and options.
+  `work/dref/checks/det.sh` gives the same fingerprint and audio digests
+  without a pack, with a pack at every quality, with every option at its
+  maximum and with the block formats decoded on the CPU
+  (`DW4_TEXTURE_CPU_DECODE=1`).
+
+`DW4_TRACE_TEXTURES=1` prints a line per stage: the game's and the pack's
+textures in GPU memory and the peak, the uploads and their time, the draws
+that showed the original while the pack's texture was not there yet,
+evictions, failures and the loading thread's scan and read times (2: also
+each texture drawn before its pack texture). `DW4_TRACE_LOADTIME` adds a
+*loadtime window* line per stage: the longest pass from the stage change to
+600 steps after the stage started, the texture work in it, and the most
+texture work in any pass of the window.
+
+## Graphics options
+
+F1 > Settings > Graphics, saved in settings.ini `[graphics]`, applied at
+once. Test runs read no settings.ini: they take the defaults and the
+environment variables.
+
+| Option | Values (settings.ini) | Test runs | What it does |
+| --- | --- | --- | --- |
+| Texture quality | `original`, `high`, `ultra` (default) | `DW4_TEXTURE_QUALITY` | No pack, the pack's 2x level, its 4x level (above). |
+| Texture filtering | `bilinear` (default), `trilinear`, `anisotropic2` .. `anisotropic16` | `DW4_TEXTURE_FILTER` (also `2x` .. `16x`) | Bilinear samples the game's textures as GX does (full size only; pack textures blend their mipmaps). Trilinear gives the game's textures a mip chain (made on upload: colours by alpha, cut-outs keep a binary alpha, so they keep their coverage at a distance). Anisotropic adds `GL_TEXTURE_MAX_ANISOTROPY` (the levels the GPU offers). Sampler objects: no texture is uploaded again for a change of the anisotropy. |
+| Mip LOD bias | `lod_bias`, -2.00 .. 2.00 (0) | `DW4_LOD_BIAS` | Added to the level choice of mipmapped textures. |
+| Sharpening | `off` (default), `low`, `high` | `DW4_SHARPEN` | Contrast adaptive sharpening of the game picture (after the published description of AMD FidelityFX CAS): the picture is copied after the scene and drawn again through a 3x3 filter; the menus are not sharpened. |
+| Shadow quality | `original` (default), `high`, `ultra` | `DW4_SHADOW_QUALITY` | The projected shadow's map at the game's size (128 x 128), 4x or 8x the texels per side; the light box maps to the same part of it. |
+| Texture memory | `texture_memory`, MiB (1024; F1: 512 MiB .. 4 GiB) | `DW4_TEXTURE_MEMORY` | The cache's budget (above). |
+| Texture pack folder | `[mods] textures` | `DW4_TEXTURE_PACK` | Reload reads it again. |
+
+The presets: *Original* sets Texture quality Original, Bilinear, LOD bias 0,
+no sharpening and the game's shadow map; *Modernized* Ultra, Anisotropic
+16x and a 4x shadow map (sharpening stays as it is: a matter of taste).
+
 ## Exporting every texture (dw4_texpack)
 
 `dw4_texpack export --data ROOT --out DIR [--no-uv-masks]` reads the game data
@@ -224,6 +394,9 @@ the source. Its contact sheets and `game_compare.py` (hidden runs with and
 without the pack at the same frames) are the means to judge a pack. Packs
 stay presentation only: `work/dref/checks/det.sh` gives the same fingerprint
 and audio digests with `DW4_TEXTURE_PACK` set as without.
+`make_dds_pack.py` turns such PNGs into a pack of format 2 (BC7 / RGBA8 DDS
+files with their mip chains made by texconv, and the manifest), checking
+every file's header and its first level decoded back against the PNG.
 
 ## Reproduce the checks
 
@@ -254,6 +427,16 @@ For the viewer, select `area.afs`, entry 621, texture index 0. This list index
 is separate from the serialized global reference number shown in diagnostics.
 Original archives, extracted image data, and generated previews remain outside
 Git. Corpus checks are local integration evidence and are not required by CI.
+
+The pack loader and the Graphics options (CTest `graphics_*`, one test per
+part of `dw4_graphics_tests`: `manifest`, `dds`, `codec`, `mips`, `choice`,
+`loader`, `stream`, `budget`, `options`) need no game data; with it
+(`DW4_TEST_DATA`) `graphics_stream` also scans an original document and
+reads a pack texture of it ahead:
+
+```powershell
+.\build\Release\dw4_graphics_tests.exe stream 'E:\path\Digimon World 4 - Extracted'
+```
 
 The texture pack export test (CTest `texpack`) checks the shared hash on
 synthetic C8 and CMPR images, the exported names as replacements and the

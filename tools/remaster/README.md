@@ -69,14 +69,24 @@ to the import path). They lower their own priority to below normal.
    variants, two zoomed crops; for tiling textures the corner where four
    copies meet), `overview.png` and `palette_check.png`.
 5. `make_pack.py --selection ... --up ... --out <dir>\pilot\pack --choose class=variant,... [--override slot=variant]`.
-6. Point the game at the pack. Hidden test runs read no settings.ini; they
-   take `DW4_TEXTURE_PACK=<folder>`. In play: F1 > Settings > Texture packs
+6. Optionally `make_dds_pack.py --pngs <pack> --export <dir>\export --out <dir>\pilot\pack_dds --texconv <texconv.exe>`:
+   the same textures as a pack of format 2 (docs/TEXTURES.md): BC7 DDS
+   files (RGBA8 for the font atlas and the title's PRESS START) with their
+   mip chains made by texconv (wrap from the export's `tiles` / `uv_edges`,
+   alpha separate, cut-outs keeping their coverage at the material's
+   reference) and the manifest `dw4pack.tsv`; each file's header and its
+   first level decoded back are checked against the PNG.
+7. Point the game at the pack. Hidden test runs read no settings.ini; they
+   take `DW4_TEXTURE_PACK=<folder>` (and `DW4_TEXTURE_QUALITY=high` for the
+   2x level). In play: F1 > Settings > Graphics > Texture pack folder
    (settings.ini `[mods] textures=<folder>`), then Reload.
-7. `game_compare.py run` (hidden runs with screenshots, with and without
-   the pack), `game_compare.py compare` (side-by-side pictures and crops,
-   fingerprint check), `game_compare.py timing` (longest pass of the
-   dng101b1 load without a pack, with an empty pack and with the pack).
-8. Determinism: `DW4_TEXTURE_PACK=<pack> bash work/dref/checks/det.sh EXE NAME`
+8. `game_compare.py run` (hidden runs with screenshots, with and without
+   the pack; `--env VAR=VALUE` for Graphics options), `game_compare.py
+   compare` (side-by-side pictures and crops, fingerprint check),
+   `game_compare.py timing` (the longest pass of the dng101b1 load and of
+   its start window without a pack, with an empty pack and with each
+   `--pack [LABEL=]DIR[@high]`, with the texture work in it).
+9. Determinism: `DW4_TEXTURE_PACK=<pack> bash work/dref/checks/det.sh EXE NAME`
    must print the same fingerprint and audio digests as without the pack.
 
 ## Full run

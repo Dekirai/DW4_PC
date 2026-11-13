@@ -1208,6 +1208,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
 #endif
         dw4::game::GlRenderer* const renderer = gl_renderer ? &*gl_renderer : nullptr;
+        // The Graphics options (settings.ini [graphics]); test runs read no
+        // settings.ini: the defaults with DW4_TEXTURE_QUALITY,
+        // DW4_TEXTURE_FILTER, DW4_LOD_BIAS, DW4_SHARPEN, DW4_SHADOW_QUALITY
+        // and DW4_TEXTURE_MEMORY (graphics_options.hpp).
+        if (renderer)
+            renderer->set_graphics(options.smoke_frames
+                                       ? dw4::game::graphics_from_env({}, [](const char* name) -> const char* { return std::getenv(name); })
+                                       : settings.graphics);
         // The window, the renderer, the sound output, the controllers, the
         // F1 menu and the pictures as the host's shared parts see them
         // (host_view.hpp: the story and a Data Overflow run use the same).
@@ -1297,16 +1305,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto pack = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
             texture_pack.configure(pack, settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
             renderer->clear_cache();
+            renderer->set_texture_pack(&texture_pack);
+            if (!texture_pack.index().error.empty()) std::cerr << "texture pack: " << texture_pack.index().error << '\n';
         };
         if (!options.smoke_frames) {
             configure_pack();
-            renderer->set_texture_pack(&texture_pack);
         } else if (std::getenv("DW4_TEXTURE_PACK") || std::getenv("DW4_DUMP_TEXTURES")) {
             // Test runs: DW4_TEXTURE_PACK=dir and / or DW4_DUMP_TEXTURES=dir.
             const char* pack = std::getenv("DW4_TEXTURE_PACK");
             const char* dump = std::getenv("DW4_DUMP_TEXTURES");
             texture_pack.configure(pack ? pack : "", dump ? dump : "");
             renderer->set_texture_pack(&texture_pack);
+            if (!texture_pack.index().error.empty()) std::cerr << "texture pack: " << texture_pack.index().error << '\n';
+            std::cout << "texture pack: " << texture_pack.replacement_count() << " textures (format " << texture_pack.index().format << ")\n";
         }
         auto& gamepads = view.gamepads;
         ScriptedInput scripted;
@@ -2221,7 +2232,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::uint64_t serial{}, begin{}, started{}, control{};
             double total_ms{}, longest_ms{};
             bool fast{};
+            // The stage start window: every pass from the change to 600
+            // steps after the stage started (its first pictures, the
+            // textures' first draws), its longest pass and where it was.
+            double window_longest_ms{}, window_longest_texture_ms{}, window_texture_max_ms{};
+            std::uint64_t window_longest_frame{}, window_passes{};
+            bool window_done{};
         } load_timing;
+        auto print_load_window = [&] {
+            std::printf("loadtime window %s: longest pass %.1f ms (texture work %.1f ms) at step %lld of %llu passes (stage change to 600 "
+                        "steps after its start); most texture work in a pass %.2f ms\n",
+                        load_timing.stage.c_str(), load_timing.window_longest_ms, load_timing.window_longest_texture_ms,
+                        (long long)load_timing.window_longest_frame - (long long)load_timing.begin, (unsigned long long)load_timing.window_passes,
+                        load_timing.window_texture_max_ms);
+            load_timing.window_done = true;
+        };
         auto print_load_timing = [&] {
             const std::string control = load_timing.control ? std::to_string(load_timing.control - load_timing.begin) : std::string("-");
             std::printf("loadtime %s%s: started after %lld fields, control after %s fields, loop %.1f ms (longest pass %.1f ms)\n",
@@ -3614,12 +3639,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             // either: a loaded save's bond keeps its randomizer whatever
                             // the settings say.
                             const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
+                            const auto& graphics = settings.graphics;
+                            const bool original_graphics = graphics.texture_quality == dw4::game::TextureQuality::original &&
+                                                           graphics.texture_filter == dw4::game::TextureFilter::bilinear &&
+                                                           graphics.lod_bias == 0.0f && graphics.sharpening == dw4::game::Sharpening::off &&
+                                                           graphics.shadow_quality == dw4::game::ShadowQuality::original;
+                            const bool modern_graphics = graphics.texture_quality == dw4::game::TextureQuality::ultra &&
+                                                         graphics.texture_filter == dw4::game::TextureFilter::aniso16 &&
+                                                         graphics.shadow_quality != dw4::game::ShadowQuality::original;
                             const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
                                                   !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
                                                   settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0 &&
-                                                  !playing.active();
+                                                  !playing.active() && original_graphics;
                             const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
-                                                    settings.fast_loading;
+                                                    settings.fast_loading && modern_graphics;
                             int preset = original ? 0 : modernized ? 1 : 2;
                             static const char* presets[] = {"Original", "Modernized", "Custom"};
                             if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
@@ -3629,6 +3662,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 settings.msaa = modern ? 4 : 0;
                                 settings.skip_intro = modern;
                                 settings.fast_loading = modern;
+                                // Graphics: Original is the GameCube's look (no
+                                // pack, bilinear, the game's shadow map);
+                                // Modernized a pack's 4x textures, 16x
+                                // anisotropic filtering and a 4x shadow map
+                                // (sharpening is left as it is: a matter of taste).
+                                auto& g = settings.graphics;
+                                g.texture_quality = modern ? dw4::game::TextureQuality::ultra : dw4::game::TextureQuality::original;
+                                g.texture_filter = modern ? dw4::game::TextureFilter::aniso16 : dw4::game::TextureFilter::bilinear;
+                                g.shadow_quality = modern ? dw4::game::ShadowQuality::high : dw4::game::ShadowQuality::original;
+                                g.lod_bias = 0.0f;
+                                if (!modern) g.sharpening = dw4::game::Sharpening::off;
+                                if (renderer) renderer->set_graphics(g);
                                 loading_override.reset();
                                 if (!modern) {
                                     settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
@@ -3639,8 +3684,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 settings_changed = true;
                             }
                             ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro, GameCube load times and the "
-                                                "original balance.");
+                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the game's own textures and shadows, the "
+                                                "intro, GameCube load times and the original balance.");
                             if (playing.active()) {
                                 if (net.active())
                                     ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1), "This session plays the host's randomizer (%s).",
@@ -3683,6 +3728,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         // (host_view.hpp: a Data Overflow run's F1 shows them too;
                         // the controls have their own tab).
                         dw4::game::settings_display_section(view);
+                        {
+                            dw4::game::TexturePackPanel panel;
+                            panel.pack = &texture_pack;
+                            panel.folder = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
+                            panel.reload = configure_pack;
+                            dw4::game::settings_graphics_section(view, panel);
+                        }
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -3720,16 +3772,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 }
                                 if (!mod.description.empty()) ImGui::TextDisabled("    %s", mod.description.c_str());
                             }
-                        }
-                        if (ImGui::CollapsingHeader("Texture packs")) {
-                            ImGui::Text("%zu replacement textures loaded.", texture_pack.replacement_count());
-                            ImGui::TextDisabled("PNG files named ..._<16 hex digit hash>.png below %s",
-                                                (settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack).string().c_str());
-                            if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
-                                settings_changed = true;
-                                configure_pack();
-                            }
-                            if (ImGui::Button("Reload texture pack")) configure_pack();
                         }
                         if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
                         if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
@@ -4476,8 +4518,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count();
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != load_timing.serial) {
                     if (load_timing.serial && !load_timing.control) print_load_timing();
+                    if (load_timing.serial && !load_timing.window_done) print_load_window();
                     load_timing = {snapshot->stage, snapshot->serial, snapshot->frame};
                     load_timing.fast = engine.fast_loading();
+                }
+                const double texture_ms = renderer ? renderer->take_pass_texture_ms() : 0.0;
+                if (load_timing.serial && !load_timing.window_done) {
+                    ++load_timing.window_passes;
+                    load_timing.window_texture_max_ms = std::max(load_timing.window_texture_max_ms, texture_ms);
+                    if (ms > load_timing.window_longest_ms) {
+                        load_timing.window_longest_ms = ms;
+                        load_timing.window_longest_texture_ms = texture_ms;
+                        load_timing.window_longest_frame = engine.frame();
+                    }
+                    if (load_timing.started && engine.frame() >= load_timing.started + 600) print_load_window();
                 }
                 if (load_timing.serial && !load_timing.started) {
                     if (trace_loadtime > 1)
@@ -4577,6 +4631,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         // (The last load of the run, without player control so far.)
         if (trace_loadtime && load_timing.serial && !load_timing.control) print_load_timing();
+        if (trace_loadtime && load_timing.serial && !load_timing.window_done) print_load_window();
+        dw4::game::trace_textures(view, engine.stage_name());
         // (No state saved or loaded, e.g. can_save refused the title's stage:
         // nothing was compared, so the test fails instead of passing empty.)
         if (state_test && state_pass == 1) {
