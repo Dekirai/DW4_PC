@@ -297,9 +297,51 @@ std::optional<PackIndex> parse_pack_manifest(std::string_view text, const std::f
         error = "the manifest has no column header";
         return std::nullopt;
     }
-    for (const auto& name : unknown_encodings)
-        index.warnings.push_back("encoding \"" + name + "\" is not read by this build (its rows are skipped)");
+    index.other_encodings.assign(unknown_encodings.begin(), unknown_encodings.end());
     if (skipped > 50) index.warnings.push_back(std::to_string(skipped - 50) + " more rows skipped");
+    return index;
+}
+
+PackIndex read_pack_folder(const std::filesystem::path& folder, std::size_t max_entries) {
+    PackIndex index;
+    index.folder = folder;
+    std::error_code error;
+    if (folder.empty() || !std::filesystem::is_directory(folder, error)) return index;
+    const auto manifest = folder / kPackManifest;
+    if (std::filesystem::is_regular_file(manifest, error)) {
+        std::ifstream in(manifest, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(in)), {});
+        std::string why;
+        if (auto parsed = parse_pack_manifest(text, folder, why)) index = std::move(*parsed);
+        else index.error = std::string(kPackManifest) + ": " + why;
+        index.folder = folder;
+        return index;
+    }
+    index.format = 1;
+    std::size_t entries = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(folder, std::filesystem::directory_options::skip_permission_denied, error);
+         !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
+        if (++entries > max_entries) {
+            index.textures.clear();
+            index.error = "the folder holds more than " + std::to_string(max_entries) +
+                          " files and folders and no dw4pack.tsv: it is not read as a pack of loose files";
+            break;
+        }
+        if (it.depth() >= kMaxLooseDepth) it.disable_recursion_pending(); // (files at most kMaxLooseDepth folders down)
+        std::error_code entry_error; // (an entry that cannot be read is passed over)
+        if (it->is_regular_file(entry_error)) {
+            bool dds = false;
+            if (const auto h = hash_of(it->path(), dds)) {
+                PackFile file;
+                file.legacy = true;
+                file.dds = dds;
+                file.encoding = dds ? TextureEncoding::unknown : TextureEncoding::png;
+                file.path = it->path();
+                // (One file per hash; a later one of the same hash replaces it, as before.)
+                index.textures[*h] = {std::move(file)};
+            }
+        }
+    }
     return index;
 }
 
@@ -445,39 +487,52 @@ std::optional<TexturePayload> load_pack_file(const PackFile& file, int first_lev
 }
 
 void TexturePack::configure(const std::filesystem::path& pack, const std::filesystem::path& dump) {
-    auto index = std::make_shared<PackIndex>();
-    index->folder = pack;
-    std::error_code error;
-    if (!pack.empty() && std::filesystem::is_directory(pack, error)) {
-        const auto manifest = pack / kPackManifest;
-        if (std::filesystem::is_regular_file(manifest, error)) {
-            std::ifstream in(manifest, std::ios::binary);
-            const std::string text((std::istreambuf_iterator<char>(in)), {});
-            std::string why;
-            if (auto parsed = parse_pack_manifest(text, pack, why)) *index = std::move(*parsed);
-            else index->error = std::string(kPackManifest) + ": " + why;
-            index->folder = pack;
-        } else {
-            index->format = 1;
-            for (auto it = std::filesystem::recursive_directory_iterator(pack, error);
-                 !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error))
-                if (it->is_regular_file(error)) {
-                    bool dds = false;
-                    if (const auto h = hash_of(it->path(), dds)) {
-                        PackFile file;
-                        file.legacy = true;
-                        file.dds = dds;
-                        file.encoding = dds ? TextureEncoding::unknown : TextureEncoding::png;
-                        file.path = it->path();
-                        // (One file per hash; a later one of the same hash replaces it, as before.)
-                        index->textures[*h] = {std::move(file)};
-                    }
-                }
-        }
-    }
-    index_ = std::move(index);
+    index_ = std::make_shared<PackIndex>(read_pack_folder(pack));
     dump_ = dump;
+    std::error_code error;
     if (!dump_.empty()) std::filesystem::create_directories(dump_, error);
+}
+
+PackLoader::~PackLoader() {
+    if (thread_.joinable()) thread_.join();
+}
+
+void PackLoader::start(std::filesystem::path pack, std::filesystem::path dump) {
+    std::lock_guard lock(mutex_);
+    if (running_) {
+        next_.emplace(std::move(pack), std::move(dump));
+        return;
+    }
+    if (thread_.joinable()) thread_.join(); // (done: its read was handed over or waits in done_)
+    running_ = true;
+    thread_ = std::thread([this, pack = std::move(pack), dump = std::move(dump)]() mutable { run(std::move(pack), std::move(dump)); });
+}
+
+void PackLoader::run(std::filesystem::path pack, std::filesystem::path dump) {
+    for (;;) {
+        TexturePack read;
+        read.configure(pack, dump);
+        std::lock_guard lock(mutex_);
+        done_ = std::move(read);
+        if (!next_) {
+            running_ = false;
+            return;
+        }
+        std::tie(pack, dump) = std::move(*next_);
+        next_.reset();
+    }
+}
+
+bool PackLoader::busy() const {
+    std::lock_guard lock(mutex_);
+    return running_;
+}
+
+std::optional<TexturePack> PackLoader::take() {
+    std::lock_guard lock(mutex_);
+    std::optional<TexturePack> out = std::move(done_);
+    done_.reset();
+    return out;
 }
 
 std::uint64_t TexturePack::hash(const std::uint8_t* rgba, std::size_t bytes, int width, int height) {

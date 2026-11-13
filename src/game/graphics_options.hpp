@@ -73,6 +73,17 @@ float sharpness(Sharpening value);
 // Shadow map texels per side over the game's own size.
 int shadow_scale(ShadowQuality value);
 
+// The F1 presets' Graphics options: Original is the GameCube's look (no
+// pack, bilinear filtering, no LOD bias, no sharpening, the game's shadow
+// map), Modernized a pack's 4x level, 16x anisotropic filtering and a 4x
+// shadow map with no LOD bias (sharpening, a matter of taste, and the
+// memory budget stay as they are). preset_graphics applies one to `base`;
+// the tests say whether options show as that preset (Modernized: Ultra,
+// 16x and any shadow map but the game's own).
+GraphicsOptions preset_graphics(bool modernized, GraphicsOptions base);
+bool is_original_graphics(const GraphicsOptions& options);
+bool is_modernized_graphics(const GraphicsOptions& options);
+
 // Test runs read no settings.ini: their options are `base` with
 // DW4_TEXTURE_QUALITY, DW4_TEXTURE_FILTER, DW4_LOD_BIAS, DW4_SHARPEN,
 // DW4_SHADOW_QUALITY and DW4_TEXTURE_MEMORY (MiB) applied, each where it is

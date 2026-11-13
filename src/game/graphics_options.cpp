@@ -183,6 +183,25 @@ int shadow_scale(ShadowQuality value) {
     return value == ShadowQuality::ultra ? 8 : value == ShadowQuality::high ? 4 : 1;
 }
 
+GraphicsOptions preset_graphics(bool modernized, GraphicsOptions base) {
+    base.texture_quality = modernized ? TextureQuality::ultra : TextureQuality::original;
+    base.texture_filter = modernized ? TextureFilter::aniso16 : TextureFilter::bilinear;
+    base.shadow_quality = modernized ? ShadowQuality::high : ShadowQuality::original;
+    base.lod_bias = 0.0f;
+    if (!modernized) base.sharpening = Sharpening::off;
+    return base.clamped();
+}
+
+bool is_original_graphics(const GraphicsOptions& g) {
+    return g.texture_quality == TextureQuality::original && g.texture_filter == TextureFilter::bilinear && g.lod_bias == 0.0f &&
+           g.sharpening == Sharpening::off && g.shadow_quality == ShadowQuality::original;
+}
+
+bool is_modernized_graphics(const GraphicsOptions& g) {
+    return g.texture_quality == TextureQuality::ultra && g.texture_filter == TextureFilter::aniso16 &&
+           g.shadow_quality != ShadowQuality::original;
+}
+
 GraphicsOptions graphics_from_env(GraphicsOptions base, const char* (*lookup)(const char*)) {
     auto get = [&](const char* name) -> std::optional<std::string_view> {
         const char* value = lookup ? lookup(name) : nullptr;

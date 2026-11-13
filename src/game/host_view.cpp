@@ -750,7 +750,9 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
             g.texture_quality = TextureQuality(value);
             changed = true;
         }
-        if (panel.pack) {
+        if (panel.loading) {
+            ImGui::TextDisabled("Reading the texture pack folder %s ...", utf8(panel.folder).c_str());
+        } else if (panel.pack) {
             const auto& index = panel.pack->index();
             if (!index.error.empty())
                 ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "The texture pack is not used: %s", index.error.c_str());
@@ -763,6 +765,12 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
                                     "2x or 4x level.",
                                     index.name.c_str(), index.name.empty() ? "" : ": ", index.textures.size(),
                                     index.format == 2 ? "pack format 2" : "loose PNG / DDS files");
+            // (Files for other devices, such as ASTC for phones: a note, not a fault.)
+            if (!index.other_encodings.empty()) {
+                std::string names;
+                for (const auto& name : index.other_encodings) names += (names.empty() ? "" : ", ") + name;
+                ImGui::TextDisabled("The pack also holds files for other devices (%s); this PC uses its own.", names.c_str());
+            }
             if (!index.warnings.empty() && ImGui::TreeNode("pack_warnings", "%zu manifest warnings", index.warnings.size())) {
                 for (const auto& w : index.warnings) ImGui::BulletText("%s", w.c_str());
                 ImGui::TreePop();
@@ -809,11 +817,17 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
     }
     {
         static const int sizes[] = {512, 1024, 2048, 4096};
-        static const char* names[] = {"512 MiB", "1 GiB", "2 GiB", "4 GiB"};
-        int value = 0;
+        // (A value settings.ini set that is none of these shows as itself,
+        // as a fifth entry, until another one is chosen.)
+        std::string other;
+        int value = -1;
         for (int i = 0; i < 4; ++i)
-            if (g.texture_memory_mb >= sizes[i]) value = i;
-        if (ImGui::Combo("Texture memory", &value, names, 4)) {
+            if (g.texture_memory_mb == sizes[i]) value = i;
+        if (value < 0) other = std::to_string(g.texture_memory_mb) + " MiB (settings.ini)";
+        const char* names[] = {"512 MiB", "1 GiB", "2 GiB", "4 GiB", other.c_str()};
+        const int count = value < 0 ? 5 : 4;
+        if (value < 0) value = 4;
+        if (ImGui::Combo("Texture memory", &value, names, count) && value < 4) {
             g.texture_memory_mb = sizes[value];
             changed = true;
         }

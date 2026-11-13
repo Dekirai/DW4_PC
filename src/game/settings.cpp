@@ -325,6 +325,23 @@ Settings Settings::parse(IniFile document) {
             if (const auto q = parse_shadow_quality(*v)) g.shadow_quality = *q;
         g.texture_memory_mb = ini.get_int("graphics", "texture_memory", g.texture_memory_mb);
         g = g.clamped();
+        // A settings.ini written before the Graphics options (its [window]
+        // stored, no [graphics] key): the F1 preset it was set to stays
+        // what it shows. Original takes the game's own textures and
+        // shadows, Modernized the pack's 4x level, 16x anisotropic
+        // filtering and the 4x shadow map; any other choice keeps the
+        // defaults (Custom either way).
+        bool graphics_stored = false;
+        for (const char* key : {"texture_quality", "texture_filter", "lod_bias", "sharpening", "shadow_quality", "texture_memory"})
+            if (ini.get("graphics", key)) graphics_stored = true;
+        if (!graphics_stored && ini.get("window", "width")) {
+            const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 && !settings.skip_intro &&
+                                  !settings.fast_loading && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
+                                  settings.damage_taken == 100 && settings.rand_seed == 0;
+            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
+                                    settings.fast_loading;
+            if (original || modernized) g = preset_graphics(modernized, g);
+        }
     }
     settings.texture_pack = ini.get_or("mods", "textures", "");
     settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);

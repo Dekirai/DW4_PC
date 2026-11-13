@@ -109,6 +109,13 @@ std::optional<TextureStreamer::ImageKey> TextureStreamer::lookup(const IgbDocume
     return image->second;
 }
 
+bool TextureStreamer::pending(const IgbDocument* document) const {
+    std::lock_guard lock(mutex_);
+    const bool on = config_.pack && !config_.pack->textures.empty() && config_.target_scale > 0;
+    const auto doc = documents_.find(document);
+    return on && doc != documents_.end() && !doc->second.scanned;
+}
+
 void TextureStreamer::request(std::uint64_t hash, std::uint32_t original_width, std::uint32_t original_height) {
     std::lock_guard lock(mutex_);
     if (!config_.pack || !config_.pack->textures.count(hash) || config_.target_scale <= 0) return;

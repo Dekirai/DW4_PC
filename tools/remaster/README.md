@@ -83,9 +83,13 @@ to the import path). They lower their own priority to below normal.
 8. `game_compare.py run` (hidden runs with screenshots, with and without
    the pack; `--env VAR=VALUE` for Graphics options), `game_compare.py
    compare` (side-by-side pictures and crops, fingerprint check),
-   `game_compare.py timing` (the longest pass of the dng101b1 load and of
-   its start window without a pack, with an empty pack and with each
-   `--pack [LABEL=]DIR[@high]`, with the texture work in it).
+   `game_compare.py timing` (every stage start of the script, `--repeat`
+   runs per case in rotating order: no pack, an empty pack as the control
+   and each `--pack [LABEL=]DIR[@high]`; judged on the passes after the
+   stage start, p99, the longest and the count over 8.3 ms, as median and
+   quartiles over the runs, against the control and its noise floor. The
+   window's single longest pass is mostly the load's heaviest step and
+   moves by several ms with the machine's load, also without any pack).
 9. Determinism: `DW4_TEXTURE_PACK=<pack> bash work/dref/checks/det.sh EXE NAME`
    must print the same fingerprint and audio digests as without the pack.
 
@@ -167,7 +171,9 @@ The comparison in the game: `game_compare.py run ... --env DW4_TEXTURE_QUALITY=o
 per quality, then `game_compare.py compare --run Original=DIR --run High=DIR --run Ultra=DIR --out DIR`
 (the frames side by side, crops at 1:1 where Original and Ultra differ
 most, fingerprints checked); `game_compare.py timing --pack Ultra=PACK --pack High=PACK@high ...`
-measures the start window of every stage the script starts.
+measures the start window of every stage the script starts against an
+empty pack (step 8). `DW4_TEXTURE_QUALITY_AT=FRAME:QUALITY` in `--env`
+changes the quality on the running stage (the F1 menu's change).
 
 ## Text path B
 

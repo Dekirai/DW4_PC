@@ -690,7 +690,8 @@ once, nothing reaches the game itself, so online partners may differ):
 
 - *Texture quality*: Original (the game's own textures), High (a texture
   pack's 2x level) or Ultra (its 4x level, the default; without a pack both
-  show the game's textures).
+  show the game's textures). It changes the running stage too: the pack's
+  textures come in within a few frames.
 - *Texture filtering*: Bilinear (the GameCube's sampling, the default),
   Trilinear (mipmaps for the game's textures: less shimmer on distant
   floors) or Anisotropic 2x to 16x (slanted surfaces stay sharp).
@@ -703,7 +704,9 @@ once, nothing reaches the game itself, so online partners may differ):
   recently drawn ones make room.
 
 The *Original* preset sets all of them to the GameCube's look; *Modernized*
-picks Ultra, Anisotropic 16x and the High shadow map. Test runs read no
+picks Ultra, Anisotropic 16x and the High shadow map. A settings.ini from
+before these options keeps the preset it showed (Original or Modernized
+graphics). Test runs read no
 settings.ini and take `DW4_TEXTURE_QUALITY`, `DW4_TEXTURE_FILTER`,
 `DW4_LOD_BIAS`, `DW4_SHARPEN`, `DW4_SHADOW_QUALITY` and `DW4_TEXTURE_MEMORY`
 ([TEXTURES.md](docs/TEXTURES.md), *Graphics options*).
@@ -712,7 +715,8 @@ settings.ini and take `DW4_TEXTURE_QUALITY`, `DW4_TEXTURE_FILTER`,
 
 A texture pack is a folder (F1 > Settings > Graphics > *Texture pack
 folder*, default `mods/textures`, settings.ini `[mods] textures`; *Reload
-texture pack* applies changes while playing). Two layouts work:
+texture pack* applies changes while playing, the folder read in the
+background while the game runs on). Two layouts work:
 
 - **Pack format 2**: a manifest `dw4pack.tsv` lists per texture hash its
   files (BC7, BC3, BC1 or RGBA8 DDS files with their mip chains, or PNG),
@@ -720,7 +724,8 @@ texture pack* applies changes while playing). Two layouts work:
   Ultra and High. The format, the encodings and the rules a pack builder
   follows are in [TEXTURES.md](docs/TEXTURES.md) (*Texture packs: format 2*).
 - **Loose files** (format 1): a PNG (or DDS) of any size whose name ends in
-  `_<hash>.png` anywhere below the folder replaces that texture.
+  `_<hash>.png` up to 8 folders below the folder replaces that texture (a
+  folder of more than 200,000 files and folders is not read as a pack).
 
 Pack textures load on a background thread: while a stage loads its
 textures are read ahead, and until a replacement is on the GPU the game's

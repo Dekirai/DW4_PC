@@ -18,7 +18,9 @@
 #include "dw4/textures.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +30,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -128,8 +131,8 @@ void manifest_tests() {
     check(rows[0].path == folder / "tex/05f8453aab0ffa8d.dds", "the file below the pack folder");
     check(rows[1].encoding == TextureEncoding::bc1 && rows[1].scale == 2, "upper-case hash, second row of the hash");
     check(index->textures.at(0xac566f5a15c2a226ull)[0].width == 0, "empty width: unknown");
-    check(std::any_of(index->warnings.begin(), index->warnings.end(), [](const std::string& w) { return w.find("astc6x6") != std::string::npos; }),
-          "the skipped encoding is named");
+    check(index->other_encodings == std::vector<std::string>{"astc6x6"} && index->warnings.empty(),
+          "the skipped encoding is named as another device's, not as a warning");
     // Refused manifests.
     auto refused = [&](const std::string& t, const std::string& why) {
         std::string e;
@@ -489,6 +492,41 @@ void loader_tests() {
     write_text(root / "bad" / kPackManifest, "#dw4pack\t9\n");
     pack.configure(root / "bad", {});
     check(pack.replacement_count() == 0 && pack.index().error.find("newer") != std::string::npos, "a refused manifest: no textures, the reason kept");
+    // A folder of loose files is walked up to a number of entries (a drive's
+    // root given by mistake is not read) and folder levels.
+    for (int i = 0; i < 12; ++i) write_text(root / "many" / ("x" + std::to_string(i) + "_000000000000000" + std::to_string(i % 10) + ".png"), "");
+    auto many = read_pack_folder(root / "many", 20);
+    check(many.format == 1 && many.textures.size() == 10 && many.error.empty(), "12 entries within a limit of 20");
+    many = read_pack_folder(root / "many", 8);
+    check(many.textures.empty() && many.error.find("more than 8") != std::string::npos, "past the limit: not read, the reason said");
+    std::filesystem::path deep = root / "deep";
+    for (int level = 0; level < kMaxLooseDepth + 2; ++level) {
+        deep /= "d";
+        char name[64];
+        std::snprintf(name, sizeof name, "t_%016x.png", level + 1);
+        write_text(deep / name, "");
+    }
+    check(read_pack_folder(root / "deep").textures.size() == std::size_t(kMaxLooseDepth),
+          "files below kMaxLooseDepth folder levels are not looked for");
+    check(read_pack_folder(root / "nothing").textures.empty() && read_pack_folder(root / "nothing").error.empty(),
+          "a folder that does not exist: an empty pack, no error");
+    // The F1 menu's reload on a thread: handed over once, the latest of two
+    // reloads asked for at once wins.
+    {
+        PackLoader loader;
+        check(!loader.take(), "nothing read before a start");
+        loader.start(root / "pack2", {});
+        loader.start(root / "p", {});
+        std::optional<TexturePack> read;
+        for (int i = 0; i < 1000 && (loader.busy() || !read); ++i) {
+            if (auto r = loader.take()) read = std::move(r);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        if (auto r = loader.take()) read = std::move(r);
+        check(!loader.busy() && read && read->index().format == 1 && read->replacement_count() == 1, "the second folder read last");
+        check(!loader.take(), "handed over once");
+        loader.start(root / "pack2", {});
+    } // (the destructor waits for that read)
     std::filesystem::remove_all(root);
 }
 
@@ -560,6 +598,22 @@ void stream_tests(const std::string& data) {
     streamer.configure({});
     streamer.request(1, 16, 16);
     check(!streamer.active() && streamer.wait_idle(2000) && !streamer.take(), "off: no work");
+    // A document listed while nothing streams (Original) is scanned once a
+    // pack streams again (the renderer keys its records from that scan:
+    // pending() says whether to wait for it).
+    auto later = std::make_shared<const IgbDocument>();
+    streamer.set_documents({empty, later});
+    check(streamer.wait_idle(2000) && !streamer.pending(later.get()) && !streamer.lookup(later.get(), 1),
+          "off: listed, not scanned, nothing pending");
+    const auto scanned_before = streamer.stats().documents_scanned;
+    config.rgba_hashes.clear();
+    streamer.configure(config);
+    const bool was_pending = streamer.pending(later.get());
+    check(streamer.wait_idle(2000) && !streamer.pending(later.get()) && streamer.stats().documents_scanned == scanned_before + 1 &&
+              (was_pending || streamer.stats().documents_scanned > scanned_before),
+          "on again: the listed document scanned");
+    check(!streamer.pending(reinterpret_cast<const IgbDocument*>(&scanned_before)), "a document not listed is never pending");
+    streamer.configure({});
     // With the game data: a real document's images are scanned and the pack's
     // texture among them is read ahead without a request.
     if (!data.empty()) {
@@ -671,6 +725,33 @@ void option_tests() {
     expected.sharpening = Sharpening::high;
     expected.texture_memory_mb = GraphicsOptions::kMemoryMaxMb;
     check(broken.graphics == expected, "malformed values keep their defaults, memory clamped");
+    // The presets.
+    GraphicsOptions mine;
+    mine.sharpening = Sharpening::low;
+    mine.lod_bias = -1.0f;
+    mine.texture_memory_mb = 2048;
+    const auto modern = preset_graphics(true, mine);
+    check(modern.texture_quality == TextureQuality::ultra && modern.texture_filter == TextureFilter::aniso16 &&
+              modern.shadow_quality == ShadowQuality::high && modern.lod_bias == 0.0f && modern.sharpening == Sharpening::low &&
+              modern.texture_memory_mb == 2048 && is_modernized_graphics(modern) && !is_original_graphics(modern),
+          "Modernized: 4x, 16x, the 4x shadow map; sharpening and memory kept");
+    const auto old = preset_graphics(false, mine);
+    check(old.texture_quality == TextureQuality::original && old.texture_filter == TextureFilter::bilinear &&
+              old.sharpening == Sharpening::off && old.texture_memory_mb == 2048 && is_original_graphics(old) && !is_modernized_graphics(old),
+          "Original: the GameCube's look");
+    check(!is_original_graphics(GraphicsOptions{}) && !is_modernized_graphics(GraphicsOptions{}), "the defaults are neither");
+    // A settings.ini written before the Graphics options keeps showing its
+    // preset; a new file (or one with [graphics]) keeps the defaults.
+    const auto from_original = Settings::parse(IniFile::parse("[window]\nwidth=1280\nwidescreen=false\nsmooth_motion=false\nmsaa=0\n"));
+    check(is_original_graphics(from_original.graphics), "an Original settings.ini: the game's own textures");
+    const auto from_modern = Settings::parse(IniFile::parse(
+        "[window]\nwidth=1920\nwidescreen=true\nsmooth_motion=true\nmsaa=8\n[preferences]\nskip_intro=true\n[gameplay]\nloading=fast\n"));
+    check(is_modernized_graphics(from_modern.graphics), "a Modernized settings.ini: the modern graphics");
+    const auto custom = Settings::parse(IniFile::parse("[window]\nwidth=1280\nwidescreen=true\nsmooth_motion=false\nmsaa=0\n"));
+    check(custom.graphics == GraphicsOptions{}, "a Custom settings.ini keeps the defaults");
+    const auto chosen = Settings::parse(IniFile::parse("[window]\nwidth=1280\nwidescreen=false\nsmooth_motion=false\nmsaa=0\n"
+                                                       "[graphics]\ntexture_quality=ultra\n"));
+    check(chosen.graphics.texture_quality == TextureQuality::ultra, "[graphics] stored: as it says");
 }
 
 } // namespace

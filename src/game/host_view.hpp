@@ -316,7 +316,8 @@ void settings_display_section(HostView& view);
 struct TexturePackPanel {
     const TexturePack* pack = nullptr;
     std::filesystem::path folder;  // the folder in use
-    std::function<void()> reload;  // TexturePack::configure + GlRenderer::set_texture_pack
+    std::function<void()> reload;  // reads the folder again (PackLoader), then GlRenderer::set_texture_pack
+    bool loading = false;          // a reload is reading the folder
 };
 void settings_graphics_section(HostView& view, const TexturePackPanel& panel);
 void settings_audio_section(HostView& view);

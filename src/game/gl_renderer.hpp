@@ -198,6 +198,10 @@ private:
         bool mag_nearest{};
         bool keyed{};                         // the hashes are known
         bool scanned{};                       // ... from the loading thread's scan
+        // The pack or the texture quality changed while this record had no
+        // hashes (the game's own textures are hashed only while a pack
+        // streams or dumps): keyed when its document's scan is there.
+        bool rekey{};
         std::uint64_t pack_hash{}, pixel_hash{};
         std::uint32_t width{}, height{};      // the original's size
         bool in_pack{};
@@ -217,12 +221,24 @@ private:
     // says which. Null when the texture cannot be decoded.
     const GpuTexture* resolve(Texture& texture, bool& replaced);
     const GpuTexture* upload_original(Texture& texture);
+    // The record's hashes from the loading thread's scan of its document
+    // (false before the scan).
+    bool key_from_scan(Texture& texture);
+    // After a pack or quality change: which records' textures the pack has,
+    // and which are keyed again (Texture::rekey).
+    void refresh_pack_flags();
     // A replacement going up in bands of rows over one or more passes
     // (stream_textures): its payload, its texture, the level and row next.
+    // `moved` says whether the pass uploaded anything yet: its first piece
+    // always goes, later ones only while the measured upload rate says
+    // they end within the pass's budget.
     struct Upload;
     void begin_upload(TexturePayload payload);
-    bool continue_upload(std::chrono::steady_clock::time_point deadline);
+    bool continue_upload(std::chrono::steady_clock::time_point deadline, bool& moved);
     void finish_upload();
+    // A replacement the GPU refused (a GL error while it went up): never
+    // asked for again in this configuration, the game's own is drawn.
+    void refuse_upload(std::uint64_t hash, unsigned error);
     unsigned sampler(const Texture& texture, const GpuTexture& gpu);
     void drop_samplers();
     void drop_originals();
@@ -270,6 +286,9 @@ private:
     Caps caps_;
     bool cpu_decode_{};               // DW4_TEXTURE_CPU_DECODE: block formats decoded on the CPU (test of that path)
     double upload_budget_ms_ = 1.5;   // uploads per pass (DW4_TEXTURE_UPLOAD_MS)
+    double upload_ns_per_byte_ = 1.0; // the measured upload rate (a running average)
+    double begin_upload_ms_ = 0.05;   // ... and the time a texture's storage takes
+    std::uint64_t refuse_hash_{};     // DW4_TEXTURE_TEST_REFUSE: this pack hash's upload raises a GL error (test of the fallback)
     std::uint64_t next_slot_ = 1;
     double pass_texture_ms_{};
     int trace_{}; // DW4_TRACE_TEXTURES (2: every texture drawn before its pack texture was there)

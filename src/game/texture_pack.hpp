@@ -21,10 +21,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace dw4 {
@@ -58,16 +61,30 @@ struct PackIndex {
     std::filesystem::path folder;
     std::unordered_map<std::uint64_t, std::vector<PackFile>> textures;
     std::vector<std::string> warnings; // skipped manifest rows and files
-    std::string error;                 // why a manifest was refused (the pack is empty then)
+    // Encodings of the manifest's rows this build does not read (files for
+    // other devices, such as ASTC for GLES): their rows are skipped, which
+    // is no fault of the pack (the F1 menu names them as a note).
+    std::vector<std::string> other_encodings;
+    std::string error;                 // why the pack is not used (it is empty then)
 };
 
 constexpr int kPackFormat = 2;
 constexpr const char* kPackManifest = "dw4pack.tsv";
+// A folder without a manifest is walked for loose files (format 1) up to
+// this many entries and folder levels: a folder with more (a drive's root
+// given by mistake) is not read as a pack.
+constexpr std::size_t kMaxLooseEntries = 200'000;
+constexpr int kMaxLooseDepth = 8;
 
 // Reads a manifest (the text of dw4pack.tsv; `folder` resolves its paths).
 // A wrong first line, a newer format or missing columns refuse it (nullopt,
 // `error` says why); malformed rows are skipped with a warning each.
 std::optional<PackIndex> parse_pack_manifest(std::string_view text, const std::filesystem::path& folder, std::string& error);
+
+// A pack folder's index: its manifest, else its loose files (format 1,
+// walked up to `max_entries` entries and kMaxLooseDepth levels). Empty for
+// a folder that does not exist; `error` set when the pack is not used.
+PackIndex read_pack_folder(const std::filesystem::path& folder, std::size_t max_entries = kMaxLooseEntries);
 
 // The encodings the GPU samples directly; the others are decoded to RGBA8 on
 // the loading thread.
@@ -150,6 +167,31 @@ private:
     std::shared_ptr<const PackIndex> index_ = std::make_shared<PackIndex>();
     std::filesystem::path dump_;
     std::unordered_map<std::uint64_t, bool> dumped_;
+};
+
+// The F1 menu's pack reload: the folder is read on a thread of its own (a
+// manifest is parsed, a folder of loose files walked), so a large folder
+// does not stop the game, and the pack is handed over once it is read. A
+// reload asked for while one runs follows when that one is done (the
+// latest folder wins). The destructor waits for a read under way.
+class PackLoader {
+public:
+    PackLoader() = default;
+    ~PackLoader();
+    PackLoader(const PackLoader&) = delete;
+    PackLoader& operator=(const PackLoader&) = delete;
+    void start(std::filesystem::path pack, std::filesystem::path dump);
+    bool busy() const;
+    // The pack read (TexturePack::configure), once (main thread).
+    std::optional<TexturePack> take();
+
+private:
+    void run(std::filesystem::path pack, std::filesystem::path dump);
+    mutable std::mutex mutex_;
+    std::thread thread_;
+    bool running_{};
+    std::optional<std::pair<std::filesystem::path, std::filesystem::path>> next_;
+    std::optional<TexturePack> done_;
 };
 
 } // namespace dw4::game

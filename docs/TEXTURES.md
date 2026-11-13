@@ -163,7 +163,10 @@ folder*, settings.ini `[mods] textures`, default `mods/textures`; test runs
   levels. Only the files it names are used.
 - **Format 1** (loose files, as before): without a manifest, every file
   below the folder whose name ends in `_<16 hex digits>.png` (or `.dds`)
-  replaces the texture of that hash, at any size. One file per hash.
+  replaces the texture of that hash, at any size. One file per hash. The
+  folder is walked at most 8 folder levels deep and up to 200,000 files and
+  folders; a folder with more (a drive's root given by mistake) is not read
+  as a pack, and the F1 menu says why.
 
 `src/game/texture_pack.hpp` reads both; `tests/graphics_tests.cpp` checks
 the manifest, the DDS headers, the decoders, the file choice and the loader
@@ -183,14 +186,18 @@ one TAB each, at most 64 MiB and 1,000,000 rows.
 3. The first other line is the column header. The columns are found by
    name, in any order; unknown columns are ignored (a builder may add its
    own, such as `alpha` or `model`). Required: `hash`, `encoding`, `scale`,
-   `levels`, `file`. Optional: `width`, `height`.
+   `levels`, `file`. Optional: `width`, `height`. Columns a builder adds
+   are information for people and tools only: the loader never reads them.
+   The release pack's `quality` column (`ultra=0,high=1`), for one, names
+   the level each quality draws, but the loader derives that level from
+   `scale` and `levels` alone (*Quality levels and the file choice*).
 4. Every further line is one file of one texture. A texture may have up to
    16 rows (encodings, scales).
 
 | Column | Value |
 | --- | --- |
 | `hash` | The texture's pack hash (*Texture pack hash* above), 16 hex digits, either case. |
-| `encoding` | `bc7`, `bc3`, `bc1` or `rgba8` (a DDS file), or `png` (a PNG file of one level). An encoding this build does not read (a later one, such as `astc6x6` for GLES devices) is skipped without error, with one warning per name. |
+| `encoding` | `bc7`, `bc3`, `bc1` or `rgba8` (a DDS file), or `png` (a PNG file of one level). An encoding this build does not read (a later one, such as `astc6x6` for GLES devices) is skipped without error: the F1 menu notes that the pack also holds files for other devices (no warning). |
 | `scale` | The first level's size over the original texture's, the same in both directions: 1, 2, 4, 8 or 16. |
 | `levels` | The levels the file holds, 1..15; level *k* has the scale `scale / 2^k` (a PNG: 1). |
 | `width`, `height` | The first level's size in texels (empty or 0: not given). When given, the file must match. |
@@ -244,7 +251,11 @@ ac566f5a15c2a226	rgba8	4	11	1024	512	tex/ac566f5a15c2a226.dds	blend
   for that).
 - For GLES devices (Android, Adreno: no BC7 in GLES), a pack adds rows of
   an ASTC encoding (KTX2 files) beside the BC rows; a loader that reads them
-  picks them by the same rules. The PC loader skips them.
+  picks them by the same rules. The PC loader skips them. The renderer is
+  ready for GLES 3 in the parts the options touch: the mip LOD bias is the
+  fragment shader's `texture()` bias (GLES 3 samplers have no
+  `GL_TEXTURE_LOD_BIAS`), anisotropy and the filters are sampler parameters
+  GLES 3 has (anisotropy through `GL_EXT_texture_filter_anisotropic`).
 
 ### Quality levels and the file choice
 
@@ -277,10 +288,27 @@ DirectXTex's decoder), BC1 / BC3 after Direct3D's rules.
   ahead).
 - **Never a blocked frame.** A texture is drawn with the game's own picture
   until its replacement is on the GPU; a draw that finds none asks for it
-  ahead of the read-ahead work. The main thread uploads within 1.5 ms per
+  ahead of the read-ahead work. The main thread uploads about 1.5 ms per
   pass (`DW4_TEXTURE_UPLOAD_MS`), into immutable storage in bands of rows
   (256 KiB), so a large texture spreads over several passes; it is drawn
-  once complete.
+  once complete. A pass's first piece (a texture's storage or a band)
+  always goes up; after it, a piece goes only while the measured upload
+  rate (a running average per byte) says it ends within the budget, so a
+  pass ends near the budget instead of a band past it.
+- **A refused upload falls back.** After a texture's storage and after its
+  bands the renderer reads the GL error state: a texture the driver refused
+  (format, size, memory) is deleted, never asked for again in this
+  configuration and the game's own texture is drawn; F1 and
+  `DW4_TRACE_TEXTURES` count it as failed with the GL error.
+  `DW4_TEXTURE_TEST_REFUSE=<hash>` makes one pack texture's upload raise a
+  GL error (test of this path).
+- **A quality or pack change applies to the running stage.** Records
+  drawn while nothing was hashed (Original, or no pack) are keyed from the
+  scan of their document, which the loading thread makes once a pack
+  streams; they show the game's own picture until then (a document it does
+  not scan is decoded and hashed once on the main thread).
+  `DW4_TEXTURE_QUALITY_AT=FRAME:QUALITY[,...]` changes the quality at those
+  frames in a test run, as the F1 menu does.
 - **A cache by hash.** Identical textures upload once, the pack's by their
   pack hash, the game's own by their pixel hash while a pack streams; they
   stay across stage changes (a stage visited again draws at once).
@@ -301,8 +329,14 @@ that showed the original while the pack's texture was not there yet,
 evictions, failures and the loading thread's scan and read times (2: also
 each texture drawn before its pack texture). `DW4_TRACE_LOADTIME` adds a
 *loadtime window* line per stage: the longest pass from the stage change to
-600 steps after the stage started, the texture work in it, and the most
-texture work in any pass of the window.
+600 steps after the stage started, the texture work in it, the most texture
+work in any pass of the window and the distribution of the passes after the
+stage started (median, p95, p99, the longest with its texture work, the
+passes over 8.3 and 16.7 ms). The window's single longest pass is mostly the
+load's own heaviest step and moves with the machine's load by several ms (it
+also does so between two runs without any pack), so it is no measure of the
+textures; `tools/remaster/game_compare.py timing` compares the
+distribution after the start against an empty pack as its control (below).
 
 ## Graphics options
 
@@ -314,15 +348,23 @@ environment variables.
 | --- | --- | --- | --- |
 | Texture quality | `original`, `high`, `ultra` (default) | `DW4_TEXTURE_QUALITY` | No pack, the pack's 2x level, its 4x level (above). |
 | Texture filtering | `bilinear` (default), `trilinear`, `anisotropic2` .. `anisotropic16` | `DW4_TEXTURE_FILTER` (also `2x` .. `16x`) | Bilinear samples the game's textures as GX does (full size only; pack textures blend their mipmaps). Trilinear gives the game's textures a mip chain (made on upload: colours by alpha, cut-outs keep a binary alpha, so they keep their coverage at a distance). Anisotropic adds `GL_TEXTURE_MAX_ANISOTROPY` (the levels the GPU offers). Sampler objects: no texture is uploaded again for a change of the anisotropy. |
-| Mip LOD bias | `lod_bias`, -2.00 .. 2.00 (0) | `DW4_LOD_BIAS` | Added to the level choice of mipmapped textures. |
+| Mip LOD bias | `lod_bias`, -2.00 .. 2.00 (0) | `DW4_LOD_BIAS` | Added to the level choice of mipmapped textures (the shader's `texture()` bias; 0 for textures without mip levels). |
 | Sharpening | `off` (default), `low`, `high` | `DW4_SHARPEN` | Contrast adaptive sharpening of the game picture (after the published description of AMD FidelityFX CAS): the picture is copied after the scene and drawn again through a 3x3 filter; the menus are not sharpened. |
 | Shadow quality | `original` (default), `high`, `ultra` | `DW4_SHADOW_QUALITY` | The projected shadow's map at the game's size (128 x 128), 4x or 8x the texels per side; the light box maps to the same part of it. |
-| Texture memory | `texture_memory`, MiB (1024; F1: 512 MiB .. 4 GiB) | `DW4_TEXTURE_MEMORY` | The cache's budget (above). |
-| Texture pack folder | `[mods] textures` | `DW4_TEXTURE_PACK` | Reload reads it again. |
+| Texture memory | `texture_memory`, MiB (1024; F1: 512 MiB .. 4 GiB; settings.ini 32 .. 8192, another value shows as itself) | `DW4_TEXTURE_MEMORY` | The cache's budget (above). |
+| Texture pack folder | `[mods] textures` | `DW4_TEXTURE_PACK` | Reload reads it again on a thread of its own (the menu says *Reading the texture pack folder* meanwhile); the game keeps running and the stage switches to the new pack once it is read. |
+
+Every option applies to the running stage, the texture quality too (from
+Original to High or Ultra the pack's textures come in as their documents
+are scanned and their files read, a few frames).
 
 The presets: *Original* sets Texture quality Original, Bilinear, LOD bias 0,
 no sharpening and the game's shadow map; *Modernized* Ultra, Anisotropic
 16x and a 4x shadow map (sharpening stays as it is: a matter of taste).
+A settings.ini written before the Graphics options (no `[graphics]` key)
+keeps showing the preset it was set to: one that matched Original gets the
+Original graphics, one that matched Modernized the Modernized graphics;
+any other keeps the defaults.
 
 ## Exporting every texture (dw4_texpack)
 

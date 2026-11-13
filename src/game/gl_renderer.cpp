@@ -82,7 +82,7 @@ struct GlRenderer::Impl {
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
     int u_texgen{}, u_pixel_center{}, u_normal{};
-    int u_id_mode{}, u_id{};
+    int u_id_mode{}, u_id{}, u_lod_bias{};
     PFNGLUNIFORM2FPROC Uniform2f{};
     PFNGLTEXSTORAGE2DPROC TexStorage2D{}; // GL 4.2 / ARB_texture_storage (null without)
     // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
@@ -105,6 +105,7 @@ struct GlRenderer::Upload {
     std::size_t level{};         // the payload level going up
     std::uint32_t row{};         // its next texel row
     bool whole_levels{};         // no immutable storage: each level whole
+    GLenum error{};              // the first GL error while it went up
 };
 
 namespace {
@@ -212,6 +213,10 @@ uniform vec4 u_fog_color;
 uniform vec2 u_fog_range;
 uniform sampler2D u_tex;
 uniform int u_use_tex;
+// The Graphics options' mip LOD bias for a mipmapped texture (0 for the
+// others). In the shader rather than the sampler: GLES 3 samplers have no
+// LOD bias, the shader's texture() bias works on both.
+uniform float u_lod_bias;
 uniform vec4 u_modulate;
 uniform int u_alpha_func;
 uniform float u_alpha_ref;
@@ -228,7 +233,7 @@ void main() {
         return;
     }
     vec4 c = v_color;
-    if (u_use_tex != 0) c *= texture(u_tex, v_uv);
+    if (u_use_tex != 0) c *= texture(u_tex, v_uv, u_lod_bias);
     c *= u_modulate;
     // GX alpha compare (800F8FB0): the 8-bit TEV alpha against the 8-bit
     // reference (int)(255.0 * ref); IG functions map 1:1 (table 0x80490530).
@@ -347,6 +352,18 @@ GLenum depth_func(int value) {
     static const GLenum table[] = {GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS};
     return value >= 0 && value < 8 ? table[value] : GL_LEQUAL;
 }
+
+// The first GL error raised since the last call (GL_NO_ERROR for none); the
+// error flags are cleared (a few at most: one per kind).
+GLenum take_gl_error() {
+    GLenum first = GL_NO_ERROR;
+    for (int i = 0; i < 8; ++i) {
+        const GLenum error = glGetError();
+        if (error == GL_NO_ERROR) break;
+        if (first == GL_NO_ERROR) first = error;
+    }
+    return first;
+}
 } // namespace
 
 GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
@@ -366,11 +383,12 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id) U(lod_bias)
 #undef U
     gl.UseProgram(program_);
     const engine::Mat4 identity{};
     gl.UniformMatrix4fv(gl.u_normal, 1, GL_FALSE, identity.m.data());
+    gl.Uniform1f(gl.u_lod_bias, 0.0f);
     gl.UseProgram(0);
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -399,6 +417,10 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     if (const char* cpu = std::getenv("DW4_TEXTURE_CPU_DECODE")) cpu_decode_ = std::atoi(cpu) != 0;
     if (const char* ms = std::getenv("DW4_TEXTURE_UPLOAD_MS")) upload_budget_ms_ = std::clamp(std::atof(ms), 0.1, 100.0);
     if (const char* trace = std::getenv("DW4_TRACE_TEXTURES")) trace_ = std::atoi(trace);
+    // DW4_TEXTURE_TEST_REFUSE=<16 hex digits>: that pack texture's upload
+    // raises a GL error, as a driver refusing it would (test of the fallback
+    // to the game's own texture).
+    if (const char* refuse = std::getenv("DW4_TEXTURE_TEST_REFUSE")) refuse_hash_ = std::strtoull(refuse, nullptr, 16);
     streamer_ = std::make_unique<TextureStreamer>();
 }
 
@@ -590,11 +612,24 @@ void GlRenderer::configure_streamer() {
     streamer_->configure(std::move(config));
 }
 
+void GlRenderer::refresh_pack_flags() {
+    // Records hashed before know at once whether the pack has their texture;
+    // records drawn while nothing was hashed (Original, or no pack) are
+    // keyed from the scan of their document the loading thread now makes,
+    // so a running stage switches to the pack's textures without a load.
+    const bool on = streaming();
+    for (auto& [_, t] : textures_) {
+        t.in_pack = t.keyed && on && pack_->index().textures.count(t.pack_hash) != 0;
+        t.rekey = on && !t.keyed;
+        t.asked_frame = 0;
+    }
+}
+
 void GlRenderer::set_texture_pack(TexturePack* pack) {
     pack_ = pack;
     drop_replacements();
-    for (auto& [_, t] : textures_) t.in_pack = t.keyed && streaming() && pack_->index().textures.count(t.pack_hash) != 0;
     configure_streamer();
+    refresh_pack_flags();
 }
 
 void GlRenderer::set_graphics(const GraphicsOptions& requested) {
@@ -602,11 +637,11 @@ void GlRenderer::set_graphics(const GraphicsOptions& requested) {
     const GraphicsOptions old = graphics_;
     graphics_ = options;
     if (original_mipmaps(old.texture_filter) != original_mipmaps(options.texture_filter)) drop_originals();
-    if (old.texture_filter != options.texture_filter || old.lod_bias != options.lod_bias) drop_samplers();
+    if (old.texture_filter != options.texture_filter) drop_samplers();
     if (old.texture_quality != options.texture_quality) {
         drop_replacements();
-        for (auto& [_, t] : textures_) t.in_pack = t.keyed && streaming() && pack_->index().textures.count(t.pack_hash) != 0;
         configure_streamer();
+        refresh_pack_flags();
     }
 }
 
@@ -654,18 +689,29 @@ void GlRenderer::stream_textures(const std::vector<std::shared_ptr<const IgbDocu
     if (documents) streamer_->set_documents(*documents);
     // Uploads within the pass's time budget: a replacement goes up in bands
     // of rows (a large one over several passes) and is drawn once it is
-    // complete; each pass moves at least one band.
+    // complete. Each pass moves at least one piece (a texture's storage or
+    // a band); after that a piece goes only while the measured rates say it
+    // ends within the budget, so a pass ends near the budget, not one band
+    // past it.
     const auto started = std::chrono::steady_clock::now();
     const auto deadline = started + std::chrono::microseconds(std::int64_t(upload_budget_ms_ * 1000.0));
+    bool moved = false;
     for (;;) {
         if (!upload_) {
+            if (moved && std::chrono::steady_clock::now() + std::chrono::microseconds(std::int64_t(begin_upload_ms_ * 1000.0)) > deadline)
+                break;
             auto payload = streamer_->take();
             if (!payload) break;
+            const auto begun = std::chrono::steady_clock::now();
             begin_upload(std::move(*payload));
             if (!upload_) continue;
+            moved = true;
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begun).count();
+            begin_upload_ms_ = std::clamp(0.75 * begin_upload_ms_ + 0.25 * ms, 0.001, 100.0);
         }
-        if (continue_upload(deadline)) finish_upload();
-        if (std::chrono::steady_clock::now() >= deadline) break;
+        const bool done = continue_upload(deadline, moved);
+        if (done) finish_upload();
+        if (!done || std::chrono::steady_clock::now() >= deadline) break;
     }
     const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     stats_.upload_ms += elapsed;
@@ -724,6 +770,7 @@ void GlRenderer::begin_upload(TexturePayload payload) {
     up->level = up->first;
     const auto& top = payload.levels[up->first];
     const GLsizei levels = GLsizei(payload.levels.size() - up->first);
+    take_gl_error(); // (errors of earlier calls are not this texture's)
     glGenTextures(1, &up->texture.id);
     glBindTexture(GL_TEXTURE_2D, up->texture.id);
     // Immutable storage for every level at once (GL 4.2 / ARB_texture_storage),
@@ -734,6 +781,12 @@ void GlRenderer::begin_upload(TexturePayload payload) {
         up->whole_levels = true;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1);
+    if (const GLenum error = take_gl_error()) {
+        // (The driver refused the format or the size: the game's own stays.)
+        glDeleteTextures(1, &up->texture.id);
+        refuse_upload(payload.hash, error);
+        return;
+    }
     up->texture.levels = int(levels);
     up->texture.width = int(top.width);
     up->texture.height = int(top.height);
@@ -742,8 +795,9 @@ void GlRenderer::begin_upload(TexturePayload payload) {
     upload_ = std::move(up);
 }
 
-bool GlRenderer::continue_upload(std::chrono::steady_clock::time_point deadline) {
+bool GlRenderer::continue_upload(std::chrono::steady_clock::time_point deadline, bool& moved) {
     auto& up = *upload_;
+    take_gl_error(); // (errors of the frame's draws are not this texture's)
     glBindTexture(GL_TEXTURE_2D, up.texture.id);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     constexpr std::size_t kBandBytes = std::size_t(256) << 10;
@@ -751,42 +805,84 @@ bool GlRenderer::continue_upload(std::chrono::steady_clock::time_point deadline)
         const auto& l = up.payload.levels[up.level];
         const GLint gl_level = GLint(up.level - up.first);
         const std::uint8_t* bytes = up.payload.data.data() + l.offset;
+        // The next piece: the whole level without immutable storage, else a
+        // band of rows (block rows of four texel rows for the compressed
+        // formats; the last band may end at the edge of the level, which
+        // compressed sub-images allow).
+        std::uint32_t rows = l.height - up.row;
+        std::size_t offset = 0, size = l.size;
+        if (!up.whole_levels) {
+            if (up.format) {
+                const std::size_t row_bytes = std::size_t((l.width + 3) / 4) * up.block_bytes;
+                const auto block_rows = std::uint32_t(std::max<std::size_t>(1, kBandBytes / std::max<std::size_t>(row_bytes, 1)));
+                rows = std::min(l.height - up.row, block_rows * 4);
+                offset = std::size_t(up.row / 4) * row_bytes;
+                size = std::size_t((rows + 3) / 4) * row_bytes;
+            } else {
+                const std::size_t row_bytes = std::size_t(l.width) * 4;
+                rows = std::min(l.height - up.row, std::uint32_t(std::max<std::size_t>(1, kBandBytes / row_bytes)));
+                offset = std::size_t(up.row) * row_bytes;
+                size = std::size_t(rows) * row_bytes;
+            }
+        }
+        const auto before = std::chrono::steady_clock::now();
+        if (moved && before + std::chrono::nanoseconds(std::int64_t(double(size) * upload_ns_per_byte_)) > deadline) break;
         if (up.whole_levels) {
             if (up.format)
                 gl_->CompressedTexImage2D(GL_TEXTURE_2D, gl_level, up.format, GLsizei(l.width), GLsizei(l.height), 0, GLsizei(l.size), bytes);
             else
                 glTexImage2D(GL_TEXTURE_2D, gl_level, GL_RGBA8, GLsizei(l.width), GLsizei(l.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, bytes);
             ++up.level;
-        } else if (up.format) {
-            // Block rows: four texel rows each (the last band may end at the
-            // edge of the level, which compressed sub-images allow).
-            const std::size_t row_bytes = std::size_t((l.width + 3) / 4) * up.block_bytes;
-            const auto block_rows = std::uint32_t(std::max<std::size_t>(1, kBandBytes / std::max<std::size_t>(row_bytes, 1)));
-            const std::uint32_t height = std::min(l.height - up.row, block_rows * 4);
-            const std::size_t offset = std::size_t(up.row / 4) * row_bytes;
-            const std::size_t size = std::size_t((height + 3) / 4) * row_bytes;
-            gl_->CompressedTexSubImage2D(GL_TEXTURE_2D, gl_level, 0, GLint(up.row), GLsizei(l.width), GLsizei(height), up.format,
-                                         GLsizei(size), bytes + offset);
-            up.row += height;
         } else {
-            const std::size_t row_bytes = std::size_t(l.width) * 4;
-            const auto rows = std::uint32_t(std::max<std::size_t>(1, kBandBytes / row_bytes));
-            const std::uint32_t height = std::min(l.height - up.row, rows);
-            glTexSubImage2D(GL_TEXTURE_2D, gl_level, 0, GLint(up.row), GLsizei(l.width), GLsizei(height), GL_RGBA, GL_UNSIGNED_BYTE,
-                            bytes + std::size_t(up.row) * row_bytes);
-            up.row += height;
+            if (up.format)
+                gl_->CompressedTexSubImage2D(GL_TEXTURE_2D, gl_level, 0, GLint(up.row), GLsizei(l.width), GLsizei(rows), up.format,
+                                             GLsizei(size), bytes + offset);
+            else
+                glTexSubImage2D(GL_TEXTURE_2D, gl_level, 0, GLint(up.row), GLsizei(l.width), GLsizei(rows), GL_RGBA, GL_UNSIGNED_BYTE,
+                                bytes + offset);
+            up.row += rows;
+            if (up.row >= l.height) {
+                up.row = 0;
+                ++up.level;
+            }
         }
-        if (!up.whole_levels && up.row >= l.height) {
-            up.row = 0;
-            ++up.level;
-        }
-        if (std::chrono::steady_clock::now() >= deadline) break;
+        const auto after = std::chrono::steady_clock::now();
+        moved = true;
+        // (The rate from pieces large enough to time; tiny mip levels cost
+        // little either way.)
+        if (size >= 16384)
+            upload_ns_per_byte_ = std::clamp(0.75 * upload_ns_per_byte_ +
+                                                 0.25 * std::chrono::duration<double, std::nano>(after - before).count() / double(size),
+                                             0.01, 1000.0);
+        if (after >= deadline) break;
     }
+    if (const GLenum error = take_gl_error(); error && !up.error) up.error = error;
     return up.level >= up.payload.levels.size();
+}
+
+void GlRenderer::refuse_upload(std::uint64_t hash, unsigned error) {
+    failed_uploads_[hash] = true;
+    ++stats_.failed;
+    char text[160];
+    std::snprintf(text, sizeof text, "the GPU refused pack texture %016llx (GL error 0x%04x): the game's own texture is drawn",
+                  (unsigned long long)hash, error);
+    stats_.last_error = text;
+    std::cerr << "textures: " << text << '\n';
 }
 
 void GlRenderer::finish_upload() {
     auto up = std::move(upload_);
+    if (refuse_hash_ && up->payload.hash == refuse_hash_) {
+        // (The test switch: an invalid parameter value, GL_INVALID_ENUM.)
+        glBindTexture(GL_TEXTURE_2D, up->texture.id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x1234);
+        if (const GLenum error = take_gl_error(); error && !up->error) up->error = error;
+    }
+    if (up->error) {
+        delete_texture(up->texture);
+        refuse_upload(up->payload.hash, up->error);
+        return;
+    }
     up->texture.slot = next_slot_++;
     up->texture.last_frame = frame_;
     if (up->first == 0) up->texture.rgba = std::move(up->payload.rgba);
@@ -826,12 +922,10 @@ unsigned GlRenderer::sampler(const Texture& texture, const GpuTexture& gpu) {
     gl.SamplerParameteri(id, GL_TEXTURE_WRAP_T, texture.wrap_t == 0 ? GL_CLAMP_TO_EDGE : GL_REPEAT);
     gl.SamplerParameteri(id, GL_TEXTURE_MAG_FILTER, texture.mag_nearest ? GL_NEAREST : GL_LINEAR);
     gl.SamplerParameteri(id, GL_TEXTURE_MIN_FILTER, GLint(min_filters[min_index]));
-    if (mip) {
-        gl.SamplerParameterf(id, GL_TEXTURE_LOD_BIAS, graphics_.lod_bias);
-        if (caps_.anisotropic)
-            gl.SamplerParameterf(id, GL_TEXTURE_MAX_ANISOTROPY,
-                                 std::clamp(float(anisotropy(graphics_.texture_filter)), 1.0f, std::max(caps_.max_anisotropy, 1.0f)));
-    }
+    // (The LOD bias is the shader's: u_lod_bias, render().)
+    if (mip && caps_.anisotropic)
+        gl.SamplerParameterf(id, GL_TEXTURE_MAX_ANISOTROPY,
+                             std::clamp(float(anisotropy(graphics_.texture_filter)), 1.0f, std::max(caps_.max_anisotropy, 1.0f)));
     samplers_[key] = id;
     return id;
 }
@@ -853,39 +947,61 @@ GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding) {
     if (const auto mips = binding->texture.ref(16)) t.authored_mips = !mips.elements().empty();
     // With a pack streaming, the loading thread scanned the stage's
     // documents: the hashes come from it, without a decode here.
-    if (streaming())
-        if (const auto scanned = streamer_->lookup(binding->image.document(), binding->image.reference())) {
-            t.keyed = true;
-            t.scanned = true;
-            t.pack_hash = scanned->pack_hash;
-            t.pixel_hash = scanned->pixel_hash;
-            t.width = scanned->width;
-            t.height = scanned->height;
-            t.in_pack = scanned->in_pack;
-            t.title_press = t.width == 256 && t.height == 128 && t.pixel_hash == kTitlePressStartHash &&
-                            binding->image.str(22) == "mojigc.png";
-        }
+    if (streaming()) key_from_scan(t);
     return &textures_.emplace(key, std::move(t)).first->second;
+}
+
+bool GlRenderer::key_from_scan(Texture& t) {
+    const auto scanned = streamer_->lookup(t.binding->image.document(), t.binding->image.reference());
+    if (!scanned) return false;
+    t.keyed = true;
+    t.scanned = true;
+    t.pack_hash = scanned->pack_hash;
+    t.pixel_hash = scanned->pixel_hash;
+    t.width = scanned->width;
+    t.height = scanned->height;
+    t.in_pack = scanned->in_pack;
+    t.title_press = t.title_press || (t.width == 256 && t.height == 128 && t.pixel_hash == kTitlePressStartHash &&
+                                      t.binding->image.str(22) == "mojigc.png");
+    return true;
 }
 
 const GlRenderer::GpuTexture* GlRenderer::resolve(Texture& t, bool& replaced) {
     replaced = false;
     if (t.failed) return nullptr;
+    if (t.rekey) {
+        // The pack or the quality changed while this record had no hashes:
+        // keyed from its document's scan, which the loading thread makes
+        // now (the game's own picture is drawn until then). A document the
+        // thread does not scan is decoded and hashed here once.
+        if (!streaming() || t.keyed || key_from_scan(t)) {
+            t.rekey = false;
+        } else if (!streamer_->pending(t.binding->image.document())) {
+            t.rekey = false;
+            if (t.owned.id) {
+                owned_bytes_ -= std::min(owned_bytes_, t.owned.bytes);
+                delete_texture(t.owned);
+            }
+        }
+    }
     if (t.in_pack && streaming()) {
         if (auto found = replacements_.find(t.pack_hash); found != replacements_.end()) {
             found->second.last_frame = frame_;
             replaced = true;
             return &found->second;
         }
-        ++stats_.missing_draws;
-        if (trace_ >= 2 && t.asked_frame == 0)
-            std::printf("textures: frame %llu draws %s (%016llx, %ux%u) before its pack texture (%s)\n", (unsigned long long)frame_,
-                        std::string(t.binding->image.str(22)).c_str(), (unsigned long long)t.pack_hash, t.width, t.height,
-                        t.scanned ? "read ahead, not uploaded yet" : "its document was not scanned yet");
-        // (Asked again now and then: an evicted replacement is read again.)
-        if (!failed_uploads_.count(t.pack_hash) && (t.asked_frame == 0 || frame_ - t.asked_frame >= 30)) {
-            streamer_->request(t.pack_hash, t.width, t.height);
-            t.asked_frame = frame_ ? frame_ : 1;
+        // (A replacement the GPU refused: the game's own, not counted as missing.)
+        if (!failed_uploads_.count(t.pack_hash)) {
+            ++stats_.missing_draws;
+            if (trace_ >= 2 && t.asked_frame == 0)
+                std::printf("textures: frame %llu draws %s (%016llx, %ux%u) before its pack texture (%s)\n", (unsigned long long)frame_,
+                            std::string(t.binding->image.str(22)).c_str(), (unsigned long long)t.pack_hash, t.width, t.height,
+                            t.scanned ? "read ahead, not uploaded yet" : "its document was not scanned yet");
+            // (Asked again now and then: an evicted replacement is read again.)
+            if (t.asked_frame == 0 || frame_ - t.asked_frame >= 30) {
+                streamer_->request(t.pack_hash, t.width, t.height);
+                t.asked_frame = frame_ ? frame_ : 1;
+            }
         }
     }
     // (The title's PRESS START keeps its decoded pixels for the prompts: a
@@ -1575,6 +1691,13 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     gl.ActiveTexture(GL_TEXTURE0);
     const float sx = screen.width / 640.0f, sy = screen.height / 480.0f;
     if (id_pass_) receivers_drawn = true;
+    // The mip LOD bias of the texture bound (u_lod_bias: 0 for textures
+    // without mip levels and those sampled with their own parameters).
+    float bound_bias = 0.0f;
+    gl.Uniform1f(gl.u_lod_bias, 0.0f);
+    auto set_bias = [&](float bias) {
+        if (bias != bound_bias) gl.Uniform1f(gl.u_lod_bias, bound_bias = bias);
+    };
     std::uint32_t item_number = 0;
     for (const auto& item : items) {
         ++item_number;
@@ -1688,6 +1811,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         }
         gl.BindSampler(0, bound_sampler);
         glBindTexture(GL_TEXTURE_2D, bound);
+        set_bias(gpu && bound_sampler && gpu->levels > 1 ? graphics_.lod_bias : 0.0f);
         gl.Uniform1i(gl.u_use_tex, tex ? 1 : 0);
         gl.Uniform1i(gl.u_alpha_func, s.alpha_test ? s.alpha_func : 7);
         gl.Uniform1f(gl.u_alpha_ref, s.alpha_ref);
@@ -1776,6 +1900,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             }
             gl.BindSampler(0, 0);
             glBindTexture(GL_TEXTURE_2D, prompt_atlas);
+            set_bias(0.0f);
             gl.BindVertexArray(split->icon_vao);
             glDrawElements(GL_TRIANGLES, split->icon_count, GL_UNSIGNED_INT, nullptr);
             continue;
@@ -1784,6 +1909,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
     gl.BindVertexArray(0);
+    set_bias(0.0f);
     if (!receivers_drawn) {
         glViewport(wide.x, wide.y, wide.width, wide.height);
         gl.pixel_center(wide.width, wide.height);

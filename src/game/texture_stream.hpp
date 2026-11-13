@@ -79,6 +79,9 @@ public:
     void set_documents(const std::vector<std::shared_ptr<const IgbDocument>>& documents);
     // The hashes of a scanned image (nullopt before its document's scan).
     std::optional<ImageKey> lookup(const IgbDocument* document, std::uint32_t reference) const;
+    // Whether the document is listed and its scan is still to come (false
+    // when nothing streams or the document is not one of set_documents').
+    bool pending(const IgbDocument* document) const;
     // A replacement a draw needs (ahead of read-ahead work); no-op while it
     // is queued, being read or delivered.
     void request(std::uint64_t hash, std::uint32_t original_width, std::uint32_t original_height);

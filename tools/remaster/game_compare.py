@@ -13,13 +13,18 @@ and the longest frame of a stage start.
            or of more runs (e.g. Original, High, Ultra), the crops where the
            first and the last differ most, each crop at 1:1 in every run:
              game_compare.py compare --run Original=DIR --run High=DIR --run Ultra=DIR --out DIR
-  timing   the longest pass of a stage's load and of its start window (the
-           load and 600 steps after it, DW4_TRACE_LOADTIME) with the texture
-           figures (DW4_TRACE_TEXTURES), a few runs each without a pack, with
-           an empty pack and with each pack (--pack DIR or LABEL=DIR, again
+  timing   every stage start of the script (DW4_TRACE_LOADTIME's window: the
+           load and 600 steps after the start) with the texture figures
+           (DW4_TRACE_TEXTURES), --repeat runs each (default 8, in rotating
+           order) without a pack, with an empty pack (the control: no
+           texture work) and with each pack (--pack DIR or LABEL=DIR, again
            for more; LABEL=DIR@high draws the pack's 2x level, @original
-           none); every other stage the script starts is measured alike
-           (timing.json "stages"):
+           none). Judged per stage: the passes after the start (p99, the
+           longest, the count over 8.3 ms) and the window's longest pass,
+           each as median and quartiles over the runs, against the control
+           with its noise floor (timing.json). The window's longest pass
+           alone is no measure of the textures: it is mostly the load's
+           heaviest step and moves by several ms with the machine's load.
              game_compare.py timing --exe EXE --data DATA --script SCRIPT --pack PACK --out DIR
 
 Runs are started at below-normal priority without a console window, in
@@ -212,7 +217,45 @@ def cmd_compare(args):
     return 0
 
 
+WINDOW_LINE = re.compile(
+    r"loadtime window (\S+): longest pass ([\d.]+) ms \(texture work ([\d.]+) ms\).*most texture work in a pass ([\d.]+) ms"
+    r"(?:; after the start (\d+) passes: median ([\d.]+) ms, p95 ([\d.]+) ms, p99 ([\d.]+) ms, longest ([\d.]+) ms "
+    r"\(texture work ([\d.]+) ms\), (\d+) over 8\.3 ms, (\d+) over 16\.7 ms)?")
+# The figures of a stage start window per run (DW4_TRACE_LOADTIME): the
+# longest pass of the whole window (mostly the load's heaviest step, which
+# moves with the machine's load) and the distribution after the stage start.
+WINDOW_KEYS = ("window_longest_ms", "window_texture_ms", "window_texture_max_ms", "after_passes", "after_median_ms", "after_p95_ms",
+               "after_p99_ms", "after_longest_ms", "after_longest_texture_ms", "after_over_8ms", "after_over_16ms")
+# What the comparison judges (lower is better).
+JUDGED = ("after_p99_ms", "after_longest_ms", "after_over_8ms", "window_longest_ms")
+
+
+def parse_windows(text):
+    stages = {}
+    for m in WINDOW_LINE.finditer(text):
+        values = [float(m.group(i)) if m.group(i) is not None else None for i in range(2, 13)]
+        stages[m.group(1)] = dict(zip(WINDOW_KEYS, values))
+    return stages
+
+
+def quartiles(values):
+    v = sorted(values)
+    if not v:
+        return None, None, None
+    if len(v) < 4:
+        return v[0], statistics.median(v), v[-1]
+    q = statistics.quantiles(v, n=4, method="inclusive")
+    return q[0], q[1], q[2]
+
+
 def cmd_timing(args):
+    """Stage start timing: --repeat runs of each case in rotating order (no
+    pack, the empty pack as the control, each pack); per stage the median
+    and the quartiles over the runs of the passes after the stage start
+    (p99, longest, passes over 8.3 ms) and of the window's longest pass;
+    each case against the control with the noise floor (the spread of the
+    control's runs, and how far 'no pack' lies from it: two cases without
+    any texture work)."""
     os.makedirs(args.out, exist_ok=True)
     empty = os.path.join(args.out, "empty_pack")
     os.makedirs(empty, exist_ok=True)
@@ -221,56 +264,77 @@ def cmd_timing(args):
         label, _, path = item.rpartition("=") if "=" in item else ("pack", "", item)
         path, _, quality = path.partition("@")
         cases.append((label, path, {"DW4_TEXTURE_QUALITY": quality} if quality else {}))
-    pattern = re.compile(r"loadtime %s\S*: .*loop ([\d.]+) ms \(longest pass ([\d.]+) ms\)" % re.escape(args.stage))
-    window = re.compile(r"loadtime window %s: longest pass ([\d.]+) ms \(texture work ([\d.]+) ms\).*most texture work in a pass ([\d.]+) ms"
-                        % re.escape(args.stage))
-    all_windows = re.compile(r"loadtime window (\S+): longest pass ([\d.]+) ms \(texture work ([\d.]+) ms\)"
-                             r".*most texture work in a pass ([\d.]+) ms")
-    figures = re.compile(r"^textures %s: game \d+ \(([\d.]+) MiB\), pack \d+ \(([\d.]+) MiB\), peak ([\d.]+) MiB" % re.escape(args.stage),
-                         re.M)
-    result = {}
+    extra = dict(item.split("=", 1) for item in args.env or [])
+    figures = re.compile(r"^textures (\S+): game \d+ \(([\d.]+) MiB\), pack \d+ \(([\d.]+) MiB\), peak ([\d.]+) MiB.*?"
+                         r"longest pass ([\d.]+) ms", re.M)
+    result = {label: [] for label, _, _ in cases}
     for rep in range(args.repeat):
-        for label, pack, env in cases:
+        # (A rotating order: a drift of the machine's load spreads over every case.)
+        shift = rep % len(cases)
+        for label, pack, env in cases[shift:] + cases[:shift]:
             out = os.path.join(args.out, f"{label.replace(' ', '_')}_{rep + 1}")
-            env = dict(env, DW4_TRACE_LOADTIME="2", DW4_TRACE_TEXTURES="1")
+            env = dict(env, DW4_TRACE_LOADTIME="1", DW4_TRACE_TEXTURES="1", **extra)
             code, text = start_game(args.exe, args.data, args.script, out, args.length, args.size, pack, None, env)
-            m = pattern.search(text)
-            passes = sorted((float(x) for x in re.findall(r"load pass ([\d.]+) ms", text)), reverse=True)
-            w = window.search(text)
-            f = figures.search(text)
-            stages = {m.group(1): {"window_longest_ms": float(m.group(2)), "window_texture_ms": float(m.group(3)),
-                                   "window_texture_max_ms": float(m.group(4))} for m in all_windows.finditer(text)}
-            entry = {"stages": stages, "exit": code, "loop_ms": float(m.group(1)) if m else None, "longest_ms": float(m.group(2)) if m else None,
-                     "window_longest_ms": float(w.group(1)) if w else None, "window_texture_ms": float(w.group(2)) if w else None,
-                     "window_texture_max_ms": float(w.group(3)) if w else None,
-                     "texture_peak_mib": float(f.group(3)) if f else None,
-                     "top_passes_ms": passes[:3], "fingerprints": len(fingerprints(text))}
-            result.setdefault(label, []).append(entry)
-            print(f"{label} run {rep + 1}: {dict((k, v) for k, v in entry.items() if k != 'stages')}", flush=True)
-    summary = {}
-    for label, entries in result.items():
-        longest = [e["longest_ms"] for e in entries if e["longest_ms"] is not None]
-        windowed = [e["window_longest_ms"] for e in entries if e["window_longest_ms"] is not None]
-        summary[label] = {"longest_ms_median": statistics.median(longest) if longest else None,
-                          "longest_ms_max": max(longest) if longest else None,
-                          "window_ms_median": statistics.median(windowed) if windowed else None,
-                          "window_ms_max": max(windowed) if windowed else None, "runs": entries, "stages": {}}
-        for stage in sorted({st for e in entries for st in e["stages"]}):
+            stages = parse_windows(text)
+            for m in figures.finditer(text):
+                if m.group(1) in stages:
+                    stages[m.group(1)]["texture_peak_mib"] = float(m.group(4))
+                    stages[m.group(1)]["longest_upload_pass_ms"] = float(m.group(5))
+            entry = {"exit": code, "fingerprints": len(fingerprints(text)), "stages": stages}
+            result[label].append(entry)
+            s = stages.get(args.stage, {})
+            print(f"{label} run {rep + 1}: exit {code}, {args.stage}: after the start p99 {s.get('after_p99_ms')} ms, longest "
+                  f"{s.get('after_longest_ms')} ms, over 8.3 ms {s.get('after_over_8ms')}; window longest {s.get('window_longest_ms')} ms",
+                  flush=True)
+    summary = {"cases": [label for label, _, _ in cases], "control": "empty pack", "repeat": args.repeat, "stages": {}}
+    all_stages = sorted({st for entries in result.values() for e in entries for st in e["stages"]})
+    shown = JUDGED + ("after_median_ms", "after_p95_ms", "window_texture_max_ms", "texture_peak_mib", "longest_upload_pass_ms")
+    for stage in all_stages:
+        per_case = {}
+        for label, entries in result.items():
             vals = [e["stages"][stage] for e in entries if stage in e["stages"]]
-            summary[label]["stages"][stage] = {
-                "window_longest_ms_median": statistics.median(v["window_longest_ms"] for v in vals),
-                "window_longest_ms_max": max(v["window_longest_ms"] for v in vals),
-                "window_texture_max_ms_median": statistics.median(v["window_texture_max_ms"] for v in vals),
-                "runs": len(vals)}
+            row = {"runs": len(vals)}
+            for key in shown:
+                numbers = [v[key] for v in vals if v.get(key) is not None]
+                q1, med, q3 = quartiles(numbers)
+                row[key] = {"median": med, "q1": q1, "q3": q3, "max": max(numbers) if numbers else None}
+            per_case[label] = row
+        control = per_case.get("empty pack")
+        base = per_case.get("no pack")
+        verdicts = {}
+        for label, row in per_case.items():
+            if label == "empty pack" or not control:
+                continue
+            verdicts[label] = {}
+            for key in JUDGED:
+                c, r = control[key], row[key]
+                if c["median"] is None or r["median"] is None:
+                    continue
+                # The noise floor: the control's spread (interquartile range)
+                # and the distance between the two cases without texture work.
+                noise = max(c["q3"] - c["q1"],
+                            abs(base[key]["median"] - c["median"]) if base and base[key]["median"] is not None else 0.0)
+                delta = r["median"] - c["median"]
+                verdicts[label][key] = {"delta": round(delta, 3), "noise": round(noise, 3),
+                                        "verdict": "within noise" if abs(delta) <= noise else ("above" if delta > 0 else "below")}
+        summary["stages"][stage] = {"cases": per_case, "against_control": verdicts}
+    summary["runs"] = result
     with open(os.path.join(args.out, "timing.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)
-    for label, s in summary.items():
-        print(f"{label}: longest pass of the {args.stage} load median {s['longest_ms_median']} ms, max {s['longest_ms_max']} ms; "
-              f"of its start window median {s['window_ms_median']} ms, max {s['window_ms_max']} ms")
-        for stage, v in s["stages"].items():
-            print(f"  {stage}: start window longest pass median {v['window_longest_ms_median']} ms, "
-                  f"max {v['window_longest_ms_max']} ms; most texture work in a pass median "
-                  f"{v['window_texture_max_ms_median']} ms ({v['runs']} runs)")
+
+    def fmt(cell):
+        return "-" if cell["median"] is None else f"{cell['median']:.2f} ({cell['q1']:.2f}-{cell['q3']:.2f})"
+
+    for stage in all_stages:
+        s = summary["stages"][stage]
+        print(f"\n{stage}: median (quartiles) over the runs; after = the 600 steps after the stage started")
+        print(f"  {'case':14s} {'p99 after':>20s} {'longest after':>20s} {'>8.3 ms after':>20s} {'window longest':>20s}")
+        for label, row in s["cases"].items():
+            print(f"  {label:14s} {fmt(row['after_p99_ms']):>20s} {fmt(row['after_longest_ms']):>20s} "
+                  f"{fmt(row['after_over_8ms']):>20s} {fmt(row['window_longest_ms']):>20s}")
+        for label, v in s["against_control"].items():
+            print(f"  {label} against the empty pack: "
+                  + ", ".join(f"{k} {x['delta']:+.2f} (noise {x['noise']:.2f}, {x['verdict']})" for k, x in v.items()))
     return 0
 
 
@@ -288,7 +352,8 @@ def main():
         p.add_argument("--length", type=int, default=6000)
     sub.choices["run"].add_argument("--frames", required=True)
     sub.choices["run"].add_argument("--env", action="append", help="VAR=VALUE for the run (Graphics options: DW4_TEXTURE_QUALITY ...)")
-    sub.choices["timing"].add_argument("--repeat", type=int, default=3)
+    sub.choices["timing"].add_argument("--repeat", type=int, default=8)
+    sub.choices["timing"].add_argument("--env", action="append", help="VAR=VALUE for every run (Graphics options ...)")
     sub.choices["timing"].add_argument("--stage", default="dng101b1")
     p = sub.add_parser("compare")
     p.add_argument("--a")

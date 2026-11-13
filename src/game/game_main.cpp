@@ -1301,12 +1301,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (!base.empty() && std::filesystem::is_directory(base / "mods", error)) return base / "mods" / sub;
             return std::filesystem::path("mods") / sub;
         };
-        auto configure_pack = [&] {
-            const auto pack = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
-            texture_pack.configure(pack, settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
-            renderer->clear_cache();
+        // At start the folder is read here; the F1 menu's reloads read it on
+        // a thread of their own (PackLoader: a large folder does not stop
+        // the game) and hand it over with use_pack once it is read. A pack
+        // change keeps the stage's records (GlRenderer::set_texture_pack
+        // keys them again); a dump folder switched on decodes the stage's
+        // textures again so they are written out.
+        dw4::game::PackLoader pack_loader;
+        auto pack_folders = [&] {
+            return std::make_pair(settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack,
+                                  settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
+        };
+        auto use_pack = [&](dw4::game::TexturePack read) {
+            const bool dumped = texture_pack.dumping();
+            texture_pack = std::move(read);
+            if (texture_pack.dumping() && !dumped) renderer->clear_cache();
             renderer->set_texture_pack(&texture_pack);
             if (!texture_pack.index().error.empty()) std::cerr << "texture pack: " << texture_pack.index().error << '\n';
+        };
+        auto configure_pack = [&] {
+            const auto [pack, dump] = pack_folders();
+            dw4::game::TexturePack read;
+            read.configure(pack, dump);
+            use_pack(std::move(read));
+        };
+        auto reload_pack = [&] {
+            auto [pack, dump] = pack_folders();
+            pack_loader.start(std::move(pack), std::move(dump));
         };
         if (!options.smoke_frames) {
             configure_pack();
@@ -2238,13 +2259,30 @@ int run(const Options& options, dw4::game::Settings& settings) {
             double window_longest_ms{}, window_longest_texture_ms{}, window_texture_max_ms{};
             std::uint64_t window_longest_frame{}, window_passes{};
             bool window_done{};
+            // The window's passes after the stage started (its first
+            // pictures, when its textures are first drawn), for their
+            // distribution: a single longest pass mostly shows the load's
+            // own heaviest step and the machine's load, not the textures.
+            std::vector<double> started_ms;
+            double started_longest_ms{}, started_longest_texture_ms{};
         } load_timing;
         auto print_load_window = [&] {
+            auto sorted = load_timing.started_ms;
+            std::sort(sorted.begin(), sorted.end());
+            // (Nearest rank.)
+            auto rank = [&](double p) {
+                if (sorted.empty()) return 0.0;
+                const auto n = std::max<std::size_t>(1, std::size_t(std::ceil(p * double(sorted.size()))));
+                return sorted[std::min(sorted.size(), n) - 1];
+            };
+            const auto over = [&](double ms) { return std::count_if(sorted.begin(), sorted.end(), [&](double v) { return v > ms; }); };
             std::printf("loadtime window %s: longest pass %.1f ms (texture work %.1f ms) at step %lld of %llu passes (stage change to 600 "
-                        "steps after its start); most texture work in a pass %.2f ms\n",
+                        "steps after its start); most texture work in a pass %.2f ms; after the start %zu passes: median %.2f ms, p95 %.2f "
+                        "ms, p99 %.2f ms, longest %.2f ms (texture work %.2f ms), %lld over 8.3 ms, %lld over 16.7 ms\n",
                         load_timing.stage.c_str(), load_timing.window_longest_ms, load_timing.window_longest_texture_ms,
                         (long long)load_timing.window_longest_frame - (long long)load_timing.begin, (unsigned long long)load_timing.window_passes,
-                        load_timing.window_texture_max_ms);
+                        load_timing.window_texture_max_ms, sorted.size(), rank(0.5), rank(0.95), rank(0.99), load_timing.started_longest_ms,
+                        load_timing.started_longest_texture_ms, (long long)over(8.3), (long long)over(16.7));
             load_timing.window_done = true;
         };
         auto print_load_timing = [&] {
@@ -3462,6 +3500,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // (Every stage load, also of the same stage: the texture cache is
             // keyed by document addresses, which a new load may reuse.)
             // (The story's ghost figures start over too: no figure fades across the load.)
+            if (renderer) {
+                // A pack the F1 menu's reload has read meanwhile (PackLoader).
+                if (auto read = pack_loader.take()) use_pack(std::move(*read));
+                // DW4_TEXTURE_QUALITY_AT=FRAME:QUALITY[,FRAME:QUALITY...]
+                // (test runs): the texture quality changes at those frames as
+                // the F1 menu changes it, on the running stage.
+                static const auto quality_switches = [] {
+                    std::vector<std::pair<int, dw4::game::TextureQuality>> list;
+                    if (const char* spec = std::getenv("DW4_TEXTURE_QUALITY_AT"))
+                        for (std::istringstream items(spec); items.good();) {
+                            std::string item;
+                            std::getline(items, item, ',');
+                            const auto colon = item.find(':');
+                            if (colon == std::string::npos) continue;
+                            const auto quality = dw4::game::parse_texture_quality(item.substr(colon + 1));
+                            if (quality) list.emplace_back(std::atoi(item.substr(0, colon).c_str()), *quality);
+                        }
+                    return list;
+                }();
+                static std::size_t next_switch = 0;
+                while (options.smoke_frames && next_switch < quality_switches.size() && frame >= quality_switches[next_switch].first) {
+                    auto g = renderer->graphics();
+                    g.texture_quality = quality_switches[next_switch++].second;
+                    renderer->set_graphics(g);
+                    std::printf("[%d] texture quality %s (stage %s)\n", frame, dw4::game::texture_quality_name(g.texture_quality),
+                                engine.stage_name().c_str());
+                }
+            }
             if (dw4::game::note_stage(view, engine, &ghosts)) save_profile();
             // Smooth motion: the picture is drawn between the previous step
             // and this one (MotionInterpolator::blend below).
@@ -3639,14 +3705,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             // either: a loaded save's bond keeps its randomizer whatever
                             // the settings say.
                             const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
-                            const auto& graphics = settings.graphics;
-                            const bool original_graphics = graphics.texture_quality == dw4::game::TextureQuality::original &&
-                                                           graphics.texture_filter == dw4::game::TextureFilter::bilinear &&
-                                                           graphics.lod_bias == 0.0f && graphics.sharpening == dw4::game::Sharpening::off &&
-                                                           graphics.shadow_quality == dw4::game::ShadowQuality::original;
-                            const bool modern_graphics = graphics.texture_quality == dw4::game::TextureQuality::ultra &&
-                                                         graphics.texture_filter == dw4::game::TextureFilter::aniso16 &&
-                                                         graphics.shadow_quality != dw4::game::ShadowQuality::original;
+                            const bool original_graphics = dw4::game::is_original_graphics(settings.graphics);
+                            const bool modern_graphics = dw4::game::is_modernized_graphics(settings.graphics);
                             const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
                                                   !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
                                                   settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0 &&
@@ -3666,14 +3726,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 // pack, bilinear, the game's shadow map);
                                 // Modernized a pack's 4x textures, 16x
                                 // anisotropic filtering and a 4x shadow map
-                                // (sharpening is left as it is: a matter of taste).
-                                auto& g = settings.graphics;
-                                g.texture_quality = modern ? dw4::game::TextureQuality::ultra : dw4::game::TextureQuality::original;
-                                g.texture_filter = modern ? dw4::game::TextureFilter::aniso16 : dw4::game::TextureFilter::bilinear;
-                                g.shadow_quality = modern ? dw4::game::ShadowQuality::high : dw4::game::ShadowQuality::original;
-                                g.lod_bias = 0.0f;
-                                if (!modern) g.sharpening = dw4::game::Sharpening::off;
-                                if (renderer) renderer->set_graphics(g);
+                                // (sharpening is left as it is: a matter of
+                                // taste). graphics_options.hpp preset_graphics.
+                                settings.graphics = dw4::game::preset_graphics(modern, settings.graphics);
+                                if (renderer) renderer->set_graphics(settings.graphics);
                                 loading_override.reset();
                                 if (!modern) {
                                     settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
@@ -3732,7 +3788,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             dw4::game::TexturePackPanel panel;
                             panel.pack = &texture_pack;
                             panel.folder = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
-                            panel.reload = configure_pack;
+                            panel.reload = reload_pack;
+                            panel.loading = pack_loader.busy();
                             dw4::game::settings_graphics_section(view, panel);
                         }
                         dw4::game::settings_audio_section(view);
@@ -4530,6 +4587,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         load_timing.window_longest_ms = ms;
                         load_timing.window_longest_texture_ms = texture_ms;
                         load_timing.window_longest_frame = engine.frame();
+                    }
+                    if (load_timing.started) {
+                        load_timing.started_ms.push_back(ms);
+                        if (ms > load_timing.started_longest_ms) {
+                            load_timing.started_longest_ms = ms;
+                            load_timing.started_longest_texture_ms = texture_ms;
+                        }
                     }
                     if (load_timing.started && engine.frame() >= load_timing.started + 600) print_load_window();
                 }
