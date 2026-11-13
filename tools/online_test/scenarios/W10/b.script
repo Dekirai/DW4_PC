@@ -1,4 +1,4 @@
-# W10, guest b (k2): joins a's instance at the gate (I1a's automatic join); a removes it: "You were removed from a's
+# W10, guest b (k2): joins a's instance at the gate (the prompt, autochoice first: a's row with a here); a removes it: "You were removed from a's
 # instance." and the home departure (HOME removed), home on its own story (key item 4 is a's, not b's). At the gate again
 # a's instance is no candidate for 10 minutes (the removal bar): b's arrival makes an instance of its own.
 campaign until stage=stagml11,control

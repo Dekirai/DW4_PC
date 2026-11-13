@@ -1,0 +1,19 @@
+# W11r (19.7.4, 19.24; round I1b's integration, the prompt lane's note): the lobby's return mat (mate02) through the gate
+# form with real clients: the census names the mat's "Yes" (stag0202 point 2, the Security Gate b powered), the press is
+# held for PLAN (purpose return mat), OPTIONS list a's instance at stag0202 with a here (preselected, decision 40), the
+# CHOICE goes before the press and the BARRIER's plan carries it: b joins a's stage group there.
+a: online-script: step .* log: a in stag0202
+b: online-script: step .* log: b in stag0202
+b: online-script: step .* log: b home by the Security Gate
+b: online-trace: prompt open form=gate stage=stag0202 rows=1 cursor=0 preselected=[1-9][0-9]* rows=\[[0-9]+:[^:]+:(joinable|loading):1:stag0202\]
+b: online-trace: prompt answer choice=join
+b: online-script: step .* log: b back at stag0202
+b: online-script: step .* log: b joined a by the return mat
+a: online-script: step .* log: b joined a
+relay: plan .*stage=stag0202.*purpose=returnmat.*point=2 rows=.* preselected=[1-9]
+relay: choice .*choice=join
+relay: instance_join .*how=join
+shared: a b >= 300
+!b: online-trace: prompt plan-timeout
+!a: online-script: FAIL
+!b: online-script: FAIL
