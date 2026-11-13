@@ -7,10 +7,12 @@ native build is the repository's own `CMakeLists.txt` (its `if(ANDROID)` path,
 Snapdragon 8 Gen 2, Adreno 740, Android 13); other devices are not supported
 officially.
 
-Status: **phase B in progress** (13.11.2026): the game itself runs on the
-emulator up to the title screen with sound, from the first start's file
-picker on ("Phase B" below). Phase A (toolchain, the Gradle build offline, the
-device probe) is done.
+Status: **phase B done** (13.11.2026): the game itself runs on the emulator
+(SwiftShader and the host GPU) up to the title screen with sound, from the
+first start's file picker on, with the F1 menu by controller, Back key and
+touch and HOME and back; the PC build is unchanged in its checks ("Phase B"
+below, with what is left for phase C). Phase A (toolchain, the Gradle build
+offline, the device probe) is done. Nothing has run on the Thor yet.
 
 ## Decisions this port follows
 
