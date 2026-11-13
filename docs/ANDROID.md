@@ -520,6 +520,32 @@ core) and one code path, with these differences on a GLES context
   but has no View / Back button in its gamepad mapping; `input gamepad
   keyevent` comes from the virtual keyboard device, not a controller.
 
+### Results on the emulator (`-gpu host`, the Gradle APK)
+
+The debug APK from `gradlew-dw4 --offline assembleDebug` (versionCode
+460000, versionName 0.46.0, `DEBUGGABLE`, `primaryCpuAbi=x86_64`), installed
+over the earlier one (the imported disc and settings.ini stayed):
+`renderer: OpenGL ES 3.1 (4.5.0 NVIDIA 621.01) on Android Emulator OpenGL ES
+Translator (NVIDIA GeForce RTX 5070 Ti/PCIe/SSE2), depth clamp in the vertex
+shader`, the same `data_hash 1c693d45198dd6c1`, the title screen, the
+AAudio player `started`, the menu by touch and by the virtual pad's View
+button, HOME and back `HOT` with the lifecycle lines. While the PC built at
+the same time, the emulator's own System UI showed "isn't responding"
+dialogs (not the game's).
+
+### The PC after phase B
+
+- `build/Clean` from scratch (MSVC, Ninja, Release) and `ctest`: 66 of 66.
+- `work/dref/checks/det.sh` twice: `4004f056` / `396cb219` both runs, both
+  times.
+- The save state suite (a private copy of `st_all.sh`): 17 of 17 identical
+  after loading.
+- Screenshots of `newgame_dng101b1.txt` at frames 1500, 4300 and 5000
+  (the title, the dungeon with the skinned partner and the HUD) are
+  pixel-identical to main `463c7a5b`'s.
+- The same disc logs the same `data_hash` as on Android, as an image and
+  as the Dolphin extraction.
+
 ### Open for phase C (and later)
 
 - Depth read-back for the name tags on GLES; GL error checks in a debug
