@@ -87,6 +87,17 @@ void toggle_menu(HostView& view) {
     if (!view.show_menu && view.settings_changed && view.settings.save()) view.settings_changed = false;
 }
 
+namespace {
+// The F1 menu opened or closed by an input, with the input in the log (which
+// control reached the game: a controller's View / Back button, Android's Back
+// key, a touch, F1).
+void toggle_menu_by(HostView& view, const char* input) {
+    toggle_menu(view);
+    std::printf("menu: %s (%s)\n", view.show_menu ? "open" : "closed", input);
+    std::fflush(stdout);
+}
+} // namespace
+
 bool host_event(HostView& view, const SDL_Event& event) {
     auto& settings = view.settings;
     auto& capture = view.capture;
@@ -105,11 +116,11 @@ bool host_event(HostView& view, const SDL_Event& event) {
     // the F1 menu; a tap in the window's top right corner does too (the
     // menus are the only things touch works on, docs/ANDROID.md).
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat) {
-        toggle_menu(view);
+        toggle_menu_by(view, "the Back key");
         return false;
     }
     if (event.type == SDL_EVENT_FINGER_DOWN && event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) {
-        toggle_menu(view);
+        toggle_menu_by(view, "a touch in the top right corner");
         return false;
     }
     // Controllers coming and going (player pads only: pad_host.hpp) and
@@ -166,8 +177,8 @@ bool host_event(HostView& view, const SDL_Event& event) {
         view.settings_changed = true;
     }
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free(settings))
-        toggle_menu(view);
-    if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) toggle_menu(view);
+        toggle_menu_by(view, "the controller's View / Back button");
+    if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) toggle_menu_by(view, "F1");
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
         settings.fullscreen = !settings.fullscreen;
         SDL_SetWindowFullscreen(view.window, settings.fullscreen);
