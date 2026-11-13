@@ -603,6 +603,39 @@ dialogs (not the game's).
 - The same disc logs the same `data_hash` as on Android, as an image and
   as the Dolphin extraction.
 
+### The phase B review fixes (13.11.2026)
+
+The review's findings are fixed on feat-android, with main bb95abb5
+merged in (the texture streaming and the Graphics options; see the
+renderer section). Checked:
+
+- The PC: `build/Clean` from scratch and `ctest` 76 of 76 (main brought
+  the texture and graphics tests); `det.sh` twice on an exe copy,
+  `4004f056` / `396cb219` in both runs both times; the depth clamp check
+  on `newgame_dng101b1` (renderer section): 0 crossing triangles.
+- `git merge-tree` of feat-android with main, feat-l10n and int-i1b: no
+  conflict (CMake keeps main's `add_executable(dw4_game ...)` line).
+- The emulator (SwiftShader, the Gradle APK built offline, both ABIs with
+  the new code): the title with the same `data_hash 1c693d45198dd6c1`;
+  a tap in the top right corner opens and a second one closes the menu;
+  with the menu's window dragged into the corner a tap there goes to
+  ImGui (no toggle); the Back key opens and closes it.
+- The import: `--import-disc` of a 1 MB file of zeros stops at once with
+  "The chosen file is not a GameCube disc image (ISO) or RVZ image." (no
+  copy). The import through a FIFO (a writer `cat`s the ISO into it: no
+  seek, no size, as a streaming provider) copies 1,459,978,240 bytes in
+  about 16 s, passes `check_game_data` and starts with the same
+  `data_hash`; the title follows.
+- The Sharpening option on GLES (`sharpening=high` in settings.ini): the
+  title draws with it on SwiftShader and on `-gpu host` (NVIDIA through
+  the translator), no GL error or crash in logcat; the logo's edge
+  strength rises by a third against the unsharpened title. Neither
+  emulator surface is multisampled (the menu says "now 0x" for msaa=4),
+  so the multisampled resolve of `copy_window_es` and of `keep_picture`
+  waits for the Thor.
+- Home and back to the app: the lifecycle lines in order, the game draws
+  on.
+
 ### Open for phase C (and later)
 
 - Depth read-back for the name tags on GLES; GL error checks in a debug
@@ -614,6 +647,11 @@ dialogs (not the game's).
   `LOW_MEMORY` (the texture cache).
 - A context loss is handled but was not provoked on the emulator (nor the
   texture pack streaming after one).
+- On the Thor: a multisampled surface (msaa=4) with the kept picture and
+  the Sharpening option (the resolve blits); a texture pack on Adreno
+  (CPU-decoded BC7); a full external storage (the import's space check)
+  and an unmounted one (`app_root_problem`), neither provoked on the
+  emulator.
 - Measure on the Thor (correct, possibly expensive on a tiler):
   `keep_picture` blits the whole (with msaa=4 multisampled) window every
   frame, an extra resolve in the middle of the frame after which ImGui
