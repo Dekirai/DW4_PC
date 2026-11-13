@@ -552,16 +552,17 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             const bool focused = ImGui::IsItemFocused();
             ImGui::SameLine();
             if (row.closing) ImGui::TextDisabled(" ");
-            else if (row.own) ImGui::TextDisabled("%s", row.cancellable ? "A: Cancel" : " "); // (stamped or going: nothing to cancel)
+            // (The F1 menu's buttons as the controller's pictures, as the page's other hints: round I1b's integration.)
+            else if (row.own) prompt_text_disabled(row.cancellable ? "{OK} Cancel" : " "); // (stamped or going: nothing to cancel)
             else if (!row.grey.empty()) ImGui::TextDisabled("%s", row.grey.c_str());
-            else ImGui::TextDisabled("A: Go along");
+            else prompt_text_disabled("{OK} Go along");
             if (focused && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
                 s.go_closed = row.id;
                 s.close_requested = true;
             }
             first = false;
         }
-        ImGui::TextDisabled("B: Close");
+        prompt_text_disabled("{BACK} Close");
         // (The row to focus is gone: the first row then.)
         if (s.focus_go && !ImGui::IsWindowAppearing()) s.focus_go_id = 0;
         // (A View press within a notice's first half second: the cursor goes

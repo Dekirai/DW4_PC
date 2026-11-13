@@ -2459,7 +2459,8 @@ Overlay Session::overlay(double now) const {
     if (mode_ == Mode::parked && go_parked_at_ >= 0 && now - go_parked_at_ > 10.0) {
         o.loading = "Waiting for " + go_first_name(nullptr) + "'s floor...";
         o.go_back = true;
-        o.go_back_line = go_back_asked_ ? "End the instance for everyone?   A: Yes   B: No" : "B: Back to the lobby";
+        // (The game's A / B as the controller's pictures: the line goes through prompt_text; round I1b's integration.)
+        o.go_back_line = go_back_asked_ ? "End the instance for everyone?   {A} Yes   {B} No" : "{B} Back to the lobby";
     }
     if (host_away_until_ >= 0 && wid_ != 0) {
         const int left = int(std::ceil(std::max(0.0, host_away_until_ - now)));

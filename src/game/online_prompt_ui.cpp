@@ -1,5 +1,7 @@
 #include "online_prompt_ui.hpp"
 
+#include "button_prompts.hpp"
+
 #include "dw4/pad.hpp"
 #include "presence_data.hpp"
 
@@ -122,11 +124,13 @@ void draw_arrival_prompt(const online::PromptView& p, bool keyboard) {
     }
     ImGui::Separator();
     const bool home_back = p.form == online::PromptForm::loading;
-    // (19.5.7: the keyboard has arrows, Enter and Backspace in the prompt; X: Details is the pad's only.)
+    // (19.5.7: the keyboard has arrows, Enter and Backspace in the prompt, named as keys; X: Details is the pad's only. The pad's
+    // buttons are the controller's pictures of the game's A / X / B, the buttons the prompt reads: round I1b's integration.)
     const std::string hint = keyboard ? std::string("Enter: Choose   Left/Right: visibility   ") +
                                             (home_back ? "Backspace: Back to the lobby" : "Backspace: Back")
-                                      : std::string("A: Choose   Left/Right: visibility   X: Details   ") + (home_back ? "B: Back to the lobby" : "B: Back");
-    ImGui::TextUnformatted(hint.c_str());
+                                      : std::string("{A} Choose   Left/Right visibility   {X} Details   ") +
+                                            (home_back ? "{B} Back to the lobby" : "{B} Back");
+    prompt_text(hint);
     ImGui::End();
 }
 

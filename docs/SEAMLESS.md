@@ -9303,6 +9303,20 @@ will move.
 
 #### 19.5.6 Wording (English UI)
 
+A button in a hint is the controller's picture (the port UI's placeholders,
+`button_prompts.hpp`: `{A}`, `{B}`, `{X}` for the game's buttons the screen
+reads, `{OK}` / `{BACK}` for the F1 menu's, `{MENU}` for the F1 menu's own
+button: View / Back / Share / Minus, F1 on the keyboard), so the pictures
+follow player 1's controller; the table writes "A: Choose" for "`{A}`
+Choose". Round I1b's hints use them since the integration: the prompt's
+pad line "`{A}` Choose   Left/Right visibility   `{X}` Details   `{B}`
+Back", the go-along box's "`{OK}` Go along", "`{OK}` Cancel", "`{BACK}`
+Close", the go-along line's "`{MENU}` answer" / "`{MENU}` cancel" (one text
+for the pad and the keyboard: `{MENU}` shows F1 there), the held GO
+barrier's "`{B}` Back to the lobby" and "`{A}` Yes   `{B}` No". The prompt's
+keyboard line names its keys (Enter, Backspace), which are not the game's
+bindings.
+
 | Where | Text |
 | --- | --- |
 | Home screen | "Play: <form> Lv <n> (Box <b>)", "Choose character", "Friends (<n> online)", "Party", "Instances", "Settings", "Account", "Log out", "Online now: <n> players, <m> instances" |

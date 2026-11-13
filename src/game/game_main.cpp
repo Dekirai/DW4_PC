@@ -4551,7 +4551,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const auto notices = session.go_notices(now_s);
                     const std::string line = session.go_line();
                     if (!notices.empty() || !line.empty()) {
-                        const bool keyboard = gamepads.empty();
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
                         ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, 12), ImGuiCond_Always, ImVec2(0.5f, 0));
                         ImGui::SetNextWindowBgAlpha(0.75f);
@@ -4561,12 +4560,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (!line.empty()) {
                             const auto state = session.go_state();
                             const bool cancellable = state == dw4::game::online::GoState::asked || state == dw4::game::online::GoState::waiting;
-                            ImGui::TextUnformatted((line + (cancellable ? (keyboard ? "  F1: cancel" : "  View: cancel") : "")).c_str());
+                            // ({MENU}: the F1 menu's button as player 1's device shows it: View / Back / Share / Minus, F1 on
+                            // the keyboard; round I1b's integration.)
+                            dw4::game::prompt_text(line + (cancellable ? "  {MENU} cancel" : ""));
                         }
                         for (const auto* notice : notices) {
                             ImGui::TextUnformatted(session.go_notice_text(*notice).c_str());
                             ImGui::SameLine(0, 24);
-                            ImGui::TextDisabled(keyboard ? "F1: answer" : "View: answer");
+                            dw4::game::prompt_text_disabled("{MENU} answer");
                             const float left = float(std::clamp(1.0 - (now_s - notice->notice_at) / std::max(1.0, notice->notice_seconds), 0.0, 1.0));
                             ImGui::ProgressBar(left, ImVec2(-1, 3), "");
                         }

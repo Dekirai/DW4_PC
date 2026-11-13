@@ -2101,7 +2101,7 @@ void go_along_review() {
         check(world.run_until(10, [&] { return b.session->mode() == Mode::parked; }), "B departed and waits at its barrier");
         world.run(11);
         const auto held = b.session->overlay(world.now);
-        check(held.go_back && held.loading == "Waiting for kim's floor..." && held.go_back_line == "B: Back to the lobby",
+        check(held.go_back && held.loading == "Waiting for kim's floor..." && held.go_back_line == "{B} Back to the lobby",
               "after 10 s: " + held.loading + " / " + held.go_back_line);
         const int leaves = world.hub.leave_intents;
         const bool sent = b.session->go_back_press(false, true);
@@ -2111,9 +2111,9 @@ void go_along_review() {
             continue;
         }
         check(!sent && world.hub.leave_intents == leaves, "the host's B only asks");
-        check(b.session->overlay(world.now).go_back_line == "End the instance for everyone?   A: Yes   B: No",
+        check(b.session->overlay(world.now).go_back_line == "End the instance for everyone?   {A} Yes   {B} No",
               "the question: " + b.session->overlay(world.now).go_back_line);
-        check(!b.session->go_back_press(false, true) && b.session->overlay(world.now).go_back_line == "B: Back to the lobby",
+        check(!b.session->go_back_press(false, true) && b.session->overlay(world.now).go_back_line == "{B} Back to the lobby",
               "B there keeps waiting");
         check(!b.session->go_back_press(false, true), "B asks again");
         check(!b.session->go_back_press(false, false), "nothing pressed: nothing");
