@@ -57,7 +57,7 @@ public partial class HubLogicTests
     private sealed class Harness
     {
         public RoomHub Hub { get; }
-        public long Now { get; private set; } = Stopwatch.Frequency * 1000;
+        public long Now { get; private set; }
         public Dictionary<string, (HubMember Member, Peer Peer)> M { get; } = [];
 
         /// <summary>The harness answers held arrival prompts (<see cref="Peer.AutoAnswer"/>).</summary>
@@ -68,8 +68,9 @@ public partial class HubLogicTests
         /// was; a test of I1a's automatic path itself passes <c>world: new WorldHubOptions { ArrivalPrompt = false }</c>. PromptTests
         /// answer the prompt themselves.)</summary>
         public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null,
-            int protocol = Wire.CheckpointProtocol, WorldHubOptions? world = null, bool? answer = null)
+            int protocol = Wire.CheckpointProtocol, WorldHubOptions? world = null, bool? answer = null, long? clock = null)
         {
+            Now = clock ?? Stopwatch.Frequency * 1000; // (the hub's clock; `clock`: another start, e.g. far from the machine's uptime)
             AutoAnswer = answer ?? world is null;
             Hub = new RoomHub(new RoomInfo("ROOM01", protocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
                 instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner, world ?? new WorldHubOptions());
@@ -451,9 +452,9 @@ public partial class HubLogicTests
     // ---- Round J: joins from a checkpoint (SEAMLESS.md 6.13.4-6.13.5)
 
     /// <summary>A solo leader in stag0101 that reached its load end (K = 20) and reported its STATEHASH of tick 600.</summary>
-    private static Harness CheckpointTarget(InstanceOptions? options = null, int protocol = Wire.CheckpointProtocol)
+    private static Harness CheckpointTarget(InstanceOptions? options = null, int protocol = Wire.CheckpointProtocol, long? clock = null)
     {
-        var h = new Harness(options, protocol: protocol);
+        var h = new Harness(options, protocol: protocol, clock: clock);
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Barrier("a", "stag0101");
@@ -621,6 +622,28 @@ public partial class HubLogicTests
         Assert.Empty(i.ReplayFp); // never a judge
         Assert.Equal(840u, i.RebuildTick);
         Assert.True(h.Mem("b").RebuiltFromCheckpoint);
+    }
+
+    /// <summary>Round I1b's integration (the prompt lane's finding of 2026-11-11): a joiner's InstanceSince is the hub's clock like every
+    /// other stamp, not the machine's. Before, BecomeMember took Stopwatch.GetTimestamp(): with the hub's clock far from the machine's
+    /// uptime (a test hub, or the first ~17 minutes after a reboot for the harness's default start) the joiner looked older than the
+    /// host, became the trusted judge and the donor, and the resync test above failed.</summary>
+    [Fact]
+    public void A_joiners_instance_since_is_the_hubs_clock_so_the_host_stays_the_older_member()
+    {
+        // (The hub's clock a year ahead of the machine's: a real-time stamp would be older than every hub stamp.)
+        var h = CheckpointTarget(clock: Stopwatch.GetTimestamp() + Stopwatch.Frequency * 86400L * 365);
+        var i = h.I("a");
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7]).Frame());
+        var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        var before = h.Now;
+        h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 720).Frame());
+        Assert.Same(i, h.Mem("b").Instance);
+        Assert.Equal(before, h.Mem("b").InstanceSince);
+        Assert.True(h.Mem("a").InstanceSince < h.Mem("b").InstanceSince, "the host is the older member");
     }
 
     // ---- Round J's review: the relay's checkpoint rules

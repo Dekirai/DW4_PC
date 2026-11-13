@@ -2376,7 +2376,7 @@ public sealed partial class RoomHub
             foreach (var st in target.Streams)
                 st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
             j.Stamped = true;
-            BecomeMember(target, m, j);
+            BecomeMember(target, m, j, now);
             Note("join", target, ("member", m.Index), ("slot", j.Slot), ("tick", at));
         }
         else if (target.Mode == InstanceMode.SoloLed && target.Barrier is null && target.Leader is { Connected: true } leader && target.SoloJoin is null)
@@ -2392,7 +2392,7 @@ public sealed partial class RoomHub
         // Otherwise (a sealed start that waits for hashes, another JOIN_REQ in flight) the housekeeping tries again.
     }
 
-    private void BecomeMember(HubInstance target, HubMember m, JoinState j)
+    private void BecomeMember(HubInstance target, HubMember m, JoinState j, long now)
     {
         target.Observers.Remove(m);
         target.Reserved[j.Slot] = null;
@@ -2402,7 +2402,7 @@ public sealed partial class RoomHub
         m.Instance = target;
         m.Slot = j.Slot;
         m.Cursor = cursor;
-        m.InstanceSince = Stopwatch.GetTimestamp();
+        m.InstanceSince = now; // (the hub's clock like every other stamp: a test hub's clock is not the machine's uptime)
         m.JoinedVia = j;
         m.GaveUp = false;
         if (m.PreferredSlot < 0) m.PreferredSlot = j.Slot;
@@ -2478,7 +2478,7 @@ public sealed partial class RoomHub
             i.AddEvent(at, TickEvent.Delay(m.Slot, p.LeaderDelay));
             foreach (var st in i.Streams)
                 st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
-            BecomeMember(i, p.Joiner, p.Joiner.Joining!);
+            BecomeMember(i, p.Joiner, p.Joiner.Joining!, now);
             Note("join", i, ("member", p.Joiner.Index), ("slot", p.Slot), ("tick", at), ("solo_leader", m.Index));
         }
         i.Sealing = true;
