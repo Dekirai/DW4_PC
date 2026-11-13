@@ -22,10 +22,9 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
             new { a = accountId }, cancellationToken: ct));
     }
 
-    public async Task<bool> SaveAsync(OnlineStoryRow row, StoryHistoryPolicy history, CancellationToken ct = default)
+    public Task<bool> SaveAsync(OnlineStoryRow row, StoryHistoryPolicy history, CancellationToken ct = default) =>
+        HistoryWriteAsync(async (c, tx) =>
     {
-        await using var c = await db.OpenAsync(ct);
-        await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
         // Only a newer revision replaces the row (saves can arrive out of order); a new account's first one inserts it.
         var written = await c.ExecuteAsync(new CommandDefinition(
             "UPDATE online_story SET revision = @Revision, flags = @Flags, folder = @Folder, counters = @Counters, updated_at = @UpdatedAt " +
@@ -36,14 +35,12 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
                 $"SELECT @AccountId, @Revision, @Flags, @Folder, @Counters, @UpdatedAt FROM accounts WHERE id = @AccountId AND {Live}",
                 row, tx, cancellationToken: ct)) > 0;
         if (written) await KeepAsync(c, tx, row, row.Revision, StoryWriteReasons.Room, history, ct);
-        await tx.CommitAsync(ct);
         return written;
-    }
+    }, ct);
 
-    public async Task<long> ReplaceAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default)
+    public Task<long> ReplaceAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default) =>
+        HistoryWriteAsync(async (c, tx) =>
     {
-        await using var c = await db.OpenAsync(ct);
-        await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
         // The next revision in one statement: a room save of the old story that is still on its way is older and writes
         // nothing after this (only newer revisions replace the row).
         var updated = await c.ExecuteAsync(new CommandDefinition(
@@ -57,14 +54,12 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
         var revision = await c.ExecuteScalarAsync<long?>(new CommandDefinition(
             "SELECT revision FROM online_story WHERE account_id = @AccountId", row, tx, cancellationToken: ct)) ?? 0;
         if (revision > 0) await KeepAsync(c, tx, row, revision, reason, history, ct);
-        await tx.CommitAsync(ct);
         return revision;
-    }
+    }, ct);
 
-    public async Task KeepAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default)
+    public Task KeepAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default) =>
+        HistoryWriteAsync(async (c, tx) =>
     {
-        await using var c = await db.OpenAsync(ct);
-        await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
         // (Only for a live account with a story: a deleted one keeps nothing. A revision the history already keeps as a
         // session start, reset or restore is not kept again: rooms opened one after another without play in between, or a
         // loop of room creations, add nothing.)
@@ -75,7 +70,33 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
             "SELECT COUNT(*) FROM online_story_history WHERE account_id = @AccountId AND revision = @Revision AND reason <> 'room'",
             row, tx, cancellationToken: ct)) > 0;
         if (live is not null && !kept) await KeepAsync(c, tx, row, row.Revision, reason, history, ct);
-        await tx.CommitAsync(ct);
+        return true;
+    }, ct);
+
+    /// <summary>
+    /// One transaction of a story write with its history rows, run again when InnoDB made it a deadlock victim (at most
+    /// <see cref="MySqlErrors.DeadlockAttempts"/> times, then the error goes to the caller). The thinning DELETE of one
+    /// account's history and another account's new history row deadlock when two accounts write at once (round I1b's
+    /// integration: two accounts entering the world together, W28 r11, left the session start unkept). Every body reads
+    /// what it decides by inside its transaction, so a second run decides again.
+    /// </summary>
+    private async Task<T> HistoryWriteAsync<T>(Func<MySqlConnection, MySqlTransaction, Task<T>> body, CancellationToken ct)
+    {
+        for (var attempt = 1; ; ++attempt)
+        {
+            await using var c = await db.OpenAsync(ct);
+            try
+            {
+                await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
+                var result = await body(c, tx);
+                await tx.CommitAsync(ct);
+                return result;
+            }
+            catch (MySqlException e) when (MySqlErrors.RetryDeadlock(e, attempt))
+            {
+                // Another account's history write took a lock this one needed first: this one runs again.
+            }
+        }
     }
 
     public async Task<IReadOnlyList<OnlineStoryHistoryRow>> ListHistoryAsync(long accountId, CancellationToken ct = default)
