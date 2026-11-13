@@ -31,15 +31,17 @@ public class WorldRelayTests
             .EnterAsync(new DW4Online.Domain.Abstractions.AuthenticatedSession { AccountId = account }, null, null, null).GetAwaiter().GetResult().Value!.Ticket;
 
     [DbFact]
-    public async Task The_handshake_takes_only_world_tickets_at_protocol_49()
+    public async Task The_handshake_takes_only_world_tickets_at_the_worlds_protocol()
     {
         var (host, port) = await StartAsync();
         await using var scope = host;
         var (_, _, id) = await host.RegisterAsync("FloorPlayer");
-        await using (var old = await RelayConnection.OpenAsync(port, $"DW4R2 {Ticket(host, id)} 48 1 0"))
-            Assert.Equal("ERR protocol", await old.ReadLineAsync());
+        // (Protocol 50 since round I1b: 49 and 48 are refused.)
+        foreach (var older in new[] { 48, 49 })
+            await using (var old = await RelayConnection.OpenAsync(port, $"DW4R2 {Ticket(host, id)} {older} 1 0"))
+                Assert.Equal("ERR protocol", await old.ReadLineAsync());
         var tickets = host.App.Services.GetRequiredService<RelayTickets>();
-        await using (var room = await RelayConnection.OpenAsync(port, $"DW4R2 {tickets.Issue("ABCD12", id, RelayRoles.Member)} 49 1 0"))
+        await using (var room = await RelayConnection.OpenAsync(port, $"DW4R2 {tickets.Issue("ABCD12", id, RelayRoles.Member)} {Wire.WorldProtocol} 1 0"))
             Assert.Equal("ERR ticket", await room.ReadLineAsync());
         await using var ok = await WorldMember.ConnectAsync(port, Ticket(host, id));
         Assert.NotEqual(0, ok.Welcome.Flags & WelcomeMsg.World);
@@ -247,7 +249,7 @@ public class WorldRelayTests
             "SELECT detail FROM audit_log WHERE event = 'instance_remove' AND account_id = @guestId", new { guestId }));
     }
 
-    /// <summary>A raw protocol 49 member: handshake, WELCOME, the first STORY_ACK (its own story).</summary>
+    /// <summary>A raw member at the world's protocol: handshake, WELCOME, the first STORY_ACK (its own story).</summary>
     private sealed class WorldMember : IAsyncDisposable
     {
         private readonly RelayConnection _c;

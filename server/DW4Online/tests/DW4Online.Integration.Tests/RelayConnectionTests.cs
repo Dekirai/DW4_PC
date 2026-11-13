@@ -55,7 +55,7 @@ public class RelayConnectionTests
         using var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, port);
         var stream = client.GetStream();
-        var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {ticket} 49 1 {0x1234UL:x16}\n");
+        var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {ticket} {Wire.WorldProtocol} 1 {0x1234UL:x16}\n");
         await stream.WriteAsync(Encoding.ASCII.GetBytes(hello));
         var line = new StringBuilder();
         var one = new byte[1];
@@ -106,7 +106,7 @@ public class RelayConnectionTests
             using var client = new TcpClient();
             await client.ConnectAsync(IPAddress.Loopback, port);
             var stream = client.GetStream();
-            var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {tickets.Issue(Wire.WorldChannel, 7, RelayRoles.Member)} 49 1 {0x1234UL:x16}\n");
+            var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {tickets.Issue(Wire.WorldChannel, 7, RelayRoles.Member)} {Wire.WorldProtocol} 1 {0x1234UL:x16}\n");
             await stream.WriteAsync(Encoding.ASCII.GetBytes(hello));
             var one = new byte[1];
             while (await stream.ReadAsync(one) == 1 && one[0] != '\n')
