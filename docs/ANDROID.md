@@ -782,6 +782,26 @@ Output in `work/android_research/thor/` (gitignored; it holds the serial).
 - `gpio-keys`: volume, HOME, FOCUS, CAMERA; `pmic_pwrkey`, `pmic_resin`,
   `hall_switch` (lid/cover), headset jack.
 
-Not yet known (needs an installed APK, with approval): the real GL limits and
-compressed formats (ASTC is expected on Adreno), how SDL names the controller,
-and the Focus Mode behaviour of the lower screen's touch.
+### Phase B's APK on the Thor (13.11.2026, installed with the owner's approval)
+
+The debug APK of phase B (`org.dw4pc.game` 0.46.0, arm64-v8a) on the real
+device:
+
+- First start: the message box and Android's picker; the owner picked the
+  image from the SD card (`content://com.android.externalstorage.documents/
+  document/<card>%3ARoms%2Fgc%2F...iso`), copied in 88 s into
+  `files/data/dw4.iso`, `data_hash 1c693d45198dd6c1` (the PC's value).
+- `renderer: OpenGL ES 3.2 V@0676.53 ... on Adreno (TM) 740, depth clamp
+  GL_EXT_depth_clamp`: the real extension, so the vertex shader's emulation
+  is not used here. Low latency audio is on.
+- The intro and the title run without an error in logcat.
+- The built-in controller: every button works in the game and in the menus,
+  and the Back button opens and closes the menu (`menu: open (the
+  controller's View / Back button)`). The title shows the Xbox-style menu
+  glyph for START.
+- The window is 1920 x 970: the status bar and the navigation bar stay
+  visible. Phase C makes the game window immersive full screen.
+
+Still unknown: the full GL limits and compressed formats (the probe APK
+logs them; ASTC is expected on Adreno) and the Focus Mode behaviour of the
+lower screen's touch (phase E0).
