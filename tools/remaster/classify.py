@@ -27,7 +27,20 @@ Class (first rule that matches; `class_overrides.tsv` comes first):
   env_graphic environment textures (not cut-outs, not additive) that are flat
               graphics (many hard jumps between flat areas: panels, signs, LED
               grids, circuit patterns)   UltraSharpV2
-  decal       painted 2D ornaments on stage geometry (overrides)   UltraSharpV2
+  decal       painted 2D ornaments on stage geometry (overrides)   UltraSharpV2, dither denoised first
+
+`texture_overrides.tsv` (hash, model, pre, note) then sets the variant or
+the preprocessing of single textures after the visual review (a flat
+16 x 16 colour strip with Lanczos, a circuit tile with UltraSharpV2).
+`pre`: `smooth` (effects and glows whose soft alpha is a ramp of at most 8
+coarse levels, found automatically: the alpha is dequantised before Lanczos
+and nothing is sharpened), `dither` (also the colour's dither blurred
+lightly; set per texture), `denoise` (decals: the dither is denoised before
+the model), `mask_nearest` (cut-outs with square windows one texel wide:
+the mask by nearest neighbour).
+
+`wrap` is the per-axis tiling decision (rmcommon.tiling_axes) that
+upscale.py, finalize.py and build_pack.py pad and filter by.
 
 Format and usage then refine it: a C8 texture drawn only additively is an
 effect wherever its name puts it (weapon trails, item sparkles); an unnamed
@@ -49,6 +62,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rmcommon  # noqa: E402
+
+import numpy as np  # noqa: E402
 
 LANGS = ("usa", "jpn", "eng", "fra", "ger", "ita", "spn", "aeu", "ajp", "aus")
 DIGI = ("agumon", "alpha", "angelr", "beelzeb", "bwargrey", "dorumon", "dukecrim", "girumon", "hekabut", "impdrafm",
@@ -78,7 +93,39 @@ CELL_CLASSES_2D = {"font", "loading", "title", "ui", "portrait", "decal", "effec
 NO_COLOUR_FIX = {"card"}  # the cards' redraw look is intended
 
 COLUMNS = ["slot", "hash", "class", "variants", "cells", "file", "names", "width", "height", "note",
-           "model", "alt", "curate", "colour_fix", "format", "mode", "usa", "lang", "reason"]
+           "model", "alt", "curate", "colour_fix", "format", "mode", "usa", "lang", "reason", "wrap", "wrap_note", "pre"]
+VARIANTS = {"lanczos", "lanczos_sharp", "pbrify_v4", "ultrasharp_v2", "hdcube3", "pathb"}
+PRE = {"-", "smooth", "dither", "denoise", "mask_nearest"}
+# Soft alpha of 5 to 8 levels (STEPPED_LEVELS) on STEPPED_SHARE of the texels,
+# in plateaus (STEPPED_PLATEAU of the soft neighbour pairs equal: steps over
+# 2 texels wide) that form ramps (STEPPED_RAMP of the neighbour pairs that
+# differ go to the next level: no pixel art), on pictures of at least
+# STEPPED_MIN texels both ways.
+STEPPED_LEVELS, STEPPED_SHARE, STEPPED_PLATEAU, STEPPED_RAMP, STEPPED_MIN = (5, 8), 0.25, 0.55, 0.75, 32
+
+
+def stepped_alpha(src):
+    """A glow whose soft alpha is a staircase of a few coarse levels (the
+    stagbs01 beams: Lanczos keeps every step as a hard edge, sharpening
+    rings on them). Tiny sparkles are left alone."""
+    if min(src.shape[:2]) < STEPPED_MIN:
+        return False
+    a = np.round(src[..., 3] * 255.0)
+    part = (a > 0) & (a < 255)
+    if part.mean() < STEPPED_SHARE or not STEPPED_LEVELS[0] <= len(np.unique(a[part])) <= STEPPED_LEVELS[1]:
+        return False
+    rank = np.searchsorted(np.unique(a), a)
+    pairs = same = differ = ramp = 0
+    for axis in (0, 1):
+        n = part.shape[axis]
+        both = np.take(part, range(1, n), axis=axis) & np.take(part, range(0, n - 1), axis=axis)
+        pairs += int(both.sum())
+        same += int((both & (np.diff(a, axis=axis) == 0)).sum())
+        d = np.abs(np.diff(rank, axis=axis))
+        seen = np.take(a, range(1, n), axis=axis) + np.take(a, range(0, n - 1), axis=axis) > 0
+        differ += int(((d > 0) & seen).sum())
+        ramp += int(((d == 1) & seen).sum())
+    return (pairs > 0 and same / pairs >= STEPPED_PLATEAU and differ > 0 and ramp / differ >= STEPPED_RAMP)
 
 
 def blends(row):
@@ -210,6 +257,8 @@ def main():
     ap.add_argument("--out", required=True, help="classes TSV to write")
     ap.add_argument("--overrides", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "class_overrides.tsv"))
     ap.add_argument("--usa-only", action="store_true", help="leave out textures the USA release never loads")
+    ap.add_argument("--texture-overrides", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                "texture_overrides.tsv"))
     args = ap.parse_args()
 
     EXPORT_DIR[0] = args.export
@@ -225,6 +274,14 @@ def main():
             if r["hash"] not in manifest:
                 sys.exit(f"{args.overrides}: hash {r['hash']} is not in the export")
             overrides[r["hash"]] = (r["class"], r.get("note", ""))
+    tex_over = {}
+    if args.texture_overrides and os.path.exists(args.texture_overrides):
+        for r in rmcommon.read_tsv(args.texture_overrides):
+            if r["hash"] not in manifest:
+                sys.exit(f"{args.texture_overrides}: hash {r['hash']} is not in the export")
+            if r.get("model", "-") not in VARIANTS | {"-"} or r.get("pre", "-") not in PRE:
+                sys.exit(f"{args.texture_overrides}: unknown model or pre for {r['hash']}")
+            tex_over[r["hash"]] = r
 
     result = {}
     for h, row in manifest.items():
@@ -255,15 +312,30 @@ def main():
         # seam where meshes sample across its border).
         rects = rmcommon.merge_cells(rmcommon.read_cells(args.export, row), int(row["width"]), int(row["height"]))
         cells = bool(rects) and cls in CELL_CLASSES_2D
-        variants = model + ("," + alt if alt else "")
         mode = rmcommon.alpha_mode(row)
+        src = rmcommon.load_rgba(os.path.join(args.export, "textures", row["file"]))
+        wrap, wrap_note = rmcommon.tiling_axes(row, src, cls)
+        pre = "-"
+        if cls == "decal":
+            pre = "denoise"
+        elif model == "lanczos_sharp" and mode in ("blend", "additive") and stepped_alpha(src):
+            pre = "smooth"
         note = reason
+        ov = tex_over.get(h)
+        if ov:
+            if ov.get("model", "-") != "-":
+                model = ov["model"]
+            if ov.get("pre", "-") != "-":
+                pre = ov["pre"]
+            note = f"{reason}; texture override: {ov.get('note', '')}"
+        variants = model + ("," + alt if alt else "")
         out_rows.append({
             "slot": h[:8], "hash": h, "class": cls, "variants": variants, "cells": "1" if cells else "0",
             "file": row["file"], "names": row["names"], "width": row["width"], "height": row["height"], "note": note,
             "model": model, "alt": alt or "-", "curate": "1" if alt else "0",
             "colour_fix": "0" if cls in NO_COLOUR_FIX else "1", "format": row["format"], "mode": mode,
             "usa": row["usa"], "lang": language(row), "reason": reason,
+            "wrap": ("t" if wrap[0] else "") + ("s" if wrap[1] else "") or "-", "wrap_note": wrap_note, "pre": pre,
         })
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
@@ -279,7 +351,10 @@ def main():
         if u or o:
             print(f"{cls:12s} {MODELS[cls][0]:14s} {u:5d} {o:5d}")
     print(f"cells: {sum(r['cells'] == '1' for r in out_rows)}, curated: {sum(r['curate'] == '1' for r in out_rows)}, "
-          f"overrides: {sum(r['reason'].startswith('override') for r in out_rows)}")
+          f"overrides: {sum(r['reason'].startswith('override') for r in out_rows)}, "
+          f"texture overrides: {sum(r['hash'] in tex_over for r in out_rows)}, "
+          f"pre: {dict(collections.Counter(r['pre'] for r in out_rows))}, "
+          f"wrap: {dict(collections.Counter(r['wrap'] for r in out_rows))}")
 
 
 if __name__ == "__main__":

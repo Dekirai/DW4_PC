@@ -19,6 +19,17 @@ Per texture:
   against the source more than DETAIL_GAIN lower, and the base's above
   DETAIL_FLOOR), the alternative is blended in through a feathered mask;
   `--curation` (hash, choice base|alt|merge, gain) overrides it per texture;
+* soft rims (ui, decal): where the source alpha is partial (the soft dark
+  shadow or outline of HUD digits and lettering, a decal's anti-aliased
+  rim) and next to it, alpha and colour come from the Lanczos 4x of the
+  source, so a half-transparent shadow stays half-transparent instead of
+  the model's hard black (ui) or white sticker outline (decal); ui keeps
+  the model inside the opaque glyphs, decals take the texels next to the
+  rim too;
+* HUD panels (stpnlwn*): the 2-texel colour tables at both sides by
+  nearest neighbour, the lilac symbol field (a 3-texel "!" the model
+  redrew as another glyph) from Lanczos; no soft rim (the frame keeps the
+  model's look);
 * alpha coverage (soft alpha): where the result shrunk back misses the
   source alpha by more than 0.08 (a model that made a half-transparent
   margin, a soft outline or shadow, solid), the Lanczos alpha takes over;
@@ -49,7 +60,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from rmcommon import (alpha_mode, colour_fix, downscale2x, fidelity, keep_alpha_coverage, load_rgba,  # noqa: E402
-                      local_de, save_rgba, border_jump, uv_island_mask, wrap_axes)
+                      local_de, nearest, save_rgba, border_jump, uv_island_mask, wrap_axes)
 
 FIX_ABOVE = 3.0  # mean CIEDE2000 above which the colour is corrected
 FIX_TARGET = 2.5  # the gentler correction is kept when it reaches this
@@ -59,8 +70,10 @@ DETAIL_FLOOR = 4.0  # ... where the base's is above this
 P95_FLAG = 12.0
 ALPHA_FLAG = 26.0
 SEAM_FLAG = 1.25  # border jump of the 4x result against the source's
-# Drawn as flat quads: no face samples across their borders, so no seam check.
-FLAT_CLASSES = {"ui", "loading", "title", "font", "card", "portrait", "decal"}
+FLAT_CLASSES = rmcommon.FLAT_CLASSES  # drawn as flat quads: no seam check
+SOFT_RIM_CLASSES = {"ui", "decal"}
+PANEL_PREFIX = "stpnlwn"  # HUD panels with colour tables in their outer columns
+DEFAULT_CURATION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "curation.tsv")
 
 REPORT_COLUMNS = ["hash", "file", "names", "size", "format", "mode", "usa", "lang", "class", "variant", "wrap", "cells",
                   "de_raw", "p95_raw", "de", "p95", "psnr", "psnr_alpha", "colour_fix", "seam", "flags", "model_s",
@@ -87,13 +100,64 @@ def curated_merge(src, base, alt, mode, mask, gain):
     return out.astype(np.float32), float(m.mean()), m
 
 
+def lanczos_ref(src, row, mode, wrap):
+    """The Lanczos 4x of the source through upscale.py's pipeline (fill under
+    alpha 0, padding by the tiling decision, soft alpha within range)."""
+    import upscale
+    return upscale.run_picture(src, row, mode, upscale.lanczos_sr, upscale.lanczos_sr, wrap)
+
+
+def _upsample_weight(m, sigma=1.5):
+    w4 = nearest(m.astype(np.float32), 4)
+    return np.clip(cv2.GaussianBlur(w4, (0, 0), sigma), 0.0, 1.0)
+
+
+def soft_rim(src, out, lz, cls):
+    """Alpha and colour from Lanczos in the source's partial-alpha band."""
+    a = np.round(src[..., 3] * 255.0)
+    band = ((a > 0) & (a < 255)).astype(np.float32)
+    if band.max() <= 0:
+        return out, 0.0
+    k = np.ones((3, 3), np.uint8)
+    if cls == "decal":
+        band = cv2.dilate(band, k)  # the rim and the texels on both sides
+    else:
+        band = np.maximum(band, cv2.dilate(band, k) * (a < 255))  # not into the opaque glyphs
+    w4 = _upsample_weight(band)[..., None]
+    res = out.copy()
+    res[..., :4] = out[..., :4] * (1.0 - w4) + lz[..., :4] * w4
+    return res.astype(np.float32), float(band.mean())
+
+
+def panel_fix(src, out, lz):
+    """HUD panel: the 2-texel colour tables at both sides (columns 0-1 and
+    the last two: pairs of rows with fixed palette values) nearest, the
+    lilac symbol field with its 3-texel "!" (the model drew another glyph)
+    from Lanczos."""
+    res = out.copy()
+    rgb, a = src[..., :3], src[..., 3]
+    lilac = (rgb[..., 0] - rgb[..., 1] > 0.15) & (rgb[..., 2] - rgb[..., 1] > 0.15) & (a > 0.5)
+    lilac[:, :2] = False
+    lilac[:, -2:] = False
+    m = np.zeros(a.shape, np.float32)
+    if lilac.any():
+        ys, xs = np.nonzero(lilac)
+        m[ys.min():ys.max() + 1, xs.min():xs.max() + 1] = 1.0
+    w4 = _upsample_weight(m, 1.0)[..., None]
+    res = res * (1.0 - w4) + lz * w4
+    res[:, :8] = nearest(src[:, :2], 4)
+    res[:, -8:] = nearest(src[:, -2:], 4)
+    return res.astype(np.float32), float(m.mean())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--export", required=True)
     ap.add_argument("--classes", required=True, help="classify.py's classes.tsv")
     ap.add_argument("--up", required=True, help="upscale.py's output folder (one subfolder per variant)")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--curation", default="", help="TSV hash, choice (base|alt|merge), gain: per-texture curation choices")
+    ap.add_argument("--curation", default=DEFAULT_CURATION,
+                    help="TSV hash, choice (base|alt|merge), gain: per-texture curation choices")
     ap.add_argument("--only", default="", help="comma-separated hashes (default: all)")
     ap.add_argument("--masks", action="store_true", help="also write OUT/curation/<hash>_mask.png")
     args = ap.parse_args()
@@ -137,7 +201,7 @@ def main():
         t0 = time.perf_counter()
         src = load_rgba(os.path.join(args.export, "textures", row["file"]))
         mode = alpha_mode(row)
-        wrap = wrap_axes(row)
+        wrap = wrap_axes(row, c)
         mask = uv_island_mask(args.export, row, c["class"])
         flags, notes = [], []
         base_path = os.path.join(args.up, c["model"], row["file"])
@@ -170,6 +234,16 @@ def main():
                     variant = c["model"] + " (curated: base)"
             else:
                 flags.append("missing_alt")
+        lz = None
+        panel = row["names"].startswith(PANEL_PREFIX)
+        if mode == "blend" and c["class"] in SOFT_RIM_CLASSES and not panel:
+            lz = lanczos_ref(src, row, mode, wrap)
+            out, share = soft_rim(src, out, lz, c["class"])
+            if share > 0.0:
+                notes.append(f"soft rim: Lanczos alpha and colour on {share:.1%} of texels")
+        if panel:
+            out, share = panel_fix(src, out, lanczos_ref(src, row, mode, wrap))
+            notes.append(f"HUD panel: colour tables nearest, symbol field Lanczos ({share:.1%} of texels)")
         if mode == "blend":
             out[..., 3], share = keep_alpha_coverage(src[..., 3], out[..., 3], wrap)
             if share > 0.0:
@@ -223,7 +297,8 @@ def main():
         lines[h] = {
             "hash": h, "file": row["file"], "names": row["names"], "size": f"{row['width']}x{row['height']}",
             "format": row["format"], "mode": mode, "usa": row["usa"], "lang": c["lang"], "class": c["class"],
-            "variant": variant, "wrap": ("t" if wy else "") + ("s" if wx else "") or "-", "cells": c["cells"],
+            "variant": variant + (f" ({c['pre']})" if c.get("pre", "-") not in ("-", "") else ""),
+            "wrap": ("t" if wy else "") + ("s" if wx else "") or "-", "cells": c["cells"],
             "de_raw": raw["de_mean"], "p95_raw": raw["de_p95"], "de": fid["de_mean"], "p95": fid["de_p95"],
             "psnr": fid["psnr"], "psnr_alpha": fid["psnr_alpha"], "colour_fix": fix_txt, "seam": seam_txt,
             "flags": ",".join(dict.fromkeys(flags)) or "-", "model_s": round(model_s, 3), "finish_s": round(dt, 3),

@@ -134,19 +134,78 @@ def cutout_threshold(row):
     return thr, inclusive
 
 
-def wrap_axes(row):
+# Drawn as flat quads (2D): no face samples across their borders.
+FLAT_CLASSES = {"ui", "loading", "title", "font", "card", "portrait", "decal"}
+CONTINUITY_FACTOR, CONTINUITY_SLACK = 1.5, 0.02
+
+
+def border_continuity(src, mode, axis):
+    """(jump across the wrap border, mean jump between neighbouring rows
+    (axis 0) or columns (axis 1)) of the visible picture: colour times alpha
+    and alpha where alpha is seen, else colour."""
+    if mode in ("blend", "cutout", "additive"):
+        vis = np.concatenate([src[..., :3] * src[..., 3:4], src[..., 3:4]], axis=2)
+    else:
+        vis = src[..., :3]
+    if vis.shape[axis] < 2:
+        return 0.0, 0.0
+    first = np.take(vis, 0, axis=axis)
+    last = np.take(vis, -1, axis=axis)
+    jump = float(np.abs(first - last).mean())
+    inner = float(np.abs(np.diff(vis, axis=axis)).mean())
+    return jump, inner
+
+
+def tiling_axes(row, src, cls):
+    """(wrap_y, wrap_x) and a note: the axes padded cyclically before
+    upscaling (and filtered cyclically for the smaller levels).
+
+    `tiles` (the UVs repeat the picture within a face, or scroll across it)
+    always wraps. `uv_edges` alone (the UVs reach near a border under a
+    repeat wrap mode) wraps only for 3D classes whose picture continues
+    across that border (the jump between its last and first row/column at
+    most CONTINUITY_FACTOR times the picture's mean neighbour jump plus
+    CONTINUITY_SLACK): border-to-border faces that tile. Everything else is
+    padded by edge extension: a light beam whose first row is black, a skin
+    whose UV islands touch the border, a HUD piece, must not get its
+    opposite edge blended into its outer rows."""
+    mode = alpha_mode(row)
+    out, notes = [], []
+    for axis, name in ((0, "t"), (1, "s")):
+        tiles = row.get("tiles", "no")
+        edges = row.get("uv_edges", "no")
+        if tiles not in ("no", "-") and name in tiles:
+            out.append(True)
+            notes.append(f"{name}: tiles")
+            continue
+        if edges in ("no", "-") or name not in edges:
+            out.append(False)
+            continue
+        if cls in FLAT_CLASSES:
+            out.append(False)
+            notes.append(f"{name}: uv edge, flat class -> edge")
+            continue
+        jump, inner = border_continuity(src, mode, axis)
+        cont = jump <= CONTINUITY_FACTOR * inner + CONTINUITY_SLACK
+        out.append(cont)
+        notes.append(f"{name}: uv edge, border jump {jump:.3f} vs {inner:.3f} -> {'wrap' if cont else 'edge'}")
+    return (out[0], out[1]), "; ".join(notes) or "-"
+
+
+def wrap_axes(row, sel=None):
     """(wrap_y, wrap_x): axes padded cyclically before upscaling.
 
-    `tiles` (UVs repeat the picture within a face) and `uv_edges` (UVs reach
-    a border with a repeat wrap, so bilinear filtering reads the opposite edge
-    and border-to-border faces tile it) both ask for it (docs/TEXTURES.md).
+    The decision is classify.py's `wrap` column (tiling_axes: `t`, `s`,
+    `ts` or `-`), carried by classes.tsv and finalize.py's report.tsv; pass
+    that row as `sel`. Without it only the export's `tiles` column counts
+    (uv_edges alone does not make a texture tile, docs/TEXTURES.md).
     """
-    axes = set()
-    for col in ("tiles", "uv_edges"):
-        v = row.get(col, "no")
-        if v not in ("no", "-"):
-            axes |= set(v)
-    return ("t" in axes, "s" in axes)
+    if sel is not None and sel.get("wrap") not in (None, ""):
+        v = sel["wrap"]
+        return ("t" in v, "s" in v)
+    v = row.get("tiles", "no")
+    v = "" if v in ("no", "-") else v
+    return ("t" in v, "s" in v)
 
 
 def merge_cells(cells, w, h):

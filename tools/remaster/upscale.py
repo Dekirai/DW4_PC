@@ -15,14 +15,23 @@ the textures an interrupted run finished. Per texture:
 * colours under alpha 0 are filled from their neighbours (push-pull), and
   for 3D skins (characters, bosses, weapons, items) the texels outside
   their UV islands (the export's uvmask, when the UVs do not scroll) too;
-* axes whose UVs tile or reach a border with a repeat wrap are padded
-  cyclically, others by edge extension; the padding is cropped after 4x;
+* axes padded cyclically only where classify.py's `wrap` says the texture
+  tiles there (rmcommon.tiling_axes: `tiles`, or a 3D texture whose picture
+  continues across a UV edge), others by edge extension, so no opposite
+  edge bleeds into the outer rows; the padding is cropped after 4x;
+* preprocessing (`pre`): `smooth` takes the steps out of coarse soft alpha
+  ramps (blurred, each texel kept within half a step of its level) and
+  drops the sharpening; `dither` also blurs the colour's dither lightly;
+  `denoise` smooths a decal's dither (edge-preserving) before the model;
+  `mask_nearest` takes a cut-out's mask by nearest neighbour (rows of
+  square windows one texel wide);
 * atlas cells (font glyphs, UI pictures, sprite frames) are cut out one by
   one with a border of their own edge texels and pasted back, so nothing
   bleeds between cells and pieces that fill their cell keep solid edges;
 * RGB and alpha are upscaled separately (alpha as a grey picture);
-* alpha afterwards: cut-outs are thresholded at the material's alpha
-  reference, soft alpha stays soft (Lanczos in gentle ramps, the model's
+* alpha afterwards: cut-outs take the Lanczos-upscaled source mask
+  thresholded at the material's alpha reference (the model's alpha changed
+  their shapes: round holes for square windows, lost thin texels), soft alpha stays soft (Lanczos in gentle ramps, the model's
   only at hard edges) and within the 3 x 3 range of the source,
   additive effects (SRC_ALPHA/ONE) upscale their visible colour (colour times
   alpha over black) and take a Lanczos alpha, so no alpha is invented;
@@ -191,8 +200,10 @@ def lanczos_sr(img):
 
 # --------------------------------------------------------------- pipeline
 
-def run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra=None, sharpen=False):
-    """One picture (a texture or a cell) through the whole 4x pipeline."""
+def run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra=None, sharpen=False, mask_nearest=False):
+    """One picture (a texture or a cell) through the whole 4x pipeline.
+    `mask_nearest`: a cut-out's mask by nearest neighbour (square windows
+    one texel wide stay square)."""
     h, w = src.shape[:2]
     rgb, a = src[..., :3], src[..., 3]
     if mode == "additive":
@@ -215,7 +226,9 @@ def run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra=None, sharpen=Fa
         aout = np.ones((h * SCALE, w * SCALE), np.float32)
     else:
         apad = pad(a, py, px, wy, wx)
-        if mode in ("additive", "ignore"):
+        if mode == "cutout" and mask_nearest:
+            aout = crop(nearest(apad, SCALE))
+        elif mode in ("additive", "ignore", "cutout"):
             aout = crop(lanczos4(apad, SCALE))
         else:
             aout = crop(alpha_sr(np.repeat(apad[..., None], 3, axis=2))).mean(axis=2)
@@ -266,23 +279,83 @@ def paste_cell(out, rect, cell_out):
     out[y0 * SCALE:y1 * SCALE, x0 * SCALE:x1 * SCALE] = cell_out[b:b + (y1 - y0) * SCALE, b:b + (x1 - x0) * SCALE]
 
 
+def dequantize_alpha(a, wrap, sigma=1.5):
+    """Coarse soft alpha (a staircase of a few levels) made a smooth ramp:
+    blurred, then each texel kept within half a step of its own level (the
+    quantisation bin it came from), so the picture at its own size stays as
+    it was while the 4x ramp has no hard steps."""
+    q = np.round(a * 255.0)
+    levels = np.unique(q)
+    if len(levels) < 2:
+        return a, 0.0
+    idx = np.searchsorted(levels, q)
+    mids = (levels[1:] + levels[:-1]) / 2.0
+    lo = np.where(idx > 0, mids[np.maximum(idx - 1, 0)], q) / 255.0
+    hi = np.where(idx < len(levels) - 1, mids[np.minimum(idx, len(mids) - 1)], q) / 255.0
+    p = int(np.ceil(3 * sigma)) + 1
+    wy, wx = wrap
+    ab = cv2.GaussianBlur(pad(a, p, p, wy, wx), (0, 0), sigma)[p:-p, p:-p]
+    return np.clip(ab, lo, hi).astype(np.float32), sigma
+
+
+def smooth_steps(src, mode, wrap, dither):
+    """`smooth`: the soft alpha dequantised (dequantize_alpha); `dither`:
+    also the colour's dither blurred lightly (sigma 0.7 texels, on
+    premultiplied colour where alpha is seen) before the upscale."""
+    out = src.copy()
+    sig_a = 0.0
+    if mode not in ("opaque", "ignore"):
+        out[..., 3], sig_a = dequantize_alpha(src[..., 3], wrap)
+    sig_c = 0.0
+    if dither:
+        sig_c = 0.7
+        p = 4
+        wy, wx = wrap
+        big = pad(src, p, p, wy, wx)
+        if mode in ("opaque", "ignore"):
+            out[..., :3] = cv2.GaussianBlur(big[..., :3], (0, 0), sig_c)[p:-p, p:-p]
+        else:
+            pm = cv2.GaussianBlur(big[..., :3] * big[..., 3:4], (0, 0), sig_c)[p:-p, p:-p]
+            ab = cv2.GaussianBlur(big[..., 3], (0, 0), sig_c)[p:-p, p:-p][..., None]
+            out[..., :3] = np.where(ab > 1.0 / 255.0, pm / np.maximum(ab, 1.0 / 255.0), src[..., :3])
+    return np.clip(out, 0.0, 1.0).astype(np.float32), sig_a, sig_c
+
+
+def denoise_dither(src):
+    """A decal's fine dither smoothed edge-preservingly before the model."""
+    out = src.copy()
+    out[..., :3] = cv2.bilateralFilter(np.ascontiguousarray(src[..., :3]), 5, 0.06, 1.0)
+    return out
+
+
 def process(src, row, sel, variant, sr, alpha_sr, export_dir, notes):
     """The 4x picture and the texels that count for the fidelity check (a
     character's UV islands, else None)."""
     mode = alpha_mode(row)
     spec = VARIANTS[variant]
     cls = sel["class"]
-    wrap = wrap_axes(row)
+    wrap = wrap_axes(row, sel)
     valid_extra = rmcommon.uv_island_mask(export_dir, row, cls)
     if valid_extra is not None:
         notes.append(f"uv islands {valid_extra.mean():.0%} of texels")
     sharpen = spec.get("sharpen", False)
+    pre = sel.get("pre", "-")
+    if pre in ("smooth", "dither"):
+        src, sig_a, sig_c = smooth_steps(src, mode, wrap, pre == "dither")
+        sharpen = False
+        notes.append(f"{pre}: alpha dequantised (sigma {sig_a:g}), colour blur {sig_c:g}, no sharpening")
+    elif pre == "denoise":
+        src = denoise_dither(src)
+        notes.append("dither denoised")
+    mask_nearest = pre == "mask_nearest" and mode == "cutout"
+    if mask_nearest:
+        notes.append("cut-out mask nearest")
     h, w = src.shape[:2]
     rects = merge_cells(rmcommon.read_cells(export_dir, row), w, h) if sel["cells"] == "1" else []
     if spec["kind"] == "pathb" and not rects:
         notes.append("path B (whole picture)")
         return textpath.path_b(src, mode, SCALE), valid_extra
-    out = run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra, sharpen)
+    out = run_picture(src, row, mode, sr, alpha_sr, wrap, valid_extra, sharpen, mask_nearest)
     if rects:
         glyphs = icons = 0
         for rect in rects:
@@ -372,7 +445,7 @@ def main():
         mode = alpha_mode(row)
         fid = fidelity(src, out, mode, mask)
         save_rgba(os.path.join(out_dir, row["file"]), out)
-        wy, wx = wrap_axes(row)
+        wy, wx = wrap_axes(row, sel)
         m = {"slot": sel["slot"], "hash": sel["hash"], "class": sel["class"], "mode": mode,
              "wrap": ("t" if wy else "") + ("s" if wx else "") or "-", "size": f"{src.shape[1]}x{src.shape[0]}",
              **fid, "seconds": round(dt, 3), "notes": "; ".join(notes) or "-"}
