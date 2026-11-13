@@ -303,6 +303,9 @@ public enum HoldKind
     Prompt,
     /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs: a GO's barrier waits before its decision.</summary>
     TestGo,
+    /// <summary>Decision 46 (round I1b's integration): a fresh arrival that chose an *Arriving now* row waits for that instance's stage
+    /// group at the stage (Instances:JoinHoldSeconds at most, as a JOIN's hold), then its choice is decided again.</summary>
+    Arriving,
 }
 
 /// <summary>

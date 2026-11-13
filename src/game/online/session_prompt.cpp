@@ -337,7 +337,8 @@ void Session::answer_prompt(bool back, double now) {
     trace("prompt answer choice=%s wid=%u visibility=%s form=%s back_point=%d", back ? "back" : c.choice == w::ChoiceKind::join ? "join" : "new",
           c.wid, visibility_word(c.visibility), v.form == PromptForm::gate ? "gate" : "loading", c.back_point == 0xFF ? -1 : int(c.back_point));
     chosen_join_ = !back && c.choice == w::ChoiceKind::join;
-    chosen_here_ = chosen_join_ && v.rows[v.cursor].here > 0;
+    // (An *Arriving now* row, decision 46: its players are on their way to the stage and the arrival joins them there.)
+    chosen_here_ = chosen_join_ && (v.rows[v.cursor].here > 0 || v.rows[v.cursor].state == w::RowState::arriving);
     chosen_host_ = chosen_join_ ? v.rows[v.cursor].host_name : std::string();
     if (v.form == PromptForm::gate) {
         // A: CHOICE first, then the held press in the next pad (the BARRIER names the plan); B: a B press to the game.

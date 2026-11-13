@@ -16,6 +16,10 @@ public enum RowState
     Waiting,
     /// <summary>Not choosable: the host reconnecting, story not here yet, too long to catch up.</summary>
     Greyed,
+    /// <summary>No stage group at the arrival stage, but one of the instance at a barrier heading there, or its players parked on their
+    /// way there (decision 46, round I1b's integration): *Arriving now*, choosable; the arrival waits for their stage group at the stage
+    /// (then a JOIN as for a loading one). Never preselected, never the automatic join.</summary>
+    Arriving,
 }
 
 /// <summary>One row of an arrival's candidates: the instance, its stage group at the arrival stage (null: none), the state, its players
@@ -108,11 +112,13 @@ public static class Matching
             .ThenBy(r => r.World.Wid)
             .ToList();
 
-    /// <summary>The order's first key: joinable now or in a moment 0, a boss fight 1 (choosing it waits for its end), greyed 2.</summary>
+    /// <summary>The order's first key: joinable now or in a moment 0, a boss fight or players arriving at the stage 1 (choosing it waits
+    /// for its end or their arrival; decision 46), greyed 2.</summary>
     private static int Rank(CandidateRow r) => r.State switch
     {
         RowState.Joinable or RowState.GuestNew => 0,
         RowState.Waiting => r.Group is { BossLock: true } ? 1 : 0,
+        RowState.Arriving => 1,
         _ => 2,
     };
 
@@ -124,7 +130,9 @@ public static class Matching
 
     /// <summary>The row I1b's prompt preselects (19.7.3): the first row when it is not greyed and is the party's or a friend's or has
     /// players at the arrival stage; otherwise none (*New instance*). A row only the staff bypass shows is never preselected nor counted
-    /// as the first (fix-019: a moderator who simply plays is a player; the row is his own choice only).</summary>
+    /// as the first (fix-019: a moderator who simply plays is a player; the row is his own choice only). An *Arriving now* row is never
+    /// preselected either (decision 46): as the first row it leaves the cursor on *New instance* (decision 40 unchanged).</summary>
     public static CandidateRow? Preselected(IReadOnlyList<CandidateRow> ordered) =>
-        ordered.FirstOrDefault(r => !r.StaffOnly) is { Choosable: true } first && (first.HostFriend || first.FriendsInside > 0 || first.Here > 0) ? first : null;
+        ordered.FirstOrDefault(r => !r.StaffOnly) is { Choosable: true } first && first.State != RowState.Arriving &&
+        (first.HostFriend || first.FriendsInside > 0 || first.Here > 0) ? first : null;
 }

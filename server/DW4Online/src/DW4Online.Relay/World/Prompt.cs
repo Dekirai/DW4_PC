@@ -309,6 +309,13 @@ namespace DW4Online.Relay.Hub
                         HoldPrompt(g, rows, OptionsMsg.NoticeClosed, g.PromptHosts.GetValueOrDefault(c.Wid) ?? "", now);
                         return true;
                     }
+                    if (row.State == RowState.Arriving)
+                    {
+                        // Decision 46: the instance's players are on their way to the stage: the barrier waits for their stage group
+                        // there (CheckHolds decides the choice again then: a JOIN, with 3.4's holds), at most a JOIN hold's time.
+                        HoldArriving(g, w, now);
+                        return true;
+                    }
                     var starting = w.StartingUntil != 0 && row.Group is not null;
                     g.Arrival = starting ? ArrivalKind.Starting : row.Group is null ? ArrivalKind.GuestNew : ArrivalKind.AutoJoin;
                     g.World = w;
@@ -330,6 +337,49 @@ namespace DW4Online.Relay.Hub
                     g.PromptChoice = null;
                     return false;
             }
+        }
+
+        /// <summary>Decision 46: a chosen *Arriving now* row holds the barrier (HoldKind.Arriving) until the instance's players are at the
+        /// stage; BARRIER_WAIT names them like a JOIN's hold.</summary>
+        private void HoldArriving(ArrivalGroup g, WorldInstance w, long now)
+        {
+            if (g.Hold != HoldKind.Arriving)
+            {
+                g.Hold = HoldKind.Arriving;
+                g.HoldUntil = now + FromMs(_inst.JoinHoldSeconds * 1000.0);
+                if (!_holds.Contains(g)) _holds.Add(g);
+                Count("arriving_holds");
+                Note("hold_arriving", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", w.Wid),
+                    ("stage", g.Stage.ToLowerInvariant()));
+            }
+            SendWait(g, WaitReason.NotJoinable, w.Members.Select(x => x.Name), Math.Max(0, Ms(g.HoldUntil - now) / 1000.0), 0, now);
+        }
+
+        /// <summary>CheckHolds' Arriving case: the chosen row again; still arriving: the barrier waits (BARRIER_WAIT every second) until
+        /// the hold's time is up (then a NEW with 3.4's hold-expired notice, as a JOIN's hold); otherwise the choice is decided again (a
+        /// JOIN, a guest's NEW, or the refreshed prompt that names the row gone).</summary>
+        private void CheckArriving(ArrivalGroup g, long now)
+        {
+            var wid = g.PromptChoice?.Wid ?? 0;
+            var w = _worlds.GetValueOrDefault(wid);
+            var row = w is null ? null : Candidates(g, now, staffChoice: true).FirstOrDefault(r => r.World.Wid == wid);
+            if (row is { State: RowState.Arriving } && now < g.HoldUntil)
+            {
+                if (Ms(now - g.LastWaitSent) >= 1000)
+                    SendWait(g, WaitReason.NotJoinable, row.World.Members.Select(x => x.Name), Ms(g.HoldUntil - now) / 1000.0, 0, now);
+                return;
+            }
+            _holds.Remove(g);
+            g.Hold = HoldKind.None;
+            Note("arriving_done", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", wid),
+                ("state", row?.State.ToString().ToLowerInvariant() ?? "gone"));
+            if (row is { State: RowState.Arriving })
+            {
+                Count("arriving_expired");
+                New(g, now, BarrierNotice.HoldExpired, row.World.Members.Select(x => x.Name).ToList());
+                return;
+            }
+            if (!DecideChoice(g, now)) FreshJoinOrNew(g, now);
         }
 
         /// <summary>A member or co-arrival of <paramref name="g"/> that <paramref name="w"/> may not seat (<see cref="Unseatable"/>: a removal
@@ -444,6 +494,7 @@ namespace DW4Online.Relay.Hub
                 {
                     RowState.Joinable or RowState.GuestNew => OptionState.Joinable,
                     RowState.Waiting => r.Group is { BossLock: true } ? OptionState.BossFight : OptionState.Loading,
+                    RowState.Arriving => OptionState.ArrivingNow,
                     _ => r.Why switch
                     {
                         "host_away" => OptionState.HostAway,

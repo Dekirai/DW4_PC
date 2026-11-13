@@ -8945,6 +8945,10 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 | 40 (2026-11-06) | Players at the arrival stage first: in the arrival prompt, after party and friends come the instances with players at the arrival stage, then the others, each by Q13's ping and free seats; a row with nobody of its instance at the arrival stage is never preselected unless it is the party's or a friend's (the host a friend or friends in it), *New instance* is then; *A* on the row of an instance elsewhere in the area still enters where the player walked in (not the travel to the host of option (c)) | 19.7.3, 19.30.3 |
 | 41 (2026-11-06) | A host alone in his instance is never prompted about another instance at a stage he walks to; round 67's lone-host prompt with *Continue alone* stays out | 19.7.1, 19.30.3 |
 | 43 (2026-11-11) | Two players who leave together and both choose *New instance* land together: a *New instance* chooser may be the co-arrival of another *New instance* base it may see (the same visibility rules as every co-arrival: Private, Friends, blocks, bars; staff are ordinary players here); players who chose a row still join the row they chose | 19.7.6, 19.32 |
+| 44 (2026-11-12) | Go along: the stamp to control takes 3.3-3.4 s (measured in W31, not 19.30.7's "under two seconds"): accepted as built; it may be shortened later | 19.30.7, 19.25 |
+| 45 (2026-11-12) | Go along: a context that changes on the target after the stamp is decided as built, as any arrival's decision (a stage group of its own there with the notice *other quest*), not a wait on the loading screen | 19.30.7, 19.25 |
+| 46 (2026-11-12) | *Arriving now*: a stage group of an instance at a barrier heading to the arrival stage (or its members parked on the way there) shows as a row *Arriving now* with its host's name; selectable (the arrival waits for their stage group at the stage, then joins it), never preselected (decision 40 unchanged), never the automatic join; built in round I1b's integration | 19.7.2, 19.7.3, 19.32 |
+| 47 (2026-11-12) | The prompt review's finding 8 (a fresh arrival without an answer becomes a co-arrival base before its own loading-screen prompt) is accepted as built: no extra handling | 19.7.6, 19.32 |
 
 **Standing decisions that stay:** at most four players per stage group (the
 engine's slots 0-3; staff bypass the visibility always, the blocks and the
@@ -9787,7 +9791,12 @@ not ending, and listed with their state:
 - *Boss fight* (boss-locked): choosing it waits (19.7.7);
 - *Host reconnecting* (greyed, not choosable);
 - *Full* (greyed; for staff *Spectate*, I3);
-- *Arriving now*: a running instance's group at the barrier for S;
+- *Arriving now*: no stage group at S, but one of the instance at a barrier
+  for S, or its members parked on their way there (decision 46, built in
+  round I1b's integration): choosable, the arrival waits for their stage
+  group at S and joins it (`Instances:JoinHoldSeconds` at most, then a
+  NEW with 3.4's hold-expired notice, as a JOIN's hold); never
+  preselected, never the automatic join; its players are not *Here*;
 - before round J, beyond `Instances:MaxCatchUpSeconds`: "Too long to catch
   up" (greyed); after J the check goes;
 - *Other settings* (greyed) only for a setting I1a's first task finds
@@ -9867,7 +9876,10 @@ they counted while their group waited at the exit, so the row became a
 preselected guest's NEW and I1a's interim rule put a stranger alone into a
 new stage group of their instance), nor a member playing on alone at the
 stage (another engine: the arrival would not meet it either). A stage
-group at a barrier *for* the arrival's stage is I1b's *Arriving now*.
+group at a barrier *for* the arrival's stage is I1b's *Arriving now*
+(decision 46): it ranks with the boss fights, after every row that can be
+entered now or in a moment, and is never preselected, so decision 40's
+preselection of the other rows stays as it was.
 
 #### 19.7.4 The gate form (Q13: standing at the gate)
 
@@ -12892,13 +12904,14 @@ departure is INTENT 4's argument -1; the session context of a GO (3.7,
 checked after it (6.5); "<name> went on to <stage>." and the late form of
 a notice that waited; a re-entry's 120 s from the member's own leave (and
 a member never named is news); *A: Cancel* only on a waiting row.
-Open for the user (the integration moves them to the round's list of open
-points): (1) a context that changes on the target after the stamp, in the
-second of the departure: built as any arrival's decision (a stage group of
-its own there with the notice *other quest*), the other choice being a
-wait on the loading screen; (2) the stamp to control takes 3.3-3.4 s, not
-under two seconds (above): accept, or shorten the GO's departure; (3) the
-host's question's hint "A: Yes   B: No" on the loading screen (19.5.6).
+The user's answers of 2026-11-12: (1) a context that changes on the
+target after the stamp, in the second of the departure: as built, as any
+arrival's decision (a stage group of its own there with the notice *other
+quest*; decision 45); (2) the stamp to control takes 3.3-3.4 s, not under
+two seconds (above): accepted (decision 44; it may be shortened later);
+(3) the host's question's hint "A: Yes   B: No" on the loading screen
+(19.5.6): with the controller's button pictures since the integration
+("{A}: Yes   {B}: No", the port UI's placeholders).
 Not built: a UI scenario of the *Go along* box (the half second, the
 cursor below the box, *B: Close*, *A: Cancel* by the controller); the
 scenarios drive the box's actions through the online script.
@@ -14441,16 +14454,22 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   catch-up is a greyed *Too long to catch up* row (its *New instance* needs
   no notice). Decision 41's test checks that the lone host's move has no
   prompt; the guest-NEW gate test checks the prompt's rows.
-- **Not built, for the user** (19.7.2's *Arriving now*, state 5): a running
-  instance's stage group at its barrier for the arrival stage is not a row
-  of its own; the instance shows as *Joinable* (a guest's NEW) with its
-  parked members counted in *Here*, and A on it makes a second stage group
-  of that instance at the stage next to the arriving one (the arriving
-  group then joins it there by 3.4 among its instance's own groups).
-  Building it needs a hold that waits for the arriving group to stand at
-  the stage before the JOIN (as *Loading* does for a group that stands
-  there). Found by reading the code, not by a probe.
-- **Open for the user** (finding 8 of the review): a fresh arrival with
+- **Not built in the lane, built by the integration** (19.7.2's *Arriving
+  now*, state 5; decision 46, the user's answer of 2026-11-12): a running
+  instance's stage group at its barrier for the arrival stage (or its
+  members parked on the way there) is a row *Arriving now* with its host's
+  name (`RowState.Arriving`, OPTIONS state 5); A on it holds the barrier
+  (`HoldKind.Arriving`, BARRIER_WAIT not joinable naming them) until their
+  stage group stands at the stage, then the choice is decided again (a
+  JOIN with 3.4's holds); `Instances:JoinHoldSeconds` without them: a NEW
+  with the hold-expired notice. Never preselected, never I1a's automatic
+  join (`Matching.Preselected` / `AutoJoinRow`). Unit tests
+  `PromptArrivingTests.cs` (each fails without `ArrivingAt` or without the
+  preselection rule). Before, the instance showed as *Joinable* (a guest's
+  NEW) and A on it made a second stage group of that instance at the stage
+  next to the arriving one.
+- **Accepted as built** (decision 47, the user's answer of 2026-11-12;
+  finding 8 of the review): a fresh arrival with
   candidates but without an answer (a lost PLAN, or a departure the census
   cannot name) becomes a co-arrival base for announced members before its
   own loading-screen prompt; after the hold the group lands in a new

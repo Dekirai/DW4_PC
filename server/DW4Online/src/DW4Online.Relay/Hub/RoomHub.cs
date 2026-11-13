@@ -1505,6 +1505,9 @@ public sealed partial class RoomHub
                     // run c1 went on alone as an unregistered NEW after five seconds.)
                     else if (Ms(now - g.LastWaitSent) >= 1000) SendWait(g, WaitReason.NotJoinable, [], 0, 0, now);
                     break;
+                case HoldKind.Arriving:
+                    CheckArriving(g, now);
+                    break;
                 case HoldKind.Prompt:
                     // (A CHOICE the held prompt's throttle kept waits for its turn, World/Prompt.cs.)
                     if (g.PendingChoice is { } pending && g.Members.Count > 0 && Ms(now - g.LastChoiceAt) >= ChoiceSpacingMs)

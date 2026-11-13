@@ -1133,6 +1133,12 @@ public sealed partial class RoomHub
                 }
                 else state = group.Joinable && group.Snapshot.Complete && !group.BossLock ? RowState.Joinable : RowState.Waiting;
             }
+            else if (ArrivingAt(w, g))
+            {
+                // Decision 46: no stage group at S, but the instance's players are on their way there (its members are not *Here*).
+                state = RowState.Arriving;
+                why = "arriving";
+            }
             else if (Matching.MayEnterAsGuest(w, g.Stage, _areas)) state = RowState.GuestNew;
             else
             {
@@ -1147,6 +1153,13 @@ public sealed partial class RoomHub
         names = which.SelectMany(x => x.Members).Select(x => x.Name).Distinct().ToList();
         return Matching.Order(rows);
     }
+
+    /// <summary>Decision 46 (round I1b's integration, *Arriving now*): a stage group of <paramref name="w"/> at a barrier heading to the
+    /// arrival's stage, or an arrival of its members parked on the way there (a co-arrival or JOIN hold, a GO's barrier); never the
+    /// arrival <paramref name="g"/> itself.</summary>
+    private bool ArrivingAt(WorldInstance w, ArrivalGroup g) =>
+        w.Groups.Any(x => !x.Ended && x != g.From && x.Barrier is { } b && SameStage(b.Stage, g.Stage)) ||
+        _holds.Any(h => h != g && SameStage(h.Stage, g.Stage) && h.Members.Any(a => a.Member.World == w));
 
     /// <summary>
     /// The decision of a fresh arrival (from home) at a stage outside the hub after its co-arrival holds (19.7.1, 19.7.6): a
