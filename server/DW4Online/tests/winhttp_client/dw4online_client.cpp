@@ -45,7 +45,7 @@ struct Options {
     std::string stage = "stagD101";
     // (online_join is "joined someone else's instance" since the world, 19.8.9: a client at home gets none.)
     std::string achievement = "first_defeat";
-    int protocol = 49;
+    int protocol = 50;
     unsigned long long data_hash = 1;
     std::string client_version = "0.48.0";
     std::string pin; // base64 SHA-256 SPKI of a pinned (self-signed) server certificate

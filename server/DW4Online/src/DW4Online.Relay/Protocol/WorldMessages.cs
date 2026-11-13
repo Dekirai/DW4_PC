@@ -62,7 +62,7 @@ public sealed record InstanceOpMsg(InstanceOpKind Op, uint Argument)
 }
 
 /// <summary>
-/// REPORT (client, protocol 49, round I1b): member u32 (the reported member) | reason u8 (1 griefing, 2 cheating, 3 name, 4 other)
+/// REPORT (client, protocol 50, round I1b): member u32 (the reported member) | reason u8 (1 griefing, 2 cheating, 3 name, 4 other)
 /// | wid u32 (the instance the reporter shares with him; 0: none). The relay answers with WORLD_NOTICE 14 (<see cref="ReportResult"/>).
 /// </summary>
 public sealed record ReportMsg(uint Member, byte Reason, uint Wid)
@@ -143,7 +143,7 @@ public sealed record WorldNoticeMsg(WorldNoticeKind Kind, uint Member, string Na
 }
 
 /// <summary>
-/// OFFER (server, protocol 49, round I1b, SEAMLESS.md 19.30.5): offer id u16 | op u8 | flags u8 | entrant count u8 + member u32 each (the
+/// OFFER (server, protocol 50, round I1b, SEAMLESS.md 19.30.5): offer id u16 | op u8 | flags u8 | entrant count u8 + member u32 each (the
 /// first entrant first) | stage str (where the first entrant still in the dungeon is) | notice seconds u8 | close reason u8.
 /// </summary>
 public sealed record OfferMsg(ushort Id, OfferOp Op, byte Flags, IReadOnlyList<uint> Entrants, string Stage, byte NoticeSeconds, OfferClose Close)

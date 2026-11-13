@@ -195,7 +195,7 @@ public enum IntentKind : byte
     GiveUp = 2,
     /// <summary>Protocol 49: *Leave instance*: the own slot goes home (the relay stamps HOME).</summary>
     Leave = 3,
-    /// <summary>Protocol 49, round I1b: *Go along* (argument: the offer id; 0 the player's *Cancel*; -1 the client's report that its
+    /// <summary>Protocol 50, round I1b: *Go along* (argument: the offer id; 0 the player's *Cancel*; -1 the client's report that its
     /// stamped GO ended without a departure: expired after 300 ticks, or it did nothing at its step). The I1a relay ignores it.</summary>
     GoAlong = 4,
     /// <summary>Development clients' scenario hook (argument: hook | value &lt;&lt; 8): a TEST event in the sender's sealed stage group,

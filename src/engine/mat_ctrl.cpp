@@ -69,6 +69,7 @@ void MatCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     context_ = nullptr;
     live_ = 0;
+    pending_run_.reset(); // (a mat script's MATsetRun: read only after its own run; round I1b's integration, the tick state)
 }
 
 bool MatCtrlManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {

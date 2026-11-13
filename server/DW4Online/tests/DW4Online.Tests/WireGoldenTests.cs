@@ -70,7 +70,7 @@ public class WireGoldenTests
             PayloadHex(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, NetStatMsg.InStream).Frame()));
         Assert.Equal(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1), NetStatMsg.Parse(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1).Frame().AsSpan(Wire.HeaderBytes)));
         Assert.Equal(0x8F, new NetStatMsg(0, 0, 0, 0, 0, 0, 0, 0).Frame()[0]);
-        // (Protocol 49, round I1b: + the exit port's asked mask.)
+        // (Protocol 50, round I1b: + the exit port's asked mask.)
         Assert.Equal("0700000008737461673031303203cdab000000000000" + "00", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
         // Protocol 49: + travel token u32, plan id u16 and the member's own settings (11 B; the defaults: light 1).
         Assert.Equal("0700000002000000f401000008646e67313031623101030388776655443322110200000009" + "09" + "00000000" + "0000" +
@@ -227,7 +227,7 @@ public class WireGoldenTests
         Assert.Equal(0x01020304u, BarrierOkMsg.Parse(Body(ok.Frame())).CoArrivals.Single().Member);
         var state = new StateMsg(1, 2, 3, StateMsg.Joinable | StateMsg.NoLivingMember, 5, StateReason.None);
         Assert.Equal(state, StateMsg.Parse(Body(state.Frame())));
-        Assert.Equal(49, Wire.WorldProtocol);
+        Assert.Equal(50, Wire.WorldProtocol);
     }
 
     [Fact]

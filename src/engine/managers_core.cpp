@@ -327,6 +327,9 @@ void CameraManager::clear_stage(Engine&) {
     centre_moved_ = false;
     blend_ = 0.0f;
     box_ = previous_box_ = 0;
+    // (The blend's start, written at the stage's first box: round I1b's
+    // integration, a restored engine's tick state has them at the identity.)
+    saved_eye_ = saved_target_ = Mat4{};
     // Per-slot cameras: the boxes start again with the stage.
     player_box_ = {};
     player_frame_ = {};
@@ -1012,6 +1015,7 @@ void StageCtlManager::add_info(Engine& engine, const ObjectView& info) { make_ra
 void StageCtlManager::clear_stage(Engine&) {
     rams_.clear();
     reset_state_ = 0;
+    reset_time_ = 0; // (read only in reset_state_ 1; round I1b's integration, the tick state)
 }
 
 // 80347BB4: START pressed on pad 1 while B and X are held arms the soft

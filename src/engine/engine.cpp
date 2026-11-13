@@ -819,6 +819,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
         snapshot.random = random.str();
     }
     if (auto* points = get<PlayerPointManager>()) snapshot.point_no = points->point_no();
+    if (auto* actions = get<ActionManager>()) snapshot.random_wait_min = actions->random_wait_min();
     snapshot.loader_teardown = loader_teardown_;
     snapshot.loader_common = loader_common_;
     snapshot.stage_active = stage_active_;
@@ -864,6 +865,9 @@ void Engine::restore(const StageSnapshot& snapshot) {
         random >> fight::generator();
     }
     if (auto* points = get<PlayerPointManager>()) points->set_point_no(snapshot.point_no);
+    // (Round I1b's integration: before, a restored engine's minimum was 0 where
+    // the others kept the stage's 120: S22b's statehash_mismatch.)
+    if (auto* actions = get<ActionManager>()) actions->set_random_wait_min(snapshot.random_wait_min);
     if (auto* sys = get<GameSystem>(); sys && snapshot.system) {
         const Ram keep = sys->ram_;
         *sys = *static_cast<const GameSystem*>(snapshot.system.get());

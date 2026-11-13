@@ -110,7 +110,7 @@ enum class Type : std::uint8_t {
     statehash = 0x15,
     checkpoint = 0x16,
     checkpoint_bad = 0x17,
-    // protocol 49 (round I1b, 19.7.4): the gate form's plan and the prompt's answer (prompt_wire.hpp)
+    // protocol 50 (round I1b, 19.7.4): the gate form's plan and the prompt's answer (prompt_wire.hpp)
     plan = 0x18,
     choice = 0x19,
     // protocol 49 (round I1a, 19.18): the host's or staff's instance change
@@ -134,7 +134,7 @@ enum class Type : std::uint8_t {
     reassign = 0x8E,
     netstat = 0x8F, // round 62: the member's link (older clients skip it)
     presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
-    // protocol 49 (round I1b, 19.7.3): the arrival prompt's rows (prompt_wire.hpp)
+    // protocol 50 (round I1b, 19.7.3): the arrival prompt's rows (prompt_wire.hpp)
     options = 0x91,
     checkpoint_ask = 0x92, // round J: upload the tick state at the next state-safe tick
     // protocol 49 (round I1a, 19.18)
@@ -325,7 +325,7 @@ struct Log {           // inst | visit | u32 first tick | u16 count (1-1200) | p
     std::uint32_t inst{}, visit{}, first{};
     std::vector<WirePad> pads;
 };
-// Protocol 49 (round I1b, 19.30.5) appends u8 asked: the slots the exit port
+// Protocol 50 (round I1b, 19.30.5) appends u8 asked: the slots the exit port
 // asked on the mat for this departure that stay (no go-along notice for them).
 struct Heading {       // inst | str stage | u8 point | u64 session context hash | u8 asked
     std::uint32_t inst{};

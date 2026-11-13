@@ -54,7 +54,7 @@ public sealed record TickEvent(byte Type, byte[] Payload)
         return new TickEvent(Ev.Test, p);
     }
 
-    /// <summary>Protocol 49, round I1b (19.30.7): the slot goes along to <paramref name="stage"/> at <paramref name="point"/> (taken as named).
+    /// <summary>Protocol 50, round I1b (19.30.7): the slot goes along to <paramref name="stage"/> at <paramref name="point"/> (taken as named).
     /// Applied like INTENT at the first membership-safe step; every GO of a step together; expires 300 ticks after its tick.</summary>
     public static TickEvent Go(int slot, int point, string stage)
     {
@@ -209,7 +209,7 @@ public sealed record LogMsg(uint Inst, uint Visit, uint FirstTick, Pad[] Pads)
 /// HEADING: a member confirmed an exit or the gate disc (one to two seconds before its barrier), with the session context
 /// hash its engine will arrive with (co-arrivals need the same context).
 /// </summary>
-/// <summary>HEADING: inst | stage | point | context u64 | asked u8 (protocol 49, round I1b: the slots the exit port asked on the mat
+/// <summary>HEADING: inst | stage | point | context u64 | asked u8 (protocol 50, round I1b: the slots the exit port asked on the mat
 /// for this departure that stay; no go-along notice for them, SEAMLESS.md 19.30.5).</summary>
 public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong ContextHash, byte Asked = 0)
 {
@@ -463,7 +463,7 @@ public sealed record StateMsg(uint Inst, uint Visit, uint Tick, byte Flags, ulon
     /// <summary>Protocol 47 (round J's review): the visit reached its load end K; the first such STATE's context is the
     /// visit's entry context (SEAMLESS.md 3.7), joinable or not.</summary>
     public const byte LoadEnded = 8;
-    /// <summary>Protocol 49 (round I1b): no present slot is alive. Accepted (and ignored) by the I1a relay.</summary>
+    /// <summary>Protocol 50 (round I1b): no present slot is alive. Accepted (and ignored) by the I1a relay.</summary>
     public const byte NoLivingMember = 16;
 
     public static StateMsg Parse(ReadOnlySpan<byte> p)

@@ -51,7 +51,14 @@ namespace dw4::game {
 // as u32, the settings block, BARRIER_OK's world part, HOME, INSTANCE_INFO,
 // WORLD_NOTICE, MEMBER_INFO, INSTANCE_OP; ROOM and ROSTER retired). The
 // world relay speaks only 49 (its floor is this number, 19.17.3).
-inline constexpr std::uint32_t kOnlineProtocol = 49;
+// 50 round I1b (docs/SEAMLESS.md 19.25): the arrival prompt (PLAN, CHOICE,
+// OPTIONS, BARRIER_WAIT 5), go along (OFFER, INTENT 4, JOIN_REQ kind go, the
+// tick event GO, STATE's flag 16, HEADING's asked byte), REPORT and
+// WORLD_NOTICE 13 / 14, and the snapshot version 44 (the stage snapshot keeps
+// ActionManager's random WAITCHECK minimum: a 49 engine restored from a 50
+// snapshot, or the reverse, would play its waits differently). The relay's
+// floor is 50.
+inline constexpr std::uint32_t kOnlineProtocol = 50;
 
 // The command line's world session (round I1a, docs/SEAMLESS.md 19.21):
 // --online-login NAME --online-play [BOX] logs in from the test profile and

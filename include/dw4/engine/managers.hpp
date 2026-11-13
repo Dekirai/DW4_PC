@@ -2234,6 +2234,10 @@ public:
     // Whether the action whose model instance is `node` shows it (its switch
     // bit); true for a node no action owns.
     bool drawn(const Node* node) const;
+    // The random WAITCHECKs' minimum (80535A60): a global that survives the
+    // stage load (clear_stage keeps it), so the stage snapshot carries it.
+    float random_wait_min() const { return random_wait_min_; }
+    void set_random_wait_min(float value) { random_wait_min_ = value; }
     // The action switch whose bit mask is the one of `other` (an igSwitch):
     // the same mask object or the same mask words. A kind 0x400 HitLand check
     // switch shares the mask object of its model's action switch, so the

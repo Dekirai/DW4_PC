@@ -84,6 +84,20 @@ void ShadowManager::clear_stage(Engine&) {
     casters_.clear();
     shader_ = false;
     light_.reset();
+    // (Round I1b's integration: the shader's values and the per-slot lights
+    // are the stage info's; a stage without a shadow kept the last stage's in
+    // the tick state, which a restored engine has at their defaults. Read only
+    // while a shader is set, which add_info fills.)
+    factor_ = 0.3f;
+    width_ = height_ = 128;
+    top_ = right_ = 100.0f;
+    bottom_ = left_ = -100.0f;
+    near_ = 0.1f;
+    far_ = 1000.0f;
+    up_ = Vec3f{1, 0, 0};
+    direction_ = Vec3f{0, -1, 0};
+    player_lights_ = {};
+    player_cameras_ = 0;
 }
 
 void ShadowManager::update(Engine& engine) {

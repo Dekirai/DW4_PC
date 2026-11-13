@@ -452,6 +452,11 @@ struct StageSnapshot {
     std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
+    // ActionManager's minimum of the random WAITCHECKs (80535A60): a global
+    // of the original that a stage load keeps (WAITCHECK 'R' with 'S' sets
+    // it, a later 'R' reads it in any stage). Snapshot version 44 (round
+    // I1b's integration); a version 43 state loads it as 0.
+    float random_wait_min{};
     ConsoleReset console_reset;               // the reset button and the controller's combination
     // Online co-op (online.hpp): the rules of the visit and the present
     // slots' personal session values (all off / empty offline).

@@ -19,7 +19,7 @@ public sealed class FakeClientOptions
     public string Host { get; set; } = "127.0.0.1";
     public int Port { get; set; }
     public required Func<CancellationToken, Task<string>> Ticket { get; init; }
-    /// <summary>The world relay speaks only protocol 49 (SEAMLESS.md 19.18).</summary>
+    /// <summary>The world relay speaks only its protocol (SEAMLESS.md 19.18: 49, 50 since round I1b).</summary>
     public int Protocol { get; set; } = Wire.WorldProtocol;
     public ulong DataHash { get; set; } = 1;
     public ulong SettingsHash { get; set; }

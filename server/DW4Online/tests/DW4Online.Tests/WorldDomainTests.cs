@@ -96,11 +96,11 @@ public class WorldDomainTests
     {
         var gate = new VersionGate(new PlayOptions { MinimumProtocol = configured });
         Assert.Equal(WorldProtocol.Version, gate.MinimumProtocol);
-        foreach (var old in new int?[] { null, 1, 46, 47, 48 })
+        foreach (var old in new int?[] { null, 1, 46, 47, 48, 49 })
             Assert.Equal(ErrorKind.Outdated, gate.Check(old, "0.60.0")?.Kind);
-        Assert.Null(gate.Check(49, "0.60.0"));
+        Assert.Null(gate.Check(50, "0.60.0"));
         Assert.Null(gate.Check(new PlayContext { Protocol = 50 }));
-        Assert.Equal(49, gate.Check(48, null)!.Extra!["minimumProtocol"]);
+        Assert.Equal(50, gate.Check(49, null)!.Extra!["minimumProtocol"]);
         Assert.Equal(60, new VersionGate(new PlayOptions { MinimumProtocol = 60 }).MinimumProtocol);
     }
 

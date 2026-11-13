@@ -27,7 +27,7 @@ FAILURES = []
 INPUT, HEADING, BARRIER, SNAPSHOT, SNAPHASH, PONG, BYE = 0x01, 0x03, 0x04, 0x07, 0x08, 0x12, 0x13
 WELCOME, SEALED, BARRIER_OK, BARRIER_WAIT, STATE_DATA, PING = 0x80, 0x81, 0x84, 0x85, 0x86, 0x8B
 INSTANCE_INFO, WORLD_NOTICE = 0x95, 0x96
-PROTOCOL = 49  # the world's (SEAMLESS.md 19.18)
+PROTOCOL = 50  # the world's (SEAMLESS.md 19.18; 50 since round I1b)
 # The settings block of protocol 49 (11 bytes): difficulty, camera, light, fast loading, rand seed u32, drops, enemies, zones.
 OWN_SETTINGS = bytes([0, 0, 1, 0]) + struct.pack("<I", 0) + bytes([0, 0, 0])
 
@@ -193,8 +193,8 @@ def main():
     s, gone = call(base, "GET", "/api/v1/rooms")
     check(s == 410 and gone["code"] == "rooms_retired", "rooms are retired", s)
     enter = {"box": 1, "protocol": PROTOCOL, "dataHash": 1234, "clientVersion": "0.52.0"}
-    old = call(base, "POST", "/api/v1/world/enter", dict(enter, protocol=48), host["token"])
-    check(old[0] == 426 and old[1]["code"] == "client_outdated", "protocol 48 refused (the floor in code is 49)", old[0])
+    old = call(base, "POST", "/api/v1/world/enter", dict(enter, protocol=49), host["token"])
+    check(old[0] == 426 and old[1]["code"] == "client_outdated", "protocol 49 refused (the floor in code is 50)", old[0])
     s, entered_a = call(base, "POST", "/api/v1/world/enter", enter, host["token"])
     check(s == 200 and entered_a.get("relayTicket") and entered_a.get("relay", {}).get("protocol") == "DW4R2", "host enters the world", s)
     s, entered_b = call(base, "POST", "/api/v1/world/enter", enter, guest["token"])
