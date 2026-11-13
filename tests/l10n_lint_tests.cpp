@@ -56,7 +56,7 @@ void test_lint() {
     check(std::fabs(fonts.scale("MINIMUM") - 0.66f) < 1e-5f && fonts.scale("NORMAL") == 1.0f, "MINIMUM measures 0.66 of NORMAL");
 
     dw4::l10n::Corpus corpus;
-    corpus.boxes["TALK/font00"] = {"TALK/font00", "NORMAL", 0, 5.8f};
+    corpus.boxes["TALK/font00"] = {"TALK/font00", "NORMAL", 0, 1.0f};
     corpus.boxes["LIST/font000"] = {"LIST/font000", "MINIMUM", 0, 1.68f};
     corpus.boxes["db:weapon:TXT"] = {"db:weapon:TXT", "MINIMUM", 0, 0.0f};
     corpus.texts = {text(u"Hello there.\r\nHow are you?", "dialog", "TALK/font00"), text(u"Press ≪ now.", "dialog", "TALK/font00"),
@@ -144,12 +144,78 @@ void test_lint() {
     // A clean catalog passes; another revision is noted.
     const auto clean = dw4::l10n::lint(source, "# revision=0000\n\tShort\tKurz\n\tPress {B} now.\tDrück {B} jetzt\tsqueeze=0.92\n", fonts);
     check(!clean.failed() && clean.ok == 1 && clean.squeezed == 1 && !clean.revision_note.empty(), "A clean catalog passes");
+
+    // A box's field wider than its English words is its budget: "Short" is
+    // 0.35 wide in a 1.68 field, a German word up to 1.68 fits.
+    const auto field = dw4::l10n::lint(source, "\tShort\tKurzzeitiger\n\tLong\tLangzeitigerAlsDasFeldBreitIst\n", fonts);
+    check(field.ok == 1 && field.errors == 1, "The field is the budget of a box whose English is narrower");
+}
+
+// The wrap: a translation's own line breaks are kept where the lines then
+// fit the box (a heading line, options), else the text is wrapped as one
+// paragraph; apply_wraps puts the suggestions into the catalog's translation
+// column and leaves every other line as it is.
+void test_wrap() {
+    const auto normal = synthetic_font("NORMAL", 1.0f);
+    const auto minimum = synthetic_font("MINIMUM", 0.66f);
+    const dw4::l10n::Fonts fonts{normal.get(), minimum.get()};
+    dw4::l10n::Corpus corpus;
+    corpus.boxes["INFO/font00"] = {"INFO/font00", "NORMAL", 0, 1.0f};
+    corpus.texts = {text(u"Head line\r\nA text below it\r\nEnd.", "dialog", "INFO/font00"), text(u"One more line", "dialog", "INFO/font00"),
+                    text(u"Fine.", "dialog", "INFO/font00")};
+    dw4::l10n::compute_budgets(corpus, fonts);
+    const auto& info = corpus.boxes["INFO/font00"];
+    check(std::fabs(info.max_width - 1.43f) < 1e-4f && info.max_lines == 3, "The info box: 1.43 wide, three lines");
+    std::vector<std::string> problems;
+    const auto source = dw4::l10n::read_source_tsv(dw4::l10n::write_source_tsv(corpus, fonts), problems);
+    auto suggestion = [&](const std::string& catalog, std::size_t line) {
+        const auto report = dw4::l10n::lint(source, catalog, fonts);
+        for (const auto& row : report.rows)
+            if (row.line == line) return row.suggestion;
+        throw std::runtime_error("no lint row for line " + std::to_string(line));
+    };
+    check(suggestion("\tHead line{BR}A text below it{BR}End.\tKopf{BR}Ein Text unten drunter\n", 1) == "Kopf{BR}Ein Text unten{BR}drunter",
+          "The translation's own break is kept and the long line wrapped");
+    check(suggestion("\tHead line{BR}A text below it{BR}End.\tKopf{BR}Ein Text unten drunter dran{BR}Ende.\n", 1) ==
+              "Kopf Ein Text{BR}unten drunter{BR}dran Ende.",
+          "Four lines with the breaks kept: the text is wrapped as one paragraph");
+    check(suggestion("\tFine.\tEin unglaublichlangeswort\n", 1).empty(), "A word wider than the box: no suggestion");
+    check(suggestion("\tOne more line\tEr steigt um 1 Punkt\n", 1) == "Er steigt um{BR}1 Punkt",
+          "A number stays on the line of the word after it");
+
+    const std::string catalog = "# a comment\n"
+                                "\tHead line{BR}A text below it{BR}End.\tKopf{BR}Ein Text unten drunter\tsqueeze=0.95\tnote\n"
+                                "\tOne more line\tNoch eine Zeile mit mehr Text drin\n"
+                                "\tFine.\tGut.\n";
+    const auto report = dw4::l10n::lint(source, catalog, fonts);
+    std::size_t applied = 0;
+    const auto wrapped = dw4::l10n::apply_wraps(catalog, report, &applied);
+    check(applied == 2, "Two rows are wrapped: " + std::to_string(applied));
+    check(wrapped == "# a comment\n"
+                     "\tHead line{BR}A text below it{BR}End.\tKopf{BR}Ein Text unten{BR}drunter\tsqueeze=0.95\tnote\n"
+                     "\tOne more line\tNoch eine Zeile{BR}mit mehr Text{BR}drin\n"
+                     "\tFine.\tGut.\n",
+          "apply_wraps changes only the translation column of the wrapped rows:\n" + wrapped);
+    const auto again = dw4::l10n::lint(source, wrapped, fonts);
+    check(!again.failed() && again.squeezed == 1 && again.ok == 2, "The wrapped catalog passes the lint");
+
+    // A memory card text keeps its English line count: the box shows two
+    // lines, but its next line holds the other half of a one-line sentence.
+    dw4::l10n::Corpus cards;
+    cards.boxes["MEM/font000"] = {"MEM/font000", "NORMAL", 0, 1.0f};
+    cards.texts = {text(u"Card one here", "memcard", "MEM/font000"), text(u"Pick it\r\nnow.", "memcard", "MEM/font000")};
+    dw4::l10n::compute_budgets(cards, fonts);
+    const auto card_source = dw4::l10n::read_source_tsv(dw4::l10n::write_source_tsv(cards, fonts), problems);
+    const auto card_report = dw4::l10n::lint(card_source, "\tCard one here\tKarte eins{BR}hier\n\tPick it{BR}now.\tNimm es{BR}jetzt.\n", fonts);
+    check(card_report.errors == 1 && card_report.ok == 1 && card_report.rows[0].detail.find("2 lines, the box shows 1") != std::string::npos,
+          "A one-line memory card text may not take two lines: " + card_report.rows[0].detail);
 }
 } // namespace
 
 int main() {
     try {
         test_lint();
+        test_wrap();
     } catch (const std::exception& error) {
         std::cerr << "l10n lint test failed after " << checks << " checks: " << error.what() << '\n';
         return 1;

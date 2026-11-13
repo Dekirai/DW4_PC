@@ -25,8 +25,9 @@ struct Box {
     std::string style = "NORMAL"; // the font: NORMAL or MINIMUM
     int align = 0;                // 0 left, 1 right, 2 centre (beFontInfoData [9])
     float field_width = 0;        // beFontInfoData [7] (0: not a pack line); not a hard limit, English passes it too
-    // The budget: the widest line and the most lines an English text shown
-    // in this box has, measured with the engine's layout (compute_budgets).
+    // The budget: the widest line (or the field where that is wider) and the
+    // most lines an English text shown in this box has, measured with the
+    // engine's layout (compute_budgets).
     float max_width = 0;
     int max_lines = 0;
 };
@@ -102,7 +103,9 @@ struct LintRow {
     std::string english;     // token form
     std::string text;        // token form
     std::string detail;
-    std::string suggestion;  // a greedy rewrap that fits (token form), if one does
+    // A greedy rewrap that fits (token form), if one does: the translation's
+    // own line breaks kept, else the whole text wrapped as one paragraph.
+    std::string suggestion;
     float widest = 0;        // the widest line against the budget (1 = exactly full)
 };
 struct LintReport {
@@ -117,5 +120,9 @@ LintReport lint(const SourceTable& source, std::string_view catalog_tsv, const F
 // The report as text: one line per row (all rows, or only those that are
 // not ok) and the summary.
 std::string format_report(const LintReport& report, bool all_rows);
+// The catalog with every suggested wrap put into its translation column
+// (dw4_l10n wrap): the rows the lint found too wide or too long and could
+// wrap; every other line stays as it is. applied: how many rows changed.
+std::string apply_wraps(std::string_view catalog_tsv, const LintReport& report, std::size_t* applied = nullptr);
 
 } // namespace dw4::l10n

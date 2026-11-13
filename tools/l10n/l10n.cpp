@@ -215,6 +215,12 @@ Corpus read_research(const std::filesystem::path& folder, std::vector<std::strin
                 Box box;
                 box.key = key;
                 box.style = "MINIMUM";
+                // An Item's name and text are shown in the windows' lists
+                // and description box: STWINFONT14 (field 1.68) and
+                // STWINFONT29/font000 (3.52), both MINIMUM (the shops, the
+                // status window's folders; subwnd_shop.cpp, subwnd.cpp).
+                static const std::set<std::string> items = {"weapon", "armor1", "armor2", "abChip", "conItem", "impItem", "insItem"};
+                if (items.contains(table_name)) box.field_width = column == "NAME" ? 1.68f : column == "TXT" ? 3.52f : 0.0f;
                 corpus.boxes.emplace(key, box);
             }
             std::string text_class = "db_" + column;
@@ -271,7 +277,8 @@ std::string write_source_tsv(const Corpus& corpus, const Fonts& fonts) {
     out += "# DW4 game text: the English corpus for translators (dw4_l10n export). Derived from the game: keep it local.\n";
     out += "# revision=" + corpus_revision(corpus) + "\n";
     out += "# Columns 1-4 are game.tsv's (fill in translation; flags: squeeze=0.90..0.99 as a last resort); the rest are notes.\n";
-    out += "# max_width / max_lines: the strictest box this text is shown in (the widest English line there, in its font's units).\n";
+    out += "# max_width / max_lines: the strictest box this text is shown in (the widest English line there, in its font's units);\n";
+    out += "# the budget is max_width or field_width where that is wider.\n";
     out += "id\tenglish\ttranslation\tflags\tclass\twhere\tboxes\tfont\tmax_width\tmax_lines\talign\tfield_width\tcopies\n";
     for (const auto& text : corpus.texts) {
         const Box* strictest = nullptr;
@@ -282,7 +289,8 @@ std::string write_source_tsv(const Corpus& corpus, const Fonts& fonts) {
             const auto found = corpus.boxes.find(key);
             if (found == corpus.boxes.end()) continue;
             const Box& box = found->second;
-            const float normalized = box.max_width / std::max(fonts.scale(box.style), 0.01f);
+            // (The box's budget: its widest English line or its field.)
+            const float normalized = std::max(box.max_width, box.field_width) / std::max(fonts.scale(box.style), 0.01f);
             if (!strictest || normalized < best) strictest = &box, best = normalized;
             lines = lines ? std::min(lines, box.max_lines) : box.max_lines;
             if (!boxes.empty()) boxes += ";";
@@ -341,9 +349,18 @@ const char* verdict_name(Verdict verdict) {
 
 namespace {
 
-// The text wrapped greedily into lines that fit (its own breaks become
-// spaces); empty when a word is too wide or the lines are too many.
-std::u16string rewrap(const engine::FontImage& font, std::u16string_view text, float squeeze, float max_width, int max_lines) {
+// A word the next one stays with on its line: a number ("1 Punkt", "450 HP")
+// or one that ends in an Item / element icon ("{I_ARMOR1} Rüstungs-Board").
+bool binds_to_next(std::u16string_view word) {
+    static constexpr std::u16string_view icons = u"∈∋∨∧¶⊂⊃∪∩⊆";
+    if (word.empty()) return false;
+    if (icons.find(word.back()) != std::u16string_view::npos) return true;
+    return std::all_of(word.begin(), word.end(), [](char16_t c) { return (c >= u'0' && c <= u'9') || (c >= u'０' && c <= u'９'); });
+}
+
+// The words of a text wrapped greedily into lines that fit, added to lines
+// (a text without words adds one empty line); false when a word is too wide.
+bool wrap_words(const engine::FontImage& font, std::u16string_view text, float squeeze, float max_width, std::vector<std::u16string>& lines) {
     std::vector<std::u16string> words;
     std::u16string word;
     for (const char16_t c : text) {
@@ -354,8 +371,19 @@ std::u16string rewrap(const engine::FontImage& font, std::u16string_view text, f
         }
     }
     if (!word.empty()) words.push_back(std::move(word));
-    if (words.empty()) return {};
-    std::vector<std::u16string> lines;
+    // (A number or an icon and the word after it are one unit.)
+    for (std::size_t i = 0; i + 1 < words.size();) {
+        if (binds_to_next(words[i])) {
+            words[i] += u" " + words[i + 1];
+            words.erase(words.begin() + std::ptrdiff_t(i) + 1);
+        } else {
+            ++i;
+        }
+    }
+    if (words.empty()) {
+        lines.emplace_back();
+        return true;
+    }
     std::u16string current;
     for (const auto& next : words) {
         const std::u16string candidate = current.empty() ? next : current + u" " + next;
@@ -364,17 +392,40 @@ std::u16string rewrap(const engine::FontImage& font, std::u16string_view text, f
             current = candidate;
             continue;
         }
-        if (current.empty()) return {}; // one word wider than the box
+        if (current.empty()) return false; // one word wider than the box
         lines.push_back(std::move(current));
         current = next;
         const auto alone = measure(font, current, squeeze);
-        if (alone.empty() || alone[0] > max_width + 1e-4f) return {};
+        if (alone.empty() || alone[0] > max_width + 1e-4f) return false;
     }
     lines.push_back(std::move(current));
-    if (max_lines > 0 && int(lines.size()) > max_lines) return {};
-    std::u16string joined;
-    for (std::size_t i = 0; i < lines.size(); ++i) joined += (i ? u"\r\n" : u"") + lines[i];
-    return joined;
+    return true;
+}
+
+// The text wrapped greedily into lines that fit: its own line breaks kept
+// (structure such as a heading line or options, each line wrapped on its
+// own), else the whole text as one paragraph (its breaks become spaces);
+// empty when a word is too wide or the lines are too many either way.
+std::u16string rewrap(const engine::FontImage& font, std::u16string_view text, float squeeze, float max_width, int max_lines) {
+    auto joined = [](const std::vector<std::u16string>& lines) {
+        std::u16string text;
+        for (std::size_t i = 0; i < lines.size(); ++i) text += (i ? u"\r\n" : u"") + lines[i];
+        return text;
+    };
+    auto fits = [&](const std::vector<std::u16string>& lines) { return max_lines <= 0 || int(lines.size()) <= max_lines; };
+    std::vector<std::u16string> lines;
+    bool wrapped = true;
+    for (std::size_t start = 0; wrapped;) {
+        const auto end = text.find_first_of(u"\r\n", start);
+        wrapped = wrap_words(font, text.substr(start, end == std::u16string_view::npos ? end : end - start), squeeze, max_width, lines);
+        if (end == std::u16string_view::npos) break;
+        start = end + (text.substr(end).starts_with(u"\r\n") ? 2 : 1);
+    }
+    if (wrapped && fits(lines)) return joined(lines);
+    lines.clear();
+    if (text.find_first_not_of(u" \r\n") == std::u16string_view::npos || !wrap_words(font, text, squeeze, max_width, lines) || !fits(lines))
+        return {};
+    return joined(lines);
 }
 
 } // namespace
@@ -431,30 +482,43 @@ LintReport lint(const SourceTable& source, std::string_view catalog_tsv, const F
             }
         bool squeeze_needed = false;
         if (box && problems.empty()) {
+            // The budget: the widest English line in the box, or the box's
+            // field where that is wider (a short English word in a wide
+            // label, e.g. the status window's "Spirit" in its 0.84 field).
+            const float budget = std::max(box->max_width, box->field_width);
+            // The lines: the box's, but a memory card text keeps its English
+            // line count (its box's next line is often the other half of the
+            // sentence, CHRSELFONT06 font000 / font001, or the options).
+            int max_lines = box->max_lines;
+            if (box->text_class == "memcard") {
+                const int english_lines = std::max(1, int(measure(*font, entry.english).size()));
+                max_lines = max_lines > 0 ? std::min(max_lines, english_lines) : english_lines;
+            }
             const auto widths = measure(*font, entry.text, entry.squeeze);
             const float widest = widths.empty() ? 0.0f : *std::max_element(widths.begin(), widths.end());
-            row.widest = box->max_width > 0 ? widest / box->max_width : 0;
-            const bool too_many = box->max_lines > 0 && int(widths.size()) > box->max_lines;
+            row.widest = budget > 0 ? widest / budget : 0;
+            const bool too_many = max_lines > 0 && int(widths.size()) > max_lines;
             if (too_many)
-                problems.push_back(std::to_string(widths.size()) + " lines, the box shows " + std::to_string(box->max_lines));
-            if (box->max_width > 0 && widest > box->max_width + 1e-4f) {
+                problems.push_back(std::to_string(widths.size()) + " lines, the box shows " + std::to_string(max_lines) +
+                                   (max_lines < box->max_lines ? " (a memory card text keeps the English lines)" : ""));
+            if (budget > 0 && widest > budget + 1e-4f) {
                 const auto plain = measure(*font, entry.text);
                 const float plain_widest = plain.empty() ? 0.0f : *std::max_element(plain.begin(), plain.end());
-                const float needed = box->max_width / plain_widest;
+                const float needed = budget / plain_widest;
                 char text[160];
                 if (needed >= i18n::kMinSqueeze) {
                     const float squeeze = std::floor(needed * 100.0f) / 100.0f;
                     std::snprintf(text, sizeof text, "%.0f %% of the box: fits with squeeze=%.2f (the last resort; shorter is better)",
-                                  double(plain_widest / box->max_width * 100.0f), double(squeeze));
+                                  double(plain_widest / budget * 100.0f), double(squeeze));
                     squeeze_needed = true;
                 } else {
                     std::snprintf(text, sizeof text, "%.0f %% of the box: shorten it (a squeeze reaches 111 %% at most)",
-                                  double(plain_widest / box->max_width * 100.0f));
+                                  double(plain_widest / budget * 100.0f));
                 }
                 problems.push_back(text);
             }
-            if ((too_many || (box->max_width > 0 && widest > box->max_width + 1e-4f)) && box->max_width > 0) {
-                const auto wrapped = rewrap(*font, entry.text, entry.squeeze, box->max_width, box->max_lines);
+            if ((too_many || (budget > 0 && widest > budget + 1e-4f)) && budget > 0) {
+                const auto wrapped = rewrap(*font, entry.text, entry.squeeze, budget, max_lines);
                 if (!wrapped.empty()) row.suggestion = i18n::encode_tokens(wrapped);
             }
             // Worth a look (shown as it is).
@@ -491,6 +555,29 @@ LintReport lint(const SourceTable& source, std::string_view catalog_tsv, const F
     report.translated = covered.size();
     std::sort(report.rows.begin(), report.rows.end(), [](const LintRow& a, const LintRow& b) { return a.line < b.line; });
     return report;
+}
+
+std::string apply_wraps(std::string_view catalog_tsv, const LintReport& report, std::size_t* applied) {
+    std::map<std::size_t, const LintRow*> wraps;
+    for (const auto& row : report.rows)
+        if (!row.suggestion.empty() && row.line > 0) wraps[row.line] = &row;
+    std::size_t count = 0;
+    std::string out;
+    const auto lines = lines_of(catalog_tsv);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const auto found = wraps.find(i + 1);
+        auto columns = split(lines[i], '\t');
+        if (found == wraps.end() || columns.size() < 3 || columns[2] != found->second->text) {
+            out += lines[i] + "\n";
+            continue;
+        }
+        columns[2] = found->second->suggestion;
+        for (std::size_t c = 0; c < columns.size(); ++c) out += (c ? "\t" : "") + std::string(columns[c]);
+        out += "\n";
+        ++count;
+    }
+    if (applied) *applied = count;
+    return out;
 }
 
 std::string format_report(const LintReport& report, bool all_rows) {

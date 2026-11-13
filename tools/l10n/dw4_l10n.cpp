@@ -13,6 +13,15 @@
 //       against its box, the line count, whether a squeeze is needed. Prints
 //       the rows that are not ok (--all: every row) and a summary; exit code
 //       1 when a row has an error or needs a squeeze flag it lacks.
+//   dw4_l10n wrap --source FILE --catalog FILE --data GAME --out FILE
+//       The catalog with the lint's suggested wraps put in: every translation
+//       too wide or too long for its box that a greedy wrap makes fit (its own
+//       {BR}s kept where possible). Translators write running text and let
+//       this break it; the lint afterwards shows what is left.
+//   dw4_l10n measure --data GAME --file FILE [--font NORMAL|MINIMUM]
+//       The width of each line of every text in FILE (one text in the token
+//       form per line), laid out as the engine lays a translation out: for
+//       trying wordings against a box's budget (the export's max_width).
 //   dw4_l10n revision --source FILE
 //       The English corpus revision the source names (language.ini revision=).
 #include "l10n.hpp"
@@ -31,6 +40,8 @@ namespace {
 int usage() {
     std::cerr << "usage: dw4_l10n export --research DIR --data GAME --out FILE\n"
                  "       dw4_l10n lint --source FILE --catalog FILE --data GAME [--all] [--report FILE]\n"
+                 "       dw4_l10n wrap --source FILE --catalog FILE --data GAME --out FILE\n"
+                 "       dw4_l10n measure --data GAME --file FILE [--font NORMAL|MINIMUM]\n"
                  "       dw4_l10n revision --source FILE\n";
     return 2;
 }
@@ -120,24 +131,34 @@ int main(int argc, char** argv) {
                   << dw4::l10n::corpus_revision(corpus) << " -> " << option("out") << '\n';
         return 0;
     }
-    if (command == "lint") {
+    if (command == "lint" || command == "wrap") {
         if (option("source").empty() || option("catalog").empty() || option("data").empty()) return usage();
+        if (command == "wrap" && option("out").empty()) return usage();
         std::string source_text, catalog_text;
         if (!read_file(std::filesystem::u8path(option("source")), source_text)) {
-            std::cerr << "lint: " << option("source") << " cannot be read\n";
+            std::cerr << command << ": " << option("source") << " cannot be read\n";
             return 1;
         }
         if (!read_file(std::filesystem::u8path(option("catalog")), catalog_text)) {
-            std::cerr << "lint: " << option("catalog") << " cannot be read\n";
+            std::cerr << command << ": " << option("catalog") << " cannot be read\n";
             return 1;
         }
         GameFonts fonts;
         if (!load_fonts(std::filesystem::u8path(option("data")), fonts)) return 1;
         std::vector<std::string> problems;
         const auto source = dw4::l10n::read_source_tsv(source_text, problems);
-        for (const auto& problem : problems) std::cerr << "lint: " << problem << '\n';
+        for (const auto& problem : problems) std::cerr << command << ": " << problem << '\n';
         if (source.rows.empty()) return 1;
         const auto report = dw4::l10n::lint(source, catalog_text, fonts.fonts());
+        if (command == "wrap") {
+            std::size_t applied = 0;
+            if (!write_file(std::filesystem::u8path(option("out")), dw4::l10n::apply_wraps(catalog_text, report, &applied))) {
+                std::cerr << "wrap: " << option("out") << " cannot be written\n";
+                return 1;
+            }
+            std::cout << "wrap: " << applied << " translations wrapped -> " << option("out") << '\n';
+            return 0;
+        }
         const auto text = dw4::l10n::format_report(report, all);
         if (!option("report").empty()) {
             if (!write_file(std::filesystem::u8path(option("report")), text)) {
@@ -151,6 +172,37 @@ int main(int argc, char** argv) {
             std::cout << text;
         }
         return report.failed() ? 1 : 0;
+    }
+    if (command == "measure") {
+        std::string list;
+        if (option("data").empty() || option("file").empty()) return usage();
+        if (!read_file(std::filesystem::u8path(option("file")), list)) {
+            std::cerr << "measure: " << option("file") << " cannot be read\n";
+            return 1;
+        }
+        GameFonts fonts;
+        if (!load_fonts(std::filesystem::u8path(option("data")), fonts)) return 1;
+        const auto* font = fonts.fonts().of(option("font") == "MINIMUM" ? "MINIMUM" : "NORMAL");
+        std::istringstream lines(list);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            std::string error;
+            const auto text = dw4::i18n::decode_tokens(line, &error);
+            if (!text) {
+                std::cout << "?\t" << line << "\t" << error << '\n';
+                continue;
+            }
+            std::string widths;
+            char number[16];
+            for (const float width : dw4::l10n::measure(*font, *text)) {
+                std::snprintf(number, sizeof number, "%.3f", double(width));
+                widths += (widths.empty() ? "" : " ") + std::string(number);
+            }
+            std::cout << widths << '\t' << line << '\n';
+        }
+        return 0;
     }
     if (command == "revision") {
         std::string source_text;
