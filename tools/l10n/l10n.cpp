@@ -151,16 +151,21 @@ std::u16string ink_text(std::u16string_view text, int align) {
 }
 
 // A field whose data width reaches under its frame's decoration is no
-// budget: there only the English text's own width is usable. The enemy info
-// card's description (DMINFOFONT02 font02) has a 2.56 field whose right part
-// lies under the card's yellow bars; the widest English line (2.18) stays
-// clear of them, German lines up to the field ran into them (in-game review).
-bool framed_field(std::string_view key) { return key == "DMINFOFONT02/font02"; }
+// budget; its usable width is the frame's opening. The enemy info card's
+// description (DMINFOFONT02 font02, centred, MINIMUM) has a 2.56 field whose
+// right part lies under the card's yellow bars: German lines up to the field
+// ran into them in the in-game review. The opening left of the bars is 460
+// pixels at 1080 lines, 2.0 in the font's units (the English lines stay at
+// 1.92 there, but one: 2.23, which touches the bars too).
+float framed_width(std::string_view key) { return key == "DMINFOFONT02/font02" ? 2.0f : 0.0f; }
+bool framed_field(std::string_view key) { return framed_width(key) > 0; }
 
-bool in_framed_field(std::string_view boxes) {
+// The usable width of a framed box among a text's boxes (0: none).
+float framed_width_of(std::string_view boxes) {
+    float width = 0;
     for (const auto box : split(boxes, ';'))
-        if (framed_field(box)) return true;
-    return false;
+        if (const float framed = framed_width(box); framed > 0) width = width > 0 ? std::min(width, framed) : framed;
+    return width;
 }
 
 WrapMode wrap_mode(std::string_view text_class, std::string_view boxes) {
@@ -343,9 +348,9 @@ std::string write_source_tsv(const Corpus& corpus, const Fonts& fonts) {
             if (found == corpus.boxes.end()) continue;
             const Box& box = found->second;
             // (The box's budget: its widest English line or its field, unless
-            // the field runs under a frame, framed_field.)
-            const float field = framed_field(box.key) ? 0.0f : box.field_width;
-            const float normalized = std::max(box.max_width, field) / std::max(fonts.scale(box.style), 0.01f);
+            // the field runs under a frame: the frame's opening, framed_width.)
+            const float framed = framed_width(box.key);
+            const float normalized = (framed > 0 ? framed : std::max(box.max_width, box.field_width)) / std::max(fonts.scale(box.style), 0.01f);
             if (!strictest || normalized < best) strictest = &box, best = normalized;
             lines = lines ? std::min(lines, box.max_lines) : box.max_lines;
             if (!boxes.empty()) boxes += ";";
@@ -586,9 +591,11 @@ LintReport lint(const SourceTable& source, std::string_view catalog_tsv, const F
             // The budget: the widest English line in the box, or the box's
             // field where that is wider (a short English word in a wide
             // label, e.g. the status window's "Spirit" in its 0.84 field);
-            // not a field that runs under a frame (framed_field: a source
-            // exported before that rule still names its field).
-            const float budget = in_framed_field(box->boxes) ? box->max_width : std::max(box->max_width, box->field_width);
+            // in a field that runs under a frame, the frame's opening
+            // (framed_width; a source exported before that rule still names
+            // the field).
+            const float framed = framed_width_of(box->boxes);
+            const float budget = framed > 0 ? framed : std::max(box->max_width, box->field_width);
             // The lines: the box's, but a memory card text keeps its English
             // line count (its box's next line is often the other half of the
             // sentence, CHRSELFONT06 font000 / font001, or the options).
