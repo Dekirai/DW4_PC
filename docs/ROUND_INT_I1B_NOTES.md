@@ -61,11 +61,51 @@ first uploader's connection.
 
 ## Tests and checks
 
-(Filled in below as the runs finish.)
+On the final code (833c10bd) unless named:
+
+- **ctest** (Release, DEV=OFF, tests): 66/66 (`build/int/ctest_c4.log`). Before the last commit `scene` failed once: its
+  "older version is refused" took the version minus one, which 44 now reads (833c10bd: two versions back, and bytes left
+  over after a snapshot are refused).
+- **Server**: unit 551/551 (`build/int/unit_c3.log`), integration 150 passed / 3 skipped (the opt-in end-to-end ones;
+  mysqld 3681, `build/int/it_c3.log`). The protocol rise needed the relay handshake tests and the Python harness at 50.
+- **det.sh** (DEV=OFF copies in `build/int/off/`): `dw4_int_off_c1.exe` (the snapshot field, before its commit),
+  `_c3.exe` (6aded751) and `_c4.exe` (833c10bd), each run twice (c3 and c4 twice each): every run 4004f056 / audio
+  396cb219 (`build/int/det_c1.log`, `det_c3.log`, `det_c4.log`; `work/dref/checks/det/det_int_i1b_*`).
+- **r25c** (`_c4.exe`, 4 at a time): 10 of 10 segments reached their checkpoint, 1,748,011 frames
+  (`work/campaign/runs/seg/seg_r25c_int_i1b_833c10bd`, `build/int/r25c_c4.log`).
+- **Save state suite** (`_c4.exe`, a private copy of `work/dref/checks/st` in `build/int/st`): 17 of 17 identical after
+  loading with a loaded state (`build/int/st_c4.log`).
+- **Scenarios** (real hidden clients, `build/int/scen.sh`, run.py `--parallel 1 --keep`):
+  - r1 (`build/int/scen_r1.log`; client c1 = the client code of 64f6676b, server of 51fd2d93): **S22b PASS** (366 s:
+    no `statehash_mismatch` after b's classic join any more, fix-019's open criterion), **W11r PASS** (407 s, first
+    run), **W4c PASS**; W1 and W10 stopped at once: the harness uploaded their cards with protocol 49 (426
+    `client_outdated`), fixed in c63347a7.
+  - r2 (`build/int/scen_r2.log`; client c2 = the client code of 6aded751, server of c63347a7): **W1** (230 s), **W10**
+    (483 s, with the new prompt check), **W10d**, **W2b** (180 s), **W31**, **W7e**: 6 of 6 passed. In this W7e run a's
+    link was cut before its BARRIER reached the relay (b's NEW alone, b uploaded itself), so it did not take the path of
+    the fix; the unit tests do.
+  - r3 (`build/int/scen_r3.log`, W7e again, client c2): W7e twice more on the final relay (r3 `build/int/scen_r3.log`, r4 `scen_r4.log`): both runs hit the race of r11 / r13 (the sealed NEW of a and b at stag0102, a's link cut 8-31 ms after it) and **SNAPSHOT_ASK did its part on real clients**: 2.0 s after a's drop the relay asked b (`snapshot_ask ... instead_of=1`) and b's 24,001 bytes completed the snapshot. Both runs still **failed**, for a second reason: r3 because b's script took a's never-loaded slot in its engine for a's return (`present=2` held at once) and b left; b.script now waits until @300 first (this commit). r4 then showed the rest: a's client resumed into visit 3 "playing apart" (`mode lost -> solo inst=3 visit=3`), sent its old barrier (visit 2's NEXTSTAGE, tick 7243) as a barrier of visit 3; the relay split it off (`barrier_split`), decided a's JOIN into b's visit 3 at once and sent its state (127 KB, checkpoint 1180), but a's client never answered with READY (`join_ready_timeout` 60 s later, then `fallback_new`: an instance of its own, "Joining ... failed"). That is the resume of a member whose link was cut right after its BARRIER_OK, a client / relay matter beyond the snapshot: open (Left).
+  - The c2 client lacks only 833c10bd's check for bytes left over after a snapshot (it refuses malformed bytes; valid
+    ones decode alike).
 
 ## Left
 
-(Filled in at the end.)
+- Not pushed and not merged into main (as asked).
+- Scenarios not run on the integrated build: the rest of the round's set (W2, W10b, W10c, W11, W11b, W30b, W30c, W31b-W31i,
+  W31c2, W31d2, W31h2) and round I1a's set again with `DW4_ONLINE_AUTOCHOICE=first` (A1, S14p, S14z, W1x, W3-W9, W12, W18,
+  W19, W22, W24-W30, W30x, W32), the UI set, `--fake`, RGJ1, S22a, W10s. The lanes ran them on their branches (the prompt
+  lane the whole I1a set with the prompt); here the merged build ran S22b, W1, W2b, W4c, W7e, W10, W10d, W11r, W31.
+- The release: the DW4Online 0.2.0 zip and the client release; the user's steps (DEPLOY.md 9.3: a backup, the settings
+  `Play:MinimumProtocol` / `CurrentProtocol` 50, the server, then the client). The game's version stays the CMake
+  project's 0.46.0 (the repo raises it with engine milestones, not with protocol rises; the server gates the protocol).
+- From fix-019: the load gate on a quiet machine (no workflow beside it).
+- **W7e's race path, second part** (runs r3 / r4): the snapshot is there now (SNAPSHOT_ASK), but a member whose link was
+  cut right after its BARRIER_OK resumes into the new visit "playing apart", sends its old barrier as one of the new visit,
+  and never answers the JOIN the relay then decides with READY (`join_ready_timeout`, its own instance). Either the relay
+  answers such a resumed barrier (a visit the member never loaded) with a fresh decision of the member alone, or the
+  client sends READY for the JOIN's state while parked there. W7e passes when the cut comes before the BARRIER (r2).
+- From the go lane: a UI scenario of the *Go along* box (the scenarios drive it through the online script).
+- The prompt's ImGui hint lines with the button pictures have no automatic test (the session's loading-screen line has).
 
 ## How to run
 

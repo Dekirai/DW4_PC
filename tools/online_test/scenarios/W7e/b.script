@@ -6,5 +6,9 @@ log b joined a
 route {route:stag0101_west}
 mat matz02 yes 2 until stage=stag0102,control
 log b in stag0102
+# (Round I1b's integration, run r3: when a's BARRIER reached the relay before the cut, the barrier was a sealed NEW of
+# both and b's engine has a's slot from the load on, so present=2 held at once and b left before a came back. b stays
+# until a's empty slot is gone (the relay's snapshot hash wait, 60 s) and a is back.)
+wander 330 140 15 until epoch>=@300 fail stage=stagml11
 wander 330 140 15 until present=2,sealed>=900 fail stage=stagml11
 log a is back with b

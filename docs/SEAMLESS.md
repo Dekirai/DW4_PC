@@ -12968,7 +12968,13 @@ scenarios drive the box's actions through the online script.
   in the lowest slot (SNAPSHOT_ASK 0x9C, protocol 50: inst | visit) once the
   visit is 2 s old and the uploader left the visit or its connection; that
   member uploads its own load snapshot of the visit and is the uploader;
-  chunks of anybody else are dropped (no longer a protocol error).
+  chunks of anybody else are dropped (no longer a protocol error). Two
+  real runs that hit the race showed it working (b asked 2 s after a's
+  drop); they failed for a second reason, still open: a, whose link was cut
+  right after its BARRIER_OK, resumes into the new visit "playing apart",
+  sends its old barrier as one of it, and never answers the JOIN the relay
+  then decides with READY (its own instance after 60 s). W7e passes when
+  the cut comes before the BARRIER.
 - **Scenarios:** W10 checks the prompt after the removal; W11r (new) takes
   the lobby's return mat through the gate form with real clients. On the
   merged build S22b (no `statehash_mismatch` any more), W1, W2b, W4c, W7e,
