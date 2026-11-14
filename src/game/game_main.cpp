@@ -1521,11 +1521,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // The Graphics options (settings.ini [graphics]); test runs read no
         // settings.ini: the defaults with DW4_TEXTURE_QUALITY,
         // DW4_TEXTURE_FILTER, DW4_LOD_BIAS, DW4_SHARPEN, DW4_SHADOW_QUALITY
-        // and DW4_TEXTURE_MEMORY (graphics_options.hpp).
-        if (renderer)
-            renderer->set_graphics(options.smoke_frames
-                                       ? dw4::game::graphics_from_env({}, [](const char* name) -> const char* { return std::getenv(name); })
-                                       : settings.graphics);
+        // and DW4_TEXTURE_MEMORY (graphics_options.hpp). (A test run's F1
+        // menu shows those; test runs never save settings.ini.)
+        if (options.smoke_frames)
+            settings.graphics = dw4::game::graphics_from_env({}, [](const char* name) -> const char* { return std::getenv(name); });
+        if (renderer) renderer->set_graphics(settings.graphics);
         // The window, the renderer, the sound output, the controllers, the
         // F1 menu and the pictures as the host's shared parts see them
         // (host_view.hpp: the story and a Data Overflow run use the same).
