@@ -484,6 +484,8 @@ public sealed partial class RoomHub
         w.EndedAt = now;
         w.HostAwaySince = 0;
         w.GraceUntil = 0;
+        w.LastBackAt = 0;
+        w.LastGraceUntil = 0;
         if (w.Keeper.Held) w.Keeper.Release(merge: false);
         Count("instances_ended");
         Note("instance_end", null, ("wid", w.Wid), ("reason", EndReasons.Text(reason)));
@@ -633,36 +635,59 @@ public sealed partial class RoomHub
 
     // The host's grace (19.6.7) ---------------------------------------------------------------------------------------------
 
-    /// <summary>The host's connection closed or fell silent: his slot fills with neutral pads, guests see the countdown, their story
-    /// values are held, joins wait; he stays host and keeps his seat until the grace's end.</summary>
+    /// <summary>The host's slot stream in his stage group (null: none, e.g. a solo-led group or between stage groups).</summary>
+    private static SlotStream? HostStream(WorldInstance w) =>
+        w.Host.Instance is { } g && w.Host.Slot >= 0 && w.Host.Slot < g.Streams.Length ? g.Streams[w.Host.Slot] : null;
+
+    /// <summary>
+    /// The host's connection closed or fell silent: his slot fills with neutral pads, guests see the countdown, their story values are
+    /// held, joins wait; he stays host and keeps his seat until the grace's end. A drop less than Relay:LagLeaveSeconds after his last
+    /// return (a link that keeps dropping, "flapping") belongs to the same absence episode: the grace keeps that episode's deadline,
+    /// whose countdown ran on while he was briefly back, instead of a fresh World:HostGraceSeconds (a deadline already past ends the
+    /// instance at the next housekeeping). Before, every drop started a fresh grace and a host whose link kept dropping held his
+    /// guests' stage group for good: the real client's pads of the last ticks before each return come in time (they are made on the
+    /// wall clock), so no rule on his fill streak alone catches it (scenario W7g).
+    /// </summary>
     private void StartGrace(WorldInstance w, long now, string why)
     {
         if (w.Ending || w.HostAway) return;
+        var st = HostStream(w);
+        var fresh = now + FromMs(_world.HostGraceSeconds * 1000.0);
+        var continued = w.LastBackAt != 0 && Ms(now - w.LastBackAt) < _relay.LagLeaveSeconds * 1000.0;
         w.HostAwaySince = now;
-        w.GraceUntil = now + FromMs(_world.HostGraceSeconds * 1000.0);
+        w.GraceUntil = continued ? Math.Min(fresh, w.LastGraceUntil) : fresh;
+        w.LastBackAt = 0;
+        w.LastGraceUntil = 0;
         w.LastAwayNotice = now;
         w.Keeper.Hold();
-        if (w.Host.Instance is { } g && w.Host.Slot >= 0 && g.Streams[w.Host.Slot] is { } st) st.NeutralFill = true;
+        if (st is not null) st.NeutralFill = true;
         Count("host_grace");
-        Note("host_away", null, ("wid", w.Wid), ("why", why));
+        if (continued) Count("host_grace_continued");
+        var seconds = (uint)Math.Ceiling(Math.Max(0, Ms(w.GraceUntil - now)) / 1000.0);
+        Note("host_away", null, ("wid", w.Wid), ("why", why), ("grace_s", seconds), ("continued", continued));
         foreach (var x in w.Members)
-            if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostAway, w.Host, (uint)_world.HostGraceSeconds, ""));
+            if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostAway, w.Host, seconds, ""));
         MarkInfoDirty(w);
     }
 
-    /// <summary>The host is back within his grace (RESUME, a reconnect, INPUT after silence): play on, the held values merge. The lag
-    /// rule gives his slot Relay:LagLeaveSeconds from now (his client catches up to the ticks sealed meanwhile), not from the grace's
-    /// start.</summary>
+    /// <summary>The host is back within his grace (RESUME, a reconnect, INPUT after silence): play on, the held values merge. His
+    /// first return in a fill streak gives his slot Relay:LagLeaveSeconds from now for the lag rule (his client catches up to the
+    /// ticks sealed meanwhile), not from the grace's start; a further return in the same streak continues that clock where this
+    /// absence stopped it (<see cref="SlotStream.HostReturned"/>). The grace's deadline stays the episode's for a drop within
+    /// Relay:LagLeaveSeconds (<see cref="StartGrace"/>). Past the deadline he is not back in time: the next housekeeping ends the
+    /// instance (before, a return in the quarter second until that pass counted).</summary>
     private void HostBack(WorldInstance w, long now)
     {
-        if (!w.HostAway) return;
-        w.HostAwaySince = 0;
-        w.GraceUntil = 0;
-        if (w.Host.Instance is { } g && w.Host.Slot >= 0 && g.Streams[w.Host.Slot] is { } st)
+        if (!w.HostAway || now >= w.GraceUntil) return;
+        if (HostStream(w) is { } st)
         {
             st.NeutralFill = false;
-            st.RestartFillStreakClock(now);
+            st.HostReturned(now, w.HostAwaySince);
         }
+        w.LastBackAt = now;
+        w.LastGraceUntil = w.GraceUntil;
+        w.HostAwaySince = 0;
+        w.GraceUntil = 0;
         Note("host_back", null, ("wid", w.Wid));
         foreach (var x in w.Members)
             if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostBack, w.Host, 0, ""));

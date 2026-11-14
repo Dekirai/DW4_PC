@@ -1,0 +1,12 @@
+# W7g (fix-flap, 19.6.7): a's link keeps dropping (half-open cuts of 7 s, 0.2 s apart, from @200): every drop within
+# Relay:LagLeaveSeconds of a return keeps the first grace's deadline (one absence episode), so the instance ends (host_lost) about 60 s
+# after the first grace; before, every drop started a fresh 60 s grace and a stayed in b's stage group for good
+relay: host_away .*why=silence.*continued=False
+relay: host_back
+relay: host_away .*continued=True
+relay: instance_end .*reason=host_lost
+b: online-script: step .* log: b home after the episode
+a: online-script: step .* log: a home after the episode
+shared: a b >= 600
+!a: online-script: FAIL
+!b: online-script: FAIL

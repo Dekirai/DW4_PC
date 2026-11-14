@@ -15,7 +15,7 @@ public sealed record Impairment(double OneWayMs, double JitterMs, double Loss)
 }
 
 /// <summary>
-/// A scheduled cut of the link (the world's host grace scenarios, SEAMLESS.md 19.24 W7-W7e): from <paramref name="StartUnixSeconds"/>
+/// A scheduled cut of the link (the world's host grace scenarios, SEAMLESS.md 19.24 W7-W7g): from <paramref name="StartUnixSeconds"/>
 /// for <paramref name="Seconds"/>. <paramref name="Half"/> false: every open connection is closed at the start and new ones
 /// are closed at once until the end (the client sees a broken connection and cannot reconnect); true: a half-open cut,
 /// nothing is closed (no FIN, no RST) and nothing is delivered in either direction until the end, then everything held
@@ -30,6 +30,10 @@ public sealed record LinkCut(double StartUnixSeconds, double Seconds, bool Half)
         return new LinkCut(double.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture),
             double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture), parts.Length > 2 && parts[2] == "half");
     }
+
+    /// <summary>Several cuts, ';'-separated (a link that keeps dropping, scenario W7g); empty: none.</summary>
+    public static IReadOnlyList<LinkCut> ParseAll(string text) =>
+        [.. text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Parse)];
 
     public double EndUnixSeconds => StartUnixSeconds + Seconds;
 }

@@ -13,7 +13,8 @@ using DW4Online.Relay.Protocol;
 //           [--protocol 43] [--data-hash 1] [--settings-hash HEX] [--name NAME] [--quest N] [--context HEX] [--seed N] [--script FILE]
 //           [--duration SECONDS] [--replay-rate N] [--entry-ticks 120] [--depart-ticks 120] [--log FILE] [--stats FILE]
 //   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P] [--up MS,JITTER,LOSS] [--down MS,JITTER,LOSS]
-//           [--cut EPOCH,SECONDS[,half|close]] (a scheduled cut of the link, the world's host grace scenarios)
+//           [--cut EPOCH,SECONDS[,half|close][;EPOCH,SECONDS[,half|close]...]] (scheduled cuts of the link, the world's host grace
+//           scenarios; several, ';'-separated: a link that keeps dropping, W7g)
 //           (--up / --down: an asymmetric link, client to server / server to client; each overrides the symmetric values)
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
 //   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm,joins,prompt] [--out FILE.json]
@@ -124,7 +125,7 @@ switch (args.FirstOrDefault())
         await using var proxy = new ImpairmentProxy(new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--listen"), CultureInfo.InvariantCulture)),
             new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--target"), CultureInfo.InvariantCulture)), up, down, Environment.ProcessId)
         {
-            Cuts = Opt("--cut").Length > 0 ? [LinkCut.Parse(Opt("--cut"))] : [],
+            Cuts = LinkCut.ParseAll(Opt("--cut")),
         };
         Console.WriteLine($"proxy {proxy.Port} -> {Opt("--target")} (up {up}, down {down})");
         try

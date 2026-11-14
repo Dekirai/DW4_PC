@@ -1,0 +1,42 @@
+{
+  "desc": "a flapping host link (fix-flap, 19.6.7): from @200 the proxy holds a's packets for 7 s at a time, 0.2 s apart (ten half-open cuts, the last ending before the END's HOME barrier: a later one held a's barrier report past Instances:BarrierReportSeconds and split it). Each cut's 4 s of silence start a grace, each window a return; a's pads of the last ticks before each window come in time, so its fill streak ends every time and only the absence episode bounds it: every drop within Relay:LagLeaveSeconds of a return keeps the first grace's deadline, and the instance ends (host_lost) about 60 s after the first grace instead of never; b goes home",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "allow_close": true,
+  "db_checks": [
+    {
+      "name": "end reason",
+      "sql": "SELECT end_reason FROM instance_history",
+      "expect": "^host_lost$"
+    }
+  ],
+  "own_story": [
+    "b"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0,
+      "cut": {
+        "at": 200,
+        "seconds": 7,
+        "mode": "half",
+        "every": 7.2,
+        "count": 10
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

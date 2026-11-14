@@ -248,6 +248,53 @@ Checks (code of 5a7fd4d8; the first scenario batch ran on ebbe48bf with these ch
 - Not run again: r25c (the change is host-side, in a test-only path; det.sh and the save state suite cover the engine)
   and the l10n lint (neither the export nor game.tsv changed).
 
+## The flapping host (branch `fix-flap`, 2026-11-14)
+
+2b009cee's author flagged it: every return restarted the host slot's lag clock and every drop started a fresh 60 s grace
+(4 s of silence start one, before 10 s of lag count), so a host whose link kept dropping briefly stayed in his guests'
+stage group for good. Relay only; protocol 50, schema 14, no setting of its own (SEAMLESS 19.6.7, "A link that keeps
+dropping").
+
+- **The rule.** (1) *One grace per absence episode* (`WorldHub.StartGrace`): a drop less than `Relay:LagLeaveSeconds`
+  after the host's last return keeps the deadline of the episode's first grace (its countdown runs on through his brief
+  returns; `WorldInstance.LastBackAt` / `LastGraceUntil`, counter `host_grace_continued`, the guests' notice shows the
+  seconds left); a return past the deadline is not in time (`HostBack`). (2) *One restart of the lag clock per fill
+  streak* (`SlotStream.HostReturned`, replacing 2b009cee's `RestartFillStreakClock`): the first return of a streak
+  restarts it, a later one only skips its absence, so `lagOut` counts his connected time since that return.
+- **The bound.** From his slot's first fill he is out of the guests' stage group (`lag_leave`) or his instance has
+  ended (`host_lost`) within `Relay:LagLeaveSeconds` + `World:HostGraceSeconds` + `Relay:LagLeaveSeconds` = 80 s (plus
+  the housekeeping's quarter seconds): a single absence's worst case. A host back once after up to the whole grace
+  plays on as with 2b009cee; back for `LagLeaveSeconds` (with his pads in time) a later drop is a new loss. A flapping
+  guest was bounded already (his clock never restarts: `lag_leave` `LagLeaveSeconds` after his streak's first fill).
+- **Why two rules.** The first design had only a fill-streak rule (grace and lag clock once per streak). W7g's first run
+  (`build/flap/scen_w7g_1.log`, `.work/run_20261114_175919`) showed the real client defeating it: its pads are made on
+  the wall clock, so after each half-open cut the pads of its last ticks arrive in time and end the streak; every grace
+  was fresh (`continued=false` at all eight cuts), the host stayed in for good. The episode rule does not look at the pads.
+- **Tests.** `WorldFlapTests.cs` (8): the closing flapper (`lag_leave` 16 s after his first return, the countdown 60, 55,
+  50, 45), the silent flapper (16 s), a drop soon after a return keeps the deadline (7 s, `host_lost`; a return 50 ms past
+  it does not save it), the bound over nine patterns (three with in-time bursts as the real client sends them), the
+  flapper with pads in time between drops (`host_lost` 60 s after the first drop; back 11 s between drops: fresh graces,
+  plays on), the slot clock, and as guards the single long return with a later fresh grace and the flapping guest.
+  Counter-proof with 2b009cee's semantics (`unit_flap4_nofix.log`): 6 of 8 fail (all nine bound patterns stay in for
+  300 s), the two guards and 2b009cee's test pass; without the episode rule (`unit_flap4_noepisode.log`) the three burst
+  patterns stay in for good and one exceeds the bound (89.8 s); keeping the streak credit past a pad in time fails the
+  long-return guard and the slot clock test (`unit_flap5_overfix.log`). Unit 569/569 (`unit_flap_final.log`),
+  integration 153 passed / 3 skipped (`it_flap_final.log`, an own mysqld on 3731, shut down by SQL).
+- **Scenarios** (real hidden clients, run.py `--parallel 1`, mysqld 3732, ports 60300-60399; the client a read-only copy
+  of int-i1b's DEV=ON `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65; logs in `build/flap/`): W7g, W7, W7c, W7d, W7f
+  passed (`scen_flap_batch1.log`, `.work/run_20261114_182900`), W1 passed (`scen_flap_w1.log`; the batch's W1 had failed
+  at its start: `python -I` leaves the script's folder off `sys.path`, `build/flap/runpy_online.py` puts it back). W7g:
+  the first grace (silence, 60 s) at 205.04 s of the relay's clock, eight continued ones (53, 46, 39, 32, 25, 17, 10, 3 s
+  on b's notices), `host_lost` at 265.28 s, 60.25 s after the first grace and about 65 s after the first cut; both went
+  home. Its run with twelve cuts (`scen_w7g_2.log`) had the same relay events and failed only on a `barrier_split` at the
+  END's HOME barrier (the eleventh cut held a's report past `Instances:BarrierReportSeconds`): ten cuts since. W7, W7c,
+  W7d and W7f: one fresh grace, `host_back`, no `lag_leave`, the host stayed (W7f by `barrier_apart`); in W7 a 5 ms
+  silence grace (a client stall) came 10.09 s before the cut, just outside the episode's window (0.1 s earlier, the cut
+  would have had the 50 s left instead of 60: two losses closer than `LagLeaveSeconds` count as one, SEAMLESS 19.6.7).
+- **Harness.** A client's `"cut"` in scenario.json may be a list or carry `"every"` / `"count"` (run.py), the proxy's
+  `--cut` takes several `;`-separated cuts (`LinkCut.ParseAll`; `ProxyCutTests`: repeated half-open cuts hold each
+  one's bytes and pass the window between them). Scenario **W7g**: ten half-open cuts of 7 s, 0.2 s apart, from @200.
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
@@ -266,9 +313,10 @@ Checks (code of 5a7fd4d8; the first scenario batch ran on ebbe48bf with these ch
   pad) and the boss fight's go-along line; the prompt's ImGui hint lines (the goalong screenshots show the gate form's).
 - The lag rule after `host_back` is fixed on this branch only (2b009cee); main and the live server 0.1.9 keep taking a
   host back after more than 10 s out of his stage group until the 0.2.0 release.
-- To watch: each return restarts the host slot's lag clock, and 4 s of silence start a new grace; a host whose link
-  keeps dropping for a few seconds and coming back would stay in his stage group without a pad in time (the guests play
-  on, his Digimon stands). One absence is bounded by the grace, the sequence is not; no test makes it.
+- ~~To watch: each return restarts the host slot's lag clock, and 4 s of silence start a new grace; a host whose link
+  keeps dropping for a few seconds and coming back would stay in his stage group without a pad in time.~~ **Done** on
+  branch `fix-flap` (from 0ef550e9; "The flapping host" above): one grace per absence episode and one restart of the
+  lag clock per fill streak, the bound of one absence (80 s) for any sequence; `WorldFlapTests`, W7g.
 - Later: a client flag in BARRIER for a barrier of a visit the member never loaded would let the relay decide it apart
   also when its tick lies inside what the new visit sealed (now the split after `Instances:BarrierReportSeconds`, the
   others stalled 5 s; it needs the old visit to have run shorter than the new one has when the member comes back).
@@ -285,6 +333,10 @@ Checks (code of 5a7fd4d8; the first scenario batch ran on ebbe48bf with these ch
 - The fix stage after the merge: the same `build/mg/` scripts and builds; `fx_checks.sh` (det.sh on
   `off/dw4_fx_off*.exe`, the save state suite on `off/dw4_fx_st.exe` in English and German), `marathon_fx.sh BATCH...`
   (batches `fx_smoke`, `fx_uihome`, `fx_w7`, `fx_w7f_a`, `fx_w7f_b`; `fx_mix` needs the temporary `scenarios/S22bmix`).
+- The flapping host (worktree `DW4_PC-wt/flap`, branch `fix-flap`): `build/flap/` (`utest.sh LOG [filter]`; `itest.sh LOG`
+  with an own mysqld on 3731 (data `build/flap/it-mysql`) and test ports 60200-60299; `sbuild.sh LOG` builds the server
+  and the FakeClient with `-m:2`, then `scen.sh LOG SCENARIO... --no-build` with mysqld 3732 and ports 60300-60399; the
+  client a read-only copy of `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65, as `build/flap/scen/dw4_flap_dev.exe`).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the

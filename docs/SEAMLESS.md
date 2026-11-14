@@ -9703,7 +9703,58 @@ catch-up whose target leaves the stage).
   `Relay:LagLeaveSeconds` to catch up to the ticks sealed meanwhile and then
   plays on in his stage group (round I1b's fix stage after the merge of main:
   before, a host away longer than that was taken out by `lag_leave` a quarter
-  second after `host_back`).
+  second after `host_back`). A return past the grace's deadline, before the
+  housekeeping's next pass ended the instance, is not in time.
+- **A link that keeps dropping** ("flapping": closes or silences again and
+  again; fix-flap). Two rules bound it:
+  - *One grace per absence episode.* A drop less than
+    `Relay:LagLeaveSeconds` after his last return belongs to the same
+    episode: its grace keeps the deadline of the episode's first grace,
+    whose countdown runs on while he is briefly back (the guests' notice
+    shows the seconds left, not 60; `host_grace_continued`); a deadline
+    already past ends the instance at the next housekeeping (`host_lost`, as
+    any grace's end). Back for `Relay:LagLeaveSeconds`, a later drop is a
+    new loss with a fresh grace; two losses closer than that count as one
+    (the second gets what the first left of its 60 s: W7's run of fix-flap
+    had a 5 ms silence grace, a stall of the client, 10.09 s before its
+    cut, which so got a fresh grace; 0.1 s earlier it would have had 50 s,
+    still enough for the 20 s cut).
+  - *One restart of the lag clock per fill streak* (6.4: the ticks filled
+    since a pad of his was last sealed in time). His first return in the
+    streak restarts it as above; a further return only moves it on by that
+    absence, so `lagOut` counts his connected time since his first return,
+    `Relay:LagLeaveSeconds` in all.
+
+  **The bound:** from the first filled tick of his slot he is out of the
+  guests' stage group (`lag_leave`: he plays apart, still host, the
+  instance goes on) or his instance has ended (`host_lost`) within
+  `Relay:LagLeaveSeconds` (lagging before his first drop) +
+  `World:HostGraceSeconds` (the episode's deadline) +
+  `Relay:LagLeaveSeconds` (back at that deadline: a further drop within it
+  ends the instance, connected that long with late pads the lag rule takes
+  him out), 80 s with the defaults plus the housekeeping's quarter seconds:
+  the worst case of one absence (lagging 9.9 s, closed, back after 59.9 s,
+  10 s to catch up), so the guests never play against his standing Digimon
+  longer than one absence could make them, unless he comes back for
+  `Relay:LagLeaveSeconds` with his pads in time (then he plays); outside
+  `lagOut`'s own exceptions (everyone lags, a resync). The episode rule is
+  the one that holds the real client: its pads are made on the wall clock,
+  so the pads of its last ticks before each return arrive in time and end
+  the fill streak every time (W7g's first run, on a rule of the fill streak
+  alone: a fresh grace at every cut, for good). A host who does not catch
+  up between brief drops (his pads late, no such burst) is taken out by the
+  lag rule first, the instance going on. Before, every return restarted the
+  clock, every drop started a fresh grace, and 4 s of silence start a grace
+  before 10 s of lag count: such a host stayed in his stage group for good.
+  A host outside a sealed stage group (lone after `lag_leave`, solo-led)
+  has no guest in his group; his graces follow the same episode rule. A
+  flapping **guest** is not on this path: no grace, and his reconnects never
+  restart his slot's clock, so `lagOut` takes him out
+  `Relay:LagLeaveSeconds` after his streak's first fill however his link
+  comes and goes (`Relay:ReconnectSeconds` counts each drop on its own);
+  with his pads in time between the drops he plays on, as before. No
+  setting of its own: the rule uses the grace's and the lag rule's keys
+  (`WorldFlapTests`, W7g).
 - **A crash** (the engine lost): within the grace only with round I5 (a
   checkpoint rejoin of his own slot, 19.15); before I5 a crashed host ends
   his instance after 60 s.
@@ -9720,7 +9771,9 @@ catch-up whose target leaves the stage).
 - **Not back:** END `host_lost`, HOME for everyone.
 - **The test** W7 runs with a proxy that cuts by closing the connection and
   W7c with one that swallows packets without FIN or RST; W7d holds a
-  reconnect at 45 s to prove the member timeout does not end the grace.
+  reconnect at 45 s to prove the member timeout does not end the grace; W7g
+  swallows them for 7 s at a time, 0.2 s apart (a flapping link): one
+  episode's countdown, `host_lost` at its deadline, inside the bound.
 
 #### 19.6.8 Desync
 
@@ -12230,6 +12283,7 @@ means round I1a):
 | W7d | I1 | a reconnects after 45 s (beyond the member timeout of 35 s): still host, the instance never ended |
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
 | W7f | I1b | (the integration's fix stage) W7e's race on demand: a's link goes as the sealed NEW's BARRIER_OK comes (`DW4_ONLINE_TEST_CUT_AT_ANSWER`, development builds: the answer is lost with it); SNAPSHOT_ASK makes b the uploader; a resumes into the new visit and re-sends its old barrier, which lies past b's sealed ticks: decided apart at once (`barrier_apart`, no split, no stall for b), a JOIN under a's visit, READY, still host |
+| W7g | I1b | (fix-flap) a flapping host link: from @200 the proxy swallows a's packets for 7 s at a time, 0.2 s apart (ten half-open cuts, the last before the END's HOME barrier, a client's "cut" with "every" / "count"): each cut's silence starts a grace, each window is a return, and a's pads of the last ticks before it come in time (its fill streak ends every time); every drop within `Relay:LagLeaveSeconds` of a return keeps the first grace's deadline (`host_away ... continued=True`), so the instance ends (`host_lost`) about 60 s after the first grace, inside the bound of 19.6.7, instead of never; b goes home |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
 | W10 | I1b | a removes b: b goes home; b's prompt (its PLAN after the removal: no row, the cursor on *New instance*; the integration's check) and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |

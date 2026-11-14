@@ -74,17 +74,37 @@ public sealed class SlotStream
     /// <summary>Consecutive filled ticks (0 after a pad sealed in time; a late pad does not end it: the lag rule counts
     /// the ticks the member's own pads missed).</summary>
     public int FillStreak { get; private set; }
-    /// <summary>The server time (timestamp) at which the current fill streak began (or, for a host back from his grace, his return:
-    /// <see cref="RestartFillStreakClock"/>).</summary>
+    /// <summary>The server time (timestamp) the lag rule counts the current fill streak from: its first filled tick, or for a host back
+    /// from his grace his first return in the streak, moved on by his later absences in it (<see cref="HostReturned"/>).</summary>
     public long FillStreakSince { get; private set; }
+    /// <summary>A host's return from his grace restarted the current fill streak's clock (<see cref="HostReturned"/>): once per
+    /// streak; a pad of his sealed in time ends the streak and clears it.</summary>
+    public bool ReturnCredited { get; private set; }
 
-    /// <summary>The host back within his grace (SEAMLESS.md 19.6.7, "back in time: play on"): the lag rule (Relay:LagLeaveSeconds)
-    /// counts his fill streak from his return, so his resumed client has that long to catch up to the ticks sealed meanwhile. The
-    /// streak's length stays: he lags until a pad of his is sealed in time. (Before, the streak counted from the grace's start, and a
-    /// host away longer than LagLeaveSeconds was taken out of his stage group by the next housekeeping after his return.)</summary>
-    public void RestartFillStreakClock(long now)
+    /// <summary>
+    /// The host back within his grace (SEAMLESS.md 19.6.7, "back in time: play on"). His first return in a fill streak restarts the
+    /// streak's clock: the lag rule (Relay:LagLeaveSeconds) counts from his return, so his resumed client has that long to catch up to
+    /// the ticks sealed meanwhile (before, the streak counted from the grace's start, and a host away longer than LagLeaveSeconds was
+    /// taken out of his stage group by the next housekeeping after his return). A further return in the same streak (no pad of his
+    /// sealed in time since: a link that keeps dropping, "flapping") only moves the clock on by that absence
+    /// (<paramref name="awaySince"/>, the grace's start, to <paramref name="now"/>): the lag rule counts his connected time since his
+    /// first return, LagLeaveSeconds in all however often his link drops, and his absences count against the grace instead (one
+    /// grace per absence episode, WorldHub.StartGrace). Before, every return restarted the clock and a host whose link dropped every
+    /// few seconds stayed in his stage group for good without a pad in time. The streak's length stays: he lags until a pad of his
+    /// is sealed in time.
+    /// </summary>
+    public void HostReturned(long now, long awaySince)
     {
-        if (FillStreak > 0) FillStreakSince = now;
+        if (FillStreak == 0) return;
+        if (!ReturnCredited)
+        {
+            FillStreakSince = now;
+            ReturnCredited = true;
+        }
+        else if (awaySince != 0 && awaySince < now)
+        {
+            FillStreakSince = Math.Min(now, FillStreakSince + (now - awaySince));
+        }
     }
     /// <summary>The furthest tick this member submitted a pad for (its horizon).</summary>
     public uint Horizon { get; private set; }
@@ -170,6 +190,7 @@ public sealed class SlotStream
             _ring[i] = null;
             SetSource(pad, tick);
             FillStreak = 0;
+            ReturnCredited = false;
             filled = false;
             return Sealing(pad);
         }

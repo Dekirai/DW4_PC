@@ -156,6 +156,11 @@ public sealed class WorldInstance(uint wid)
     public long HostAwaySince { get; set; }
     public long GraceUntil { get; set; }
     public long LastAwayNotice { get; set; }
+    /// <summary>When the host last came back from a grace and that grace's deadline then (0: none since his last drop; 19.6.7, a link
+    /// that keeps dropping): a grace that starts less than Relay:LagLeaveSeconds after that return belongs to the same absence episode
+    /// and keeps that deadline (its countdown runs on through his brief returns) instead of a fresh World:HostGraceSeconds.</summary>
+    public long LastBackAt { get; set; }
+    public long LastGraceUntil { get; set; }
     /// <summary>Removal bars: account until (relay clock).</summary>
     public Dictionary<long, long> Bars { get; } = [];
     /// <summary>Every account that held a seat in the instance (a report names the instance both shared, round I1b).</summary>
