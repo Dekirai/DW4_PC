@@ -2292,6 +2292,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
+        bool focus_paused_before = false; // (the focus pause's log lines)
         // State files live in saves/states next to the program (not in test runs).
         std::filesystem::path state_dir;
         if (const auto program = program_dir(); !program.empty()) state_dir = program / "saves" / "states";
@@ -2843,8 +2844,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
             }
+            // Android: while another window has the focus (the notification
+            // shade, the quick settings) the game pauses and goes quiet: Android
+            // pauses the app only when it leaves the screen, and the
+            // controller's input goes to that window meanwhile. Never in a
+            // session (its steps are every member's) or a test run.
+            const bool focus_paused =
+                view.unfocused && settings.pause_unfocused && !options.smoke_frames && !net.active() && !net.in_lobby() && !online;
+            if (focus_paused != focus_paused_before) {
+                std::cout << (focus_paused ? "focus: another window is in front: the game pauses\n" : "focus: back: the game goes on\n");
+                focus_paused_before = focus_paused;
+            }
             // (Behind Play's loading screen the title is not heard either.)
-            view.gain = overflow_switch.gain() * (title_driver.covering() ? 0.0f : 1.0f);
+            view.gain = overflow_switch.gain() * (title_driver.covering() || focus_paused ? 0.0f : 1.0f);
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
@@ -2896,7 +2908,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // no menu, so no attract movie starts while the player types; over
             // the menu the title runs on: it waits for the player anyway.)
             const auto* title_menu = engine.get<dw4::engine::Title2Manager>();
-            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online) || net.in_lobby() ||
+            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online) || net.in_lobby() || focus_paused ||
                                 (title_online.active && !online && !(title_menu && title_menu->menu_open()));
             if (net.active())
                 if (auto message = net.take_message(); !message.empty()) {
@@ -4290,6 +4302,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             }
                         }
                         if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
+#ifdef SDL_PLATFORM_ANDROID
+                        if (ImGui::Checkbox("Pause the game while another window is in front (notifications, quick settings)",
+                                            &settings.pause_unfocused))
+                            settings_changed = true;
+#endif
                         if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
                             settings_changed = true;
                         ImGui::TextDisabled("Save (memory card slot A): %s", player_store.describe(0).c_str());

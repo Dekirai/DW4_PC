@@ -133,6 +133,8 @@ bool host_event(HostView& view, const SDL_Event& event) {
         toggle_menu_by(view, "the Back key");
         return false;
     }
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) view.unfocused = true;
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) view.unfocused = false;
     if (event.type == SDL_EVENT_FINGER_DOWN) view.last_touch = std::chrono::steady_clock::now();
     if (event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN || event.type == SDL_EVENT_SCREEN_KEYBOARD_HIDDEN)
         note_screen_keyboard(event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN);
@@ -147,7 +149,14 @@ bool host_event(HostView& view, const SDL_Event& event) {
         SDL_GetWindowSizeInPixels(view.window, &width, &height);
         on_button = touch_menu_rect(float(width), float(height)).contains(event.tfinger.x * float(width), event.tfinger.y * float(height));
     }
-    if (event.type == SDL_EVENT_FINGER_DOWN && ((event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) || on_button)) {
+    // The button is drawn over everything (ImGui's foreground draw list), so
+    // a tap on it is the button's even where a large menu reaches under it
+    // (the F1 window at a menu size of 300 % covers the button's place).
+    if (event.type == SDL_EVENT_FINGER_DOWN && on_button) {
+        toggle_menu_by(view, "the touch menu button");
+        return false;
+    }
+    if (event.type == SDL_EVENT_FINGER_DOWN && event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) {
         bool on_menu = false;
         if (view.show_menu && ImGui::GetCurrentContext()) {
             const ImVec2 size = ImGui::GetIO().DisplaySize;
@@ -755,10 +764,18 @@ namespace {
 // present interval, of the pass's own work up to the swap (input, the
 // steps, drawing the scene and the menus) and of the swap's wait (vsync, the
 // GPU), and the frame rate the display runs at: frame pacing on a device.
+// It also counts the presents by the engine steps since the one before (0:
+// the picture repeats, 1, 2 or more: a step skipped on the screen) and how
+// often a 0 and a 2+ follow each other (the jitter of a 59.94 Hz game on a
+// 60 Hz panel shows as a lone 0 every ~16.7 s; pairs in a row are judder).
 struct FrameStats {
     double period = 0;
     std::chrono::steady_clock::time_point started, last_swap;
     std::vector<float> interval, work, swap, step;
+    std::size_t steps_at_present = 0;           // s.step.size() at the last present
+    std::array<std::size_t, 3> by_steps{};      // presents after 0, 1, 2+ steps
+    std::size_t flips = 0;                      // a 0 next to a 2+
+    int previous_bucket = 1;
 };
 FrameStats& frame_stats_state() {
     static FrameStats stats = [] {
@@ -791,6 +808,14 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
     if (view.pass_started != std::chrono::steady_clock::time_point{} && view.pass_started <= before_swap) s.work.push_back(ms(view.pass_started, before_swap));
     s.swap.push_back(ms(before_swap, now));
     s.last_swap = now;
+    {
+        const std::size_t since = s.step.size() - s.steps_at_present;
+        s.steps_at_present = s.step.size();
+        const int bucket = since >= 2 ? 2 : int(since);
+        ++s.by_steps[std::size_t(bucket)];
+        if ((bucket == 0 && s.previous_bucket == 2) || (bucket == 2 && s.previous_bucket == 0)) ++s.flips;
+        s.previous_bucket = bucket;
+    }
     const double elapsed = std::chrono::duration<double>(now - s.started).count();
     if (elapsed < s.period) return;
     const std::size_t presents = s.interval.size();
@@ -805,11 +830,16 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
                 double(percentile(s.work, 0.9)), double(percentile(s.work, 0.99)), double(percentile(s.work, 1.0)),
                 double(percentile(s.swap, 0.5)), double(percentile(s.swap, 0.99)), double(steps) / elapsed, double(percentile(s.step, 0.5)),
                 double(percentile(s.step, 0.9)), double(percentile(s.step, 0.99)), double(percentile(s.step, 1.0)));
+    std::printf("frames: presents after 0 / 1 / 2+ steps: %zu / %zu / %zu, a 0 next to a 2+: %zu\n", s.by_steps[0], s.by_steps[1], s.by_steps[2],
+                s.flips);
     std::fflush(stdout);
     s.interval.clear();
     s.work.clear();
     s.swap.clear();
     s.step.clear();
+    s.steps_at_present = 0;
+    s.by_steps = {};
+    s.flips = 0;
     s.started = now;
 }
 } // namespace

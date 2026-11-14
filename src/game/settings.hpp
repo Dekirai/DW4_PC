@@ -105,6 +105,10 @@ struct Settings {
     int volume = 100;        // master volume in percent
     // [menu]
     bool pause_in_menu = true;
+    // [menu] pause_unfocused (Android): the game pauses while another window
+    // has the focus (the notification shade, the quick settings) and the
+    // game stays on the screen. Not written while it is the default.
+    bool pause_unfocused = true;
     // [preferences]
     bool skip_intro = false;
     // [preferences] language: the game text's display language (docs/L10N.md):

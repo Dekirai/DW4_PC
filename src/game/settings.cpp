@@ -228,6 +228,7 @@ Settings Settings::parse(IniFile document) {
     }
     settings.volume = std::clamp(ini.get_int("audio", "volume", settings.volume), 0, 100);
     settings.pause_in_menu = ini.get_bool("menu", "pause", settings.pause_in_menu);
+    settings.pause_unfocused = ini.get_bool("menu", "pause_unfocused", settings.pause_unfocused);
     settings.skip_intro = ini.get_bool("preferences", "skip_intro", settings.skip_intro);
     // (A code the language packs could name: lowercase letters, digits, '-'.)
     if (std::string language = ini.get_or("preferences", "language", settings.language);
@@ -406,6 +407,7 @@ void Settings::store() {
     else if (ini_.get("window", "ui_scale")) ini_.set("window", "ui_scale", "auto");
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
+    if (!pause_unfocused || ini_.get("menu", "pause_unfocused")) ini_.set_bool("menu", "pause_unfocused", pause_unfocused);
     ini_.set_bool("preferences", "skip_intro", skip_intro);
     ini_.set("preferences", "language", language);
     ini_.set_int("gameplay", "exp_rate", exp_rate);

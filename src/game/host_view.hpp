@@ -178,6 +178,11 @@ struct HostView {
     std::optional<KeyCapture> capture;
     bool settings_changed = false;
     bool quit_requested = false; // the window was closed
+    // Android: another window has the focus (the notification shade, the
+    // quick settings, a dialog, the app switcher's live tile) while the game
+    // stays on the screen, so Android does not pause it; the loop pauses the
+    // game meanwhile ([menu] pause_unfocused).
+    bool unfocused = false;
 
     // Pictures.
     PictureState picture;

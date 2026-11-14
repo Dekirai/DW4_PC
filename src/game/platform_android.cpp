@@ -19,27 +19,45 @@
 namespace dw4::game {
 
 namespace {
-// One reader per stream: lines (without the newline) at INFO for stdout,
-// WARN for stderr; a line longer than logcat's limit goes in pieces.
-void pump(int fd, int priority) {
+// stderr carries the engine's trace ("[frame] stage change -> ...") and
+// SDL's echo of its own log next to the real problems, so a stderr line is a
+// warning (or an error) only when its words say so: logcat's W/DW4 and E/DW4
+// are the problems alone, everything else is I/DW4 like stdout.
+int stderr_line_priority(const std::string& line) {
+    std::string lower(line);
+    for (char& c : lower)
+        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+    for (const char* word : {"fatal", "crash", "abort", "exception"})
+        if (lower.find(word) != std::string::npos) return ANDROID_LOG_ERROR;
+    for (const char* word : {"error", "fail", "cannot", "could not", "can't", "unable", "warning", "refused", "invalid", "missing",
+                             "not found", "unsupported", "corrupt"})
+        if (lower.find(word) != std::string::npos) return ANDROID_LOG_WARN;
+    return ANDROID_LOG_INFO;
+}
+
+// One reader per stream: lines (without the newline) into logcat (stdout at
+// INFO, stderr by stderr_line_priority); a line longer than logcat's limit
+// goes in pieces.
+void pump(int fd, bool from_stderr) {
     std::string line;
     char buffer[1024];
+    auto write_line = [&] { __android_log_write(from_stderr ? stderr_line_priority(line) : ANDROID_LOG_INFO, "DW4", line.c_str()); };
     for (;;) {
         const ssize_t got = read(fd, buffer, sizeof buffer);
         if (got <= 0) break;
         for (ssize_t i = 0; i < got; ++i) {
             if (buffer[i] == '\n' || line.size() >= 3000) {
-                __android_log_write(priority, "DW4", line.c_str());
+                write_line();
                 line.clear();
                 if (buffer[i] == '\n') continue;
             }
             line.push_back(buffer[i]);
         }
     }
-    if (!line.empty()) __android_log_write(priority, "DW4", line.c_str());
+    if (!line.empty()) write_line();
 }
 
-void route(FILE* stream, int fd, int priority) {
+void route(FILE* stream, int fd, bool from_stderr) {
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) return;
     std::fflush(stream);
@@ -50,7 +68,7 @@ void route(FILE* stream, int fd, int priority) {
         return;
     }
     close(pipe_fds[1]);
-    std::thread(pump, pipe_fds[0], priority).detach();
+    std::thread(pump, pipe_fds[0], from_stderr).detach();
 }
 } // namespace
 
@@ -58,8 +76,8 @@ void route_output_to_logcat() {
     static bool routed = false;
     if (routed) return;
     routed = true;
-    route(stdout, STDOUT_FILENO, ANDROID_LOG_INFO);
-    route(stderr, STDERR_FILENO, ANDROID_LOG_WARN);
+    route(stdout, STDOUT_FILENO, false);
+    route(stderr, STDERR_FILENO, true);
 }
 
 namespace {
