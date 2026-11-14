@@ -238,6 +238,11 @@ void online_panel(const Screen2Online& online, Screen2Place place, Screen2Menu* 
 }
 
 void menu_panel(Screen2Menu& menu) {
+    if (menu.open && menu.here && menu.own_chrome) {
+        // (The console menu: its own header, close button and scrolling.)
+        if (menu.draw) menu.draw();
+        return;
+    }
     if (menu.open && menu.here) {
         if (ImGui::Button("Close the menu")) menu.ask = Screen2Menu::Ask::close;
         if (menu.pauses) {
@@ -316,7 +321,9 @@ bool draw_screen2_panels(Settings& settings, bool& settings_changed, Screen2Plac
     // Leaving the Menu tab while the F1 menu is open there closes it (the
     // game would stay paused behind a menu nobody sees).
     if (menu && menu->open && menu->here && shown != Screen2Tab::menu && !select) menu->ask = Screen2Menu::Ask::close;
-    ImGui::BeginChild("##panel", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    const bool own_chrome = menu && menu->own_chrome && menu->open && menu->here && shown == Screen2Tab::menu;
+    ImGui::BeginChild("##panel", ImVec2(0, 0), ImGuiChildFlags_None,
+                      own_chrome ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None);
     switch (shown) {
     case Screen2Tab::status: status_panel(status); break;
     case Screen2Tab::online:
@@ -327,7 +334,7 @@ bool draw_screen2_panels(Settings& settings, bool& settings_changed, Screen2Plac
         if (menu) menu_panel(*menu);
         break;
     }
-    touch_scroll();
+    if (!own_chrome) touch_scroll();
     ImGui::EndChild();
     return online_shown;
 }
@@ -415,6 +422,7 @@ void screen2_release_input() {}
 void screen2_shutdown() {}
 double screen2_seconds_since_touch() { return 1e9; }
 void screen2_request_shot(const std::string&) {}
+void screen2_touch(int, float, float) {}
 #endif
 
 } // namespace dw4::game

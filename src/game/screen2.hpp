@@ -72,6 +72,10 @@ struct Screen2Menu {
     bool open = false;                    // the F1 menu is open
     bool here = false;                    // ... on this screen (the Menu tab draws it)
     bool pauses = false;                  // it pauses the game ([menu] pause)
+    // The menu draws its own header and close button and scrolls itself (the
+    // console menu, console_menu.hpp): the Menu tab shows only menu.draw,
+    // without "Close the menu", the panel's scrollbar and its drag.
+    bool own_chrome = false;
     std::function<void()> draw;           // the F1 menu's tabs (into the current window)
     // Out: what the player asked for this frame.
     enum class Ask { none, open, close, move_here };
@@ -142,6 +146,10 @@ bool screen2_take_event(const SDL_Event& event);
 // mode off) while one of its fields had the keyboard: the keyboard goes and
 // the field is left (the host calls it every frame without a lower screen).
 void screen2_release_input();
+// A touch for the lower screen's queue as Android's LowerScreen gives it
+// (action 0 down, 1 move, 2 up, 3 cancel; surface pixels): the menu
+// script's "tap ... lower" (nothing on the PC).
+void screen2_touch(int action, float x, float y);
 // Seconds since the last touch on the lower screen (1e9 without one).
 double screen2_seconds_since_touch();
 // The lower screen's picture as a BMP file at its next frame (test runs'

@@ -202,6 +202,14 @@ double screen2_seconds_since_touch() {
     return double(now_ns() - last) / 1e9;
 }
 
+void screen2_touch(int action, float x, float y) {
+    g_last_touch_ns.store(now_ns());
+    std::lock_guard info(g_info_lock);
+    // (A long drag between two frames keeps its last moves only.)
+    if (g_touches.size() >= 64) g_touches.erase(g_touches.begin(), g_touches.begin() + 32);
+    g_touches.push_back({action, x, y});
+}
+
 void screen2_request_shot(const std::string& path) {
     std::lock_guard info(g_info_lock);
     g_shot = path;
@@ -336,7 +344,7 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
             // need not pan for the keyboard, so the area is its top corner.)
             const SDL_Rect corner{0, 0, 1, 1};
             SDL_SetTextInputArea(window, &corner, 0);
-            start_text_input(window, secret);
+            start_text_input(window, secret, numeric_field_active(*g_imgui));
             std::printf("second screen: a %s field takes the keyboard%s\n", secret ? "password" : "text", again ? " (again)" : "");
             std::fflush(stdout);
         }
@@ -540,12 +548,7 @@ JNIEXPORT void JNICALL Java_org_dw4pc_game_LowerScreen_nativeDisplay(JNIEnv* env
 
 // A touch on the panels (the first finger; surface pixels).
 JNIEXPORT void JNICALL Java_org_dw4pc_game_LowerScreen_nativeTouch(JNIEnv*, jclass, jint action, jfloat x, jfloat y) {
-    using namespace dw4::game;
-    g_last_touch_ns.store(now_ns());
-    std::lock_guard info(g_info_lock);
-    // (A long drag between two frames keeps its last moves only.)
-    if (g_touches.size() >= 64) g_touches.erase(g_touches.begin(), g_touches.begin() + 32);
-    g_touches.push_back({int(action), float(x), float(y)});
+    dw4::game::screen2_touch(int(action), float(x), float(y));
 }
 
 } // extern "C"
