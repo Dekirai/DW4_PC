@@ -1636,6 +1636,84 @@ reading them again after switching Focus Mode tells which key is which
   Android itself is phase D.
 - The Data Overflow loop (paused) does not draw the lower screen.
 
+## The player's side integrated (14.11.2026)
+
+`feat-android-cux` 229cc18d holds phases A and B (feat-android 0dc24e67),
+phase C's player side with its review fixes (de4ffe93), lane C2's leftovers
+on the player's side (b6934564: the profile build type, the name tags' depth
+read-back on GLES, the GL check walk, the context loss test, the storage
+cases, "this device") and phase E (`feat-android-e` 2a42570d, merge commit
+229cc18d: no textual conflict; `DW4_TEST_CONTEXT_LOSS`, which both lanes
+added, is one switch, "Phase E: the second screen"). It changes no
+simulation result (its det pair is the old one) and is the line that may
+reach main before the determinism part, after the usual review and the
+owner's look at it on the Thor in the game (the checklist below; the merge
+rule itself is in feat-android's copy of this file, "Phase C status").
+feat-android carries this line together with the determinism part and phase
+F; its APK is the one the emulator ran.
+
+Checked on 229cc18d (logs in `build/phi/` of the worktree):
+
+- The PC (`build/Clean`, MSVC, idle priority, 4 jobs): `ctest` 78 of 78;
+  `det.sh` twice on an exe copy, 4004f056 / 396cb219 in all four runs; the
+  save state suite (a private copy) 17 of 17 identical after loading.
+- `git merge-tree` with main 12f6a1a8, int-i1b d80617ef, feat-remaster
+  150f42a2 and feat-l10n 12f6a1a8: no conflict; main with this line, then
+  int-i1b, then feat-android: no conflict.
+
+### The owner's checklist on the Thor (the game itself)
+
+The Thor's lock screen was secure all day, so the game has not run on it
+since phase B; everything below was checked on the emulator and the PC
+only. One debug APK covers it (the phase C and E points; `adb install -r`
+keeps the disc copy, settings.ini and game.tsv). Logcat: `adb logcat -s
+DW4`. Point 9 and the lower screen's frame statistics (point 4) run test
+switches through `dw4args`, which needs
+`adb shell run-as org.dw4pc.game touch files/dw4args.allow` (the owner's
+choice; `rm` it afterwards).
+
+1. **Start**: the logos, the intro, the title; no status or navigation bar;
+   `math self-test: passed`, `ui: menus at 231 %`, `window: 1920x1080,
+   status bar hidden, navigation bar hidden, display 0 at 60.00 Hz`.
+2. **The top screen's menus**: F1 by the Back button; every tab readable
+   at 231 %; the touch button (three lines right of the 4:3 picture; on the
+   emulator it stood at the top centre during the logos) shows after a
+   touch, fades after 4 s, and a tap on it opens and closes F1.
+3. **The controller**: the Thor's prompts (round letter buttons, START /
+   SELECT pills: do they fit the printed icons?); the quick settings tile
+   "Controller style" switched while the game runs: the printed A confirms
+   in Standard, the bottom button in Xbox (`adb shell getevent -l` of the
+   printed A in each style); "L2/R2 mode" Analog, Digital and Both: one
+   pull each; a binding on BACK and the Back button still opens F1.
+4. **The lower screen**: the eight points of "The Thor: the owner's
+   checklist" (phase E): the panels at 231 % by touch, Focus Mode Auto and
+   Top, Screen Launch: Bottom, the lower screen off and on, HOME and the
+   app switcher, the frame statistics with the panels on and off, a text
+   field there.
+5. **Lifecycle**: HOME and back, the app switcher, the notification shade
+   down (`focus: another window is in front: the game pauses`, silent, then
+   `focus: back: the game goes on`), HOME inside a stage load (`lifecycle:
+   the surface waited N ms ...` and no `EGL_BAD_SURFACE`);
+   `adb shell dumpsys media.audio_flinger` after HOME (the track paused).
+6. **Text**: F1 > Saves, the cloud backup's Account field: the system
+   keyboard; its password field as a password field.
+7. **Language**: F1 > Settings > Language > Deutsch (the owner's game.tsv is
+   in the app's folder): German text; English again.
+8. **Graphics**: msaa 4 (the default) with Sharpening on; a texture pack
+   (BC7 / BC1 / BC3 compressed on Adreno); F1 > Settings > Graphics.
+9. **Frame pacing** (`dw4args`, best with the profile APK, `assembleProfile`):
+   `--mute --env DW4_FRAME_STATS=10` in the intro, the title and the det
+   route (`newgame_dng101b1`): 60 presents/s, interval p50 16.7 ms, no 0 /
+   2+ pairs in a row (done when 5: the reference scenes at a steady 60 fps),
+   at Smooth Display 60 and 120.
+10. **Memory**: `adb shell dumpsys meminfo org.dw4pc.game` at the title and
+    in the dungeon.
+11. **A new game**: the first dungeon, a save; `saves/savedata.dat` loaded
+    on the PC, saved there and loaded on the Thor again (the arm64 turn of
+    the save round trip).
+12. **The online screens** over the title at their window-height size (24 px
+    text): the owner's judgement (online play on Android is phase D).
+
 ## The Thor
 
 Nothing is installed on the Thor without the owner's approval. The first
