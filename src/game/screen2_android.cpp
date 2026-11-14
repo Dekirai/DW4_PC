@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -69,7 +70,8 @@ bool g_swap_interval_set = false;
 bool g_drew_last = false;
 Clock::time_point g_last_frame;
 int g_wanted_sent = -1;
-int g_gl_errors = 0, g_frames = 0;
+int g_gl_errors = 0, g_frames = 0, g_swaps = 0;
+std::uint64_t g_digest = 0;                 // the last swapped picture's draw data (0: none)
 bool g_logged_failure = false;
 
 long long now_ns() { return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count(); }
@@ -104,6 +106,40 @@ void drop_imgui() {
 void log_line(const char* text) {
     std::printf("%s\n", text);
     std::fflush(stdout);
+}
+
+// The draw data's digest: vertices, indices and commands (with their
+// textures), the size, and whether a texture waits for an upload (the font
+// atlas baked new glyphs). Never 0.
+std::uint64_t draw_digest(const ImDrawData* data, int width, int height) {
+    std::uint64_t h = 0x9e3779b97f4a7c15ull ^ (std::uint64_t(std::uint32_t(width)) << 32 | std::uint32_t(height));
+    const auto mix = [&h](const void* bytes, std::size_t size) {
+        const auto* p = static_cast<const unsigned char*>(bytes);
+        std::size_t i = 0;
+        for (; i + 8 <= size; i += 8) {
+            std::uint64_t word;
+            std::memcpy(&word, p + i, 8);
+            h = (h ^ word) * 0x100000001b3ull;
+            h ^= h >> 29;
+        }
+        for (; i < size; ++i) h = (h ^ p[i]) * 0x100000001b3ull;
+    };
+    if (!data) return 1;
+    for (const ImDrawList* list : data->CmdLists) {
+        mix(list->VtxBuffer.Data, std::size_t(list->VtxBuffer.Size) * sizeof(ImDrawVert));
+        mix(list->IdxBuffer.Data, std::size_t(list->IdxBuffer.Size) * sizeof(ImDrawIdx));
+        for (const ImDrawCmd& cmd : list->CmdBuffer) {
+            mix(&cmd.ClipRect, sizeof cmd.ClipRect);
+            mix(&cmd.TexRef._TexData, sizeof cmd.TexRef._TexData);
+            mix(&cmd.TexRef._TexID, sizeof cmd.TexRef._TexID);
+            const std::uint32_t counts[3] = {cmd.VtxOffset, cmd.IdxOffset, cmd.ElemCount};
+            mix(counts, sizeof counts);
+        }
+    }
+    if (data->Textures)
+        for (const ImTextureData* tex : *data->Textures)
+            if (tex->Status != ImTextureStatus_OK) h = (h ^ std::uint64_t(tex->Status)) * 0x100000001b3ull + 1;
+    return h ? h : 1;
 }
 
 // GL state the lower frame changes besides ImGui's (its backend restores its own).
@@ -200,23 +236,15 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
             return false;
         }
         g_logged_failure = false;
+        g_digest = 0; // (a new surface: its first picture)
         const Screen2Display shown = screen2_display();
         std::printf("second screen: drawing on display %d \"%s\" (%dx%d, %d dpi)\n", shown.id, shown.name.c_str(), ANativeWindow_getWidth(g_window),
                     ANativeWindow_getHeight(g_window), shown.dpi);
         std::fflush(stdout);
     }
-    if (!eglMakeCurrent(egl_display, g_surface, g_surface, context)) {
-        std::fprintf(stderr, "second screen: eglMakeCurrent failed (EGL error 0x%x); the surface is made again\n", unsigned(eglGetError()));
-        eglMakeCurrent(egl_display, top_draw, top_read, context);
-        destroy_surface_locked();
-        return false;
-    }
-    if (!g_swap_interval_set) {
-        // (The lower screen's swaps never wait for its display: the game's
-        // pace is the top screen's.)
-        eglSwapInterval(egl_display, 0);
-        g_swap_interval_set = true;
-    }
+    // The panels' frame (ImGui only, SDL's surface stays current), then the
+    // lower surface current, drawn and swapped only when the picture changed:
+    // a panel that shows the same costs no surface switch and no swap.
     EGLint width = 0, height = 0;
     eglQuerySurface(egl_display, g_surface, EGL_WIDTH, &width);
     eglQuerySurface(egl_display, g_surface, EGL_HEIGHT, &height);
@@ -228,6 +256,7 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
         ImGui::SetCurrentContext(top);
         g_scale = 0;
         g_last_frame = start;
+        g_digest = 0;
     }
     ImGui::SetCurrentContext(g_imgui);
     const float scale = ui_scale_factor(ui_scale_setting, float(dpi) / 160.0f, true);
@@ -260,40 +289,60 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
         shot.swap(g_shot);
     }
     if (input) input();
-    GlState saved;
-    saved.save();
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
     if (draw) draw();
     ImGui::Render();
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, width, height);
-    glDisable(GL_SCISSOR_TEST);
-    glClearColor(0.06f, 0.06f, 0.08f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    if (!shot.empty()) {
-        std::vector<std::uint8_t> pixels(std::size_t(width) * std::size_t(height) * 4);
-        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-        write_bmp(shot, width, height, pixels);
-        std::printf("screenshot %s (the second screen)\n", shot.c_str());
-        std::fflush(stdout);
+    const std::uint64_t digest = draw_digest(ImGui::GetDrawData(), width, height);
+    bool swapped = false, failed = false;
+    if (digest != g_digest || !shot.empty()) {
+        if (!eglMakeCurrent(egl_display, g_surface, g_surface, context)) {
+            std::fprintf(stderr, "second screen: eglMakeCurrent failed (EGL error 0x%x); the surface is made again\n", unsigned(eglGetError()));
+            eglMakeCurrent(egl_display, top_draw, top_read, context);
+            destroy_surface_locked();
+            failed = true;
+        } else {
+            if (!g_swap_interval_set) {
+                // (The lower screen's swaps never wait for its display: the
+                // game's pace is the top screen's.)
+                eglSwapInterval(egl_display, 0);
+                g_swap_interval_set = true;
+            }
+            GlState saved;
+            saved.save();
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+            glDisable(GL_SCISSOR_TEST);
+            glClearColor(0.06f, 0.06f, 0.08f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            if (!shot.empty()) {
+                std::vector<std::uint8_t> pixels(std::size_t(width) * std::size_t(height) * 4);
+                glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                write_bmp(shot, width, height, pixels);
+                std::printf("screenshot %s (the second screen)\n", shot.c_str());
+                std::fflush(stdout);
+            }
+            static const bool gl_check = std::getenv("DW4_GL_CHECK") && std::atoi(std::getenv("DW4_GL_CHECK")) != 0;
+            if (gl_check)
+                for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
+                    if (++g_gl_errors <= 20) std::fprintf(stderr, "second screen: GL error 0x%x (frame %d)\n", unsigned(error), g_frames);
+            if (!eglSwapBuffers(egl_display, g_surface))
+                std::fprintf(stderr, "second screen: eglSwapBuffers failed (EGL error 0x%x)\n", unsigned(eglGetError()));
+            eglMakeCurrent(egl_display, top_draw, top_read, context);
+            saved.restore();
+            g_digest = digest;
+            swapped = true;
+            ++g_swaps;
+        }
     }
-    static const bool gl_check = std::getenv("DW4_GL_CHECK") && std::atoi(std::getenv("DW4_GL_CHECK")) != 0;
-    if (gl_check)
-        for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
-            if (++g_gl_errors <= 20) std::fprintf(stderr, "second screen: GL error 0x%x (frame %d)\n", unsigned(error), g_frames);
-    if (!eglSwapBuffers(egl_display, g_surface))
-        std::fprintf(stderr, "second screen: eglSwapBuffers failed (EGL error 0x%x)\n", unsigned(eglGetError()));
     ++g_frames;
     exchange_ui_scale(top_scale);
     ImGui::SetCurrentContext(top);
-    eglMakeCurrent(egl_display, top_draw, top_read, context);
-    saved.restore();
     if (g_abandon.exchange(false)) release_window_locked();
     g_drew_last = true;
-    frame_stats_screen2(std::chrono::duration<double, std::milli>(Clock::now() - start).count());
-    return true;
+    frame_stats_screen2(std::chrono::duration<double, std::milli>(Clock::now() - start).count(), swapped);
+    return !failed;
 }
 
 void screen2_device_reset() {
@@ -302,6 +351,7 @@ void screen2_device_reset() {
     // window's alone, which its backend's restart makes again.)
     drop_imgui();
     destroy_surface_locked();
+    g_digest = 0;
     if (g_window) log_line("second screen: made again after the lost OpenGL context");
 }
 
@@ -319,7 +369,7 @@ void screen2_shutdown() {
         destroy_surface_locked();
     }
     if (std::getenv("DW4_GL_CHECK"))
-        std::printf("second screen: GL error check: %d errors in %d frames\n", g_gl_errors, g_frames);
+        std::printf("second screen: GL error check: %d errors in %d frames (%d drawn and swapped)\n", g_gl_errors, g_frames, g_swaps);
     screen2_request(false);
     g_wanted_sent = -1;
     std::fflush(stdout);

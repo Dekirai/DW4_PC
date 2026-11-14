@@ -339,9 +339,9 @@ void pace_presents(HostView& view);
 // DW4_FRAME_STATS: one engine step's time (the story loop around
 // Engine::step; nothing is kept without the switch).
 void frame_stats_step(double ms);
-// DW4_FRAME_STATS: one frame of the second screen (its own draw and swap
-// after the window's swap, screen2.hpp).
-void frame_stats_screen2(double ms);
+// DW4_FRAME_STATS: one frame of the second screen after the window's swap
+// (screen2.hpp): its time and whether it drew and swapped its surface.
+void frame_stats_screen2(double ms, bool swapped);
 
 // ---- The F1 menu's settings sections (inside the Settings tab)
 void settings_display_section(HostView& view);

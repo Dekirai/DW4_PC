@@ -791,6 +791,7 @@ struct FrameStats {
     std::chrono::steady_clock::time_point started, last_swap;
     std::vector<float> interval, work, swap, step;
     std::vector<float> screen2; // the second screen's frames (screen2.hpp)
+    std::size_t screen2_swaps = 0;
     std::size_t steps_at_present = 0;           // s.step.size() at the last present
     std::array<std::size_t, 3> by_steps{};      // presents after 0, 1, 2+ steps
     std::size_t flips = 0;                      // a 0 next to a 2+
@@ -852,11 +853,12 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
     std::printf("frames: presents after 0 / 1 / 2+ steps: %zu / %zu / %zu, a 0 next to a 2+: %zu\n", s.by_steps[0], s.by_steps[1], s.by_steps[2],
                 s.flips);
     if (!s.screen2.empty())
-        std::printf("frames: second screen %.1f frames/s, p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n", double(s.screen2.size()) / elapsed,
-                    double(percentile(s.screen2, 0.5)), double(percentile(s.screen2, 0.9)), double(percentile(s.screen2, 0.99)),
-                    double(percentile(s.screen2, 1.0)));
+        std::printf("frames: second screen %.1f frames/s (%.1f drawn and swapped), p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n",
+                    double(s.screen2.size()) / elapsed, double(s.screen2_swaps) / elapsed, double(percentile(s.screen2, 0.5)),
+                    double(percentile(s.screen2, 0.9)), double(percentile(s.screen2, 0.99)), double(percentile(s.screen2, 1.0)));
     std::fflush(stdout);
     s.screen2.clear();
+    s.screen2_swaps = 0;
     s.interval.clear();
     s.work.clear();
     s.swap.clear();
@@ -870,8 +872,11 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
 
 void frame_stats_step(double ms) { frame_stats_step_into(frame_stats_state(), ms); }
 
-void frame_stats_screen2(double ms) {
-    if (auto& s = frame_stats_state(); s.period > 0) s.screen2.push_back(float(ms));
+void frame_stats_screen2(double ms, bool swapped) {
+    if (auto& s = frame_stats_state(); s.period > 0) {
+        s.screen2.push_back(float(ms));
+        s.screen2_swaps += swapped ? 1 : 0;
+    }
 }
 
 void finish_present(HostView& view, engine::Engine& engine, const std::function<void()>& swapped) {
