@@ -15,9 +15,7 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
-#ifdef SDL_PLATFORM_ANDROID
 #include <imgui_internal.h>
-#endif
 
 #include "app_paths.hpp"
 
@@ -1009,10 +1007,19 @@ void settings_display_section(HostView& view) {
         }
         static const int sample_choices[] = {0, 2, 4, 8};
         static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
+        // Only the levels the GPU has (GL_MAX_SAMPLES: 4 on the AYN Thor's
+        // Adreno 740; a PC's GPU has 8 or more).
+        static const int offered = [] {
+            GLint most = 0;
+            glGetIntegerv(GL_MAX_SAMPLES, &most);
+            int count = 1;
+            while (count < 4 && (most <= 0 || sample_choices[count] <= most)) ++count;
+            return count;
+        }();
         int choice = 0;
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < offered; ++i)
             if (settings.msaa >= sample_choices[i]) choice = i;
-        if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, 4)) {
+        if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, offered)) {
             settings.msaa = sample_choices[choice];
             view.settings_changed = true;
         }
@@ -1201,7 +1208,14 @@ void settings_audio_section(HostView& view) {
 
 void settings_presence_section(HostView& view, const char* discord_status) {
     auto& settings = view.settings;
-    if (ImGui::CollapsingHeader("Name tags, Discord, achievements", ImGuiTreeNodeFlags_DefaultOpen)) {
+#ifdef SDL_PLATFORM_ANDROID
+    // (Discord Rich Presence talks to the Discord desktop app: the PC's.)
+    const bool open = ImGui::CollapsingHeader("Name tags, achievements", ImGuiTreeNodeFlags_DefaultOpen);
+#else
+    const bool open = ImGui::CollapsingHeader("Name tags, Discord, achievements", ImGuiTreeNodeFlags_DefaultOpen);
+#endif
+    if (open) {
+        ImGui::PushTextWrapPos(0.0f);
         // (LabelMode order: automatic, all, others, off.)
         static const char* label_modes[] = {"Auto (two or more players)", "All players", "Other players", "Off"};
         int mode = int(parse_label_mode(settings.overhead_labels));
@@ -1212,19 +1226,42 @@ void settings_presence_section(HostView& view, const char* discord_status) {
         if (ImGui::SliderInt("Name tag size", &settings.label_scale, 50, 200, "%d%%")) view.settings_changed = true;
         if (ImGui::Checkbox("HP / MP numbers on name tags", &settings.label_numbers)) view.settings_changed = true;
         ImGui::TextDisabled("Name, level, HP and MP over the players' Digimon (not in cutscenes, menus and loads).");
+#ifndef SDL_PLATFORM_ANDROID
         if (ImGui::Checkbox("Discord Rich Presence", &settings.discord)) view.settings_changed = true;
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", discord_status);
         ImGui::TextDisabled("Shows your form, level, area and difficulty in Discord while the Discord app runs.");
+#else
+        (void)discord_status;
+#endif
         if (ImGui::Checkbox("Achievements", &settings.achievements)) view.settings_changed = true;
         ImGui::SameLine();
         if (ImGui::Checkbox("Unlock notices", &settings.achievement_popups)) view.settings_changed = true;
         if (ImGui::Checkbox("Network indicator in online sessions", &settings.net_indicator)) view.settings_changed = true;
         ImGui::TextDisabled("Ping and input delay in the lower left corner while you play online (details in F1 > Online).");
+        ImGui::PopTextWrapPos();
     }
 }
 
+namespace {
+// A finger held 0.6 s on the last item (touch only: a mouse's held button
+// stays a click): true once, and the item lets go of the finger, so its
+// release is no tap.
+bool touch_long_press() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseSource != ImGuiMouseSource_TouchScreen || !ImGui::IsItemActive()) return false;
+    if (io.MouseDownDuration[ImGuiMouseButton_Left] < 0.6f) return false;
+    ImGui::ClearActiveID();
+    return true;
+}
+} // namespace
+
 void settings_keyboard_section(HostView& view) {
+#ifdef SDL_PLATFORM_ANDROID
+    // (A keyboard is the PC's controller: Android plays with the device's.)
+    (void)view;
+    return;
+#endif
     auto& settings = view.settings;
     auto& capture = view.capture;
     if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1355,6 +1392,7 @@ void settings_controllers_section(HostView& view) {
                 view.settings_changed = true;
             }
             prompt_text_disabled("This menu and the online screens: {OK} confirms, {BACK} goes back.");
+#ifndef SDL_PLATFORM_ANDROID
             int wii = settings.wii_driver == WiiDriver::on ? 1 : settings.wii_driver == WiiDriver::off ? 2 : 0;
             static const char* kWii[] = {"Automatic (while one is connected)", "On", "Off"};
             if (ImGui::Combo("Wii U Pro support", &wii, kWii, 3)) {
@@ -1363,13 +1401,16 @@ void settings_controllers_section(HostView& view) {
             }
             ImGui::TextDisabled("(SDL's Wii driver, now %s. Wii remotes, also on a DolphinBar, never take a player's place.)",
                                 view.wii_hint ? "on" : "off");
-#ifndef SDL_PLATFORM_ANDROID
             if (ImGui::Checkbox("GameCube adapter in Wii U mode (WinUSB)", &settings.gc_adapter)) view.settings_changed = true;
             ImGui::TextDisabled("(released while the game is in the background, so Dolphin can use it then)");
 #endif
         }
         ImGui::Spacing();
+#ifdef SDL_PLATFORM_ANDROID
+        ImGui::TextDisabled("Tap an input and press a controller button or trigger; a long press on it clears it.");
+#else
         ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
+#endif
         ImGui::TextDisabled("The left stick is the main stick (walks), the right stick the C-stick.");
         // The names of the inputs: the prompts' family when it is a pad,
         // else the first pad's.
@@ -1394,7 +1435,9 @@ void settings_controllers_section(HostView& view) {
                     if (label.empty()) label = "-";
                     label += "##pad" + std::to_string(b * 8 + k);
                     if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k, true};
-                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                    // (A right-click clears it; on a touch screen a long press, which
+                    // then is no tap: the button lets go of the finger.)
+                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right) || touch_long_press()) {
                         settings.pad[b][k] = {};
                         capture.reset();
                         view.settings_changed = true;

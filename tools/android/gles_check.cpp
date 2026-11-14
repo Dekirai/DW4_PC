@@ -808,7 +808,11 @@ int main(int argc, char** argv) {
                 points.insert(points.end(), {float(probes[k].x), float(probes[k].y), float(k)});
             }
             const int count = int(probes.size());
-            std::vector<GLuint> bits(std::size_t(count) * 4);
+            // (One slot more than the probes: the pass never writes it, so it
+            // must keep the clear's marker, a NaN's bits; the renderer tells
+            // an unwritten probe by it.)
+            constexpr GLuint kUnwritten = 0xFFFFFFFFu;
+            std::vector<GLuint> bits(std::size_t(count + 1) * 4);
             auto read_back = [&] {
                 glDisable(GL_SCISSOR_TEST);
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
@@ -818,8 +822,8 @@ int main(int argc, char** argv) {
                 glViewport(0, 0, count, 1);
                 glDisable(GL_DEPTH_TEST);
                 glDisable(GL_BLEND);
-                const GLuint zero[4]{};
-                glClearBufferuiv(GL_COLOR, 0, zero);
+                const GLuint marker[4]{kUnwritten, 0, 0, 0};
+                glClearBufferuiv(GL_COLOR, 0, marker);
                 glUseProgram(probe);
                 glUniform1f(glGetUniformLocation(probe, "u_slots"), float(count));
                 glUniform1i(glGetUniformLocation(probe, "u_depth"), 3);
@@ -829,7 +833,7 @@ int main(int argc, char** argv) {
                 glBindBuffer(GL_ARRAY_BUFFER, probe_vbo);
                 glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(points.size() * sizeof(float)), points.data(), GL_STREAM_DRAW);
                 glDrawArrays(GL_POINTS, 0, count);
-                glReadPixels(0, 0, count, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, bits.data());
+                glReadPixels(0, 0, count + 1, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, bits.data());
                 glBindVertexArray(0);
                 glUseProgram(0);
                 glActiveTexture(GL_TEXTURE0);
@@ -842,12 +846,16 @@ int main(int argc, char** argv) {
             for (std::size_t k = 0; k < probes.size(); ++k) {
                 float depth = -1.0f;
                 std::memcpy(&depth, &bits[k * 4], sizeof depth);
-                const bool written = bits[k * 4 + 3] == 1u;
+                const bool written = bits[k * 4] != kUnwritten;
                 if (!written || std::fabs(depth - probes[k].expected) >= 1e-5f) {
                     std::printf("     probe (%d, %d): %s %.7f, expected %.2f\n", probes[k].x, probes[k].y, written ? "read" : "not written",
                                 double(depth), double(probes[k].expected));
                     ++wrong;
                 }
+            }
+            if (bits[std::size_t(count) * 4] != kUnwritten) {
+                std::printf("     the slot after the probes reads %08x, not the clear's marker\n", unsigned(bits[std::size_t(count) * 4]));
+                ++wrong;
             }
             if (wrong) {
                 std::printf("FAIL depth read-back: %d of %d probes wrong\n", wrong, count);

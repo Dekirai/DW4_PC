@@ -262,4 +262,41 @@ void MotionInterpolator::blend(std::vector<engine::DrawItem>& items, engine::Fra
     }
 }
 
+
+void RefreshClock::reset() {
+    refresh_hz_ = 0;
+    measured_sum_ = 0;
+    refreshes_ = 0;
+    owed_ = 0;
+}
+
+double RefreshClock::pass(double measured, double refresh_hz) {
+    if (!(refresh_hz >= 20.0 && refresh_hz <= 1000.0) || !(measured > 0.0)) {
+        reset();
+        return measured;
+    }
+    if (refresh_hz != refresh_hz_) {
+        reset();
+        refresh_hz_ = refresh_hz;
+    }
+    double period_now = period();
+    // (A mean that left the reported rate by more than 1 %: not this display's.)
+    if (std::abs(period_now * refresh_hz - 1.0) > 0.01) {
+        reset();
+        refresh_hz_ = refresh_hz;
+        period_now = period();
+    }
+    const double count = std::round(measured / period_now);
+    if (count < 1.0 || count > 4.0 || std::abs(measured - count * period_now) > 0.25 * period_now) return measured;
+    measured_sum_ += measured;
+    refreshes_ += count;
+    double counted = count * period_now;
+    owed_ += measured - counted;
+    if (std::abs(owed_) >= kStepSeconds) {
+        counted += owed_;
+        owed_ = 0;
+    }
+    return counted;
+}
+
 } // namespace dw4::game

@@ -4,6 +4,8 @@
 #include "online/server_config.hpp"
 #include "online/token_store.hpp"
 
+#include "app_paths.hpp"
+
 #include "dw4/save_import.hpp"
 
 #include <imgui.h>
@@ -150,7 +152,7 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
         ImGui::BeginDisabled(login_id_ != 0);
         if (ImGui::Button("Log in##cloud")) log_in();
         ImGui::EndDisabled();
-        ImGui::TextDisabled("(Without a password a remembered login of this PC is used.)");
+        ImGui::TextDisabled("(Without a password a remembered login of %s is used.)", kThisMachine);
         if (!login_message_.empty()) ImGui::TextWrapped("%s", login_message_.c_str());
         ImGui::PopTextWrapPos();
         return;

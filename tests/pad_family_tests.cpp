@@ -447,8 +447,8 @@ void thor() {
           "Thor A / B pictures");
     check(face(PadFamily::thor, PromptControl::confirm, s) == Face::letter_a && face(PadFamily::thor, PromptControl::back, s) == Face::letter_b,
           "Thor menus: A confirms, B goes back (by label)");
-    check(face(PadFamily::thor, PromptControl::start, s) == Face::start_word, "Thor START");
-    check(face(PadFamily::thor, PromptControl::menu, s) == Face::select_word, "Thor SELECT opens the menu");
+    check(face(PadFamily::thor, PromptControl::start, s) == Face::start_arrow, "Thor START: the printed arrow");
+    check(face(PadFamily::thor, PromptControl::menu, s) == Face::select_square, "Thor SELECT (the printed square) opens the menu");
     check(face(PadFamily::thor, PromptControl::l, s) == Face::l2 && face(PadFamily::thor, PromptControl::r, s) == Face::r2, "Thor L2 / R2");
     check(face(PadFamily::thor, PromptControl::z, s) == Face::r1, "Thor Z on R1");
     check(pad_input_label(PadFamily::thor, s, {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER}) == "L1", "F1: L1");

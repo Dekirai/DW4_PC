@@ -151,7 +151,7 @@ enum class Face : std::uint8_t {
     lb, rb, lt, rt, l1, r1, l2, r2, l, r, zl, zr, z,
     // middle buttons
     start_360, back_360, menu, view, options, share, create, plus, minus, start_gc, home, capture, touchpad, mic, c_button,
-    start_word, select_word, // a pill with the word START / SELECT (the AYN Thor)
+    start_arrow, select_square, // the AYN Thor's START (a right-pointing arrow) and SELECT (a square), as printed
     // sticks, their clicks, the D-pad (whole or one direction)
     left_stick, right_stick, left_stick_click, right_stick_click, c_stick, dpad, dpad_up, dpad_down, dpad_left, dpad_right,
     paddle_r1, paddle_l1, paddle_r2, paddle_l2, gl, gr,

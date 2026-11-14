@@ -693,7 +693,7 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
     case Face::paddle_l1: shoulder(c, b, "P3", false, st.shoulder, st.shoulder_label); return;
     case Face::paddle_l2: shoulder(c, b, "P4", false, st.shoulder, st.shoulder_label); return;
     case Face::menu: case Face::view: case Face::start_360: case Face::back_360: case Face::plus: case Face::minus:
-    case Face::home: case Face::misc: case Face::c_button: {
+    case Face::home: case Face::misc: case Face::c_button: case Face::start_arrow: case Face::select_square: {
         // As large as a face button (smaller ones read as a dot beside A / B).
         const float rm = r;
         round_button(c, cx, cy, rm, st.middle, st.face_rim);
@@ -709,6 +709,10 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
             break;
         }
         case Face::start_360: triangle_fill(c, cx + rm * 0.06f, cy, rm * 0.5f, true, sym); break;
+        // The AYN Thor's printing (the PlayStation 2's signs): START a
+        // right-pointing arrow, SELECT a square.
+        case Face::start_arrow: triangle_fill(c, cx + rm * 0.06f, cy, rm * 0.5f, true, sym); break;
+        case Face::select_square: box(c, cx, cy, rm * 0.36f, rm * 0.36f, rm * 0.05f, sym); break;
         case Face::back_360: triangle_fill(c, cx - rm * 0.06f, cy, rm * 0.5f, false, sym); break;
         case Face::plus:
             line(c, {cx - rm * 0.5f, cy}, {cx + rm * 0.5f, cy}, half * 1.2f, sym);
@@ -727,13 +731,12 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
         }
         return;
     }
-    case Face::options: case Face::share: case Face::create: case Face::start_gc: case Face::touchpad: case Face::mic: case Face::capture:
-    case Face::start_word: case Face::select_word: {
+    case Face::options: case Face::share: case Face::create: case Face::start_gc: case Face::touchpad: case Face::mic: case Face::capture: {
         const Color sym = st.middle_symbol;
-        if (pf.face == Face::start_gc || pf.face == Face::start_word || pf.face == Face::select_word) {
+        if (pf.face == Face::start_gc) {
             const float hw = wide ? std::min(b.w() * 0.46f, s * 1.3f) : s * 0.47f, hh = wide ? s * 0.36f : s * 0.27f;
-            pill(c, cx, cy, hw, hh, st.middle, pf.face == Face::start_gc ? hex(0, 0) : st.face_rim);
-            draw_text(c, pf.face == Face::select_word ? "SELECT" : "START", cx, cy, hh * 0.9f, hw * 1.7f, sym);
+            pill(c, cx, cy, hw, hh, st.middle, hex(0, 0));
+            draw_text(c, "START", cx, cy, hh * 0.9f, hw * 1.7f, sym);
             return;
         }
         if (pf.face == Face::touchpad) {

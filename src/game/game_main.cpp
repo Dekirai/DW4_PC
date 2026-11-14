@@ -480,12 +480,16 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
     }
     w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
     w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
-    if (!w.context && msaa > 1) {
+    // A level the GPU does not have (8x on the AYN Thor's Adreno 740, which
+    // has 4x): the next lower one, down to none.
+    for (int samples = msaa / 2; !w.context && msaa > 1; samples /= 2) {
         if (w.window) SDL_DestroyWindow(w.window);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, samples > 1 ? 1 : 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, samples > 1 ? samples : 0);
         w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
         w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
+        if (w.context) std::printf("window: %dx anti-aliasing is not offered here; %dx instead\n", msaa, samples > 1 ? samples : 0);
+        if (samples <= 1) break;
     }
     if (!w.window || !w.context) {
         // No half-open window stays behind (the next call would return it
@@ -2412,6 +2416,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
+        dw4::game::RefreshClock refresh_clock; // (the step clock in the display's refreshes, interpolation.hpp)
         bool focus_paused_before = false; // (the focus pause's log lines)
         // State files live in saves/states next to the program (not in test runs).
         std::filesystem::path state_dir;
@@ -3001,7 +3006,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto now = std::chrono::steady_clock::now();
             // (DW4_DEV_PRESENT: every pass is one present of the virtual refresh.)
             const double pass_seconds = dev.presenting() ? 1.0 / dev.hz : std::chrono::duration<double>(now - last).count();
-            accumulator += pass_seconds;
+            // With VSync the step clock counts a pass in the display's
+            // refreshes (RefreshClock: the jitter of a pass's start no longer
+            // decides between 0 and 2 steps); an online room's session paces
+            // its steps from the measured time itself, test runs step once.
+            const bool refresh_paced = settings.vsync && !dev.presenting() && !options.smoke_frames && !online && !net.active() && view.window;
+            if (refresh_paced) {
+                double refresh_hz = 0;
+                if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(view.window)))
+                    refresh_hz = mode->refresh_rate_numerator > 0 && mode->refresh_rate_denominator > 0
+                                     ? double(mode->refresh_rate_numerator) / double(mode->refresh_rate_denominator)
+                                     : double(mode->refresh_rate);
+                accumulator += refresh_clock.pass(pass_seconds, refresh_hz);
+            } else {
+                refresh_clock.reset();
+                accumulator += pass_seconds;
+            }
             last = now;
             // (Online rooms keep real time in test runs too: the relay seals on its clock.)
             int steps = options.smoke_frames && !dev.presenting() && !online && !ui_script.loaded() ? (net.in_lobby() ? 0 : 1) : 0;
@@ -4432,7 +4452,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
                         dw4::game::settings_screen2_section(settings, settings_changed, view.menu_section);
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            ImGui::PushTextWrapPos(0.0f);
+#ifdef SDL_PLATFORM_ANDROID
+                            ImGui::TextDisabled("Files: %s", state_dir.string().c_str());
+#else
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
+#endif
+                            ImGui::PopTextWrapPos();
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
                                 ImGui::PushID(int(slot));
                                 if (ImGui::SmallButton("Save")) save_state(slot);

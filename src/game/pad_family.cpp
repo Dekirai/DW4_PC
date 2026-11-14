@@ -295,8 +295,8 @@ const char* face_name(Face face) {
     case Face::touchpad: return "Touchpad";
     case Face::mic: return "Mute";
     case Face::c_button: return "C";
-    case Face::start_word: return "Start";
-    case Face::select_word: return "Select";
+    case Face::start_arrow: return "Start";
+    case Face::select_square: return "Select";
     case Face::left_stick: return "Left stick";
     case Face::right_stick: return "Right stick";
     case Face::left_stick_click: return "Left stick press";
@@ -350,7 +350,7 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
         if (nintendo_pad && nintendo == NintendoLayout::by_position) return Face::letter_x;
         return Face::letter_y;
     case SDL_GAMEPAD_BUTTON_BACK:
-        if (thor) return Face::select_word;
+        if (thor) return Face::select_square;
         if (family == PadFamily::xbox360) return Face::back_360;
         if (family == PadFamily::ps4) return Face::share;
         if (family == PadFamily::ps5) return Face::create;
@@ -358,7 +358,7 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
         if (gc) return Face::none;
         return Face::view;
     case SDL_GAMEPAD_BUTTON_START:
-        if (thor) return Face::start_word;
+        if (thor) return Face::start_arrow;
         if (family == PadFamily::xbox360) return Face::start_360;
         if (sony) return Face::options;
         if (nintendo_pad) return Face::plus;

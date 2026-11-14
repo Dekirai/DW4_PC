@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.res.Configuration;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -186,16 +187,34 @@ public class DW4Activity extends SDLActivity {
      * text input again with another kind (a password field after a text
      * field): the keyboard keeps the text field's kind until its input is
      * restarted. Runs after SDL's own show task (the same main looper).
+     *
+     * The restarted keyboard can be taller than the one Android panned the
+     * picture for (Gboard's password layout adds a row of digits), which then
+     * covered the field: once the keyboard has its new size, the field's
+     * place (SDL's text edit) asks to be on the screen again, and Android
+     * pans the picture for the keyboard as it is now.
      */
     public static void restartTextInput() {
         final SDLActivity activity = mSingleton;
         if (activity instanceof DW4Activity) {
-            ((DW4Activity) activity).mMainHandler.post(() -> {
+            final Handler handler = ((DW4Activity) activity).mMainHandler;
+            handler.post(() -> {
                 InputMethodManager imm = (InputMethodManager) activity.getSystemService(Context.INPUT_METHOD_SERVICE);
                 if (imm != null && mTextEdit != null) {
                     imm.restartInput(mTextEdit);
                 }
             });
+            for (long delay : new long[] {150, 400}) {
+                handler.postDelayed(DW4Activity::keepTextFieldInSight, delay);
+            }
+        }
+    }
+
+    /** The text field's place above the keyboard (the restarted keyboard's size; see restartTextInput). */
+    private static void keepTextFieldInSight() {
+        final View edit = mTextEdit;
+        if (edit != null && edit.isShown() && edit.hasFocus()) {
+            edit.requestRectangleOnScreen(new Rect(0, 0, edit.getWidth(), edit.getHeight()), true);
         }
     }
 

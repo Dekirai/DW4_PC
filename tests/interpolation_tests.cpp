@@ -296,6 +296,74 @@ void test_blend_report() {
 }
 } // namespace
 
+// The step clock on a display with VSync (RefreshClock): passes measured
+// with the jitter of when a pass starts after its vsync (0..3 ms, a fixed
+// pseudo-random series) feed the host's accumulator (kFieldSeconds per
+// step, at most 4 a pass); counted are the passes after 0 / 2+ steps and
+// how often a 0 and a 2+ follow each other (judder).
+struct PacingRun {
+    int zeros = 0, doubles = 0, pairs = 0;
+    double counted = 0, real = 0;
+};
+PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, double jitter = 0.003) {
+    constexpr double kField = 1001.0 / 60000.0;
+    dw4::game::RefreshClock clock;
+    PacingRun run;
+    std::uint32_t seed = 12345;
+    const auto noise = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return double(seed >> 8) / double(1u << 24) * jitter;
+    };
+    double previous = noise(), accumulator = 0;
+    int last_steps = 1;
+    for (int k = 1; k <= passes; ++k) {
+        const double stamp = double(k) / display_hz + noise();
+        const double measured = stamp - previous;
+        previous = stamp;
+        const double dt = snapped ? clock.pass(measured, reported_hz) : measured;
+        run.counted += dt;
+        run.real += measured;
+        accumulator += dt;
+        int steps = 0;
+        while (accumulator >= kField && steps < 4) {
+            accumulator -= kField;
+            ++steps;
+        }
+        if (steps == 4) accumulator = 0;
+        if (k > 240) { // (after the clock settled)
+            if (steps == 0) ++run.zeros;
+            if (steps >= 2) ++run.doubles;
+            if ((steps == 0 && last_steps >= 2) || (steps >= 2 && last_steps == 0)) ++run.pairs;
+        }
+        last_steps = steps;
+    }
+    return run;
+}
+
+void test_refresh_clock() {
+    // 60 Hz with the jitter: measured, 0 / 2 pairs near the boundary; counted
+    // in refreshes, one lone repeated picture every ~1000 passes.
+    const auto raw = pace(60.0, 60.0, 6000, false);
+    const auto clocked = pace(60.0, 60.0, 6000, true);
+    check(raw.pairs > 20, "the measured clock judders on a 60 Hz display (the test sees it)");
+    check(clocked.pairs == 0 && clocked.doubles == 0 && clocked.zeros >= 4 && clocked.zeros <= 6,
+          "counted in refreshes: only the lone repeats of 60 against 59.94 Hz");
+    check(std::abs(clocked.counted - clocked.real) < 1001.0 / 60000.0, "the counted clock keeps real time");
+    // A 59.94 Hz display that reports 60: the measured period takes over, no judder at all.
+    const auto ntsc = pace(60000.0 / 1001.0, 60.0, 6000, true);
+    check(ntsc.pairs == 0 && ntsc.zeros <= 1 && ntsc.doubles <= 1, "a 59.94 Hz display: steady");
+    check(std::abs(ntsc.counted - ntsc.real) < 1001.0 / 60000.0, "a 59.94 Hz display that says 60: real time kept");
+    // 120 Hz: a step every other pass, never two.
+    const auto fast = pace(120.0, 120.0, 6000, true, 0.0015);
+    check(fast.doubles == 0, "120 Hz: never two steps in a pass");
+    // A display that is not what it reports (a variable refresh at the game's
+    // own pace under a 144 Hz mode): every pass as measured.
+    dw4::game::RefreshClock clock;
+    check(near(float(clock.pass(1001.0 / 60000.0, 144.0)), float(1001.0 / 60000.0)), "not a whole number of refreshes: as measured");
+    check(clock.pass(0.2, 60.0) == 0.2, "a hitch of more than four refreshes: as measured");
+    check(clock.pass(0.016, 0.0) == 0.016 && clock.period() == 0.0, "no known rate: as measured");
+}
+
 int main() {
     try {
         test_blend_between_steps();
@@ -308,6 +376,7 @@ int main() {
         test_turns_keep_their_size();
         test_previous_view();
         test_blend_report();
+        test_refresh_clock();
     } catch (const std::exception& error) {
         std::cerr << "interpolation tests failed: " << error.what() << '\n';
         return 1;

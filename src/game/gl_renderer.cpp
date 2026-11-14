@@ -448,6 +448,9 @@ void main() {
 }
 )";
 
+// The probe row's clear: a NaN's bits, never a depth's (read_depths).
+constexpr GLuint kProbeUnwritten = 0xFFFFFFFFu;
+
 const char* kDepthProbeFragment = R"(#version 330 core
 flat in ivec2 v_pixel;
 uniform sampler2D u_depth;
@@ -1018,7 +1021,10 @@ std::vector<std::optional<float>> GlRenderer::read_depths(const std::vector<std:
         glDisable(GL_BLEND);
         glDisable(GL_CULL_FACE);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        const GLuint unwritten[4]{0, 0, 0, 0};
+        // (A slot the pass does not write keeps a NaN's bits, which no
+        // depth is: the R32UI target has no alpha to mark the written ones,
+        // GL_RGBA_INTEGER reads A = 1 for every pixel.)
+        const GLuint unwritten[4]{kProbeUnwritten, 0, 0, 0};
         gl.ClearBufferuiv(GL_COLOR, 0, unwritten);
         gl.UseProgram(gl.probe_program);
         gl.Uniform1f(gl.u_probe_slots, float(count));
@@ -1057,8 +1063,8 @@ std::vector<std::optional<float>> GlRenderer::read_depths(const std::vector<std:
         return depths;
     }
     for (std::size_t k = 0; k < slots.size(); ++k) {
-        // (The fourth component marks a probe the pass wrote.)
-        if (bits[k * 4 + 3] != 1u) continue;
+        // (A probe the pass did not write: unknown, not "in front".)
+        if (bits[k * 4] == kProbeUnwritten) continue;
         float depth = 1.0f;
         std::memcpy(&depth, &bits[k * 4], sizeof depth);
         depths[slots[k]] = depth;
