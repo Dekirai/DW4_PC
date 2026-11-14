@@ -22,7 +22,9 @@ public sealed record ReportPage(IReadOnlyList<ReportRow> Reports, int Total, int
 /// the relay's live one, else the newest of the instance history within <see cref="ReportOptions.SharedInstanceHours"/>.
 /// A reporter at his limit is answered "limit" without a query for <see cref="LimitKnownMinutes"/> (also a repeat then).
 /// Staff list them and mark them done (audited report_handled) or open again (report_reopened), never one about their own
-/// account (403 own_report). Writes of one reporter are serialized (the daily count and the repeat check cannot race).
+/// account (403 own_report). Writes of one reporter are serialized (the daily count and the repeat check cannot race). The limit's
+/// retryAfterSeconds is when the oldest report of the 24 hours leaves them; done reports go <see cref="ReportOptions.DoneDays"/>
+/// after they were handled (<see cref="PruneDoneAsync"/>).
 /// </summary>
 public sealed class ReportService(
     IAccountRepository accounts,
@@ -33,9 +35,10 @@ public sealed class ReportService(
 {
     private const int LockStripes = 16;
     private readonly SemaphoreSlim[] _locks = Enumerable.Range(0, LockStripes).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
-    /// <summary>Reporters at their daily limit, until when they are answered "limit" without a query (round I1b review: a flood of
-    /// REPORTs or POSTs past the limit costs the database nothing). Re-checked in the table after <see cref="LimitKnownMinutes"/>.</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTime> _limited = new();
+    /// <summary>Reporters at their daily limit: until when they are answered "limit" without a query (round I1b review: a flood of
+    /// REPORTs or POSTs past the limit costs the database nothing), and when the oldest report of their 24 hours leaves them.
+    /// Re-checked in the table after <see cref="LimitKnownMinutes"/>, or sooner when a report leaves the window before.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, (DateTime Until, DateTime FreeAt)> _limited = new();
     public const int LimitKnownMinutes = 10;
     private const string LimitMessage = "You can't send more reports today.";
 
@@ -61,10 +64,11 @@ public sealed class ReportService(
         if (!ReportReasons.IsValid(reason))
             return DomainError.Invalid("invalid_reason", "Choose a reason: griefing, cheating, name or other.");
         if (reporter == reported) return DomainError.Invalid("own_account", "You can't report yourself.");
-        if (_limited.TryGetValue(reporter, out var until))
+        if (_limited.TryGetValue(reporter, out var known))
         {
-            if (time.GetUtcNow().UtcDateTime < until) return DomainError.TooMany("report_limit", LimitMessage, 3600);
-            _limited.TryRemove(new KeyValuePair<long, DateTime>(reporter, until));
+            var at = time.GetUtcNow().UtcDateTime;
+            if (at < known.Until) return Limit(known.FreeAt, at);
+            _limited.TryRemove(new KeyValuePair<long, (DateTime, DateTime)>(reporter, known));
         }
         var target = await accounts.GetAsync(reported, ct);
         if (target is null || target.Status == AccountStatus.Deleted)
@@ -77,10 +81,14 @@ public sealed class ReportService(
             if (await reports.LastAboutAsync(reporter, reported, now.AddHours(-Math.Max(0, options.RepeatHours)), ct) is not null)
                 return new ReportOutcome(ReportOutcome.Sent, ReportOutcome.SentMessage, null);
             var day = now.AddDays(-1);
-            if (await reports.CountByReporterAsync(reporter, day, ct) >= Math.Max(1, options.PerDay))
+            var perDay = Math.Max(1, options.PerDay);
+            if (await reports.CountByReporterAsync(reporter, day, ct) is var count && count >= perDay)
             {
-                _limited[reporter] = now.AddMinutes(LimitKnownMinutes);
-                return DomainError.TooMany("report_limit", LimitMessage, 3600);
+                // A report leaves the 24 hours when its day is over: the (count - PerDay + 1)-th oldest frees the first place.
+                var freeAt = (await reports.ReportTimeAsync(reporter, day, count - perDay, ct) ?? now).AddDays(1);
+                var until = now.AddMinutes(LimitKnownMinutes);
+                _limited[reporter] = (freeAt < until ? freeAt : until, freeAt);
+                return Limit(freeAt, now);
             }
             instanceId ??= await reports.SharedInstanceAsync(reporter, reported, now.AddHours(-Math.Max(0, options.SharedInstanceHours)), ct);
             var id = await reports.InsertAsync(new ReportInsert(reporter, reported, reason!, source, instanceId, now), ct);
@@ -92,6 +100,15 @@ public sealed class ReportService(
             gate.Release();
         }
     }
+
+    /// <summary>429 report_limit with the seconds until a report leaves the reporter's 24 hours (at least 1).</summary>
+    private static DomainError Limit(DateTime freeAt, DateTime now) =>
+        DomainError.TooMany("report_limit", LimitMessage, (int)Math.Clamp(Math.Ceiling((freeAt - now).TotalSeconds), 1, 86400));
+
+    /// <summary>The hourly housekeeping: done reports handled more than <see cref="ReportOptions.DoneDays"/> ago go (the privacy
+    /// page's period); open ones stay until staff handle them.</summary>
+    public Task<int> PruneDoneAsync(CancellationToken ct = default) =>
+        reports.DeleteDoneAsync(time.GetUtcNow().UtcDateTime.AddDays(-Math.Max(1, options.DoneDays)), ct);
 
     /// <summary>The admin list for the staff member <paramref name="viewer"/>: <paramref name="state"/> open, done or null (all), page 1
     /// first; a report about the viewer himself without its reporter (<see cref="ReportRow.WithoutReporter"/>).</summary>
@@ -128,8 +145,10 @@ public sealed class ReportService(
         if (row.ReportedAccountId == staff) return OwnReport();
         var now = time.GetUtcNow().UtcDateTime;
         if (!await reports.MarkDoneAsync(id, staff, now, ct)) return DomainError.Conflict("report_done", "This report is done already.");
+        // (Never the reporter: an admin sees every audit row with its detail, also the ones about his own account, and a reported
+        // staff member never learns who reported him, 19.16. The report's row keeps the reporter for the other staff.)
         await audit.WriteAsync("report_handled", row.ReportedAccountId, staff, ip,
-            new { reportId = id, reason = row.Reason, reportedId = row.ReportedAccountId, reporterId = row.ReporterAccountId }, now, ct);
+            new { reportId = id, reason = row.Reason, reportedId = row.ReportedAccountId }, now, ct);
         return true;
     }
 

@@ -106,6 +106,9 @@ public sealed class ReportOptions
     public int SharedInstanceHours { get; set; } = 24;
     /// <summary>Rows per page of the admin list.</summary>
     public int PageSize { get; set; } = 50;
+    /// <summary>Days a done report stays after it was handled (the hourly housekeeping deletes it then; open reports stay until
+    /// staff handle them). The privacy page names this period.</summary>
+    public int DoneDays { get; set; } = 180;
 }
 
 /// <summary>

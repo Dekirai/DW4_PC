@@ -86,6 +86,12 @@ public interface IReportRepository
     Task<long?> InsertAsync(ReportInsert report, CancellationToken ct = default);
     /// <summary>The reporter's reports since <paramref name="since"/> (the daily limit).</summary>
     Task<int> CountByReporterAsync(long reporter, DateTime since, CancellationToken ct = default);
+    /// <summary>When the reporter's report number <paramref name="skip"/> + 1 since <paramref name="since"/> came, the oldest first
+    /// (null: fewer): the daily limit's retryAfterSeconds.</summary>
+    Task<DateTime?> ReportTimeAsync(long reporter, DateTime since, int skip, CancellationToken ct = default);
+    /// <summary>Deletes done reports handled before <paramref name="handledBefore"/> (Reports:DoneDays, the hourly housekeeping); open
+    /// ones stay until staff handle them.</summary>
+    Task<int> DeleteDoneAsync(DateTime handledBefore, CancellationToken ct = default);
     /// <summary>The newest report of the reporter about the reported account since <paramref name="since"/> (a repeat adds no row).</summary>
     Task<DateTime?> LastAboutAsync(long reporter, long reported, DateTime since, CancellationToken ct = default);
     /// <summary>The newest instance both accounts played in (as players) that started or ended since <paramref name="since"/>.</summary>

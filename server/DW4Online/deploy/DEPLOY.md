@@ -865,6 +865,14 @@ powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backu
 Start-Service DW4Online
 ```
 
+**A release that raised the protocol** (0.1.7: 49, 0.2.0: 50): before that `Start-Service`, set `Play:MinimumProtocol` and
+`Play:CurrentProtocol` in `config\appsettings.Production.json` back to the old release's protocol (49 for 0.1.9). The old
+release takes the larger of the file's value and its own, so with 50 left in the file it answers every 49 client
+`client_outdated` (426), and its relay speaks only 49: nobody could play. Then check `/api/v1/status` (`"minimumProtocol":49`).
+A client release of the new protocol that was published already cannot play on the old server either (`ERR protocol`):
+withdraw it with the rollback. That is why the client release follows the server only after the server runs and was
+checked (section 9.3).
+
 Database updates and restarts: DW4Online depends on the database service (`sc.exe config DW4Online depend= MariaDB`,
 or `mysql`), so `Stop-Service` and `Restart-Service` of that service refuse while DW4Online runs (without `-Force`,
 which stops DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Online first:
@@ -1110,14 +1118,19 @@ with 0.1.7 (its checksum is unchanged), and `v_staff_audit` stays 0013's.
 `Play:CurrentProtocol` to **50** (the server refuses anything below 50 anyway; set it so the file says what happens).
 The new relay options have code defaults and need no line: `World:ArrivalPrompt` (true), `World:OptionsRefreshMs`
 (1000), `World:OfferReopenSeconds` (120), `World:AnswerNoticeSeconds` (20), `World:GoAlongWaitSeconds` (60),
-`World:RemovedBarMinutes` (10), `Reports:PerDay` (10), `Reports:RepeatHours` (24), `RateLimits:ReportsPerMinute` (10).
+`World:RemovedBarMinutes` (10), `Reports:PerDay` (10), `Reports:RepeatHours` (24), `Reports:SharedInstanceHours` (24),
+`Reports:DoneDays` (180: a handled report is deleted that long after it was handled, by the hourly housekeeping; the privacy
+page names the period, so set it there only together with what the operator tells the players), `RateLimits:ReportsPerMinute`
+(10).
 Never set the test options (`World:TestHooks`, `World:TestGoHook*`, `World:TestGoBarrierHoldMs`, `World:TestJoinHoldMs`,
 `World:TestDropPlans`) on the live server.
 
 **The update** is section 8 with these steps in this order: (1) the backup (section 7; the migration's way back), (2)
 the settings above, (3) the server release 0.2.0 (`migrate`: "... done in N s: schema 14", `Start-Service`;
-`/api/v1/status` says `"version":"0.2.0"` and `"minimumProtocol":50`), (4) the client release for the players. The
-way back is section 8's rollback with the backup of step 1 (0.1.9 refuses schema 14).
+`/api/v1/status` says `"version":"0.2.0"` and `"minimumProtocol":50`), (4) only then, with the server running and checked, the
+client release for the players. The way back is section 8's rollback with the backup of step 1 (0.1.9 refuses schema 14)
+**and the two settings back to 49** before the start (section 8, "A release that raised the protocol"); a client release of
+0.2.0 that went out already is withdrawn with it (it cannot play on 0.1.9).
 
 The check in HeidiSQL after the update (as root or `dw4backup`, database `dw4online`, a *Query* tab, F9):
 

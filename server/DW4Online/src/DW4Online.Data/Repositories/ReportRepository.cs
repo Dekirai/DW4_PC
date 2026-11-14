@@ -39,6 +39,23 @@ public sealed class ReportRepository(Database db) : IReportRepository
             new { reporter, since }, cancellationToken: ct));
     }
 
+    public async Task<DateTime?> ReportTimeAsync(long reporter, DateTime since, int skip, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        return await c.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
+            "SELECT created_at FROM player_reports WHERE reporter_account_id = @reporter AND created_at >= @since " +
+            "ORDER BY created_at, id LIMIT 1 OFFSET @skip",
+            new { reporter, since, skip = Math.Max(0, skip) }, cancellationToken: ct));
+    }
+
+    public async Task<int> DeleteDoneAsync(DateTime handledBefore, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        return await c.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM player_reports WHERE state = 'done' AND handled_at < @handledBefore LIMIT 10000",
+            new { handledBefore }, cancellationToken: ct));
+    }
+
     public async Task<DateTime?> LastAboutAsync(long reporter, long reported, DateTime since, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);

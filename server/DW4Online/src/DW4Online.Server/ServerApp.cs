@@ -321,11 +321,11 @@ public static class ServerApp
 }
 
 /// <summary>
-/// Hourly housekeeping: audit retention (180 days), expired sessions, the history of reset online characters and expired
-/// friend requests (Friends:RequestDays).
+/// Hourly housekeeping: audit retention (180 days), expired sessions, the history of reset online characters, expired
+/// friend requests (Friends:RequestDays) and done reports (Reports:DoneDays).
 /// </summary>
-internal sealed class MaintenanceService(MaintenanceRepository repository, SocialService social, OnlineCharacterOptions characters,
-    TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
+internal sealed class MaintenanceService(MaintenanceRepository repository, SocialService social, ReportService reports,
+    OnlineCharacterOptions characters, TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -338,9 +338,10 @@ internal sealed class MaintenanceService(MaintenanceRepository repository, Socia
                 {
                     var (audit, sessions, revisions) = await repository.PruneAsync(Clock.Now(time), 180, characters.ResetHistoryDays, stop);
                     var requests = await social.PurgeExpiredAsync(stop);
-                    if (audit + sessions + revisions + requests > 0)
-                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions, {Revisions} revisions of reset characters and {Requests} expired friend requests",
-                            audit, sessions, revisions, requests);
+                    var done = await reports.PruneDoneAsync(stop);
+                    if (audit + sessions + revisions + requests + done > 0)
+                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions, {Revisions} revisions of reset characters, {Requests} expired friend requests and {Reports} done reports",
+                            audit, sessions, revisions, requests, done);
                 }
                 catch (MySqlConnector.MySqlException e)
                 {

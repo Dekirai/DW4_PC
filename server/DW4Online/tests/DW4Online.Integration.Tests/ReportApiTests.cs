@@ -47,15 +47,27 @@ public class ReportApiTests
         // A repeat about Lee answers "sent" and adds nothing; Max is the second of two a day; Ann the third: 429.
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Lee", "cheating")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Max", "name")).StatusCode);
-        var limit = await ReportAsync(kim, "Ann", "other");
-        Assert.Equal(HttpStatusCode.TooManyRequests, limit.StatusCode);
-        Assert.Equal("report_limit", await limit.ProblemCode());
+        // retryAfterSeconds: when the oldest report of the 24 hours leaves them (round I1b's integration review: it said 3600 while
+        // the count runs over 24 hours, so a client that kept to it was refused for up to a day).
+        static async Task<(HttpStatusCode Status, string Code, int RetryAfter)> Refused(HttpResponseMessage r)
+        {
+            var body = await r.Json();
+            return (r.StatusCode, body.GetProperty("code").GetString()!, body.GetProperty("retryAfterSeconds").GetInt32());
+        }
+        var limit = await Refused(await ReportAsync(kim, "Ann", "other"));
+        Assert.Equal((HttpStatusCode.TooManyRequests, "report_limit"), (limit.Status, limit.Code));
+        Assert.InRange(limit.RetryAfter, 86_400 - 5, 86_400);
         // At the limit the service answers without the table for ReportService.LimitKnownMinutes: a repeat about Lee (which the
-        // table would answer "sent") is "limit" now; ten minutes later the table speaks again.
-        Assert.Equal("report_limit", await (await ReportAsync(kim, "Lee", "griefing")).ProblemCode());
+        // table would answer "sent") is "limit" now, with the same time; ten minutes later the table speaks again.
+        var known = await Refused(await ReportAsync(kim, "Lee", "griefing"));
+        Assert.Equal("report_limit", known.Code);
+        Assert.InRange(known.RetryAfter, 86_400 - 5, 86_400);
         host.Clock.Advance(TimeSpan.FromMinutes(DW4Online.Domain.Services.ReportService.LimitKnownMinutes + 1));
         Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Lee", "griefing")).StatusCode);
-        Assert.Equal("report_limit", await (await ReportAsync(kim, "Ann", "other")).ProblemCode());
+        var later = await Refused(await ReportAsync(kim, "Ann", "other"));
+        Assert.Equal("report_limit", later.Code);
+        var left = 86_400 - (DW4Online.Domain.Services.ReportService.LimitKnownMinutes + 1) * 60;
+        Assert.InRange(later.RetryAfter, left - 5, left);
         Assert.Equal(HttpStatusCode.Unauthorized, (await ReportAsync(host.Client(), "Lee", "griefing")).StatusCode);
 
         await using var sql = await host.SqlAsync();
@@ -131,9 +143,88 @@ public class ReportApiTests
         Assert.Equal(["report_handled", "report_reopened"], audits.Select(a => a.Event));
         Assert.All(audits, a => Assert.Equal(leeId, a.Account));
         Assert.Contains($"\"reportId\":{id}", audits[0].Detail);
+        // (Never the reporter: an admin reads every audit row with its detail, 19.16.)
+        Assert.All(audits, a => Assert.DoesNotContain("reporter", a.Detail, StringComparison.OrdinalIgnoreCase));
         // (v_staff_audit is 0013's view: report_handled is in it, report_reopened only in audit_log and the website's list; 0014 could
         // not replace the view without the right DROP.)
         Assert.Equal(1, await check.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM v_staff_audit WHERE staff = 'Moddy' AND event LIKE 'report%'"));
+    }
+
+    /// <summary>A reported admin reads the whole staff audit (every row with its detail, also the ones about his own account): the
+    /// report_handled row of a report about him never names who reported him (19.16; round I1b's integration review: its detail had
+    /// reporterId, which the account search turns into a name).</summary>
+    [DbFact]
+    public async Task A_reported_admin_never_learns_his_reporter_from_the_staff_audit()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (kimToken, _, kimId) = await host.RegisterAsync("Kim");
+        await host.RegisterAsync("Boss");
+        await host.RegisterAsync("Moddy");
+        await using (var sql = await host.SqlAsync())
+        {
+            await sql.ExecuteAsync("UPDATE accounts SET role = 'admin' WHERE username = 'Boss'");
+            await sql.ExecuteAsync("UPDATE accounts SET role = 'moderator' WHERE username = 'Moddy'");
+        }
+        Assert.Equal(HttpStatusCode.OK, (await ReportAsync(host.Client(kimToken), "Boss", "griefing")).StatusCode);
+        var mod = host.Client((await host.LoginAsync("Moddy")).Token);
+        var report = (await (await mod.GetAsync("/api/v1/admin/reports")).Json()).GetProperty("reports")[0];
+        Assert.Equal(("Boss", "Kim"), (report.GetProperty("reported").GetString(), report.GetProperty("reporter").GetString()));
+        Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync($"/api/v1/admin/reports/{report.GetProperty("id").GetInt64()}/done", null)).StatusCode);
+
+        var boss = host.Client((await host.LoginAsync("Boss")).Token);
+        var rows = (await (await boss.GetAsync("/api/v1/admin/audit")).Json()).GetProperty("rows").EnumerateArray().ToList();
+        var handled = Assert.Single(rows, r => r.GetProperty("event").GetString() == "report_handled");
+        Assert.Equal("Boss", handled.GetProperty("player").GetString());
+        var detail = handled.GetProperty("detail").GetString() ?? "";
+        Assert.DoesNotContain("reporter", detail, StringComparison.OrdinalIgnoreCase);
+        using (var parsed = JsonDocument.Parse(detail))
+        {
+            Assert.Equal(["reason", "reportId", "reportedId"], parsed.RootElement.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal));
+            Assert.DoesNotContain(parsed.RootElement.EnumerateObject(), p => p.Value.ValueKind == JsonValueKind.Number && p.Value.GetInt64() == kimId &&
+                                                                           p.Name != "reportId");
+        }
+        Assert.All(rows, r => Assert.NotEqual("Kim", r.GetProperty("player").GetString()));
+        using var web = new WebBrowser(host);
+        await web.LoginAsync("Boss");
+        var page = (await web.GetAsync("/admin/audit")).Html;
+        Assert.Contains("report_handled", page);
+        Assert.DoesNotContain("reporterId", page);
+    }
+
+    /// <summary>Done reports go Reports:DoneDays after they were handled (the hourly housekeeping; the privacy page names the period);
+    /// open ones stay until staff handle them.</summary>
+    [DbFact]
+    public async Task Done_reports_go_after_reports_done_days_and_open_ones_stay()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Reports:DoneDays"] = "30" });
+        var (kimToken, _, _) = await host.RegisterAsync("Kim");
+        await host.RegisterAsync("Lee");
+        await host.RegisterAsync("Max");
+        await host.RegisterAsync("Moddy");
+        await using (var sql = await host.SqlAsync())
+            await sql.ExecuteAsync("UPDATE accounts SET role = 'moderator' WHERE username = 'Moddy'");
+        var kim = host.Client(kimToken);
+        Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Lee", "griefing")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ReportAsync(kim, "Max", "name")).StatusCode);
+        var mod = host.Client((await host.LoginAsync("Moddy")).Token);
+        var aboutLee = (await (await mod.GetAsync("/api/v1/admin/reports")).Json()).GetProperty("reports").EnumerateArray()
+            .Single(r => r.GetProperty("reported").GetString() == "Lee");
+        Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync($"/api/v1/admin/reports/{aboutLee.GetProperty("id").GetInt64()}/done", null)).StatusCode);
+        var service = host.App.Services.GetRequiredService<DW4Online.Domain.Services.ReportService>();
+        host.Clock.Advance(TimeSpan.FromDays(29));
+        Assert.Equal(0, await service.PruneDoneAsync());
+        host.Clock.Advance(TimeSpan.FromDays(2));
+        Assert.Equal(1, await service.PruneDoneAsync());
+        await using var check = await host.SqlAsync();
+        Assert.Equal(["Max"], await check.QueryAsync<string>("SELECT reported FROM v_player_reports"));
+        Assert.Equal(0, await service.PruneDoneAsync());
+        // The privacy page says what a report keeps, who sees it and this period (round I1b's integration review).
+        using var web = new WebBrowser(host);
+        var privacy = System.Text.RegularExpressions.Regex.Replace(System.Net.WebUtility.HtmlDecode((await web.GetAsync("/privacy")).Html), @"\s+", " ");
+        Assert.Contains("Reports: who reported whom", privacy);
+        Assert.Contains("the reported player never sees who reported him", privacy);
+        Assert.Contains("Until 30 days after a moderator handled it", privacy);
+        Assert.Contains("the user names, levels and Digimon of up to four players in it", privacy);
     }
 
     [DbFact]
