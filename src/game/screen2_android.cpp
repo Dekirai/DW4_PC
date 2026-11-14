@@ -322,7 +322,9 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
     // password field's: no suggestions, nothing learned); again when the
     // kind changes, and when a tap on a field follows a keyboard the player
     // put away (Back stops SDL's text input; ImGui's field stays active).
-    if (io.WantTextInput) {
+    // (A field that is active now: io.WantTextInput still says the last
+    // frame's, also the frame after screen2_release_input left the field.)
+    if (io.WantTextInput && g_imgui->ActiveId != 0 && g_imgui->ActiveId == g_imgui->InputTextState.ID) {
         SDL_Window* window = g_text_window ? g_text_window : SDL_GL_GetCurrentWindow();
         const bool secret = password_field_active(*g_imgui);
         const ImGuiID field = g_imgui->ActiveId;
