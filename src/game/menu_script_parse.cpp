@@ -84,6 +84,9 @@ std::optional<std::vector<MenuCommand>> parse_menu_script(std::string_view text,
             if (w.size() != 2 || !listed(kKeys, w[1])) return bad("key needs a key name");
             c.kind = MenuCommand::Kind::key;
             c.name = w[1];
+        } else if (cmd == "screen2") {
+            if (w.size() != 1) return bad("screen2 takes nothing");
+            c.kind = MenuCommand::Kind::screen2;
         } else if (cmd == "back" || cmd == "f1") {
             if (w.size() != 1) return bad(cmd + " takes nothing");
             c.kind = cmd == "back" ? MenuCommand::Kind::back : MenuCommand::Kind::f1;

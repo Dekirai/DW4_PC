@@ -309,6 +309,11 @@ void MenuScript::update(Host& host) {
         host.shot = c.name;
         done = true;
         break;
+    case MenuCommand::Kind::screen2:
+        view.menu_on_screen2 = view.show_menu;
+        menu_log("menu script: the menu on the second screen");
+        done = true;
+        break;
     case MenuCommand::Kind::expect:
         expect(host, c);
         log_mark_ = menu_log_count();

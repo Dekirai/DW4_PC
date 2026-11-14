@@ -23,6 +23,7 @@
 //   longpress X Y [lower]       held 0.8 s
 //   drag X0 Y0 X1 Y1 MS [lower] down, moved over MS ms, up
 //   type TEXT                   characters into the active text field
+//   screen2                     the open F1 menu moves to the second screen (as its "Show it here")
 //   shot NAME                   NAME.bmp beside --screenshot's file (and NAME_screen2.bmp)
 //   expect focus ROW | page PATH | value ROW TEXT | setting SECTION.KEY VALUE | log TEXT
 //          | open | closed | dialog KIND
@@ -44,7 +45,7 @@ class ConsoleMenu;
 struct HostView;
 
 struct MenuCommand {
-    enum class Kind : std::uint8_t { wait, waitms, pad, stick, key, back, f1, tap, longpress, drag, type, shot, expect };
+    enum class Kind : std::uint8_t { wait, waitms, pad, stick, key, back, f1, tap, longpress, drag, type, shot, expect, screen2 };
     Kind kind = Kind::wait;
     int line = 0;
     std::string name;              // pad: the button; key: its name; expect: what; shot / type: the text
