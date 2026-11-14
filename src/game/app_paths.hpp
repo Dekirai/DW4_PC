@@ -58,6 +58,12 @@ inline std::filesystem::path private_root() {
 // main on (platform_android.cpp): the game's own lines, error texts before
 // their message boxes, SDL's log.
 void route_output_to_logcat();
+// The language packs the APK carries (assets lang/<code>/: the repository's
+// data/lang, language.ini and textures.tsv; never a game.tsv) into
+// lang_root (app_root()/lang, where the PC build puts them next to the
+// program), each file written only when it differs. Other files there (a
+// game.tsv the player copied in) are left alone (platform_android.cpp).
+void install_bundled_language_packs(const std::filesystem::path& lang_root);
 #endif
 
 } // namespace dw4::game

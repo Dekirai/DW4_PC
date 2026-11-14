@@ -89,6 +89,13 @@ public:
     // budget, sharpening and the shadow map size.
     void set_graphics(const GraphicsOptions& options);
     const GraphicsOptions& graphics() const { return graphics_; }
+    // Clears the GL error flags; with DW4_GL_CHECK=1 an error raised since
+    // the last check is logged ("renderer: GL error 0x... <where> (frame
+    // N)", the first 20) and counted (the total when the renderer ends).
+    // Called before texture uploads and, while checking_gl(), at the end of
+    // every presented frame (no glGetError per frame otherwise).
+    void check_gl_errors(const char* where);
+    bool checking_gl() const;
     // Once per pass, before drawing (note_stage): the documents the engine
     // holds (null: the same as last time; new ones are scanned and their
     // pack textures read ahead, while a stage loads), the uploads of

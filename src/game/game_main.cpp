@@ -114,6 +114,9 @@ struct Options {
     int import_slot = 0;
     std::filesystem::path convert_from, convert_to; // --convert-rvz IN OUT
     std::string import_disc; // --import-disc PATH (Android debug builds): the first start's import of PATH
+    // --mute: no sound output this run (no audio device opened; settings.ini
+    // and the device's volume untouched): checks on a device nobody hears.
+    bool mute{};
     // Online co-op: --host (with --players, --port, --net-delay) or --join ADDRESS[:PORT].
     bool net_host{};
     std::string net_join;
@@ -1490,7 +1493,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // Audio: the SoundManager's streams go to the default playback device
     // (not in smoke tests). DW4_AUDIO_DUMP=FILE.wav records what was mixed.
     SDL_AudioStream* audio = nullptr;
-    if (!options.smoke_frames && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+    if (options.mute && !options.smoke_frames) std::cout << "audio: muted (--mute)\n";
+    if (!options.smoke_frames && !options.mute && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, dw4::engine::SoundManager::kOutputRate};
         audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
         if (audio) SDL_ResumeAudioStreamDevice(audio);
@@ -1659,6 +1663,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
         {
             std::filesystem::path lang_root = (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "lang";
             if (const char* folder = std::getenv("DW4_LANG_DIR"); folder && *folder && options.smoke_frames) lang_root = std::filesystem::u8path(folder);
+#ifdef SDL_PLATFORM_ANDROID
+            // (Android: the APK's packs into lang/ of the app's folder first,
+            // as the PC build copies them next to the program.)
+            else
+                dw4::game::install_bundled_language_packs(lang_root);
+#endif
             languages.discover(lang_root);
             std::string wanted = options.smoke_frames ? std::string("en") : settings.language;
             if (const char* forced = std::getenv("DW4_LANGUAGE"); forced && *forced) wanted = forced;
@@ -5373,6 +5383,7 @@ int main(int argc, char** argv) {
             else if (arg == "--online-folder") options.online_folder = next();
             else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--import-disc") options.import_disc = next();
+            else if (arg == "--mute") options.mute = true;
             else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--overflow-run") {
                 // KEY=VALUE tokens up to the next option (overflow_run.hpp).
@@ -5402,7 +5413,7 @@ int main(int argc, char** argv) {
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
                              "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
-                             "         [--save-file FILE] [--load-state FILE] [--loading original|fast]\n"
+                             "         [--save-file FILE] [--load-state FILE] [--loading original|fast] [--mute]\n"
                              "         [--export-presence-art FOLDER] (Discord art asset PNGs from your game data)\n"
                              "         [--overflow-run form=p_agumon field=stagbs02 seed=N [at=F] [frames=N] ...] (Data Overflow)\n"
                              "dw4_game --save-info FILE|FOLDER\n"

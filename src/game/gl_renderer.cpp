@@ -121,12 +121,22 @@ struct GlRenderer::Impl {
     // and as a total at the end.
     bool check_depth_clamp = std::getenv("DW4_CHECK_DEPTH_CLAMP") != nullptr;
     std::uint64_t clamp_checked{}, clamp_crossing{}, clamp_report{1};
+    // DW4_GL_CHECK=1 (any platform): the GL errors raised, read at the end
+    // of every frame and where the texture uploads clear the error flags
+    // (GlRenderer::check_gl_errors); the first 20 are logged with where and
+    // when they were seen, the total when the renderer ends.
+    bool check_gl = [] {
+        const char* value = std::getenv("DW4_GL_CHECK");
+        return value && *value && *value != '0';
+    }();
+    std::uint64_t gl_errors{}, gl_checks{};
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
     ~Impl() {
         if (check_depth_clamp)
             std::cout << "renderer: depth clamp check: " << clamp_crossing << " of " << clamp_checked
                       << " orthographic triangles crossed the near or far plane\n";
+        if (check_gl) std::cout << "renderer: GL error check: " << gl_errors << " errors in " << gl_checks << " checks\n";
     }
     void check_clamp(const engine::GeometryData& g, const engine::Mat4& mvp) {
         auto side = [&](std::uint32_t index) {
@@ -520,6 +530,19 @@ GLenum take_gl_error() {
 
 GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) { create_objects(); }
 
+void GlRenderer::check_gl_errors(const char* where) {
+    auto& gl = *gl_;
+    const GLenum error = take_gl_error();
+    if (!gl.check_gl) return;
+    ++gl.gl_checks;
+    if (error == GL_NO_ERROR) return;
+    if (++gl.gl_errors <= 20)
+        std::cerr << "renderer: GL error 0x" << std::hex << error << std::dec << " " << where << " (frame " << frame_ << ")"
+                  << (gl.gl_errors == 20 ? "; further errors are only counted" : "") << '\n';
+}
+
+bool GlRenderer::checking_gl() const { return gl_->check_gl; }
+
 void GlRenderer::reset_context() {
     // (Every GL object went with the lost context: the names are only
     // forgotten. The loading thread holds none; it starts again, configured
@@ -613,6 +636,12 @@ void GlRenderer::create_objects() {
     caps_.bc7 = SDL_GL_ExtensionSupported("GL_ARB_texture_compression_bptc") || major > 4 || (major == 4 && minor >= 2);
     if (SDL_GL_ExtensionSupported("GL_ARB_texture_storage") || major > 4 || (major == 4 && minor >= 2))
         gl.TexStorage2D = reinterpret_cast<PFNGLTEXSTORAGE2DPROC>(SDL_GL_GetProcAddress("glTexStorage2D"));
+    // (OpenGL ES 3.0 has immutable storage in its core, BPTC only as
+    // GL_EXT_texture_compression_bptc; its version numbers are ES ones.)
+    if (gl.gles) {
+        caps_.bc7 = SDL_GL_ExtensionSupported("GL_EXT_texture_compression_bptc");
+        if (major >= 3) gl.TexStorage2D = reinterpret_cast<PFNGLTEXSTORAGE2DPROC>(SDL_GL_GetProcAddress("glTexStorage2D"));
+    }
     caps_.bc1 = caps_.bc3 = SDL_GL_ExtensionSupported("GL_EXT_texture_compression_s3tc");
     caps_.anisotropic =
         SDL_GL_ExtensionSupported("GL_ARB_texture_filter_anisotropic") || SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic");
@@ -1009,7 +1038,7 @@ void GlRenderer::begin_upload(TexturePayload payload) {
     up->level = up->first;
     const auto& top = payload.levels[up->first];
     const GLsizei levels = GLsizei(payload.levels.size() - up->first);
-    take_gl_error(); // (errors of earlier calls are not this texture's)
+    check_gl_errors("before a texture upload"); // (errors of earlier calls are not this texture's)
     glGenTextures(1, &up->texture.id);
     glBindTexture(GL_TEXTURE_2D, up->texture.id);
     // Immutable storage for every level at once (GL 4.2 / ARB_texture_storage),
@@ -1036,7 +1065,7 @@ void GlRenderer::begin_upload(TexturePayload payload) {
 
 bool GlRenderer::continue_upload(std::chrono::steady_clock::time_point deadline, bool& moved) {
     auto& up = *upload_;
-    take_gl_error(); // (errors of the frame's draws are not this texture's)
+    check_gl_errors("before a texture upload"); // (errors of the frame's draws are not this texture's)
     glBindTexture(GL_TEXTURE_2D, up.texture.id);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     constexpr std::size_t kBandBytes = std::size_t(256) << 10;

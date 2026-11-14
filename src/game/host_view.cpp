@@ -686,6 +686,8 @@ void finish_present(HostView& view, engine::Engine& engine, const std::function<
         const int queued = SDL_GetAudioStreamQueued(view.audio) / int(2 * sizeof(std::int16_t));
         if (queued < kAudioFrameSamples * 2) mix_audio(view, engine, kAudioFrameSamples * 3 - queued);
     }
+    // (The frame's GL errors, the scene's and the menus': DW4_GL_CHECK.)
+    if (view.renderer && view.renderer->checking_gl()) view.renderer->check_gl_errors("in the frame");
     SDL_GL_SwapWindow(view.window);
     if (swapped) swapped();
     // A minimized window's swap does not wait for the display: the loop

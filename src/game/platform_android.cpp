@@ -1,12 +1,18 @@
-// Android only (docs/ANDROID.md): stdout and stderr into logcat.
+// Android only (docs/ANDROID.md): stdout and stderr into logcat, the
+// language packs from the APK's assets.
 #include "app_paths.hpp"
 
 #include <android/log.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <vector>
 
 namespace dw4::game {
 
@@ -52,6 +58,55 @@ void route_output_to_logcat() {
     routed = true;
     route(stdout, STDOUT_FILENO, ANDROID_LOG_INFO);
     route(stderr, STDERR_FILENO, ANDROID_LOG_WARN);
+}
+
+namespace {
+// SDL_EnumerateDirectory's names, collected (a relative path that is no
+// folder of the internal storage is read from the APK's assets).
+SDL_EnumerationResult SDLCALL collect_name(void* names, const char*, const char* name) {
+    static_cast<std::vector<std::string>*>(names)->emplace_back(name);
+    return SDL_ENUM_CONTINUE;
+}
+
+std::vector<std::string> asset_names(const std::string& folder) {
+    std::vector<std::string> names;
+    if (!SDL_EnumerateDirectory(folder.c_str(), collect_name, &names)) names.clear();
+    return names;
+}
+
+bool same_contents(const std::filesystem::path& path, const void* data, std::size_t size) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    const std::string have{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    return have.size() == size && std::equal(have.begin(), have.end(), static_cast<const char*>(data));
+}
+} // namespace
+
+void install_bundled_language_packs(const std::filesystem::path& lang_root) {
+    if (lang_root.empty()) return;
+    int written = 0;
+    for (const auto& code : asset_names("lang")) {
+        for (const auto& name : asset_names("lang/" + code)) {
+            // (Never a game.tsv: the game text is the player's own file.)
+            if (name == "game.tsv") continue;
+            const std::string asset = "lang/" + code + "/" + name;
+            std::size_t size = 0;
+            void* data = SDL_LoadFile(asset.c_str(), &size);
+            if (!data) continue;
+            const auto target = lang_root / detail::utf8_path(code.c_str()) / detail::utf8_path(name.c_str());
+            if (!same_contents(target, data, size)) {
+                std::error_code error;
+                std::filesystem::create_directories(target.parent_path(), error);
+                std::ofstream out(target, std::ios::binary | std::ios::trunc);
+                if (out.write(static_cast<const char*>(data), std::streamsize(size)) && out.flush())
+                    ++written;
+                else
+                    std::fprintf(stderr, "language: %s could not be written to %s\n", asset.c_str(), target.c_str());
+            }
+            SDL_free(data);
+        }
+    }
+    if (written) std::printf("language: %d language pack files from the APK into %s\n", written, lang_root.c_str());
 }
 
 } // namespace dw4::game

@@ -64,6 +64,28 @@ def copySdlJava = tasks.register('copySdlJava', Sync) {
     into sdlJavaDir
 }
 
+// The language packs (docs/L10N.md, docs/ANDROID.md) as the assets
+// lang/<code>/: the repository's data/lang (language.ini, textures.tsv),
+// which the game copies into lang/ of its folder at start, as the PC build
+// puts them next to the program. The game text (game.tsv, derived from the
+// game's script) is never committed and never goes into the APK: a file
+// named game.* is left out even if one lies in data/lang.
+def assetsDir = layout.buildDirectory.dir('generated/dw4-assets').get().asFile
+def copyLangAssets = tasks.register('copyLangAssets', Sync) {
+    from(new File(repoRoot, 'data/lang')) {
+        include '*/*.ini', '*/*.tsv', '*/*.po'
+        exclude '*/game.*'
+    }
+    into new File(assetsDir, 'lang')
+}
+
+// The native build's parallel jobs, capped with -Pdw4.nativeJobs=N (CMake
+// job pools for compiling and linking); unset: Ninja's default.
+def nativeJobs = (project.findProperty('dw4.nativeJobs') ?: '0') as int
+def jobPoolArguments = nativeJobs > 0
+        ? ["-DCMAKE_JOB_POOLS=dw4_jobs=${nativeJobs}".toString(), '-DCMAKE_JOB_POOL_COMPILE=dw4_jobs', '-DCMAKE_JOB_POOL_LINK=dw4_jobs']
+        : []
+
 android {
     namespace 'org.dw4pc.game'
     compileSdk 35
@@ -84,7 +106,7 @@ android {
             cmake {
                 arguments(*(['-DANDROID_STL=c++_static',
                               "-DFETCHCONTENT_SOURCE_DIR_SDL3=${forwardSlashes(sdlSource)}".toString(),
-                              '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'] + fetchContentDirs))
+                              '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'] + fetchContentDirs + jobPoolArguments))
                 // The game as libmain.so (cmake/android.cmake).
                 targets 'dw4_game'
             }
@@ -101,6 +123,7 @@ android {
     sourceSets {
         main {
             java.srcDir sdlJavaDir
+            assets.srcDir assetsDir
         }
     }
 
@@ -119,5 +142,8 @@ android {
 }
 
 tasks.named('preBuild').configure {
-    dependsOn copySdlJava
+    dependsOn copySdlJava, copyLangAssets
+}
+tasks.matching { it.name ==~ /merge\w*Assets/ }.configureEach {
+    dependsOn copyLangAssets
 }

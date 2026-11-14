@@ -372,9 +372,13 @@ if(DW4_BUILD_APP)
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
   # The language packs next to the program (docs/L10N.md): data/lang and a
   # translator's local/lang game.tsv (never installed: game-derived text).
+  # (Android has no program folder: the APK carries data/lang as assets,
+  # android/app/build.gradle, and never a game.tsv.)
+  if(NOT ANDROID)
   add_custom_command(TARGET dw4_game POST_BUILD
     COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -DTARGET=$<TARGET_FILE_DIR:dw4_game> -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_lang.cmake
     VERBATIM)
+  endif()
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
