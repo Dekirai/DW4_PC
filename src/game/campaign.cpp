@@ -7032,6 +7032,15 @@ void CampaignBot::checkpoint_update(engine::Engine& engine, int frame) {
             }
         std::printf("[%d] campaign: game began in %s: %s, checkpoints behind it: %s\n", frame, stage.c_str(), game_summary(engine).c_str(),
                     behind.empty() ? "none" : behind.c_str());
+        // DW4_CAMPAIGN_SAVE_NOW=NAME (test runs; the save round trip between
+        // the PC and Android, docs/ANDROID.md): a save is due at once, kept
+        // as the checkpoint NAME (the save room's errand as for any other).
+        if (const char* now = std::getenv("DW4_CAMPAIGN_SAVE_NOW"); now && *now && std::getenv("DW4_CAMPAIGN_CHECKPOINTS")) {
+            s.due = now;
+            s.due_since = frame;
+            s.tries = 0;
+            std::printf("[%d] campaign: a save %s is due at once (DW4_CAMPAIGN_SAVE_NOW)\n", frame, now);
+        }
     }
     const char* dir = std::getenv("DW4_CAMPAIGN_CHECKPOINTS");
     if (!s.due.empty() && changed) {
