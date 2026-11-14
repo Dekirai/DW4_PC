@@ -48,10 +48,24 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
         {
             _hub.World.History = _queue.Enqueue;
             _hub.World.Audit = _queue.Audit;
-            _hub.World.RememberVisibility = (account, visibility) =>
+            // (Under the hub lock: only queued. When the write is done, or failed, the hub hears it under its lock: until then, and for an
+            // admission that read the account before it, the hub keeps its own remembered value, decision 49's guard.)
+            var hub = _hub;
+            _hub.World.RememberVisibility = (account, visibility) => _queue.Post(async _ =>
             {
-                if (RememberVisibility is { } remember) _queue.Post(_ => remember(account, Visibilities.Text(visibility)));
-            };
+                try
+                {
+                    if (RememberVisibility is { } remember) await remember(account, Visibilities.Text(visibility));
+                }
+                finally
+                {
+                    hub.Locked((h, now) =>
+                    {
+                        h.VisibilityWritten(account, now);
+                        return true;
+                    });
+                }
+            });
             if (_reports is not null) _hub.World.Reports = Report;
         }
         // A keeper's new revision becomes its owner's online story (SEAMLESS.md 8.4). Under the hub lock: only queue it.
@@ -193,6 +207,8 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
     /// <summary>The admission (off the hub lock): web's check, or this gateway's own; then the account's story.</summary>
     private async ValueTask<HubAdmit?> AdmitAsync(HubAdmission a)
     {
+        // (Before the account is read: a remembered visibility the relay wrote after this moment may be missing from what it reads.)
+        var readAt = Stopwatch.GetTimestamp();
         var ok = await CheckAsync(a);
         if (ok is null) return null;
         var story = _stories is not null ? await _stories.LoadAsync(a.AccountId) : new RoomStoryData();
@@ -207,6 +223,7 @@ internal sealed class WorldGateway : IWorldRelay, IWorldNotifier, IWorldVisibili
             BlockedBy = ok.BlockedBy.ToList(),
             NewSession = ok.NewSession,
             Handle = a,
+            ReadAt = readAt,
         };
     }
 

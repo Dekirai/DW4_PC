@@ -1,0 +1,9 @@
+# W4f, b (k5, a stranger who remembers Private): the gate 6 s after a, while a's instance is still starting. Decision 49: no
+# "starting" for b, nothing to choose: its own Private instance. It plays alone.
+campaign until stage=stagml11,control
+idle until epoch>=@106
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+follow 40 until frames>=1800 fail present>=2
+log b alone
+idle until frames>=60

@@ -397,7 +397,11 @@ the same prompt appears on the loading screen, with B taking you back to the
 lobby. Players who take the same gate within a few seconds of you arrive
 together (also two who both choose *New instance*, as far as both chosen
 visibilities let the other in: *New instance* with *Private* never puts you
-into someone else's instance, with *Friends* only into a friend's). Without
+into someone else's instance, with *Friends* only into a friend's). When you
+choose nothing (no prompt came, or its answer got lost), your remembered
+visibility decides the same way: with *Private* you never land in a
+stranger's instance that is just starting, with *Friends* only in a
+friend's. Without
 anything to choose you start a new instance with your default visibility
 and host it ("New instance (Public). View: Online menu"). Only instances whose
 visibility lets you in are listed (*Public*; *Friends* for the host's

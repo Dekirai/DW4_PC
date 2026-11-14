@@ -95,6 +95,10 @@ public sealed record HubAdmit(long AccountId, string Name)
     public bool NewSession { get; init; }
     /// <summary>The relay's handle to run the same admission again (the live re-check, 19.14).</summary>
     public object? Handle { get; init; }
+    /// <summary>When the admission began to read the account (the hub's clock, Stopwatch ticks; 0: unknown, applied as it is): a
+    /// <see cref="DefaultVisibility"/> read before the relay's newest remembered visibility was written is older than the relay's
+    /// (decision 49's staleness guard, <c>RoomHub.AdmittedVisibility</c>).</summary>
+    public long ReadAt { get; init; }
 }
 
 /// <summary>A place in an instance (19.3): taken while the member plays in it; held during the host's grace.</summary>
