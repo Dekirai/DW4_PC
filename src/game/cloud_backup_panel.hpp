@@ -34,6 +34,35 @@ public:
     // confirmed.
     void set_test(const std::string& account, const std::string& password, const std::string& action);
 
+    // ---- The console menu's view and actions (docs/CONSOLE_MENU.md: the
+    // same state and the same requests as the section above; the console
+    // menu asks its own confirms before an overwrite).
+    struct View {
+        bool logged_in = false;
+        std::string account;          // logged in as
+        bool logging_in = false;      // the login request runs
+        bool busy = false;            // a backup request runs
+        bool known = false;           // the backup was read (or "none yet")
+        const online::cloud::Overview* overview = nullptr;
+        std::string message;          // the backup's last answer
+        bool message_error = false;
+        std::string login_message;
+        std::string typed_account;    // the account field
+        bool password_typed = false;  // the password field holds something
+        bool remember = true;
+    };
+    // (Polls the answers first, as draw() does.)
+    View view();
+    void set_account(const std::string& account);
+    void set_password(const std::string& password);
+    void set_remember(bool remember);
+    void request_login();
+    void request_logout(bool forget);
+    void request_refresh();
+    void request_upload(const save::CardStore& store);
+    void request_download(int revision, const save::CardStore& store);
+    void request_restore(int revision);
+
 private:
     void poll();
     void ensure_worker();

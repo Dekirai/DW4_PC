@@ -132,6 +132,58 @@ void CloudBackupPanel::poll() {
     }
 }
 
+CloudBackupPanel::View CloudBackupPanel::view() {
+    poll();
+    View v;
+    v.logged_in = logged_in_;
+    v.account = account_name_;
+    v.logging_in = login_id_ != 0;
+    v.busy = cloud_ && cloud_->busy() != online::cloud::CloudBackup::Busy::none;
+    v.known = cloud_ && cloud_->known();
+    v.overview = cloud_ && cloud_->overview() ? &*cloud_->overview() : nullptr;
+    if (cloud_) {
+        v.message = cloud_->message();
+        v.message_error = cloud_->message_is_error();
+    }
+    v.login_message = login_message_;
+    v.typed_account = account_;
+    v.password_typed = password_[0] != 0;
+    v.remember = remember_;
+    return v;
+}
+
+void CloudBackupPanel::set_account(const std::string& account) { std::snprintf(account_, sizeof account_, "%s", account.c_str()); }
+
+void CloudBackupPanel::set_password(const std::string& password) { std::snprintf(password_, sizeof password_, "%s", password.c_str()); }
+
+void CloudBackupPanel::set_remember(bool remember) { remember_ = remember; }
+
+void CloudBackupPanel::request_login() {
+    if (login_id_ == 0) log_in();
+}
+
+void CloudBackupPanel::request_logout(bool forget) { log_out(forget); }
+
+void CloudBackupPanel::request_refresh() {
+    if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) {
+        confirm_ = 0;
+        cloud_->refresh();
+    }
+}
+
+void CloudBackupPanel::request_upload(const save::CardStore& store) {
+    if (!cloud_ || cloud_->busy() != online::cloud::CloudBackup::Busy::none) return;
+    if (const auto local = store.read(0)) cloud_->upload(*local);
+}
+
+void CloudBackupPanel::request_download(int revision, const save::CardStore& store) {
+    if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) cloud_->download(revision, store, save::backup_folder(store));
+}
+
+void CloudBackupPanel::request_restore(int revision) {
+    if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) cloud_->restore(revision);
+}
+
 void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     ImGui::SeparatorText("Cloud backup (online account)");
     poll();
