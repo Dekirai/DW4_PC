@@ -73,6 +73,10 @@ public class DW4Activity extends SDLActivity {
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
             super.surfaceChanged(holder, format, width, height);
             applyFrameRate(holder.getSurface(), "surface " + width + "x" + height);
+            final LowerScreen lower = lowerScreen();
+            if (lower != null) {
+                lower.gameSurfaceCame();
+            }
         }
 
         /**
@@ -85,11 +89,22 @@ public class DW4Activity extends SDLActivity {
          */
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
+            // (The second screen's surface goes before the game's pause.)
+            final LowerScreen lower = lowerScreen();
+            if (lower != null) {
+                lower.gameSurfaceGone();
+            }
             SDLActivity.mNextNativeState = SDLActivity.NativeState.PAUSED;
             SDLActivity.handleNativeState();
             waitForGamePause(3000);
             super.surfaceDestroyed(holder);
         }
+    }
+
+    /** The running activity's second screen (null before onCreate and after onDestroy). */
+    static LowerScreen lowerScreen() {
+        final SDLActivity activity = mSingleton;
+        return activity instanceof DW4Activity ? ((DW4Activity) activity).mLowerScreen : null;
     }
 
     /** DID_ENTER_BACKGROUND reached the game's thread (platform_android.cpp). */
@@ -266,6 +281,8 @@ public class DW4Activity extends SDLActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             scheduleImmersive(0);
+        } else if (mLowerScreen != null) {
+            mLowerScreen.focusLost();
         }
     }
 

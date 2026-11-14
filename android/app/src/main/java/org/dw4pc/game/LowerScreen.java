@@ -3,10 +3,12 @@ package org.dw4pc.game;
 import android.app.Activity;
 import android.app.Presentation;
 import android.content.Context;
+import android.content.Intent;
 import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
@@ -44,6 +46,7 @@ final class LowerScreen implements DisplayManager.DisplayListener {
     private Panels mPanels;
     private boolean mStarted;
     private String mReported = "";
+    private long mShownAt; // uptime of the last show
 
     /** [screen2] mode as the game asks for it (any thread). */
     private static volatile boolean sWanted = true;
@@ -83,6 +86,20 @@ final class LowerScreen implements DisplayManager.DisplayListener {
     void stop() {
         mStarted = false;
         dismiss("the activity is no longer visible");
+    }
+
+    /**
+     * The game's own surface goes (the activity leaves the screen): the
+     * panels' surface goes first, before the game is asked for SDL's pause
+     * (DW4Activity.GameSurface.surfaceDestroyed); they come again with the
+     * game's surface or onStart.
+     */
+    void gameSurfaceGone() {
+        dismiss("the game's surface goes");
+    }
+
+    void gameSurfaceCame() {
+        update("the game's surface came");
     }
 
     void release() {
@@ -164,7 +181,35 @@ final class LowerScreen implements DisplayManager.DisplayListener {
             return;
         }
         mPanels = panels;
+        mShownAt = SystemClock.uptimeMillis();
         Log.i(TAG, "second screen: shown on display " + display.getDisplayId() + " (" + why + ")");
+    }
+
+    /**
+     * The activity lost the input focus. A display that has just come (a
+     * second screen added, a video out plugged in) gets its own home screen
+     * from Android, which moves the focus there, under the panels where
+     * nobody can use it, and the controller's input with it (seen on the
+     * emulator's display added at run time). Within 3 s of the panels'
+     * coming the game takes the focus back (its task to the front again);
+     * every other focus loss (the notification shade, a dialog, another app)
+     * is left alone.
+     */
+    void focusLost() {
+        if (mPanels == null || SystemClock.uptimeMillis() - mShownAt > 3000) {
+            return;
+        }
+        mHandler.postDelayed(() -> {
+            if (mPanels == null || !mStarted || mActivity.hasWindowFocus()) {
+                return;
+            }
+            Log.i(TAG, "second screen: the display that came took the focus; the game takes it back");
+            try {
+                mActivity.startActivity(new Intent(mActivity, mActivity.getClass()).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            } catch (RuntimeException e) {
+                Log.w(TAG, "second screen: the focus could not be taken back: " + e);
+            }
+        }, 300);
     }
 
     private void dismiss(String why) {

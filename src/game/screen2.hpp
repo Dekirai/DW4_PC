@@ -95,7 +95,9 @@ bool draw_screen2_screen(Settings& settings, bool& settings_changed, const Scree
 bool draw_screen2_overlay(Settings& settings, bool& settings_changed, const Screen2Status& status, const Screen2Online& online);
 // F1 > Settings > "Second screen": [screen2] mode (Android), the overlay,
 // and what the device reports.
-void settings_screen2_section(Settings& settings, bool& settings_changed);
+// `scroll_to`: DW4_MENU_SECTION's section; "Screen2" scrolls the Settings tab
+// here once (menu screenshots).
+void settings_screen2_section(Settings& settings, bool& settings_changed, std::string& scroll_to);
 
 // ---- The second display (Android: screen2_android.cpp; the PC has none)
 
@@ -122,6 +124,10 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
 // again (the shared font texture is then made again by it); both come back
 // at the next frame.
 void screen2_device_reset();
+// SDL_EVENT_WILL_ENTER_BACKGROUND (the lifecycle watch, on the game's
+// thread): the lower screen's EGL surface goes before SDL's pause lets go
+// of the context (SDL_androidevents.c); it is made again at the next frame.
+void screen2_enter_background();
 // The game ends: the second ImGui context and the surface go (before the
 // window's ImGui context).
 void screen2_shutdown();

@@ -362,8 +362,12 @@ bool draw_screen2_overlay(Settings& settings, bool& settings_changed, const Scre
     return online_shown;
 }
 
-void settings_screen2_section(Settings& settings, bool& settings_changed) {
+void settings_screen2_section(Settings& settings, bool& settings_changed, std::string& scroll_to) {
     if (!ImGui::CollapsingHeader("Second screen", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    if (scroll_to == "Screen2") {
+        ImGui::SetScrollHereY(0.0f);
+        scroll_to.clear();
+    }
     ImGui::PushTextWrapPos(0.0f);
 #ifdef SDL_PLATFORM_ANDROID
     {
@@ -401,6 +405,7 @@ Screen2Display screen2_display() { return {}; }
 void screen2_request(bool) {}
 bool screen2_frame(const std::function<void()>&, const std::function<void()>&, int, bool) { return false; }
 void screen2_device_reset() {}
+void screen2_enter_background() {}
 void screen2_shutdown() {}
 double screen2_seconds_since_touch() { return 1e9; }
 void screen2_request_shot(const std::string&) {}

@@ -305,6 +305,13 @@ void screen2_device_reset() {
     if (g_window) log_line("second screen: made again after the lost OpenGL context");
 }
 
+void screen2_enter_background() {
+    std::lock_guard surface_lock(g_surface_lock);
+    if (g_surface == EGL_NO_SURFACE) return;
+    destroy_surface_locked();
+    log_line("second screen: its surface let go before SDL's pause");
+}
+
 void screen2_shutdown() {
     {
         std::lock_guard surface_lock(g_surface_lock);

@@ -342,6 +342,8 @@ bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
     // (SDL lets go of the OpenGL context right after this; the surface's end
     // waits for it: DW4Activity.GameSurface.surfaceDestroyed.)
     if (event->type == SDL_EVENT_DID_ENTER_BACKGROUND) dw4::game::android_note_game_paused(true);
+    // (The second screen's EGL surface before SDL's pause, screen2.hpp.)
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND) dw4::game::screen2_enter_background();
     if (event->type == SDL_EVENT_WILL_ENTER_FOREGROUND) dw4::game::android_note_game_paused(false);
 #endif
     return true;
@@ -4342,7 +4344,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
-                        dw4::game::settings_screen2_section(settings, settings_changed);
+                        dw4::game::settings_screen2_section(settings, settings_changed, view.menu_section);
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
