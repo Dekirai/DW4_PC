@@ -48,8 +48,12 @@ final class LowerScreen implements DisplayManager.DisplayListener {
     private String mReported = "";
     private long mShownAt; // uptime of the last show
 
-    /** [screen2] mode as the game asks for it (any thread). */
-    private static volatile boolean sWanted = true;
+    /**
+     * [screen2] mode as the game asks for it (any thread): nothing until the
+     * game's loop runs and asks (so the lower screen never shows an empty
+     * surface first, nor with mode=off).
+     */
+    private static volatile boolean sWanted = false;
     /** The running activity's (main thread). */
     private static LowerScreen sCurrent;
 
