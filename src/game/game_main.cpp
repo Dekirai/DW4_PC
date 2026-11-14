@@ -4752,9 +4752,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         else if (last_gate != dw4::game::AchievementGate::open)
                             ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "%s", dw4::game::achievement_gate_text(last_gate));
                         ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextDisabled("Offline achievements stay on this PC (%s). Cheats, rebalancing and a save state loaded in "
+                        ImGui::TextDisabled("Offline achievements stay on %s (%s). Cheats, rebalancing and a save state loaded in "
                                             "the running stage pause them; runs with the randomizer count separately.",
-                                            profile_path.empty() ? "not saved" : profile_path.string().c_str());
+                                            dw4::game::kThisMachine, profile_path.empty() ? "not saved" : profile_path.string().c_str());
                         ImGui::PopTextWrapPos();
                         auto day = [](std::int64_t unix_seconds) {
                             const std::chrono::sys_days days = std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds(std::chrono::seconds(unix_seconds)));

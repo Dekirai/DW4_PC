@@ -737,7 +737,15 @@ void GlRenderer::reset_context() {
     shadow_fbo_ = shadow_texture_ = 0;
     shadow_width_ = shadow_height_ = 0;
     shadow_ready_ = false;
-    gl_ = std::make_unique<Impl>();
+    // (The checks' counts go on in the new context's Impl: one total at the end.)
+    auto fresh = std::make_unique<Impl>();
+    fresh->gl_errors = gl_->gl_errors;
+    fresh->gl_checks = gl_->gl_checks;
+    fresh->clamp_checked = gl_->clamp_checked;
+    fresh->clamp_crossing = gl_->clamp_crossing;
+    fresh->clamp_report = gl_->clamp_report;
+    gl_->check_gl = gl_->check_depth_clamp = false;
+    gl_ = std::move(fresh);
     create_objects();
     configure_streamer();
 }

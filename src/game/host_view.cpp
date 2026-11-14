@@ -1048,7 +1048,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
             if (!index.other_encodings.empty()) {
                 std::string names;
                 for (const auto& name : index.other_encodings) names += (names.empty() ? "" : ", ") + name;
-                ImGui::TextDisabled("The pack also holds files for other devices (%s); this PC uses its own.", names.c_str());
+                ImGui::TextDisabled("The pack also holds files for other devices (%s); %s uses its own.", names.c_str(), kThisMachine);
             }
             if (!index.warnings.empty() && ImGui::TreeNode("pack_warnings", "%zu manifest warnings", index.warnings.size())) {
                 for (const auto& w : index.warnings) ImGui::BulletText("%s", w.c_str());

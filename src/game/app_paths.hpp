@@ -15,6 +15,15 @@ inline std::filesystem::path utf8_path(const char* text) {
 }
 } // namespace detail
 
+// What the offline menus call the machine the game runs on ("Offline
+// achievements stay on this PC"): a phone or handheld is no PC. (The online
+// screens' wording is phase D's, docs/ANDROID.md.)
+#ifdef SDL_PLATFORM_ANDROID
+inline constexpr const char* kThisMachine = "this device";
+#else
+inline constexpr const char* kThisMachine = "this PC";
+#endif
+
 // The game's own folder: settings.ini, saves/, mods/ and data/ (the disc
 // image the first start copies or converts) live in it. The PC: the
 // program's folder (SDL_GetBasePath). Android: the app's external files
