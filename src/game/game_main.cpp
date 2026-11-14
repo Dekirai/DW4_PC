@@ -1706,12 +1706,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto& movie_serial = view.picture.movie_serial;
         auto& movie_stage = view.picture.movie_stage;
         // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots);
-        // DW4_MENU_TAB=<tab> selects that tab when it first shows.
+        // DW4_MENU_TAB=<tab> selects that tab when it first shows;
+        // DW4_MENU_SECTION=Graphics scrolls the Settings tab to that section.
         bool running = true;
         auto& show_menu = view.show_menu;
         show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
         auto& menu_tab = view.menu_tab;
         menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
+        view.menu_section = std::getenv("DW4_MENU_SECTION") ? std::getenv("DW4_MENU_SECTION") : "";
         auto tab_flags = [&](const char* name) -> ImGuiTabItemFlags {
             if (menu_tab != name) return ImGuiTabItemFlags_None;
             menu_tab.clear();
@@ -5384,6 +5386,20 @@ int main(int argc, char** argv) {
             else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--import-disc") options.import_disc = next();
             else if (arg == "--mute") options.mute = true;
+            else if (arg == "--env") {
+                // --env NAME=VALUE: an environment variable set before the
+                // run reads any (Android's test runs have only arguments,
+                // the dw4args extra of a debug build).
+                const std::string value = next();
+                const auto eq = value.find('=');
+                if (eq == std::string::npos || eq == 0) throw std::runtime_error("--env takes NAME=VALUE");
+                const std::string name = value.substr(0, eq), text = value.substr(eq + 1);
+#ifdef _WIN32
+                _putenv_s(name.c_str(), text.c_str());
+#else
+                setenv(name.c_str(), text.c_str(), 1);
+#endif
+            }
             else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--overflow-run") {
                 // KEY=VALUE tokens up to the next option (overflow_run.hpp).
@@ -5413,7 +5429,7 @@ int main(int argc, char** argv) {
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
                              "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
-                             "         [--save-file FILE] [--load-state FILE] [--loading original|fast] [--mute]\n"
+                             "         [--save-file FILE] [--load-state FILE] [--loading original|fast] [--mute] [--env NAME=VALUE]\n"
                              "         [--export-presence-art FOLDER] (Discord art asset PNGs from your game data)\n"
                              "         [--overflow-run form=p_agumon field=stagbs02 seed=N [at=F] [frames=N] ...] (Data Overflow)\n"
                              "dw4_game --save-info FILE|FOLDER\n"

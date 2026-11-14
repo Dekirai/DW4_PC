@@ -159,7 +159,7 @@ const std::vector<std::string_view>& online_forbidden_env() {
 const std::vector<std::string_view>& online_presentation_env() {
     // An entry ending in '*' is a prefix.
     static const std::vector<std::string_view> names = {
-        "DW4_TRACE_*", "DW4_DEV_*", "DW4_AUDIO_*", "DW4_CAMPAIGN_*", "DW4_MENU_TAB", "DW4_FARM_*",
+        "DW4_TRACE_*", "DW4_DEV_*", "DW4_AUDIO_*", "DW4_CAMPAIGN_*", "DW4_MENU_TAB", "DW4_MENU_SECTION", "DW4_FARM_*",
         "DW4_ACHIEVEMENTS", "DW4_AX_COMPRESSOR", "DW4_AVOID_MATS", "DW4_DISCORD_PIPE", "DW4_DRAW_DUMP", "DW4_DUMP_SEQ",
         "DW4_DUMP_TEXTURES", "DW4_LABELS", "DW4_MAT_SEQUENCE", "DW4_MAT_SWITCH", "DW4_MIGRATE_FROM", "DW4_MSAA",
         "DW4_NO_ERROR_BOX", "DW4_OPEN_MENU", "DW4_PRESENCE_ART_ALL", "DW4_PROFILE", "DW4_RENDER",

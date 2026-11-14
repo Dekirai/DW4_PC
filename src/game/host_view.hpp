@@ -174,6 +174,7 @@ struct HostView {
     // The F1 menu.
     bool show_menu = false;
     std::string menu_tab; // a tab to select when it first shows (DW4_MENU_TAB)
+    std::string menu_section; // a Settings section scrolled to when it first shows (DW4_MENU_SECTION: Graphics)
     std::optional<KeyCapture> capture;
     bool settings_changed = false;
     bool quit_requested = false; // the window was closed

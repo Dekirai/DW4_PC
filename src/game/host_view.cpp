@@ -792,6 +792,10 @@ std::filesystem::path from_utf8(const char* text) {
 void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
     auto& settings = view.settings;
     if (!ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    if (view.menu_section == "Graphics") {
+        ImGui::SetScrollHereY(0.0f);
+        view.menu_section.clear();
+    }
     auto& g = settings.graphics;
     bool changed = false;
     const GlRenderer::Caps caps = view.renderer ? view.renderer->caps() : GlRenderer::Caps{};
