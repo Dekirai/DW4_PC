@@ -255,45 +255,77 @@ Checks (code of 5a7fd4d8; the first scenario batch ran on ebbe48bf with these ch
 stage group for good. Relay only; protocol 50, schema 14, no setting of its own (SEAMLESS 19.6.7, "A link that keeps
 dropping").
 
-- **The rule.** (1) *One grace per absence episode* (`WorldHub.StartGrace`): a drop less than `Relay:LagLeaveSeconds`
-  after the host's last return keeps the deadline of the episode's first grace (its countdown runs on through his brief
-  returns; `WorldInstance.LastBackAt` / `LastGraceUntil`, counter `host_grace_continued`, the guests' notice shows the
-  seconds left); a return past the deadline is not in time (`HostBack`). (2) *One restart of the lag clock per fill
-  streak* (`SlotStream.HostReturned`, replacing 2b009cee's `RestartFillStreakClock`): the first return of a streak
-  restarts it, a later one only skips its absence, so `lagOut` counts his connected time since that return.
-- **The bound.** From his slot's first fill he is out of the guests' stage group (`lag_leave`) or his instance has
-  ended (`host_lost`) within `Relay:LagLeaveSeconds` + `World:HostGraceSeconds` + `Relay:LagLeaveSeconds` = 80 s (plus
-  the housekeeping's quarter seconds): a single absence's worst case. A host back once after up to the whole grace
-  plays on as with 2b009cee; back for `LagLeaveSeconds` (with his pads in time) a later drop is a new loss. A flapping
-  guest was bounded already (his clock never restarts: `lag_leave` `LagLeaveSeconds` after his streak's first fill).
-- **Why two rules.** The first design had only a fill-streak rule (grace and lag clock once per streak). W7g's first run
-  (`build/flap/scen_w7g_1.log`, `.work/run_20261114_175919`) showed the real client defeating it: its pads are made on
-  the wall clock, so after each half-open cut the pads of its last ticks arrive in time and end the streak; every grace
-  was fresh (`continued=false` at all eight cuts), the host stayed in for good. The episode rule does not look at the pads.
-- **Tests.** `WorldFlapTests.cs` (8): the closing flapper (`lag_leave` 16 s after his first return, the countdown 60, 55,
-  50, 45), the silent flapper (16 s), a drop soon after a return keeps the deadline (7 s, `host_lost`; a return 50 ms past
-  it does not save it), the bound over nine patterns (three with in-time bursts as the real client sends them), the
-  flapper with pads in time between drops (`host_lost` 60 s after the first drop; back 11 s between drops: fresh graces,
-  plays on), the slot clock, and as guards the single long return with a later fresh grace and the flapping guest.
-  Counter-proof with 2b009cee's semantics (`unit_flap4_nofix.log`): 6 of 8 fail (all nine bound patterns stay in for
-  300 s), the two guards and 2b009cee's test pass; without the episode rule (`unit_flap4_noepisode.log`) the three burst
-  patterns stay in for good and one exceeds the bound (89.8 s); keeping the streak credit past a pad in time fails the
-  long-return guard and the slot clock test (`unit_flap5_overfix.log`). Unit 569/569 (`unit_flap_final.log`),
-  integration 153 passed / 3 skipped (`it_flap_final.log`, an own mysqld on 3731, shut down by SQL).
+- **The rule (the fix stage's): the host's absence debt** (`WorldInstance.HostDebt`, `RoomHub.AccrueHostDebt`). From the
+  start of a grace on, the time he holds up the guests of his stage group counts up (away, or connected with his slot
+  filling: its last sealed tick had no pad of his in time; not while every connected member lags), the time he plays
+  there with his pads in time, or connected outside a stage group shared with a guest (lone after `lag_leave`, solo-led,
+  the hub), counts down, one for one, to 0, where the episode ends; the lag before an episode's first grace does not
+  count. Its limit is `World:HostGraceSeconds` + `Relay:LagLeaveSeconds` (70 s). A grace lasts what the debt leaves of
+  the limit, at most 60 s (`host_grace_shortened`, `host_away ... grace_s= debt_s=`); a host who shares no stage group
+  with a guest gets a fresh one. A lagging host whose debt reached the limit is out of the stage group (`lag_leave`,
+  `WorldHub.HostDebtSpent` in `lagOut`). Every return restarts the lag clock as 2b009cee did
+  (`SlotStream.RestartFillStreakClock` again); a return past the grace's deadline is not in time (from 54410943).
+- **The bound.** From his slot's first fill he is out of the guests' stage group or his instance has ended once the time
+  his slot held them up exceeds the time he played in time since by `Relay:LagLeaveSeconds` + 70 s = 80 s (plus the
+  housekeeping's quarter seconds): a stretch without play in time ends within a single absence's worst case, a host who
+  holds his guests up a share f > 1/2 of the time is out within about 80 / (2f - 1) s, and one who plays in time at
+  least as long as he holds them up plays on with a fresh grace at every drop. A host back once after up to the whole
+  grace plays on; a drop before he played in time as long as he held his guests up gets the rest.
+- **The first rule and its review.** 54410943 had two rules: a drop less than `Relay:LagLeaveSeconds` of wall clock
+  after a return kept the deadline of the episode's first grace, and the lag clock restarted only at the first return of
+  a fill streak (a credit). Its review found five faults, all confirmed by tests that fail on 54410943
+  (`build/flap/unit_fix3_on54410943.log`: 11 of the 13 flap tests; the flapping guest and 2b009cee's test pass):
+  1. Drops 10 s or more after a return were never bounded (59 s away, 10.5 s back: fresh graces for good; late returns
+     with two in-time bursts: the slot 99 % filled, in for good). Now: out within the bound (P1 at 90.3 s with 10 s in
+     time, P1s 94.1 s, 30/10.5 s 110.7 s, 20/11 s 170.9 s, P8 70.9 s; `A_flapping_host_is_out_...`, 16 patterns).
+  2. A host who played in time between close drops lost the instance (`host_lost` after 63 s at 1 s every 9 s, 70.7 s
+     for half-open 4.5 s stalls with 5 s of play, 60 s for 54410943's own "pads in time" test; and while he played apart
+     after `lag_leave`, his guest sent home). Now: he plays on, every grace a fresh 60 s
+     (`A_host_who_plays_in_time_between_brief_drops_...`, `A_host_playing_apart_whose_link_keeps_dropping_...`).
+  3. The streak credit survived a fresh grace (`lag_leave` 0.017 s after `host_back`, 2b009cee's fault back) and a drop
+     just past the episode window, before the lag rule's pass, got a fresh grace (out 138 s after the first fill). Now:
+     every return restarts the lag clock (10 s), and the debt leaves that drop 1 s (`host_lost` inside the 80 s)
+     (`A_return_after_a_new_absence_...`, `A_drop_between_two_housekeeping_passes_...`).
+  4. A client stall merged with a real absence: 51 s instead of 60 for a close 9 s after a 4.5 s stall (`host_lost`), a
+     grace of 0 s for a stall 1 s after a return from 57 s away. Now: the stall's half second is paid off (a fresh
+     60 s), and the stall after the long absence gets the 8 s the debt leaves; he plays on (`A_client_stall_...`, two
+     tests).
+  5. The window was `Relay:LagLeaveSeconds` of wall clock: a longer value made it stricter (33 s instead of 60 at 30 and
+     60). Now the limit grows with it: fresh 60 s at 10, 30 and 60; after 59 s away and 5 s in time 16, 36, 60 s
+     (`A_longer_lag_allowance_...`); README's `Relay` row says so.
+  On 0ef550e9 (2b009cee's semantics) 7 of the 13 fail (`unit_fix3_on0ef550e9.log`): every bound pattern stays in for
+  300 s; the brief-drop, playing-apart, stall-before-absence and new-absence tests pass there (54410943 broke those).
+- **Tests.** `WorldFlapTests.cs` (12) and 2b009cee's `A_host_back_after_more_than_the_lag_limit_away_...`: the bound
+  over 16 patterns (closes and silences, bursts as the real client sends them, the review's P1, P1s, P8 and 64-85 %
+  shares; the check is "held up minus played in time" within 80 s plus a pass per stretch in time), the five findings'
+  tests, a single long return that plays on and whose later drop gets the debt's rest (22 s) and, paid off, a fresh
+  grace; a drop soon after a long absence (17 s, `host_lost`; a return 50 ms past the deadline does not save it); a
+  lagging host whose debt is spent (`lag_leave` 1.5 s after his return, the instance goes on); the flapping guest.
+  Counter runs: `build/flap/counter.sh REV LOG` puts another commit's four relay sources in, runs the flap tests
+  (`flap_filter.txt`) and restores the worktree's own.
+- **Left (probe, `build/flap/probe_short_flaps.txt`, not committed):** a burst of pads in time ends any member's fill
+  streak, so a link whose half-open drops each stay below `Relay:LagLeaveSeconds` (a guest: 7 s or 3.5 s cuts with a
+  0.3 s window) or below `World:HostSilenceSeconds` (a host: 3.5 s cuts, no grace, no debt) stays in the stage group for
+  300 s, as on 0ef550e9 and 54410943. That is the lag rule's own gap (the same without drops: a stall of up to 9.9 s
+  with a burst between); closing it means a lag rule that does not reset on a short burst, for every member, outside
+  this fix.
 - **Scenarios** (real hidden clients, run.py `--parallel 1`, mysqld 3732, ports 60300-60399; the client a read-only copy
-  of int-i1b's DEV=ON `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65; logs in `build/flap/`): W7g, W7, W7c, W7d, W7f
-  passed (`scen_flap_batch1.log`, `.work/run_20261114_182900`), W1 passed (`scen_flap_w1.log`; the batch's W1 had failed
-  at its start: `python -I` leaves the script's folder off `sys.path`, `build/flap/runpy_online.py` puts it back). W7g:
-  the first grace (silence, 60 s) at 205.04 s of the relay's clock, eight continued ones (53, 46, 39, 32, 25, 17, 10, 3 s
-  on b's notices), `host_lost` at 265.28 s, 60.25 s after the first grace and about 65 s after the first cut; both went
-  home. Its run with twelve cuts (`scen_w7g_2.log`) had the same relay events and failed only on a `barrier_split` at the
-  END's HOME barrier (the eleventh cut held a's report past `Instances:BarrierReportSeconds`): ten cuts since. W7, W7c,
-  W7d and W7f: one fresh grace, `host_back`, no `lag_leave`, the host stayed (W7f by `barrier_apart`); in W7 a 5 ms
-  silence grace (a client stall) came 10.09 s before the cut, just outside the episode's window (0.1 s earlier, the cut
-  would have had the 50 s left instead of 60: two losses closer than `LagLeaveSeconds` count as one, SEAMLESS 19.6.7).
+  of int-i1b's DEV=ON `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65; logs in `build/flap/`): W7g passed
+  (`scen_fix_w7g.log`, `.work/run_20261114_200232`): silence graces of 60, 60, 57, 50, 43, 37, 30 and 23 s at debts of 0
+  to 47.2 s (about 6.8 s more per cut: 4 s of silence and 3 s of grace, minus the 0.2 s window in time), the close at
+  49.7 s of debt got 21 s, `host_lost` 20.5 s later at 279.3 s of the relay's clock, about 78 s after the first cut;
+  both went home. Against 0ef550e9's relay sources the same W7g failed as it should (`scen_w7g_on0ef550e9.log`,
+  `.work/run_20261114_203504`): nine fresh graces, the close's a full 60 s, a back at 288.7 s, no END; both scripts ran
+  into their deadlines. W7, W7b, W7c, W7d, W7f and W1 passed (`scen_fix_batch.log`, `.work/run_20261114_200801`): each a
+  single fresh 60 s grace (debt 0 at its start), `host_back` at 20.1 / 16 / 46.1 / 20 s of debt (W7, W7c, W7d, W7f), no
+  `lag_leave`, W7b `host_lost` at 60 s, W7f `barrier_apart`.
 - **Harness.** A client's `"cut"` in scenario.json may be a list or carry `"every"` / `"count"` (run.py), the proxy's
-  `--cut` takes several `;`-separated cuts (`LinkCut.ParseAll`; `ProxyCutTests`: repeated half-open cuts hold each
-  one's bytes and pass the window between them). Scenario **W7g**: ten half-open cuts of 7 s, 0.2 s apart, from @200.
+  `--cut` takes several `;`-separated cuts (`LinkCut.ParseAll`; `ProxyCutTests`: repeated half-open cuts hold each one's
+  bytes and pass the window between them). Scenario **W7g**: eight half-open cuts of 7 s, 0.2 s apart, from @200, then a
+  close of 30 s at @257.6. The builder's W7g (ten half-open cuts, 54410943) ended at the episode's deadline
+  (`scen_flap_batch1.log`); under the debt the ten cuts alone would stay short of the limit (about 3 + 9 x 6.8 = 64 s by
+  the rates above), so the close was added to end the debt's grace inside a cut (twelve half-open cuts had split the
+  END's HOME barrier in the builder's run, `scen_w7g_2.log`).
 
 ## Left
 
@@ -315,8 +347,11 @@ dropping").
   host back after more than 10 s out of his stage group until the 0.2.0 release.
 - ~~To watch: each return restarts the host slot's lag clock, and 4 s of silence start a new grace; a host whose link
   keeps dropping for a few seconds and coming back would stay in his stage group without a pad in time.~~ **Done** on
-  branch `fix-flap` (from 0ef550e9; "The flapping host" above): one grace per absence episode and one restart of the
-  lag clock per fill streak, the bound of one absence (80 s) for any sequence; `WorldFlapTests`, W7g.
+  branch `fix-flap` (from 0ef550e9; "The flapping host" above): the host's absence debt, a stretch without play in time
+  bounded by one absence's worst case (80 s); `WorldFlapTests`, W7g. Not pushed, not merged into int-i1b.
+- The lag rule's own gap ("The flapping host", left): a member whose half-open drops each stay below the lag limit (a
+  host: below the 4 s of silence that start a grace), with a burst of pads in time between them, stays in his stage
+  group; a guest so for any length of such drops below `Relay:LagLeaveSeconds`.
 - Later: a client flag in BARRIER for a barrier of a visit the member never loaded would let the relay decide it apart
   also when its tick lies inside what the new visit sealed (now the split after `Instances:BarrierReportSeconds`, the
   others stalled 5 s; it needs the old visit to have run shorter than the new one has when the member comes back).
@@ -336,7 +371,9 @@ dropping").
 - The flapping host (worktree `DW4_PC-wt/flap`, branch `fix-flap`): `build/flap/` (`utest.sh LOG [filter]`; `itest.sh LOG`
   with an own mysqld on 3731 (data `build/flap/it-mysql`) and test ports 60200-60299; `sbuild.sh LOG` builds the server
   and the FakeClient with `-m:2`, then `scen.sh LOG SCENARIO... --no-build` with mysqld 3732 and ports 60300-60399; the
-  client a read-only copy of `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65, as `build/flap/scen/dw4_flap_dev.exe`).
+  client a read-only copy of `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65, as `build/flap/scen/dw4_flap_dev.exe`). The
+  fix stage's counter runs: `counter.sh REV LOG` (the flap unit tests of `flap_filter.txt` on another commit's four relay
+  sources, the worktree's own put back after).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the

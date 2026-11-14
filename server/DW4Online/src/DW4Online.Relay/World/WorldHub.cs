@@ -484,8 +484,7 @@ public sealed partial class RoomHub
         w.EndedAt = now;
         w.HostAwaySince = 0;
         w.GraceUntil = 0;
-        w.LastBackAt = 0;
-        w.LastGraceUntil = 0;
+        w.HostDebt = 0;
         if (w.Keeper.Held) w.Keeper.Release(merge: false);
         Count("instances_ended");
         Note("instance_end", null, ("wid", w.Wid), ("reason", EndReasons.Text(reason)));
@@ -639,56 +638,99 @@ public sealed partial class RoomHub
     private static SlotStream? HostStream(WorldInstance w) =>
         w.Host.Instance is { } g && w.Host.Slot >= 0 && w.Host.Slot < g.Streams.Length ? g.Streams[w.Host.Slot] : null;
 
+    /// <summary>The host's sealed stage group when another member has a seat in it (whose play his absence or lag holds up), else null
+    /// (lone after a lag LEAVE, a solo-led group, the hub, between stage groups).</summary>
+    private static HubInstance? SharedGroup(WorldInstance w) =>
+        w.Host.Instance is { Mode: InstanceMode.Sealed, Ended: false } g && w.Host.Slot >= 0 && w.Host.Slot < g.Slots.Length &&
+        g.Slots[w.Host.Slot] == w.Host && g.Seats.Any(x => x.Member != w.Host) ? g : null;
+
+    /// <summary>The absence debt at which a grace has no time left and a lagging host is out of the stage group: a whole grace and the
+    /// lag rule's time to catch up after it (World:HostGraceSeconds + Relay:LagLeaveSeconds, 70 s).</summary>
+    private long HostDebtBudget => FromMs((_world.HostGraceSeconds + _relay.LagLeaveSeconds) * 1000.0);
+
+    /// <summary>
+    /// Brings the host's absence debt (<see cref="WorldInstance.HostDebt"/>, 19.6.7, a link that keeps dropping) up to
+    /// <paramref name="now"/>: nothing outside an episode (no grace since the debt was last 0); in his grace it grows with the time
+    /// while he has a seat in a stage group shared with a guest; connected, it grows while his slot there fills (its last sealed tick
+    /// had no pad of his in time; not when every connected member lags: the whole group stalls) and falls otherwise (his pads in time,
+    /// or connected outside such a group), one for one, to 0. The state seen now counts for the time since the last update: the
+    /// grace's start and end and every housekeeping pass bring it up to date.
+    /// </summary>
+    private void AccrueHostDebt(WorldInstance w, long now)
+    {
+        var dt = now - w.HostDebtAt;
+        w.HostDebtAt = now;
+        if (dt <= 0 || (!w.HostAway && w.HostDebt == 0)) return;
+        var g = SharedGroup(w);
+        if (w.HostAway)
+        {
+            if (g is not null) w.HostDebt += dt;
+            return;
+        }
+        if (g is { Sealing: true, Barrier: null } && g.Streams[w.Host.Slot] is { FillStreak: > 0 })
+        {
+            var everyoneLags = g.Seats.Where(x => x.Member.Connected)
+                .All(x => g.Streams[x.Slot] is { } xs && xs.FillStreak >= SlotStream.LagFills);
+            if (!everyoneLags) w.HostDebt += dt;
+            return;
+        }
+        w.HostDebt = Math.Max(0, w.HostDebt - dt);
+    }
+
+    /// <summary>The lag rule's second limit for a host (HousekeepInstance's lagOut): his absence debt reached
+    /// <see cref="HostDebtBudget"/>.</summary>
+    private bool HostDebtSpent(WorldInstance w, long now)
+    {
+        AccrueHostDebt(w, now);
+        return w.HostDebt >= HostDebtBudget;
+    }
+
     /// <summary>
     /// The host's connection closed or fell silent: his slot fills with neutral pads, guests see the countdown, their story values are
-    /// held, joins wait; he stays host and keeps his seat until the grace's end. A drop less than Relay:LagLeaveSeconds after his last
-    /// return (a link that keeps dropping, "flapping") belongs to the same absence episode: the grace keeps that episode's deadline,
-    /// whose countdown ran on while he was briefly back, instead of a fresh World:HostGraceSeconds (a deadline already past ends the
-    /// instance at the next housekeeping). Before, every drop started a fresh grace and a host whose link kept dropping held his
-    /// guests' stage group for good: the real client's pads of the last ticks before each return come in time (they are made on the
-    /// wall clock), so no rule on his fill streak alone catches it (scenario W7g).
+    /// held, joins wait; he stays host and keeps his seat until the grace's end. The grace is World:HostGraceSeconds, or what his
+    /// absence debt leaves of World:HostGraceSeconds + Relay:LagLeaveSeconds when he shares a stage group with a guest (a link that
+    /// keeps dropping, "flapping": his absences and lag since the episode's first grace count, minus the time he played in time
+    /// since; a debt already spent ends the instance at the next housekeeping). Before, a drop less than Relay:LagLeaveSeconds after
+    /// his return kept the wall-clock deadline of the episode's first grace whatever he played between (54410943), and before that
+    /// every drop started a fresh grace: a host whose link kept dropping held his guests' stage group for good (2b009cee).
     /// </summary>
     private void StartGrace(WorldInstance w, long now, string why)
     {
         if (w.Ending || w.HostAway) return;
+        AccrueHostDebt(w, now);
         var st = HostStream(w);
-        var fresh = now + FromMs(_world.HostGraceSeconds * 1000.0);
-        var continued = w.LastBackAt != 0 && Ms(now - w.LastBackAt) < _relay.LagLeaveSeconds * 1000.0;
+        var fresh = FromMs(_world.HostGraceSeconds * 1000.0);
+        var length = SharedGroup(w) is null ? fresh : Math.Clamp(HostDebtBudget - w.HostDebt, 0, fresh);
         w.HostAwaySince = now;
-        w.GraceUntil = continued ? Math.Min(fresh, w.LastGraceUntil) : fresh;
-        w.LastBackAt = 0;
-        w.LastGraceUntil = 0;
+        w.GraceUntil = now + length;
         w.LastAwayNotice = now;
         w.Keeper.Hold();
         if (st is not null) st.NeutralFill = true;
         Count("host_grace");
-        if (continued) Count("host_grace_continued");
-        var seconds = (uint)Math.Ceiling(Math.Max(0, Ms(w.GraceUntil - now)) / 1000.0);
-        Note("host_away", null, ("wid", w.Wid), ("why", why), ("grace_s", seconds), ("continued", continued));
+        if (length < fresh) Count("host_grace_shortened");
+        var seconds = (uint)Math.Ceiling(Ms(length) / 1000.0);
+        Note("host_away", null, ("wid", w.Wid), ("why", why), ("grace_s", seconds), ("debt_s", Math.Round(Ms(w.HostDebt) / 1000.0, 1)));
         foreach (var x in w.Members)
             if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostAway, w.Host, seconds, ""));
         MarkInfoDirty(w);
     }
 
-    /// <summary>The host is back within his grace (RESUME, a reconnect, INPUT after silence): play on, the held values merge. His
-    /// first return in a fill streak gives his slot Relay:LagLeaveSeconds from now for the lag rule (his client catches up to the
-    /// ticks sealed meanwhile), not from the grace's start; a further return in the same streak continues that clock where this
-    /// absence stopped it (<see cref="SlotStream.HostReturned"/>). The grace's deadline stays the episode's for a drop within
-    /// Relay:LagLeaveSeconds (<see cref="StartGrace"/>). Past the deadline he is not back in time: the next housekeeping ends the
-    /// instance (before, a return in the quarter second until that pass counted).</summary>
+    /// <summary>The host is back within his grace (RESUME, a reconnect, INPUT after silence): play on, the held values merge. The lag
+    /// rule gives his slot Relay:LagLeaveSeconds from now (his client catches up to the ticks sealed meanwhile), not from the grace's
+    /// start; his absence debt (<see cref="AccrueHostDebt"/>) bounds a link that keeps dropping. Past the deadline he is not back in
+    /// time: the next housekeeping ends the instance (before, a return in the quarter second until that pass counted).</summary>
     private void HostBack(WorldInstance w, long now)
     {
         if (!w.HostAway || now >= w.GraceUntil) return;
+        AccrueHostDebt(w, now);
         if (HostStream(w) is { } st)
         {
             st.NeutralFill = false;
-            st.HostReturned(now, w.HostAwaySince);
+            st.RestartFillStreakClock(now);
         }
-        w.LastBackAt = now;
-        w.LastGraceUntil = w.GraceUntil;
         w.HostAwaySince = 0;
         w.GraceUntil = 0;
-        Note("host_back", null, ("wid", w.Wid));
+        Note("host_back", null, ("wid", w.Wid), ("debt_s", Math.Round(Ms(w.HostDebt) / 1000.0, 1)));
         foreach (var x in w.Members)
             if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostBack, w.Host, 0, ""));
         if (w.Keeper.Release(merge: true)) StoryChanged(w.Keeper, null);
@@ -704,6 +746,7 @@ public sealed partial class RoomHub
         {
             if (!_worlds.ContainsKey(w.Wid)) continue;
             var host = w.Host;
+            AccrueHostDebt(w, now);
             if (!w.Ending && !w.HostAway && host.Connected && host.Instance is { Mode: InstanceMode.Sealed, Sealing: true } hg && host.Slot >= 0 &&
                 hg.Streams[host.Slot] is { FillStreak: > 0 } && Ms(now - host.LastInputOrPong) >= _world.HostSilenceSeconds * 1000.0)
                 StartGrace(w, now, "silence");

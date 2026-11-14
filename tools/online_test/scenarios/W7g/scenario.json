@@ -1,5 +1,5 @@
 {
-  "desc": "a flapping host link (fix-flap, 19.6.7): from @200 the proxy holds a's packets for 7 s at a time, 0.2 s apart (ten half-open cuts, the last ending before the END's HOME barrier: a later one held a's barrier report past Instances:BarrierReportSeconds and split it). Each cut's 4 s of silence start a grace, each window a return; a's pads of the last ticks before each window come in time, so its fill streak ends every time and only the absence episode bounds it: every drop within Relay:LagLeaveSeconds of a return keeps the first grace's deadline, and the instance ends (host_lost) about 60 s after the first grace instead of never; b goes home",
+  "desc": "a flapping host link (fix-flap, 19.6.7): from @200 the proxy holds a's packets for 7 s at a time, 0.2 s apart (eight half-open cuts), then closes a's link for 30 s at @257.6. Each half-open cut's 4 s of silence start a grace and its end is a return; a's pads of the last ticks before each window come in time, so its fill streak ends every time. The host's absence debt (silence and grace count, the windows in time pay a little back) is about 50 s when the link closes: that grace gets the 20 s the debt leaves of 70 s instead of a fresh 60 s, and the instance ends (host_lost) inside the cut, about 78 s after the first cut, inside the bound of one absence (80 s); before, a fresh grace at every cut and a played on for good. b goes home, a after its reconnect",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -23,13 +23,20 @@
       "script": "a.script",
       "card": "k5",
       "start": 0,
-      "cut": {
-        "at": 200,
-        "seconds": 7,
-        "mode": "half",
-        "every": 7.2,
-        "count": 10
-      }
+      "cut": [
+        {
+          "at": 200,
+          "seconds": 7,
+          "mode": "half",
+          "every": 7.2,
+          "count": 8
+        },
+        {
+          "at": 257.6,
+          "seconds": 30,
+          "mode": "close"
+        }
+      ]
     },
     {
       "name": "b",

@@ -7,13 +7,12 @@ using DW4Online.Relay.World;
 namespace DW4Online.Tests;
 
 /// <summary>
-/// A link that keeps dropping ("flapping", SEAMLESS.md 19.6.7, fix-flap). Two rules: a drop less than Relay:LagLeaveSeconds after the
-/// host's last return belongs to the same absence episode and keeps its grace's deadline (the countdown runs on through brief
-/// returns), and the lag clock restarts only at his first return of a fill streak (later returns skip only their absence). So a host
-/// whose link keeps dropping is out of his guests' stage group (lag_leave) or his instance has ended (host_lost) within
-/// Relay:LagLeaveSeconds + World:HostGraceSeconds + Relay:LagLeaveSeconds of the start, the worst case of one absence, also when the
-/// pads of his last ticks before each return come in time (as the real client's do, W7g); a host back once after up to the whole
-/// grace plays on (2b009cee), a return of LagLeaveSeconds and a pad in time renew both; a guest's lag clock never restarts.
+/// A link that keeps dropping ("flapping", SEAMLESS.md 19.6.7, fix-flap). The host's absence debt: from the start of a grace on, the
+/// time he holds up the guests of his stage group (away, or his slot filling) counts up, the time he plays with his pads in time (or
+/// connected outside such a group) counts down, one for one, to 0, where the episode ends. A grace lasts at most World:HostGraceSeconds +
+/// Relay:LagLeaveSeconds minus the debt (World:HostGraceSeconds at most); at that debt a lagging host is out of the stage group
+/// (lag_leave). So a stretch without play in time ends within the worst case of one absence (Relay:LagLeaveSeconds + 70 s), a host who
+/// plays in time at least as long as he holds his guests up plays on, and a host outside a stage group with a guest gets fresh graces.
 /// </summary>
 public partial class HubLogicTests
 {
@@ -25,6 +24,10 @@ public partial class HubLogicTests
         public WorldInstance W { get; }
         public HubInstance I { get; }
         public Dictionary<string, int> Mode { get; } = new() { ["a"] = 2, ["b"] = 2 };
+        /// <summary>Seconds a played in I with his pads in time (mode 2, connected).</summary>
+        public double InTime { get; set; }
+        /// <summary>The first HostAway notice of each grace <see cref="DropAndNote"/> started (the grace's length in seconds).</summary>
+        public List<uint> GraceStarts { get; } = [];
         private int _step;
 
         public FlapRig(int lagLeaveSeconds = 10)
@@ -39,6 +42,7 @@ public partial class HubLogicTests
 
         public bool LagLeft => H.Hub.Counters.GetValueOrDefault("lag_leave") > 0;
         public bool Out(string name) => LagLeft || W.Ending || H.Mem(name).Instance != I;
+        public bool Connected(string name) => H.Mem(name).Connected;
 
         /// <summary>Plays <paramref name="ms"/>; returns early (true) once <paramref name="stop"/> holds after a housekeeping pass.</summary>
         public bool Play(double ms, Func<bool>? stop = null)
@@ -53,7 +57,10 @@ public partial class HubLogicTests
                     if (mode == 1) H.Send(name, new InputMsg(I.Id, I.Visit, I.NextSeal - 60, [new Pad(9, 0, 0, 0, 0)]).Frame());
                     else H.Send(name, new InputMsg(I.Id, I.Visit, I.NextSeal + 3, [new Pad(1, 0, 0, 0, 0), new Pad(1, 0, 0, 0, 0)]).Frame());
                 }
+                var t0 = H.Now;
+                var inTime = Mode["a"] == 2 && Connected("a") && H.Mem("a").Instance == I;
                 H.Seal(17);
+                if (inTime) InTime += (H.Now - t0) / (double)Stopwatch.Frequency;
                 if (++_step % 15 == 0)
                 {
                     H.Housekeep();
@@ -66,97 +73,413 @@ public partial class HubLogicTests
         public void Drop(string name) => H.Hub.Disconnect(H.Mem(name), H.P(name), H.Now);
         public void Back(string name) => H.Connect(name, name == "a" ? 0 : 1);
 
+        /// <summary>Drops <paramref name="name"/> and notes the length of the grace it started (the guest's first notice of it).</summary>
+        public void DropAndNote(string name)
+        {
+            var before = AwayNotices().Count;
+            Drop(name);
+            if (AwayNotices().Count > before) GraceStarts.Add(AwayNotices()[before]);
+        }
+
         /// <summary>The HostAway notices b got (their argument: the grace's seconds left).</summary>
-        public List<WorldNoticeMsg> AwayNotices() =>
-            H.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse).Where(n => n.Kind == WorldNoticeKind.HostAway).ToList();
+        public List<uint> AwayNotices() => H.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse)
+            .Where(n => n.Kind == WorldNoticeKind.HostAway).Select(n => n.Argument).ToList();
+
+        /// <summary>The seconds b's last HostAway notice gave (the grace just started, or its countdown).</summary>
+        public uint LastAway => AwayNotices().Last();
     }
 
     /// <summary>The worst case of one absence (2b009cee): lagging up to Relay:LagLeaveSeconds before it, the whole grace away, then
     /// LagLeaveSeconds to catch up; each of the three ends noticed by a housekeeping pass (the rig's 255 ms) on top.</summary>
     private const double FlapBoundSeconds = 10 + 60 + 10 + 3 * 0.255;
 
+    /// <summary>A flapping pattern: lagging before the first drop, the first absence (a close, or a silence: its grace from the 4th
+    /// second), then repeated: the return's phases (mode, seconds), the next drop (a close, or a silence) and its absence.</summary>
+    private sealed record Flap(string Name, double Lag, double First, double Away, (int Mode, double Seconds)[] Return, bool Silence = false,
+        bool FirstSilence = false);
+
     /// <summary>
-    /// A host whose link drops for 2 s every 5 s without a pad in time (the closes of a flapping line) is taken out of his stage group by
-    /// the lag rule once he has been connected Relay:LagLeaveSeconds since his first return (the absences left out): 16 s after his
-    /// first return, at the fourth return's connected phase; his drops form one absence episode whose grace's countdown runs on (60,
-    /// 55, 50, 45 s on the guest's notices). (Before, every return restarted the lag clock and every drop a fresh 60 s grace: he stayed
-    /// in the stage group for good, the guest playing against his standing Digimon.) He stays the instance's host and plays apart.
+    /// The bound: however a host's link drops and comes back, he is out of the guests' stage group (lag_leave) or his instance has ended
+    /// (host_lost) by the time the time his slot held them up (from its first fill) exceeds the time he played with his pads in time
+    /// since by the worst case of one absence: Relay:LagLeaveSeconds + World:HostGraceSeconds + Relay:LagLeaveSeconds (80 s, plus the
+    /// housekeeping's passes and a pass per stretch in time). So a stretch without play in time ends within 80 s. Patterns: lagging
+    /// before the first drop, a long first absence, drops (closes or silences) of varying length, "bursts" whose 100 ms before each
+    /// drop come in time (the real client's pads of the last ticks before a return, W7g), and (review of 54410943, finding 1) long
+    /// absences with 10 s of play in time between, which 54410943 and 0ef550e9 renewed for good (59 s away, 10.5 s back: 85 % away),
+    /// and late returns with two in-time bursts (P8: the slot 99 % filled, in for good).
     /// </summary>
     [Fact]
-    public void A_host_whose_link_keeps_closing_without_a_pad_in_time_is_taken_out_by_the_lag_rule_after_his_connected_allowance()
+    public void A_flapping_host_is_out_or_his_instance_ended_once_he_held_his_guests_up_longer_than_one_absence_could()
     {
-        var r = new FlapRig();
-        r.Play(1000);
-        var firstDrop = r.Seconds;
-        double firstBack = 0;
-        var drops = 0;
-        while (!r.Out("a") && r.Seconds - firstDrop < 200)
+        var late = (double s) => new[] { (1, s) };
+        var patterns = new Flap[]
         {
-            r.Drop("a");
-            ++drops;
-            Assert.True(r.W.HostAway);
+            new("deadline first", 9.5, 55, 3, late(2)),
+            new("lag allowance first", 9.5, 50, 0.5, late(9)),
+            new("both at their ends", 9.5, 59, 1, late(9.9)),
+            new("short closes", 0, 30, 2, late(3)),
+            new("closes of 2 s, 3 s late", 0, 2, 2, late(3)),
+            new("silences of 6 s", 9.5, 45, 6, late(1), Silence: true),
+            new("silences of 5 s", 0, 5, 5, late(0.5), Silence: true),
+            new("silences of 5 s, 2 s late", 0, 5, 5, late(2), Silence: true, FirstSilence: true),
+            new("burst before each close", 0, 3, 3, [(1, 3.9), (2, 0.1)]),
+            new("W7g's shape", 9.5, 2, 7, [(1, 0.2), (2, 0.1)], Silence: true),
+            new("back at the deadline, a burst", 9.5, 59, 2, [(1, 9.7), (2, 0.1)]),
+            // Review of 54410943, finding 1: back long enough for a fresh grace each time.
+            new("P1: 59 s away, 10 s in time", 0, 59, 59, [(1, 0.5), (2, 10)]),
+            new("P1s: 63 s silent, 10 s in time", 0, 63, 63, [(1, 0.5), (2, 10)], Silence: true, FirstSilence: true),
+            new("30 s away, 10 s in time", 0, 30, 30, [(1, 0.5), (2, 10)]),
+            new("20 s away, 10 s in time", 0, 20, 20, [(1, 1), (2, 10)]),
+            new("P8: late with two bursts", 0, 59, 59, [(2, 0.1), (1, 5), (2, 0.1), (1, 5.1)]),
+        };
+        var problems = new List<string>();
+        foreach (var p in patterns)
+        {
+            var r = new FlapRig();
+            r.Play(1000);
+            var start = r.Seconds;
+            r.InTime = 0;
+            var stretches = 0;
+            r.Mode["a"] = 1; // his pads late from here: the slot begins to fill
+            r.Play(p.Lag * 1000, () => r.Out("a"));
+            Assert.False(r.Out("a"));
+            if (!p.FirstSilence) r.Drop("a");
             r.Mode["a"] = 0;
-            if (r.Play(2000, () => r.Out("a"))) break;
-            r.Back("a");
-            Assert.False(r.W.HostAway);
-            if (firstBack == 0) firstBack = r.Seconds;
+            var ended = r.Play(p.First * 1000, () => r.Out("a"));
+            while (!ended && r.Seconds - start < 300)
+            {
+                if (!r.Connected("a")) r.Back("a");
+                foreach (var (mode, seconds) in p.Return)
+                {
+                    r.Mode["a"] = mode;
+                    if (mode == 2) ++stretches;
+                    if (r.Play(seconds * 1000, () => r.Out("a")))
+                    {
+                        ended = true;
+                        break;
+                    }
+                }
+                if (ended) break;
+                if (!p.Silence) r.Drop("a");
+                r.Mode["a"] = 0;
+                ended = r.Play(p.Away * 1000, () => r.Out("a"));
+            }
+            var elapsed = r.Seconds - start;
+            var net = elapsed - 2 * r.InTime; // (held up minus played in time)
+            var bound = FlapBoundSeconds + 0.35 * stretches;
+            if (!r.Out("a")) problems.Add($"{p.Name}: the host is still in after {elapsed:F1} s");
+            else if (net > bound) problems.Add($"{p.Name}: out after {elapsed:F1} s, {r.InTime:F1} s in time: {net:F1} s beyond {bound:F1} s");
+            // Out by the lag rule, or the grace's end ended the instance; never both, never a guest's reconnect timeout for a host.
+            else if (!(r.LagLeft ^ (r.W.EndReason == EndReason.HostLost))) problems.Add($"{p.Name}: lag_leave {r.LagLeft}, end {r.W.EndReason}");
+            else if (r.H.Hub.Counters.ContainsKey("reconnect_timeout")) problems.Add($"{p.Name}: reconnect_timeout");
+        }
+        Assert.True(problems.Count == 0, string.Join("\n", problems));
+    }
+
+    /// <summary>
+    /// Review of 54410943, finding 2: a host who is mostly there and plays in time between brief drops plays on, every grace a fresh
+    /// one (60 s on the guest's countdown): closes of 1 s every 9 s and every 10.5 s (P5; 54410943 ended the instance after 63 s:
+    /// the drops less than 10 s apart were one episode whatever he played between), half-open stalls of 4.5 s with 5 s of play (P6:
+    /// host_lost after 70.7 s), closes of 2 s every 5 s with 2.5 s in time (54410943's own test ended it 60 s after the first drop).
+    /// He holds his guests up at most as long as he plays in time: his debt goes back to 0.
+    /// </summary>
+    [Fact]
+    public void A_host_who_plays_in_time_between_brief_drops_plays_on_with_a_fresh_grace_at_every_drop()
+    {
+        var shapes = new (string Name, double Away, bool Silence, double Late, double InTime)[]
+        {
+            ("P5: a close of 1 s every 9 s", 1, false, 0.5, 7.5),
+            ("P5: a close of 1 s every 10.5 s", 1, false, 0.5, 9),
+            ("P6: half-open stalls of 4.5 s, 5 s of play", 4.5, true, 0.5, 4.5),
+            ("closes of 2 s every 5 s, 2.5 s in time", 2, false, 0.5, 2.5),
+        };
+        var problems = new List<string>();
+        foreach (var s in shapes)
+        {
+            var r = new FlapRig();
+            r.Play(1000);
+            var start = r.Seconds;
+            var drops = 0;
+            while (!r.Out("a") && r.Seconds - start < 300)
+            {
+                ++drops;
+                if (!s.Silence) r.Drop("a");
+                r.Mode["a"] = 0;
+                if (r.Play(s.Away * 1000, () => r.Out("a"))) break;
+                if (!r.Connected("a")) r.Back("a");
+                r.Mode["a"] = 1;
+                if (r.Play(s.Late * 1000, () => r.Out("a"))) break;
+                r.Mode["a"] = 2;
+                if (r.Play(s.InTime * 1000, () => r.Out("a"))) break;
+            }
+            var graces = r.H.Hub.Counters.GetValueOrDefault("host_grace");
+            if (r.Out("a")) problems.Add($"{s.Name}: out after {r.Seconds - start:F1} s (ending {r.W.Ending}, lag_leave {r.LagLeft})");
+            else if (graces < drops - 1) problems.Add($"{s.Name}: {graces} graces for {drops} drops");
+            else if (r.AwayNotices().Any(n => n != 60) || r.H.Hub.Counters.ContainsKey("host_grace_shortened"))
+                problems.Add($"{s.Name}: a grace not fresh: {string.Join(",", r.AwayNotices().Distinct())}");
+        }
+        Assert.True(problems.Count == 0, string.Join("\n", problems));
+    }
+
+    /// <summary>
+    /// Review of 54410943, finding 2 (P7): a host out of the guests' stage group (lag_leave) whose link keeps dropping while he plays
+    /// apart does not end the instance: no guest plays with him, so every grace is fresh (also with his debt from an absence of 59 s
+    /// just before). 54410943 ended the instance 60 s after his first drop apart and sent his guest home.
+    /// </summary>
+    [Fact]
+    public void A_host_playing_apart_whose_link_keeps_dropping_keeps_his_instance_with_a_fresh_grace_at_every_drop()
+    {
+        foreach (var away59 in new[] { false, true })
+        {
+            var r = new FlapRig();
+            r.Play(1000);
+            if (away59)
+            {
+                r.Drop("a");
+                r.Mode["a"] = 0;
+                r.Play(59_000);
+                r.Back("a");
+            }
             r.Mode["a"] = 1;
-            r.Play(3000, () => r.Out("a"));
+            Assert.True(r.Play(15_000, () => r.LagLeft));
+            Assert.Null(r.H.Mem("a").Instance);
+            var start = r.Seconds;
+            while (!r.W.Ending && r.Seconds - start < 300)
+            {
+                r.DropAndNote("a");
+                if (r.Play(2000, () => r.W.Ending)) break;
+                r.Back("a");
+                if (r.Play(3000, () => r.W.Ending)) break;
+            }
+            Assert.False(r.W.Ending);
+            Assert.Same(r.I, r.H.Mem("b").Instance);
+            Assert.Same(r.H.Mem("a"), r.W.Host);
+            Assert.True(r.GraceStarts.Count >= 59);
+            Assert.All(r.GraceStarts, g => Assert.Equal(60u, g));
         }
-        Assert.True(r.LagLeft, "the flapping host is still in his stage group after 200 s");
-        // Connected 3 + 3 + 3 + 1 s since his first return, three absences of 2 s between: 16 s (one pass of slack each way).
-        Assert.InRange(r.Seconds - firstBack, 16 - 0.3, 16 + 0.6);
-        Assert.Equal(4, drops);
-        Assert.Equal(3, r.H.Hub.Counters.GetValueOrDefault("host_grace_continued"));
-        Assert.Equal(4, r.H.Hub.Counters.GetValueOrDefault("host_grace"));
-        Assert.False(r.W.Ending);
-        Assert.Same(r.H.Mem("a"), r.W.Host);
-        Assert.Contains(r.H.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
-        Assert.Equal(new uint[] { 60, 55, 50, 45 }, r.AwayNotices().Select(n => n.Argument).Take(4).ToArray());
     }
 
     /// <summary>
-    /// The same over a half-open link: 4 s of silence start each grace (19.6.7), his held-back late pads end it. The silence before each
-    /// grace counts as connected time, so the lag rule takes him out 10 s of connected time after his first return, during his third
-    /// silence. (Before, each return restarted the clock and the next grace came 4 s later, before LagLeaveSeconds: for good.)
+    /// Review of 54410943, finding 4 (P3): a stall of the client (4.5 s of silence: a grace of half a second) does not shorten a real
+    /// absence 9 s later: a close of 55 s gets a fresh 60 s grace and he plays on (54410943 gave it 51 s and ended the instance). The
+    /// half second of the stall's grace is paid off by the play in time after it.
     /// </summary>
     [Fact]
-    public void A_host_whose_link_keeps_falling_silent_without_a_pad_in_time_is_taken_out_by_the_lag_rule_after_his_connected_allowance()
+    public void A_client_stall_does_not_shorten_a_later_absence()
     {
         var r = new FlapRig();
         r.Play(1000);
-        var silentFrom = r.Seconds;
-        double firstBack = 0;
-        while (!r.Out("a") && r.Seconds - silentFrom < 200)
+        r.Mode["a"] = 0;
+        r.Play(4500);
+        Assert.True(r.W.HostAway);
+        r.Mode["a"] = 2;
+        r.Play(9000);
+        Assert.False(r.W.HostAway);
+        r.DropAndNote("a");
+        r.Mode["a"] = 0;
+        Assert.Equal(60u, r.LastAway);
+        Assert.False(r.Play(55_000, () => r.W.Ending));
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Play(2000);
+        r.Mode["a"] = 2;
+        r.Play(20_000);
+        Assert.False(r.Out("a"));
+        Assert.False(r.H.Hub.Counters.ContainsKey("host_grace_shortened"));
+    }
+
+    /// <summary>
+    /// Review of 54410943, finding 4 (P2): a stall of 4.5 s while the host catches up 1 s after an absence of 57 s gets what his debt
+    /// leaves (57 s away, 1 s late, 4 s silent: 8 s of grace) instead of ending the instance at once (54410943: one episode, a grace of
+    /// 0 s, host_lost); back, he catches up and plays on.
+    /// </summary>
+    [Fact]
+    public void A_client_stall_while_catching_up_after_a_long_absence_does_not_end_the_instance()
+    {
+        var r = new FlapRig();
+        r.Play(1000);
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(57_000);
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Play(1000);
+        r.Mode["a"] = 0;
+        r.Play(4500);
+        Assert.True(r.W.HostAway);
+        Assert.InRange(r.LastAway, 7u, 9u);
+        Assert.False(r.W.Ending);
+        r.Mode["a"] = 1;
+        r.Play(2000);
+        Assert.False(r.W.HostAway);
+        r.Mode["a"] = 2;
+        r.Play(20_000);
+        Assert.False(r.Out("a"));
+    }
+
+    /// <summary>
+    /// Review of 54410943, finding 3 (P4): a host's return after a new absence gets Relay:LagLeaveSeconds to catch up again, also when
+    /// no pad of his came in time since his last return: away 20 s, back, both members lag 12 s (everyone lags: nobody out), a drops
+    /// again for 20 s and comes back with late pads: lag_leave 10 s after his return (54410943 kept the first return's credit and took
+    /// him out 0.02 s after host_back, as before 2b009cee).
+    /// </summary>
+    [Fact]
+    public void A_return_after_a_new_absence_gets_the_whole_lag_allowance_again()
+    {
+        var r = new FlapRig();
+        r.Play(1000);
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(20_000);
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Mode["b"] = 1;
+        r.Play(12_000);
+        Assert.False(r.Out("a"));
+        r.Mode["b"] = 2;
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(20_000);
+        Assert.False(r.W.Ending);
+        r.Back("a");
+        var back = r.Seconds;
+        r.Mode["a"] = 1;
+        Assert.True(r.Play(15_000, () => r.Out("a")));
+        Assert.True(r.LagLeft);
+        Assert.InRange(r.Seconds - back, 10 - 0.3, 10 + 0.6);
+    }
+
+    /// <summary>
+    /// Review of 54410943, finding 3 (P9): a drop just past Relay:LagLeaveSeconds after a return, before the next housekeeping pass
+    /// (9.9 s lagging, 59 s away, back 10.013 s with late pads, 59 s away again) has what the debt leaves (1 s): the instance ends within
+    /// the bound of one absence (54410943: outside its episode window, a fresh grace; out only 138 s after the first fill).
+    /// </summary>
+    [Fact]
+    public void A_drop_between_two_housekeeping_passes_stays_inside_the_bound_of_one_absence()
+    {
+        var r = new FlapRig();
+        r.Play(1000);
+        var start = r.Seconds;
+        r.Mode["a"] = 1;
+        r.Play(9900);
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(59_000);
+        r.Back("a");
+        var back = r.Seconds;
+        r.Mode["a"] = 1;
+        // Up to the last pass before 10 s after the return, then on without a pass: the drop comes before the lag rule looks.
+        while (r.Seconds - back < 9.7) r.Play(17);
+        r.H.Seal((back + 10.013 - r.Seconds) * 1000);
+        Assert.False(r.Out("a"));
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        Assert.True(r.Play(59_000, () => r.Out("a")));
+        Assert.Equal(EndReason.HostLost, r.W.EndReason);
+        Assert.InRange(r.Seconds - start, 70, FlapBoundSeconds);
+    }
+
+    /// <summary>
+    /// Review of 54410943, finding 5: the debt's limit is World:HostGraceSeconds + Relay:LagLeaveSeconds, so a server that gives laggers
+    /// more time (Relay:LagLeaveSeconds 30 or 60) is more lenient with a host's drops too, never stricter (54410943's episode window was
+    /// LagLeaveSeconds of wall clock: at 30 and 60 a drop 25.5 s after a return of 2 s got 33 s instead of 60). A 2 s drop, 25.5 s in
+    /// time, a 15 s drop: a fresh 60 s grace at 10, 30 and 60; a 59 s absence, 5 s in time, a drop: 16 s, 36 s, 60 s.
+    /// </summary>
+    [Fact]
+    public void A_longer_lag_allowance_makes_the_episode_more_lenient_not_stricter()
+    {
+        foreach (var lagLeave in new[] { 10, 30, 60 })
         {
+            var r = new FlapRig(lagLeave);
+            r.Play(1000);
+            r.DropAndNote("a");
             r.Mode["a"] = 0;
-            if (r.Play(5000, () => r.Out("a"))) break;
-            Assert.True(r.W.HostAway);
-            r.Mode["a"] = 1; // the held-back pads arrive late: INPUT, he is back
-            if (r.Play(2000, () => r.Out("a"))) break;
-            if (firstBack == 0) firstBack = r.Seconds - 2;
-            Assert.False(r.W.HostAway);
+            r.Play(2000);
+            r.Back("a");
+            r.Mode["a"] = 2;
+            r.Play(25_500);
+            r.DropAndNote("a");
+            r.Mode["a"] = 0;
+            r.Play(15_000);
+            r.Back("a");
+            r.Mode["a"] = 2;
+            r.Play(5000);
+            Assert.False(r.Out("a"));
+            Assert.Equal(new uint[] { 60, 60 }, r.GraceStarts);
         }
-        Assert.True(r.LagLeft, "the flapping host is still in his stage group after 200 s");
-        // Returns at +5 s (late pads 2 s, silence 4 s), +12 s (2 s, then 2 s of silence): 10 s connected at about +16 s.
-        Assert.InRange(r.Seconds - silentFrom, 16 - 0.3, 16 + 0.6);
-        Assert.InRange(firstBack - silentFrom, 5, 5.3);
-        Assert.Equal(1, r.H.Hub.Counters.GetValueOrDefault("host_grace_continued"));
-        Assert.False(r.W.Ending);
+        foreach (var (lagLeave, second) in new[] { (10, 16u), (30, 36u), (60, 60u) })
+        {
+            var r = new FlapRig(lagLeave);
+            r.Play(1000);
+            r.Drop("a");
+            r.Mode["a"] = 0;
+            r.Play(59_000);
+            r.Back("a");
+            r.Mode["a"] = 2;
+            r.Play(5000);
+            r.DropAndNote("a");
+            Assert.InRange(r.GraceStarts.Single(), second, Math.Min(60u, second + 1)); // (the notice rounds up)
+        }
     }
 
     /// <summary>
-    /// A drop less than Relay:LagLeaveSeconds after his return keeps the grace's deadline: a host away 50 s, back for 3 s of late pads,
-    /// then gone again has the 7 s the first grace had left, not a fresh 60 s; the guest sees 7 s, and the instance ends (host_lost) when
-    /// they are over. A return just after the deadline, before the housekeeping's pass, does not save it. (Before, the second drop
-    /// started a fresh 60 s grace: a link that drops just before each grace's end kept the guests waiting for good.)
+    /// What 2b009cee keeps (19.6.7, "back in time: play on"): a host back once after nearly the whole grace whose client takes 9 s to
+    /// catch up plays on. A drop before he played in time as long as he held his guests up gets what his debt leaves (59 s away, 9 s
+    /// late, 20 s in time: 48 s of debt, a grace of 22 s); once he did (80 s more in time), a drop is a new loss with a fresh grace, and
+    /// its return gets the full Relay:LagLeaveSeconds again.
     /// </summary>
     [Fact]
-    public void A_drop_soon_after_a_return_keeps_the_graces_deadline_and_its_end_ends_the_instance()
+    public void A_host_back_once_after_nearly_the_whole_grace_plays_on_and_a_later_drop_gets_what_his_debt_leaves()
     {
         var r = new FlapRig();
         r.Play(1000);
-        var firstDrop = r.Seconds;
+        r.DropAndNote("a");
+        r.Mode["a"] = 0;
+        r.Play(59_000);
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Play(9000);
+        r.Mode["a"] = 2;
+        r.Play(20_000);
+        Assert.False(r.Out("a"));
+        Assert.True(r.I.Streams[r.H.Mem("a").Slot]!.FillStreak < SlotStream.LagFills);
+        r.DropAndNote("a");
+        r.Mode["a"] = 0;
+        r.Play(15_000);
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Play(6000);
+        r.Mode["a"] = 2;
+        r.Play(80_000);
+        Assert.False(r.Out("a"));
+        // Paid off: a fresh grace, and 9 s of late pads after a 15 s absence are inside the lag allowance.
+        r.DropAndNote("a");
+        r.Mode["a"] = 0;
+        r.Play(15_000);
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Play(9000);
+        r.Mode["a"] = 2;
+        r.Play(20_000);
+        Assert.False(r.Out("a"));
+        Assert.Equal(3, r.GraceStarts.Count);
+        Assert.Equal(60u, r.GraceStarts[0]);
+        Assert.InRange(r.GraceStarts[1], 21u, 23u);
+        Assert.Equal(60u, r.GraceStarts[2]);
+        Assert.Equal(1, r.H.Hub.Counters.GetValueOrDefault("host_grace_shortened"));
+        Assert.DoesNotContain(r.H.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
+    }
+
+    /// <summary>
+    /// A drop soon after a long absence: away 50 s, back for 3 s of late pads (53 s of debt), gone again: the grace is the 17 s the debt
+    /// leaves (the guest sees 17), and the instance ends (host_lost) when they are over. A return just after the deadline, before the
+    /// housekeeping's pass, does not save it.
+    /// </summary>
+    [Fact]
+    public void A_drop_soon_after_a_long_absence_gets_what_the_debt_leaves_and_its_end_ends_the_instance()
+    {
+        var r = new FlapRig();
+        r.Play(1000);
         r.Drop("a");
         r.Mode["a"] = 0;
         r.Play(50_000);
@@ -168,90 +491,25 @@ public partial class HubLogicTests
         r.Drop("a");
         var secondDrop = r.Seconds;
         r.Mode["a"] = 0;
-        Assert.Equal(7u, r.AwayNotices().Last().Argument);
+        Assert.InRange(r.LastAway, 17u, 18u);
+        var deadline = r.W.GraceUntil / (double)Stopwatch.Frequency;
         // Just past the deadline, between two housekeeping passes: a reconnect is not in time.
-        r.H.Advance((firstDrop + 60.05 - r.Seconds) * 1000);
+        r.H.Advance((deadline + 0.05 - r.Seconds) * 1000);
         r.Back("a");
         Assert.True(r.W.HostAway);
         Assert.True(r.Play(1000, () => r.W.Ending));
         Assert.Equal(EndReason.HostLost, r.W.EndReason);
-        Assert.InRange(r.Seconds - firstDrop, 60, 60 + 0.6);
-        Assert.InRange(r.Seconds - secondDrop, 7 - 0.3, 7 + 0.6);
-        Assert.Equal(1, r.H.Hub.Counters.GetValueOrDefault("host_grace_continued"));
+        Assert.InRange(r.Seconds - secondDrop, 17 - 0.5, 17 + 0.8);
+        Assert.Equal(1, r.H.Hub.Counters.GetValueOrDefault("host_grace_shortened"));
     }
 
     /// <summary>
-    /// The bound: however a host's link drops and comes back, he is out of the guests' stage group (lag_leave) or his instance has ended
-    /// (host_lost) at most Relay:LagLeaveSeconds + World:HostGraceSeconds + Relay:LagLeaveSeconds (80 s, plus the housekeeping's passes)
-    /// after his slot began to fill: the worst case of one absence (lagging 9.9 s, closed, back after 59.9 s, 10 s to catch up), unless
-    /// he comes back for Relay:LagLeaveSeconds with his pads in time. Patterns: lagging before the first drop, a long first absence,
-    /// then drops (closes or silences) of varying length that use up the connected allowance and the grace in different orders, and
-    /// "burst" ones whose last 100 ms before each drop come in time (the real client's pads of the last ticks before a return, W7g:
-    /// each ends the fill streak, so only the episode's deadline holds them). (Before, every pattern kept him in for good.)
+    /// The debt's lag limit: a host whose debt is spent while he lags is out of the stage group by the lag rule, the instance going on
+    /// (59 s away, 9 s late: 68 s; a drop of 0.5 s, a grace of 2 s; back with late pads: lag_leave when the debt reaches 70 s, about 1.5 s
+    /// after his return, though his lag clock restarted). He stays the instance's host and plays apart.
     /// </summary>
     [Fact]
-    public void A_flapping_host_is_out_or_his_instance_ended_within_the_single_absence_bound()
-    {
-        // (lagging before the first drop, the first absence, then repeated: away, back; silence: drops by silence (the grace from its
-        // 4th second); burst: the last 100 ms of each return's pads in time)
-        var patterns = new (double Lag, double First, double Away, double Back, bool Silence, bool Burst)[]
-        {
-            (9.5, 55, 3, 2, false, false),    // the grace's deadline first: host_lost
-            (9.5, 50, 0.5, 9, false, false),  // the connected allowance first: lag_leave
-            (9.5, 59, 1, 9.9, false, false),  // both at their ends: the tightest
-            (0, 30, 2, 3, false, false),
-            (9.5, 45, 6, 1, true, false),     // silences of 6 s
-            (0, 5, 5, 0.5, true, false),
-            (0, 3, 3, 4, false, true),        // pads in time before each drop: only the deadline holds
-            (9.5, 2, 7, 0.3, true, true),     // W7g's shape: silences of 7 s, a short window with a burst
-            (9.5, 59, 2, 9.8, false, true),   // back at the deadline's last second, a burst, gone again
-        };
-        var problems = new List<string>();
-        foreach (var p in patterns)
-        {
-            var r = new FlapRig();
-            r.Play(1000);
-            var start = r.Seconds;
-            r.Mode["a"] = 1; // his pads late from here: the slot begins to fill
-            r.Play(p.Lag * 1000, () => r.Out("a"));
-            Assert.False(r.Out("a"));
-            r.Drop("a");
-            r.Mode["a"] = 0;
-            var ended = r.Play(p.First * 1000, () => r.Out("a"));
-            var rounds = 0;
-            while (!ended && r.Seconds - start < 300)
-            {
-                if (!r.H.Mem("a").Connected) r.Back("a");
-                r.Mode["a"] = 1;
-                if (r.Play((p.Burst ? p.Back - 0.1 : p.Back) * 1000, () => r.Out("a"))) break;
-                if (p.Burst)
-                {
-                    r.Mode["a"] = 2;
-                    if (r.Play(100, () => r.Out("a"))) break;
-                }
-                if (!p.Silence) r.Drop("a");
-                r.Mode["a"] = 0;
-                ended = r.Play(p.Away * 1000, () => r.Out("a"));
-                ++rounds;
-            }
-            var elapsed = r.Seconds - start;
-            if (!r.Out("a")) problems.Add($"pattern {p}: the host is still in after {elapsed:F1} s ({rounds} rounds)");
-            else if (elapsed > FlapBoundSeconds) problems.Add($"pattern {p}: out after {elapsed:F1} s, beyond {FlapBoundSeconds} s");
-            // Out by the lag rule, or the grace's end ended the instance; never both, never a guest's reconnect timeout for a host.
-            else if (!(r.LagLeft ^ (r.W.EndReason == EndReason.HostLost))) problems.Add($"pattern {p}: lag_leave {r.LagLeft}, end {r.W.EndReason}");
-            else if (r.H.Hub.Counters.ContainsKey("reconnect_timeout")) problems.Add($"pattern {p}: reconnect_timeout");
-        }
-        Assert.True(problems.Count == 0, string.Join("\n", problems));
-    }
-
-    /// <summary>
-    /// What 2b009cee keeps (19.6.7, "back in time: play on"): a host back once after nearly the whole grace whose client takes 9 s to
-    /// catch up plays on; back for longer than Relay:LagLeaveSeconds with his pads in time, a later drop is a new loss: a fresh grace
-    /// (60 s on the guest's countdown), and its return gets the full Relay:LagLeaveSeconds again (8 s of late pads before that drop,
-    /// 15 s away, 9 s of late pads after it: still in).
-    /// </summary>
-    [Fact]
-    public void A_host_back_once_after_nearly_the_whole_grace_plays_on_and_a_stable_return_renews_his_grace_and_lag_allowance()
+    public void A_lagging_host_whose_debt_is_spent_is_taken_out_by_the_lag_rule_and_keeps_his_instance()
     {
         var r = new FlapRig();
         r.Play(1000);
@@ -261,69 +519,19 @@ public partial class HubLogicTests
         r.Back("a");
         r.Mode["a"] = 1;
         r.Play(9000);
-        r.Mode["a"] = 2;
-        r.Play(20_000);
-        Assert.False(r.Out("a"));
-        Assert.True(r.I.Streams[r.H.Mem("a").Slot]!.FillStreak < SlotStream.LagFills);
-        // His line gets bad again (8 s of late pads: a new fill streak), then drops: a fresh grace, and its return the full lag
-        // allowance again (a credit kept from the first return would leave him 2 s: the lag clock of before the drop).
-        r.Mode["a"] = 1;
-        r.Play(8000);
-        Assert.False(r.Out("a"));
-        r.Drop("a");
+        r.DropAndNote("a");
         r.Mode["a"] = 0;
-        Assert.Equal(60u, r.AwayNotices().Last().Argument);
-        r.Play(15_000);
+        Assert.InRange(r.GraceStarts.Single(), 2u, 3u);
+        r.Play(500);
         r.Back("a");
+        var back = r.Seconds;
         r.Mode["a"] = 1;
-        r.Play(9000);
-        r.Mode["a"] = 2;
-        r.Play(20_000);
-        Assert.False(r.Out("a"));
-        Assert.False(r.H.Hub.Counters.ContainsKey("host_grace_continued"));
-        Assert.Equal(2, r.H.Hub.Counters.GetValueOrDefault("host_grace"));
-        Assert.DoesNotContain(r.H.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
-    }
-
-    /// <summary>
-    /// Pads in time between the drops do not renew the grace: a host whose link drops for 2 s every 5 s, his pads in time for 2.5 s of
-    /// each return, flaps (one absence episode: 60, 55, 50 ... s on the guest's countdown) and his instance ends 60 s after the first
-    /// drop. Back for 11 s between drops of 2 s (longer than Relay:LagLeaveSeconds), each drop is a new loss with a fresh grace and he
-    /// plays on. (Before, both played on for good.)
-    /// </summary>
-    [Fact]
-    public void A_host_whose_link_keeps_dropping_loses_his_instance_when_the_episodes_grace_is_over_unless_he_stays_back_between()
-    {
-        foreach (var backSeconds in new[] { 3.0, 11.0 })
-        {
-            var r = new FlapRig();
-            r.Play(1000);
-            var firstDrop = r.Seconds;
-            for (var k = 0; k < 20 && !r.W.Ending; ++k)
-            {
-                r.Drop("a");
-                r.Mode["a"] = 0;
-                if (r.Play(2000, () => r.W.Ending)) break;
-                r.Back("a");
-                r.Mode["a"] = 1;
-                if (r.Play(500, () => r.W.Ending)) break;
-                r.Mode["a"] = 2;
-                if (r.Play((backSeconds - 0.5) * 1000, () => r.W.Ending)) break;
-            }
-            Assert.False(r.LagLeft);
-            if (backSeconds < 10)
-            {
-                Assert.Equal(EndReason.HostLost, r.W.EndReason);
-                // The deadline fell into a return; the next drop (within 5 s) ended it at the following pass.
-                Assert.InRange(r.Seconds - firstDrop, 60, 65 + 0.6);
-                Assert.Equal(new uint[] { 60, 55, 50, 45 }, r.AwayNotices().Select(n => n.Argument).Take(4).ToArray());
-                continue;
-            }
-            Assert.False(r.Out("a"));
-            Assert.Equal(20, r.H.Hub.Counters.GetValueOrDefault("host_grace"));
-            Assert.False(r.H.Hub.Counters.ContainsKey("host_grace_continued"));
-            Assert.All(r.AwayNotices(), n => Assert.Equal(60u, n.Argument));
-        }
+        Assert.True(r.Play(5000, () => r.Out("a")));
+        Assert.True(r.LagLeft);
+        Assert.InRange(r.Seconds - back, 1.0, 2.2);
+        Assert.False(r.W.Ending);
+        Assert.Same(r.H.Mem("a"), r.W.Host);
+        Assert.Contains(r.H.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
     }
 
     /// <summary>
@@ -362,30 +570,5 @@ public partial class HubLogicTests
             Assert.InRange(r.Seconds - firstDrop, 10 - 0.3, 10 + 0.6);
             Assert.False(r.H.Hub.Counters.ContainsKey("reconnect_timeout"));
         }
-    }
-
-    /// <summary>The slot's clock itself: the first return of a fill streak restarts it, a later one moves it on by the absence only, a pad
-    /// sealed in time ends the streak and the credit.</summary>
-    [Fact]
-    public void The_slot_clock_restarts_at_the_first_return_of_a_fill_streak_and_later_returns_only_skip_their_absence()
-    {
-        var f = Stopwatch.Frequency;
-        var s = new SlotStream(0, 0, 3);
-        s.Take(0, 1 * f, out _); // filled: the streak begins at 1 s
-        Assert.Equal(1 * f, s.FillStreakSince);
-        s.HostReturned(20 * f, 2 * f); // away 2..20 s: the clock from 20 s
-        Assert.Equal((20 * f, true), (s.FillStreakSince, s.ReturnCredited));
-        s.HostReturned(30 * f, 25 * f); // connected 20..25, away 25..30: 5 s of connected time counted, the clock at 25 s
-        Assert.Equal(25 * f, s.FillStreakSince);
-        Assert.Equal(SlotStream.Submit.Accepted, s.Offer(1, new Pad(1, 0, 0, 0, 0), 1, 10));
-        s.Take(1, 31 * f, out var filled); // a pad in time: the streak and its credit end
-        Assert.False(filled);
-        Assert.Equal((0, false), (s.FillStreak, s.ReturnCredited));
-        s.Take(2, 32 * f, out _);
-        s.HostReturned(40 * f, 33 * f); // a new streak's first return: restarted again
-        Assert.Equal((40 * f, true), (s.FillStreakSince, s.ReturnCredited));
-        var quiet = new SlotStream(1, 0, 3);
-        quiet.HostReturned(5 * f, 1 * f); // no fill streak: nothing to credit
-        Assert.False(quiet.ReturnCredited);
     }
 }
