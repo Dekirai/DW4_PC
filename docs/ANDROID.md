@@ -12,7 +12,10 @@ Status: **phase B done** (13.11.2026): the game itself runs on the emulator
 first start's file picker on, with the F1 menu by controller, Back key and
 touch and HOME and back; the PC build is unchanged in its checks ("Phase B"
 below, with what is left for phase C). Phase A (toolchain, the Gradle build
-offline, the device probe) is done. Nothing has run on the Thor yet.
+offline, the device probe) is done. Phase B's APK reached the title on the
+owner's Thor (13.11.2026). main 12f6a1a8 (the display languages with the
+live switch, the remaster's Graphics options and texture streaming) is merged
+in (14.11.2026, "The main merge of 14.11.2026" below).
 
 ## Decisions this port follows
 
@@ -70,6 +73,7 @@ ABIs: `arm64-v8a` (the Thor) and `x86_64` (the emulator), `c++_static`.
 | `android/gradlew-dw4.cmd`, `android/gradlew-dw4.sh` | The Gradle entry points: `gradlew` in DW4_PC's own Gradle user home ("Gradle user home") |
 | `android/ndk-core-check.cmd` | Compiles `dw4_core`, `dw4_engine`, `dw4_online` with the NDK for both ABIs |
 | `android/gradle/cache-retention.init.gradle` | The cache retention (365 days) that `gradlew-dw4` copies into its Gradle user home's `init.d` before every run |
+| `tools/android/gles_check.cpp` | A plain `adb shell` executable (EGL pbuffer, no app) that runs the renderer's OpenGL ES paths of the Graphics options and the texture streaming on a device ("GLES checks without the app") |
 
 SDL's Java classes (`org.libsdl.app.*`) are never kept in the repository: the
 Gradle task `copySdlJava` copies them at build time from the same SDL source
@@ -123,6 +127,10 @@ Then, from the repository root (`gradlew-dw4` sets the Gradle user home,
     android\gradlew-dw4.cmd --offline --no-daemon assembleDebug
 
 or in Git Bash `sh android/gradlew-dw4.sh --offline --no-daemon assembleDebug`.
+`-Pdw4.nativeJobs=N` caps the native build's parallel compile and link jobs
+(CMake job pools; unset: Ninja's default), `--max-workers=1` builds the two
+ABIs one after the other (both used while another job needs the CPU: at most
+N jobs at a time).
 Never run `android\gradlew.bat` directly: it uses the shared
 `%USERPROFILE%\.gradle` (`settings.gradle` warns when a build runs there).
 `android/gradle.properties` sets `android.builder.sdkDownload=false`, so a
@@ -265,7 +273,12 @@ the app as just `--seconds`. The probe logs what it got (`arguments 2:
 [--seconds] [10]`). Only a debuggable build (`FLAG_DEBUGGABLE`, every debug
 APK) takes the extra: the launcher activity is exported, so a release build
 ignores it (and logs "dw4args ignored") instead of letting any app pass
-arguments. Checked on the emulator (13.11.2026): the debug APK logs
+arguments. Two arguments exist for such runs: `--mute` (no audio device
+this run: silent on a device nobody listens to, settings.ini and the
+device's volume untouched) and `--env NAME=VALUE` (an environment variable
+set before the run reads any: the test switches such as `DW4_GL_CHECK=1`,
+`DW4_LANGUAGE=de` or a test run's Graphics options, which Android cannot
+pass otherwise). Both work on the PC too. Checked on the emulator (13.11.2026): the debug APK logs
 `arguments 2: [--seconds] [3]` and quits after 3 s; the same APK without
 `android:debuggable` logs "dw4args ignored" and `arguments 0: none`.
 
@@ -506,11 +519,25 @@ core) and one code path, with these differences on a GLES context
   rectangle on both sides, as GLES wants it) into a window-sized texture
   and copied from there (`Impl::copy_window_es`), and `GL_DEPTH_CLAMP` is
   only switched where the context has it. Texture packs: BC7 needs OpenGL
-  4.2 or a BPTC extension, BC1 / BC3 `GL_EXT_texture_compression_s3tc`
-  (`caps_`); Adreno has neither, so the loading thread decodes the pack's
-  DDS files to RGBA8 (the path `DW4_TEXTURE_CPU_DECODE=1` tests on the
-  PC). Anisotropic filtering follows `GL_EXT_texture_filter_anisotropic`;
-  sampler objects and the LOD bias in the shader are GLES 3.0 already.
+  4.2 or `GL_ARB_texture_compression_bptc`, on GLES
+  `GL_EXT_texture_compression_bptc`; BC1 / BC3
+  `GL_EXT_texture_compression_s3tc` (`caps_`). A GPU without them (the
+  emulator's) gets the pack's DDS files decoded to RGBA8 on the loading
+  thread (the path `DW4_TEXTURE_CPU_DECODE=1` tests on the PC); the Thor's
+  Adreno 740 has all three and takes them compressed (gles_check,
+  14.11.2026; phase B's note that Adreno had neither was wrong). Pack
+  textures go up into immutable storage (`glTexStorage2D`, core in GLES
+  3.0) in bands of 256 KiB, as on the PC (before 14.11.2026 GLES uploaded
+  each level whole). Anisotropic filtering follows
+  `GL_EXT_texture_filter_anisotropic` (the menu offers only the levels the
+  GPU has, none without it); sampler objects and the LOD bias in the
+  shader are GLES 3.0 already.
+- `DW4_GL_CHECK=1` (any platform; on Android `--env DW4_GL_CHECK=1` in
+  `dw4args`): the GL errors raised in every presented frame and before
+  the texture uploads (which clear the error flags to tell a refused
+  upload) are logged (`renderer: GL error 0x... <where> (frame N)`, the
+  first 20) and counted (`renderer: GL error check: N errors in M checks`
+  when the renderer ends).
 - `reset_context()` (a lost context) also forgets the samplers, the game's
   and the pack's textures, refused uploads, the upload in progress and the
   sharpening objects, and starts the loading thread again with the same
@@ -642,8 +669,9 @@ renderer section). Checked:
 
 ### Open for phase C (and later)
 
-- Depth read-back for the name tags on GLES; GL error checks in a debug
-  walk through the menus.
+- Depth read-back for the name tags on GLES; a debug walk through every
+  menu with `DW4_GL_CHECK=1` (the title, the new game, the dungeon, the F1
+  menu and the Graphics options are checked, 14.11.2026).
 - ImGui's size on the Thor's 400 dpi screen (the menus are drawn at 1x),
   fullscreen without the status bar (immersive mode), a visible menu button
   for touch.
@@ -651,11 +679,12 @@ renderer section). Checked:
   `LOW_MEMORY` (the texture cache).
 - A context loss is handled but was not provoked on the emulator (nor the
   texture pack streaming after one).
-- On the Thor: a multisampled surface (msaa=4) with the kept picture and
-  the Sharpening option (the resolve blits); a texture pack on Adreno
-  (CPU-decoded BC7); a full external storage (the import's space check)
-  and an unmounted one (`app_root_problem`), neither provoked on the
-  emulator.
+- On the Thor, in the game itself: a multisampled surface (msaa=4) with
+  the kept picture and the Sharpening option, a texture pack (BC7 / BC1 /
+  BC3 compressed on Adreno), the language switch (gles_check ran the same
+  GL calls without the app, 14.11.2026); a full external storage (the
+  import's space check) and an unmounted one (`app_root_problem`), neither
+  provoked on the emulator.
 - Measure on the Thor (correct, possibly expensive on a tiler):
   `keep_picture` blits the whole (with msaa=4 multisampled) window every
   frame, an extra resolve in the middle of the frame after which ImGui
@@ -665,12 +694,168 @@ renderer section). Checked:
   the frame still read, which drivers answer by copying the texture
   (alternative: all of the frame's palettes in one larger texture, one
   upload, a row offset per draw). The Sharpening option adds a second
-  resolve and copy on GLES.
-- Texture packs on the Thor: CPU-decoded RGBA8 needs 4x (BC7) to 8x (BC1)
-  the memory of the compressed files; an ASTC pack or a lower default
-  quality on GLES would be the way, if needed.
+  resolve and copy on GLES. gles_check's figures on the Thor (1920 x 1080,
+  4x multisampled, 60 rounds, each with `glFinish`): the kept picture's
+  blit 0.53 ms, the sharpening's resolve, copy and pass 2.42 ms (without
+  multisampling 0.49 / 1.10 ms); measured with the screen locked, so the
+  GPU's clock may have been low.
+- Texture packs on a GPU without BC formats: CPU-decoded RGBA8 needs 4x
+  (BC7) to 8x (BC1) the memory of the compressed files (not the Thor's
+  case: Adreno 740 takes BC7, BC1 and BC3, and ASTC LDR / HDR).
+- The debug APK's native code is built without optimization (Gradle's
+  Debug build type: `CMAKE_BUILD_TYPE=Debug`, no `-O`); performance on the
+  Thor is measured with an optimized build (a release build type or
+  `RelWithDebInfo` for the native part).
+- The F1 menu shows PC-only entries on Android too (Fullscreen (F11), the
+  window size buttons, "Dump textures"); they go or change with phase C's
+  menu work.
 - The RVZ import was not run on the emulator (no RVZ of the game); it uses
   the PC's converter on the copied file.
+
+## The main merge of 14.11.2026 (main 12f6a1a8)
+
+main 12f6a1a8 brought feat-l10n (game text catalogs laid out at display
+time, the live language switch in F1 > Settings > Language, the German
+pictures, the composed glyph cells of the font atlas, the l10n tools and
+lint; docs/L10N.md) and the remaster tools' review rounds; the texture
+streaming and the Graphics options were merged before (main bb95abb5).
+The merge commit had no conflict: l10n's renderer changes are CPU side
+(texture records keyed by the USA texture's hash and the language
+picture's, the composed glyph cells painted into the font atlas's pixels
+before an upload, a pack's font00 decoded to RGBA8 for it) and sit next to
+phase B's GLES paths. The changes after it, for Android:
+
+- **Language packs in the APK.** The PC build copies `data/lang/<code>/`
+  next to the program (`cmake/copy_lang.cmake`, now PC only); Android has
+  no program folder, so Gradle (`copyLangAssets`) puts the committed pack
+  files (`language.ini`, `textures.tsv`; never a file named `game.*`) into
+  the APK's assets `lang/<code>/`, and the game copies them into `lang/` of
+  its folder (`Android/data/org.dw4pc.game/files/lang`) at every start
+  where they differ (`install_bundled_language_packs`,
+  `platform_android.cpp`; logged as `language: N language pack files from
+  the APK into ...`). Without a `game.tsv` the German pack is "pictures
+  only" (two of its three pictures come from the player's own disc; the
+  travel dialog's is drawn from game.tsv's text). The game text catalog
+  (`game.tsv`) is derived from the game's script: it is never committed and
+  never in an APK; a player puts their own into `files/lang/de/`.
+- **Putting a game.tsv on the owner's Thor (a local step).** `adb push`
+  into `Android/data/org.dw4pc.game/files` creates folders owned by the
+  shell (`drwxrws--- shell ext_data_rw`), which the app (no member of
+  `ext_data_rw`) cannot enter: the folder must be the app's own. So:
+
+      adb push local\lang\de\game.tsv /data/local/tmp/dw4c/game.tsv
+      adb shell "run-as org.dw4pc.game mkdir -p /storage/emulated/0/Android/data/org.dw4pc.game/files/lang/de"
+      adb shell "cat /data/local/tmp/dw4c/game.tsv | run-as org.dw4pc.game sh -c 'cat > /storage/emulated/0/Android/data/org.dw4pc.game/files/lang/de/game.tsv'"
+      adb shell rm -rf /data/local/tmp/dw4c
+
+  (a debug build only: `run-as` needs `debuggable`). A file pushed into a
+  folder the app made is readable (`-rw-r--r-- shell`), as on the
+  emulator. A game.tsv copied in while the game runs is read when the
+  language is chosen again; the menu's entry follows it (before, it kept
+  saying "pictures only" until the next start; checked on the PC the other
+  way round: a game.tsv removed after the start, the switch at frame 3000,
+  the entry then says "(pictures only, no game.tsv)").
+- **The renderer on GLES**: immutable storage for pack textures and BC7
+  through `GL_EXT_texture_compression_bptc` (renderer section above),
+  `DW4_GL_CHECK=1`.
+- **Test aids**: `--mute`, `--env NAME=VALUE` (the emulator section),
+  `DW4_MENU_SECTION=Graphics` (the F1 Settings tab scrolled to its Graphics
+  section, for menu screenshots); a test run's F1 menu now shows the
+  Graphics options the renderer uses (the environment's), not settings.ini's
+  (test runs never save settings.ini).
+- `-Pdw4.nativeJobs=N` for Gradle (Building).
+
+What the Graphics options and the languages do on GLES:
+
+| Feature | OpenGL ES 3.0 (emulator, SwiftShader) | OpenGL ES 3.2 (Thor, Adreno 740) |
+| --- | --- | --- |
+| Texture quality, streaming | BC7 / BC1 decoded to RGBA8 on the loading thread, uploaded in bands | BC7 / BC1 / BC3 uploaded compressed in bands |
+| Texture filtering | Bilinear and Trilinear only (no `GL_EXT_texture_filter_anisotropic`): the menu offers no anisotropic level and says "This GPU offers no anisotropic filtering"; a settings.ini value of `anisotropic16` shows and samples as Trilinear | up to Anisotropic 16x (maximum 16) |
+| Mip LOD bias | the shader's bias, as on the PC | the same |
+| Sharpening | the window resolved by a blit, copied, the pass drawn (`copy_window_es`) | the same, with a 4x multisampled window |
+| Shadow quality | RGBA8 colour attachment up to 1024 x 1024 | the same (max texture size 16384) |
+| Texture memory | the same budget | the same |
+| Language | packs from the APK; German text and the composed glyph cells (ä ö ü ß „ “) | the same GL calls (gles_check); the game run is still open (below) |
+
+Checked on 14.11.2026:
+
+- **The PC** (`build/Clean`, MSVC, after the merge and every change):
+  `ctest` 78 of 78 (main brought the i18n and l10n lint tests);
+  `det.sh` twice on an exe copy, `4004f056` / `396cb219` in both runs both
+  times; the save state suite 17 of 17. Hidden UI runs (test runs, no
+  window shown, no sound, `DW4_GL_CHECK=1`, the new game route
+  `newgame_dng101b1`): the F1 Settings tab open while `DW4_L10N_SWITCH=
+  2400:de,3900:en` switches the language (the Language entry shows
+  "Deutsch (Fan-Übersetzung)" and the game text behind it is German, then
+  English again); German from the start (the name entry's "Gib den Namen
+  deines Digimon ein. Drücke zum Abschluss START." with ü); the Graphics
+  section (`DW4_MENU_SECTION=Graphics`) with Anisotropic 16x, Sharpening
+  High, Shadow quality Ultra and a synthetic texture pack (below) in the
+  dungeon; 0 GL errors in every run.
+- **The emulator** (`dw4thor33`, SwiftShader, OpenGL ES 3.0, the debug APK
+  built offline at idle priority with `-Pdw4.nativeJobs=6`): installed over
+  the earlier APK (the disc copy stayed), started with `dw4args '--mute
+  --env DW4_GL_CHECK=1'`: `language: 2 language pack files from the APK
+  into .../files/lang`, the title; the Back key opens F1, the Language
+  entry offers "Deutsch (Fan-Übersetzung) (pictures only, no game.tsv)";
+  chosen by touch: `language: de: no game.tsv ... 2 of 3 pictures ready`;
+  with a game.tsv pushed into the app's folder and German chosen again:
+  `game.tsv 4515 texts, 0 rejected ..., 3 of 3 pictures ready`; back to
+  English, settings.ini `language=en`; logcat without errors. Two test
+  runs through `dw4args` (`--smoke-test`, the route's input script and a
+  card folder in the app's folder, `--screenshot` BMPs pulled with adb):
+  German from the start shows the same German name entry as the PC; the
+  Graphics run (`DW4_TEXTURE_PACK` = the synthetic pack, anisotropic16,
+  sharpening high, shadow quality ultra, `DW4_MSAA=4`) draws the pack's
+  checkerboards in the dungeon, the menu shows Trilinear and the note that
+  the GPU has no anisotropic filtering; `renderer: GL error check: 0
+  errors` in 4300 and 5023 checks.
+- **The synthetic texture pack** (`work/android_research/synth_pack.py`,
+  local): format 2, eight textures of the title and the dungeon by their
+  hashes and sizes only (from a dump run's file names; the dumped pictures
+  were deleted), each a checkerboard of 4 x 4 texel blocks in two colours
+  per mip level (BC7 mode 6, BC1 and RGBA8 DDS files, scale 4 down to 1):
+  no game pixels, so it may go onto a device.
+- **The Thor**: `adb install -r` of the new debug APK (the imported
+  `files/data/dw4.iso` and settings.ini stayed, settings.ini byte for byte).
+  Its lock screen is secure (a PIN or pattern; `KeyguardServiceDelegate
+  secure=true`), so the game was not started there (no UI check while the
+  owner is away): the title, F1 by the Back key and the language switch in
+  the game on the Thor are still open. Instead gles_check ran by `adb
+  shell` (below), and the owner's game.tsv was put into the app's folder
+  as the local step above (`files/lang/de/game.tsv`, the app's own; the
+  game adds `language.ini` and `textures.tsv` at its next start), so F1 >
+  Settings > Language offers German with its text.
+
+### GLES checks without the app (gles_check)
+
+`tools/android/gles_check.cpp` is a plain executable for `adb shell`: an
+EGL pbuffer of 1920 x 1080 (4x multisampled by default) with an OpenGL ES 3
+context, no Activity and no SDL, so it runs while the device is locked. It
+reads the renderer's shader sources from a copy of `src/game/
+gl_renderer.cpp`, compiles them with the renderer's GLES header and runs the
+GL calls of the Graphics options and the texture streaming as the renderer
+makes them, `glGetError` after every step (the file's header lists them).
+Build and run (the folder `/data/local/tmp/dw4c` is removed afterwards):
+
+    %NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++ --target=aarch64-linux-android33 -std=c++20 -O1 -s ^
+        -static-libstdc++ tools\android\gles_check.cpp -lEGL -lGLESv3 -o gles_check
+    adb push gles_check src\game\gl_renderer.cpp /data/local/tmp/dw4c/
+    adb shell "chmod 755 /data/local/tmp/dw4c/gles_check && /data/local/tmp/dw4c/gles_check /data/local/tmp/dw4c/gl_renderer.cpp 4"
+
+On the owner's Thor (14.11.2026): `OpenGL ES 3.2 V@0676.53 ... Adreno (TM)
+740`, GLSL ES 3.20, max texture size 16384, max samples 4, 256 vertex
+uniform vectors (the GLES minimum: the palette texture was the right
+choice), 118 extensions, 78 compressed formats; anisotropic filtering (max
+16), BPTC, S3TC, ASTC LDR and HDR, `GL_EXT_depth_clamp`, `KHR_debug`. Every
+program links (the scene 32 active uniforms, the movie, the kept picture,
+the sharpening); immutable RGBA8 storage 2048 x 2048 with 12 levels filled
+in 93 bands (21.3 MiB in 22 ms) and BC7 / BC1 / BC3 in 30 / 20 / 30 bands;
+a draw through a trilinear sampler with 16x anisotropy; the RGBA32F
+palette; the shadow map at 128, 512 and 1024 texels complete, drawn and
+read back; the multisampled window resolved by a blit, copied, sharpened,
+and blitted into the kept picture; `GL_DEPTH_CLAMP_EXT` on and off:
+**PASSED, 0 failures** (with and without multisampling).
 
 ## Compile status (NDK clang 21, phase A)
 
@@ -802,6 +987,12 @@ device:
 - The window is 1920 x 970: the status bar and the navigation bar stay
   visible. Phase C makes the game window immersive full screen.
 
-Still unknown: the full GL limits and compressed formats (the probe APK
-logs them; ASTC is expected on Adreno) and the Focus Mode behaviour of the
-lower screen's touch (phase E0).
+The GL limits and compressed formats came from gles_check on 14.11.2026
+("GLES checks without the app"): ASTC LDR and HDR, BPTC and S3TC, 16x
+anisotropy, 256 vertex uniform vectors. Still unknown: the Focus Mode
+behaviour of the lower screen's touch (phase E0).
+
+On 14.11.2026 the new debug APK (main 12f6a1a8 merged) was installed with
+`adb install -r` (data and settings.ini kept); the lock screen is secure,
+so the game was not started while the owner was away ("The main merge of
+14.11.2026").
