@@ -93,6 +93,10 @@ struct Settings {
     bool pause_in_menu = true;
     // [preferences]
     bool skip_intro = false;
+    // [preferences] language: the game text's display language (docs/L10N.md):
+    // "en" (the game's own English text) or a language pack's code (lang/<code>
+    // next to the program). Presentation only, never part of the game state.
+    std::string language = "en";
     // [gameplay]: optional rebalancing and randomizer (100 / 0 = original)
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100;
     // [randomizer]: the seed new games bind to their save (0 off; the old

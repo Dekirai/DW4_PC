@@ -132,7 +132,7 @@ def sheet_for(sel, row, up_dir, export_dir, metrics, max_width):
     n = len(columns)
     cw_px = min(720, (max_width - GUTTER * (n + 1)) // n)
     h, w = src.shape[:2]
-    wy, wx = wrap_axes(row)
+    wy, wx = wrap_axes(row, sel)
     seam = sel["class"] in ("environment", "palette") and (wy or wx)
     # Crop windows in source texels, both shown at the same zoom.
     # (Small pictures: half of them, so the crops show more than the full view.)
@@ -294,7 +294,7 @@ def report_row(d, sheet, y, rep, cls_row, row, export_dir, final_dir, extra, f_s
     final = load_rgba(os.path.join(final_dir, row["hash"] + ".png"))
     h, w = src.shape[:2]
     cw, ch = min(32, w), min(32, h)
-    wy, wx = wrap_axes(row)
+    wy, wx = wrap_axes(row, cls_row)
     seam = (wy or wx) and cls in ("environment", "env_glow")
     centres = detail_centres(src, cw, ch, 2)
     x = GUTTER

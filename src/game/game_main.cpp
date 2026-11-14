@@ -22,6 +22,7 @@
 #include "randomizer_save.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
+#include "language.hpp"
 #include "achievements.hpp"
 #include "discord_presence.hpp"
 #include "overhead_labels.hpp"
@@ -1644,6 +1645,37 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (!texture_pack.index().error.empty()) std::cerr << "texture pack: " << texture_pack.index().error << '\n';
             std::cout << "texture pack: " << texture_pack.replacement_count() << " textures (format " << texture_pack.index().format << ")\n";
         }
+        // The game text's display language (docs/L10N.md): the language packs
+        // in lang/ next to the program, settings.ini [preferences] language.
+        // Presentation only (the engine takes it between two steps). Test
+        // runs show English unless DW4_LANGUAGE names a language; they may
+        // read the packs from DW4_LANG_DIR, switch at frames (DW4_L10N_SWITCH
+        // "F:code,..." or DW4_L10N_SWITCH_EVERY=N between English and
+        // DW4_LANGUAGE) and write the language pictures (DW4_L10N_DUMP=dir).
+        dw4::game::Languages languages;
+        auto log_language_notes = [&] {
+            for (const auto& note : languages.take_notes()) std::cout << "language: " << note << '\n';
+        };
+        {
+            std::filesystem::path lang_root = (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "lang";
+            if (const char* folder = std::getenv("DW4_LANG_DIR"); folder && *folder && options.smoke_frames) lang_root = std::filesystem::u8path(folder);
+            languages.discover(lang_root);
+            std::string wanted = options.smoke_frames ? std::string("en") : settings.language;
+            if (const char* forced = std::getenv("DW4_LANGUAGE"); forced && *forced) wanted = forced;
+            if (options.smoke_frames) {
+                if (const char* dump = std::getenv("DW4_L10N_DUMP"); dump && *dump) languages.set_dump(std::filesystem::u8path(dump));
+                if (const char* list = std::getenv("DW4_L10N_SWITCH"); list && *list) {
+                    std::string error;
+                    if (!languages.parse_schedule(list, &error)) throw std::runtime_error("DW4_L10N_SWITCH: " + error);
+                }
+                if (const char* every = std::getenv("DW4_L10N_SWITCH_EVERY"); every && std::atoi(every) > 0)
+                    languages.switch_every(std::atoi(every), wanted == "en" ? std::string("de") : wanted);
+            }
+            std::string message;
+            if (wanted != "en" && !languages.select(wanted, &message)) std::cout << "language: " << message << " (the game text stays English)\n";
+            if (languages.has_packs() || wanted != "en") std::cout << "language: " << languages.selected() << '\n';
+            log_language_notes();
+        }
         auto& gamepads = view.gamepads;
         ScriptedInput scripted;
         if (!options.input_script.empty()) scripted.load(options.input_script);
@@ -2662,6 +2694,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
             if (view.quit_requested) running = false;
+            // The display language between two steps (docs/L10N.md): a change
+            // lays every text line out again; nothing in the game state moves.
+            languages.at_frame(frame);
+            languages.sync(engine, renderer);
+            log_language_notes();
             // Input: player 1 is the keyboard and the first gamepad, players 2-4
             // the further gamepads, each on its own controller slot. The main
             // stick, the D-pad and the C-stick stay separate inputs like on a
@@ -4000,6 +4037,41 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::Begin("DW4 PC (F1)");
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
+                        {
+                            // The game text's language (docs/L10N.md): English and
+                            // the language packs in lang/, each named in its own
+                            // language; it changes at once (between two steps).
+                            const auto& entries = languages.entries();
+                            std::size_t current = 0;
+                            for (std::size_t i = 0; i < entries.size(); ++i)
+                                if (entries[i].code == languages.selected()) current = i;
+                            auto entry_label = [&](std::size_t i) {
+                                return entries[i].texts ? entries[i].name : entries[i].name + " (pictures only, no game.tsv)";
+                            };
+                            ImGui::BeginDisabled(!languages.has_packs());
+                            if (ImGui::BeginCombo("Language", entry_label(current).c_str())) {
+                                for (std::size_t i = 0; i < entries.size(); ++i) {
+                                    ImGui::PushID(int(i));
+                                    if (ImGui::Selectable(entry_label(i).c_str(), i == current) && i != current) {
+                                        std::string message;
+                                        if (languages.select(entries[i].code, &message)) {
+                                            settings.language = entries[i].code;
+                                            settings_changed = true;
+                                        } else {
+                                            state_message = "Language: " + message;
+                                            message_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                                        }
+                                    }
+                                    ImGui::PopID();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::EndDisabled();
+                            if (!languages.has_packs())
+                                ImGui::TextDisabled("Other languages come as language packs in lang/<code>/ next to the program.");
+                            else if (languages.selected() != "en")
+                                ImGui::TextDisabled("The game's own text in this language; the port's menus stay English.");
+                        }
                         {
                             // Presets: Original (the GameCube presentation, load
                             // times and balance) or Modernized (widescreen, smooth

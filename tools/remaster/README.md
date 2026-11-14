@@ -119,6 +119,23 @@ content and source format, not the name alone.
    | ui (C8 2D, multi-tone digits), loading, title, decal | `ultrasharp_v2` |
    | font (font00) | `pathb` (glyphs), `ultrasharp_v2` (button cells) |
 
+   It also writes per texture the tiling decision `wrap` (an axis wraps
+   where the export's `tiles` names it, or for 3D classes where `uv_edges`
+   names it and the picture continues across that border; everything else
+   is padded by edge extension, so no opposite edge bleeds into the outer
+   rows) and the preprocessing `pre` (`smooth` for glows whose soft alpha
+   is a staircase of 5-8 levels: dequantised, no sharpening; not for
+   patterns drawn in a few alpha levels, whose fine detail, the alpha minus
+   a 1-texel Gaussian, holds more than a fifth of the alpha's variance:
+   the dungeons' heat haze would lose half its contrast; `denoise` for
+   decals). `texture_overrides.tsv` (hash, model, pre, wrap, region, note)
+   sets single textures after a visual review: the variant, `pre`
+   (`dither`, `mask_nearest`, or `none` where the automatic `smooth` would
+   blur a grid or speckles), `wrap` (`none`, `t`, `s`, `ts` in place of
+   the tiling decision; `-` automatic) and `region` (`VARIANT:x0,y0,x1,y1`:
+   that rectangle of source texels from a second variant, e.g. UI symbols
+   from UltraSharpV2 beside a noise field from Lanczos).
+
 2. `upscale.py --variant V --selection <dir>\out\classes.tsv --out <dir>\out\full --resume ...`
    for `lanczos_sharp`, `pathb`, `ultrasharp_v2`, `hdcube3`, `pbrify_v4`
    (one model at a time; each takes the textures whose `variants` name it).
@@ -136,15 +153,33 @@ content and source format, not the name alone.
    or shadow solid) takes the Lanczos alpha there. Curation blends the alternative in through a
    feathered mask where the base lost detail the alternative kept (per
    texel CIEDE2000 against the source). Colour correction where the mean
-   CIEDE2000 exceeds 3 (not for cards, whose redraw look is intended): the
-   low-passed difference to the source (sigma 2 texels, 1 when needed) is
-   added back, for all palette variants of a group alike, and kept only
-   when it lowers the mean noticeably.
+   CIEDE2000 exceeds 2.5 (flagged from 3; not for cards, whose redraw look
+   is intended, nor for `pre` smooth or dither, whose distance to the
+   source is the intended dequantising): the low-passed difference to the
+   source (sigma 2 texels, 1 when needed) is added back, for all palette
+   variants of a group alike, and kept only when it lowers the mean by at
+   least 0.25. A `region` override pastes its rectangle from the second
+   variant before these steps. Soft rims (ui, decal): where the
+   source alpha is partial, alpha and colour come from Lanczos (soft digit
+   shadows, no white decal outline); HUD panels `stpnlwn*` keep their
+   colour tables by nearest neighbour; `curation.tsv` holds per-texture
+   curation choices (read by default).
 4. `contact_sheets.py --report <dir>\out\report.tsv --classes ... --final <dir>\out --up <dir>\out\full --out <dir>\out\sheets`:
    six textures per sheet (original and final, crops of 32 x 32 texels at
    8x: original, Lanczos, final, and the corner where four copies meet for
    tiling environment textures): 60 random ones, every flagged one, and the
    curated ones with both variants.
+5. A correction round: copy `<dir>\out\full` to a new folder, drop the
+   textures to compute again from its `metrics.tsv` files, `upscale.py ...
+   --resume` per variant (or `--only` with the hashes), `finalize.py --only
+   ...` (keep a copy of the earlier `master4x` first; finalizing everything
+   into a scratch folder and comparing its files byte by byte with
+   `master4x` lists exactly what a code change touches), then
+   `compare_sheets.py --before <copy> --after
+   <dir>\out\master4x --list <hash TSV> --out <dir>\out\sheets\<round>`
+   (original, before, after and the most changed crops), and rebuild the
+   pack with `build_pack.py --resume` after removing those hashes from the
+   report folder's `done.tsv`.
 
 ## Release pack
 

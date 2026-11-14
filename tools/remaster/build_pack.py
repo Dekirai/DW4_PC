@@ -15,7 +15,7 @@ given when -m names their count):
 * level 0 master4x, level 1 high2x as finalize.py wrote them (the 2x is a
   Lanczos3 filter of the 4x on premultiplied colour, each texel clamped to
   the range of its 4 x 4 footprint); levels 2.. by the same filter from the
-  level above, cyclic on the axes the export's `tiles` / `uv_edges` name
+  level above, cyclic on the axes finalize.py's report names in `wrap`
   (the texture repeats there: a tiling floor's small levels must match
   across its border) and edge-clamped elsewhere, each axis halved only while
   it is above 1 texel;
@@ -555,7 +555,7 @@ def main():
                 row = manifest[h]
                 t0 = time.perf_counter()
                 mode = rmcommon.alpha_mode(row)
-                wrap = rmcommon.wrap_axes(row)
+                wrap = rmcommon.wrap_axes(row, report.get(h))
                 w, hh = int(row["width"]), int(row["height"])
                 l0 = rmcommon.load_rgba(os.path.join(args.final, "master4x", h + ".png"))
                 l1 = rmcommon.load_rgba(os.path.join(args.final, "high2x", h + ".png"))

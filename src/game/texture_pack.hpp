@@ -41,6 +41,15 @@ struct TextureImage {
     std::vector<std::uint8_t> rgba;
 };
 
+// The display language's pictures (docs/L10N.md 3): what a USA texture shows
+// in that language, by the USA texture's hash. Presentation only.
+struct LanguageTexture {
+    TextureImage image;     // rows in the decoded order, like every texture
+    std::uint64_t hash = 0; // the picture's own hash: a texture pack replaces it by that hash
+    std::string name;       // its image name
+};
+using LanguageTextures = std::unordered_map<std::uint64_t, LanguageTexture>;
+
 // One file of a pack texture: a manifest row, or a loose file of a format 1
 // pack (`legacy`: encoding and scale are read from the file when it loads).
 struct PackFile {

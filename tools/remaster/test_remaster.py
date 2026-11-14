@@ -79,9 +79,101 @@ class PreprocessTests(unittest.TestCase):
         self.assertEqual(rmcommon.cutout_threshold(row(alpha_test="GEQUAL 0.6", blend="off")), (0.6, True))
         self.assertEqual(rmcommon.cutout_threshold(row(alpha_test="GREATER 0.6", blend="off")), (0.6, False))
         self.assertEqual(rmcommon.cutout_threshold(row(alpha_test="GREATER 0.1")), (0.5, True))  # blended: half coverage
-        self.assertEqual(rmcommon.wrap_axes(row(tiles="s", uv_edges="t")), (True, True))
-        self.assertEqual(rmcommon.wrap_axes(row(tiles="no", uv_edges="s")), (False, True))
-        self.assertEqual(rmcommon.wrap_axes(row()), (False, False))
+        # Without classify.py's decision only `tiles` counts; the decision wins.
+        self.assertEqual(rmcommon.wrap_axes(row(tiles="s", uv_edges="t")), (False, True))
+        self.assertEqual(rmcommon.wrap_axes(row(tiles="no", uv_edges="s")), (False, False))
+        self.assertEqual(rmcommon.wrap_axes(row(), {"wrap": "ts"}), (True, True))
+        self.assertEqual(rmcommon.wrap_axes(row(tiles="st"), {"wrap": "-"}), (False, False))
+
+    def test_tiling_axes_edge_unless_continuous(self):
+        y, x = np.mgrid[0:16, 0:16].astype(np.float32)
+        ramp = np.zeros((16, 16, 4), np.float32)
+        ramp[..., :3] = (y / 15.0)[..., None]  # a beam: black first row, bright last row
+        ramp[..., 3] = 1.0
+        tile = ramp.copy()
+        tile[..., :3] = (0.5 + 0.1 * np.sin(2 * np.pi * x / 16.0))[..., None]  # repeats along s
+        r = row(alpha="opaque", uv_edges="st")
+        self.assertEqual(rmcommon.tiling_axes(r, ramp, "environment")[0], (False, True))
+        self.assertEqual(rmcommon.tiling_axes(r, tile, "environment")[0], (True, True))
+        self.assertEqual(rmcommon.tiling_axes(r, tile, "ui")[0], (False, False))  # flat quads never wrap
+        self.assertEqual(rmcommon.tiling_axes(row(alpha="opaque", tiles="t"), ramp, "ui")[0], (True, False))
+
+
+class SmoothingAndMaskTests(unittest.TestCase):
+    def test_dequantised_alpha_stays_in_its_bins(self):
+        import upscale
+        a = np.repeat((np.arange(32) // 4 * 36 / 255.0).astype(np.float32)[:, None], 8, axis=1)  # 8 steps
+        s, _ = upscale.dequantize_alpha(a, (False, False))
+        q = np.round(a * 255)
+        self.assertTrue(np.all(np.abs(s * 255 - q) <= 18.0 + 1e-3))
+        self.assertLess(np.abs(np.diff(s, axis=0)).max(), np.abs(np.diff(a, axis=0)).max())
+
+    def test_stepped_ramp_smoothed_pattern_not(self):
+        import classify
+        y, x = np.mgrid[0:32, 0:32]
+        lv = np.array([0, 36, 72, 108, 144, 180, 216], np.float32) / 255.0
+        ramp = np.zeros((32, 32, 4), np.float32)
+        ramp[..., :3] = 1.0
+        ramp[..., 3] = lv[np.clip((x + y // 8) // 5, 0, 6)]  # a glow's stepped ramp: plateaus 5 texels wide
+        self.assertTrue(classify.stepped_alpha(ramp))
+        # A pattern in the same kind of levels (heat haze): streaks 3 texels
+        # wide, each one level from its neighbours (a random walk over the
+        # blobs). It passes the staircase tests; only its fine detail tells.
+        r = np.random.default_rng(11)
+        g = np.zeros((32, 11), int)
+        g[0, 0] = 3
+        for j in range(32):
+            for i in range(11):
+                if i or j:
+                    c = (g[j, i - 1] if i else g[j - 1, i]) + int(r.integers(-1, 2))
+                    if j and abs(c - g[j - 1, i]) > 1:
+                        c = g[j - 1, i] + int(np.sign(c - g[j - 1, i]))
+                    g[j, i] = min(max(c, 1), 6)
+        pattern = ramp.copy()
+        pattern[..., 3] = np.append(lv, 252 / 255.0)[np.repeat(g, 3, axis=1)[:, :32]]
+        self.assertGreater(classify.fine_detail_share(pattern[..., 3], (True, True)), classify.STEPPED_FINE)
+        self.assertFalse(classify.stepped_alpha(pattern, (True, True)))
+        fine = classify.STEPPED_FINE
+        try:
+            classify.STEPPED_FINE = 1.0
+            self.assertTrue(classify.stepped_alpha(pattern, (True, True)))
+        finally:
+            classify.STEPPED_FINE = fine
+
+    def test_texture_override_columns(self):
+        import classify
+        auto = ("lanczos_sharp", "smooth", (True, False), "t: tiles")
+        m, p, w, note, reg = classify.apply_override({"model": "-", "pre": "none", "wrap": "-", "region": "-"}, *auto)
+        self.assertEqual((m, p, w, reg), ("lanczos_sharp", "-", (True, False), None))
+        m, p, w, note, reg = classify.apply_override({"model": "lanczos", "pre": "-", "wrap": "none",
+                                                      "region": "ultrasharp_v2:0,16,32,32"}, *auto)
+        self.assertEqual((m, p, w, reg), ("lanczos", "smooth", (False, False), ("ultrasharp_v2", (0, 16, 32, 32))))
+        self.assertIn("override none", note)
+        self.assertEqual(classify.apply_override({"wrap": "st"}, *auto)[2], (True, True))
+        with self.assertRaises(ValueError):
+            classify.parse_region("ultrasharp_v2:0,16,32")
+
+    def test_region_paste_takes_the_rectangle(self):
+        import finalize
+        base = np.zeros((16, 16, 4), np.float32)
+        alt = np.ones((16, 16, 4), np.float32)
+        out = finalize.region_paste(base, alt, (0, 2, 4, 4))
+        self.assertEqual(float(out[8:16, 0:16].min()), 1.0)
+        self.assertEqual(float(out[:8].max()), 0.0)
+        self.assertEqual(float(base.max()), 0.0)  # the input stays as it was
+
+    def test_cutout_mask_from_source_shape(self):
+        import upscale
+        src = np.zeros((8, 8, 4), np.float32)
+        src[..., :3] = 0.5
+        src[2:6, 3:4, 3] = 1.0  # a window column one texel wide
+        r = row(alpha="cutout", blend="off", alpha_test="GREATER 0.5")
+        lz = lambda img: rmcommon.lanczos4(img, 4)  # noqa: E731
+        out = upscale.run_picture(src, r, "cutout", lz, lz, (False, False))
+        self.assertEqual(set(np.unique(out[..., 3])), {0.0, 1.0})
+        self.assertAlmostEqual(out[..., 3].mean() * 64, 4.0, delta=1.0)  # same coverage
+        sq = upscale.run_picture(src, r, "cutout", lz, lz, (False, False), mask_nearest=True)
+        self.assertTrue(np.array_equal(sq[..., 3], rmcommon.nearest(src[..., 3], 4)))
 
 
 class TextPathTests(unittest.TestCase):

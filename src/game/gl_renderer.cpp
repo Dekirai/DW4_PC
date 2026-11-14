@@ -4,6 +4,7 @@
 #include "texture_stream.hpp"
 
 #include "dw4/engine/gx_color.hpp"
+#include "dw4/engine/managers.hpp"
 #include "dw4/textures.hpp"
 
 #include <SDL3/SDL.h>
@@ -981,6 +982,15 @@ void GlRenderer::stream_textures(const std::vector<std::shared_ptr<const IgbDocu
 
 void GlRenderer::begin_upload(TexturePayload payload) {
     if (payload.generation != streamer_->generation() || payload.levels.empty() || !streaming()) return;
+    // A pack's font00: the composed glyph cells of translations (docs/L10N.md 2).
+    if (atlas_font_ && atlas_pack_hash_ && payload.hash == atlas_pack_hash_) {
+        const auto started = std::chrono::steady_clock::now();
+        paint_font_payload(payload);
+        if (trace_)
+            std::printf("textures: composed glyphs painted into the pack's font atlas %016llx (%ux%u, %.1f ms)\n",
+                        (unsigned long long)payload.hash, payload.levels[0].width, payload.levels[0].height,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    }
     auto up = std::make_unique<Upload>();
     switch (payload.encoding) {
     case TextureEncoding::bc1: up->format = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT; up->block_bytes = 8; break;
@@ -1185,14 +1195,64 @@ bool GlRenderer::key_from_scan(Texture& t) {
     if (!scanned) return false;
     t.keyed = true;
     t.scanned = true;
-    t.pack_hash = scanned->pack_hash;
-    t.pixel_hash = scanned->pixel_hash;
-    t.width = scanned->width;
-    t.height = scanned->height;
-    t.in_pack = scanned->in_pack;
-    t.title_press = t.title_press || (t.width == 256 && t.height == 128 && t.pixel_hash == kTitlePressStartHash &&
+    t.usa_pack_hash = scanned->pack_hash;
+    t.usa_pixel_hash = scanned->pixel_hash;
+    t.usa_width = scanned->width;
+    t.usa_height = scanned->height;
+    apply_language(t);
+    t.title_press = t.title_press || (t.usa_width == 256 && t.usa_height == 128 && t.usa_pixel_hash == kTitlePressStartHash &&
                                       t.binding->image.str(22) == "mojigc.png");
     return true;
+}
+
+void GlRenderer::apply_language(Texture& t) {
+    t.pack_hash = t.usa_pack_hash;
+    t.pixel_hash = t.usa_pixel_hash;
+    t.width = t.usa_width;
+    t.height = t.usa_height;
+    t.language = false;
+    if (const auto found = language_.find(t.usa_pack_hash); found != language_.end() && !found->second.image.rgba.empty()) {
+        const auto& picture = found->second;
+        t.language = true;
+        t.pack_hash = t.pixel_hash = picture.hash;
+        t.width = std::uint32_t(picture.image.width);
+        t.height = std::uint32_t(picture.image.height);
+    }
+    t.in_pack = streaming() && pack_->index().textures.count(t.pack_hash) != 0;
+}
+
+bool GlRenderer::font_atlas(const Texture& t) const {
+    if (!atlas_font_ || !t.binding) return false;
+    if (t.keyed && atlas_pixel_hash_ && t.usa_pixel_hash == atlas_pixel_hash_) return true;
+    return std::make_pair(static_cast<const void*>(t.binding->image.document()), t.binding->image.reference()) == atlas_key_;
+}
+
+void GlRenderer::paint_font_payload(TexturePayload& payload) const {
+    // (A pack's font00 is RGBA8; block encodings are decoded first, so the
+    // cells can be painted at every level: the text samples the smaller
+    // levels when it is drawn small.)
+    if (payload.encoding != TextureEncoding::rgba8) {
+        std::vector<std::uint8_t> data;
+        std::vector<TextureLevel> levels;
+        for (const auto& l : payload.levels) {
+            std::vector<std::uint8_t> rgba;
+            if (l.offset + l.size > payload.data.size() ||
+                !decode_level(payload.encoding, std::span(payload.data.data() + l.offset, l.size), l.width, l.height, false, rgba))
+                return; // (left as it is: only the composed glyphs are missing)
+            levels.push_back({l.width, l.height, data.size(), rgba.size()});
+            data.insert(data.end(), rgba.begin(), rgba.end());
+        }
+        payload.encoding = TextureEncoding::rgba8;
+        payload.levels = std::move(levels);
+        payload.data = std::move(data);
+    }
+    std::vector<std::uint8_t> level;
+    for (const auto& l : payload.levels) {
+        if (l.offset + l.size > payload.data.size() || l.size != std::size_t(l.width) * std::size_t(l.height) * 4) continue;
+        level.assign(payload.data.begin() + std::ptrdiff_t(l.offset), payload.data.begin() + std::ptrdiff_t(l.offset + l.size));
+        engine::paint_composed_glyphs(level, int(l.width), int(l.height), *atlas_font_);
+        std::copy(level.begin(), level.end(), payload.data.begin() + std::ptrdiff_t(l.offset));
+    }
 }
 
 const GlRenderer::GpuTexture* GlRenderer::resolve(Texture& t, bool& replaced) {
@@ -1258,19 +1318,25 @@ const GlRenderer::GpuTexture* GlRenderer::upload_original(Texture& t) {
     } timed{pass_texture_ms_, work_started};
     try {
         auto image = decode_igb_texture(*binding->image.document(), binding->image.reference());
-        const int width = int(image.width), height = int(image.height);
-        t.width = image.width;
-        t.height = image.height;
+        int width = int(image.width), height = int(image.height);
+        t.usa_width = image.width;
+        t.usa_height = image.height;
+        if (!t.keyed) {
+            t.width = image.width;
+            t.height = image.height;
+        }
         const bool dumping = pack_ && pack_->dumping();
-        if (!t.keyed && (streaming() || dumping)) {
+        // (Hashed also while the display language swaps pictures: they are
+        // found by the USA texture's hash.)
+        if (!t.keyed && (streaming() || dumping || language_hashing_)) {
             // Texture packs: dumps and replacements by pixel hash. CMPR
             // textures keep the hash of the earlier decode with black
             // transparent texels, so existing packs still match them
             // (TexturePack::image_hash, shared with tools/dw4_texpack).
-            t.pack_hash = TexturePack::image_hash(image);
-            t.pixel_hash = image.block_compressed ? TexturePack::hash(image.rgba.data(), image.rgba.size(), width, height) : t.pack_hash;
+            t.usa_pack_hash = TexturePack::image_hash(image);
+            t.usa_pixel_hash = image.block_compressed ? TexturePack::hash(image.rgba.data(), image.rgba.size(), width, height) : t.usa_pack_hash;
             t.keyed = true;
-            t.in_pack = streaming() && pack_->index().textures.count(t.pack_hash) != 0;
+            apply_language(t);
             if (t.in_pack) {
                 if (trace_ >= 2)
                     std::printf("textures: frame %llu hashes %s (%016llx) itself: its document was not scanned yet\n", (unsigned long long)frame_,
@@ -1279,19 +1345,36 @@ const GlRenderer::GpuTexture* GlRenderer::upload_original(Texture& t) {
                 t.asked_frame = frame_ ? frame_ : 1;
             }
         }
-        if (dumping) pack_->dump(std::string(binding->image.str(22)), image.rgba.data(), width, height, t.pack_hash);
+        if (dumping) pack_->dump(std::string(binding->image.str(22)), image.rgba.data(), width, height, t.usa_pack_hash);
         // The title's PRESS START (the USA mojigc.png, or a texture pack's
         // replacement of it): the prompts draw its START with player 1's
         // picture (button_art.hpp title_press_start; a replacement whose
         // START does not stand where the original's does is left alone).
         if (image.width == 256 && image.height == 128 && binding->image.str(22) == "mojigc.png" &&
-            (t.keyed ? t.pixel_hash : TexturePack::hash(image.rgba.data(), image.rgba.size(), 256, 128)) == kTitlePressStartHash) {
+            (t.keyed ? t.usa_pixel_hash : TexturePack::hash(image.rgba.data(), image.rgba.size(), 256, 128)) == kTitlePressStartHash) {
             t.title_press = true;
             t.width_px = width;
             t.height_px = height;
             t.original = image.rgba;
             t.nearest = t.mag_nearest;
         }
+        // The display language's picture for this texture (docs/L10N.md 3),
+        // uploaded by its own hash instead of the USA texture's.
+        const bool swapped = t.keyed && t.language;
+        if (swapped) {
+            if (const auto found = language_.find(t.usa_pack_hash); found != language_.end() && !found->second.image.rgba.empty()) {
+                const auto& picture = found->second.image;
+                image.rgba = picture.rgba;
+                image.width = std::uint32_t(picture.width);
+                image.height = std::uint32_t(picture.height);
+                width = picture.width;
+                height = picture.height;
+            }
+        }
+        // The game font's atlas: the composed glyph cells translations use
+        // (docs/L10N.md 2), painted in the atlas's free area, which English
+        // text never samples.
+        if (font_atlas(t)) engine::paint_composed_glyphs(image.rgba, width, height, *atlas_font_);
         GpuTexture g;
         glGenTextures(1, &g.id);
         glBindTexture(GL_TEXTURE_2D, g.id);
@@ -1310,7 +1393,7 @@ const GlRenderer::GpuTexture* GlRenderer::upload_original(Texture& t) {
         // (texture_codec.hpp mip_chain: colours by alpha, cut-outs keep a
         // binary alpha).
         int levels = 0;
-        if (t.authored_mips) {
+        if (t.authored_mips && !swapped) {
             if (const auto mips = binding->texture.ref(16)) {
                 int w = width, h = height;
                 for (const auto& mip : mips.elements()) {
@@ -1429,6 +1512,75 @@ void GlRenderer::set_prompt_glyphs(const PromptGlyphs& glyphs) {
     glyphs_ = glyphs;
     for (auto& [_, split] : splits_) release(split);
     splits_.clear();
+}
+
+void GlRenderer::set_font_atlas(const engine::FontImage& font) {
+    if (!font.binding || !font.binding->image) return;
+    const auto key = std::make_pair(static_cast<const void*>(font.binding->image.document()), font.binding->image.reference());
+    if (atlas_font_ && key == atlas_key_) return;
+    atlas_key_ = key;
+    atlas_font_ = std::make_unique<engine::FontImage>();
+    atlas_font_->name = font.name;
+    atlas_font_->line_height = font.line_height;
+    atlas_font_->glyphs = font.glyphs;
+    // The atlas's hashes (one decode per font image): every texture of its
+    // pixels and the pack's replacement get the cells.
+    atlas_pack_hash_ = atlas_pixel_hash_ = 0;
+    try {
+        const auto image = decode_igb_texture(*font.binding->image.document(), font.binding->image.reference());
+        atlas_pack_hash_ = TexturePack::image_hash(image);
+        atlas_pixel_hash_ = image.block_compressed
+                                ? TexturePack::hash(image.rgba.data(), image.rgba.size(), int(image.width), int(image.height))
+                                : atlas_pack_hash_;
+    } catch (const std::exception& error) {
+        std::cerr << "font atlas decode failed: " << error.what() << '\n';
+    }
+    // (Uploads made before the font was known get their cells now: the
+    // original uploads again, the pack's atlas is read again.)
+    for (auto& [record_key, t] : textures_) {
+        if (!font_atlas(t) || !t.owned.id) continue;
+        owned_bytes_ -= std::min(owned_bytes_, t.owned.bytes);
+        delete_texture(t.owned);
+    }
+    if (const auto found = originals_.find(atlas_pixel_hash_); atlas_pixel_hash_ && found != originals_.end()) {
+        delete_texture(found->second);
+        originals_.erase(found);
+    }
+    if (atlas_pack_hash_) {
+        if (upload_ && upload_->payload.hash == atlas_pack_hash_) {
+            delete_texture(upload_->texture);
+            upload_.reset();
+            streamer_->forget(atlas_pack_hash_);
+        }
+        if (const auto found = replacements_.find(atlas_pack_hash_); found != replacements_.end()) {
+            delete_texture(found->second);
+            replacements_.erase(found);
+            streamer_->forget(atlas_pack_hash_);
+        }
+        for (auto& [record_key, t] : textures_)
+            if (font_atlas(t)) t.asked_frame = 0;
+    }
+}
+
+void GlRenderer::set_language_textures(LanguageTextures textures) {
+    // Uploads hash their pixels only while a set swaps pictures (English and
+    // a pack without pictures cost nothing). Hashed uploads are kept by hash
+    // (the USA texture's and the language picture's own), so a switch only
+    // points the keyed records at the other hash; a record uploaded without
+    // its hash uploads again once a set with pictures starts hashing.
+    const bool hashing = !textures.empty();
+    const bool starts = hashing && !language_hashing_;
+    language_ = std::move(textures);
+    language_hashing_ = hashing;
+    for (auto& [_, t] : textures_) {
+        const bool before = t.language;
+        if (t.keyed) apply_language(t);
+        if (t.owned.id && ((t.keyed && t.language != before) || (!t.keyed && starts))) {
+            owned_bytes_ -= std::min(owned_bytes_, t.owned.bytes);
+            delete_texture(t.owned);
+        }
+        t.asked_frame = 0;
+    }
 }
 
 namespace {

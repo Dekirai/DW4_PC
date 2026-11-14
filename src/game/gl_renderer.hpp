@@ -2,6 +2,7 @@
 
 #include "graphics_options.hpp"
 #include "prompt_layout.hpp"
+#include "texture_pack.hpp"
 
 #include "dw4/engine/scene_graph.hpp"
 
@@ -17,6 +18,10 @@
 
 namespace dw4 {
 class IgbDocument;
+}
+
+namespace dw4::engine {
+struct FontImage;
 }
 
 namespace dw4::game {
@@ -129,6 +134,20 @@ public:
     void set_prompt_glyphs(const PromptGlyphs& glyphs);
     bool has_prompt_glyphs() const { return glyphs_.valid; }
     const PromptGlyphs& prompt_glyphs() const { return glyphs_; }
+    // Translations (docs/L10N.md 2): the game font whose atlas gets the
+    // composed glyph cells (engine::paint_composed_glyphs) when it uploads,
+    // also into every level of a texture pack's larger font00 as it streams
+    // in. Its glyphs are copied; the atlas (the original and the pack's)
+    // uploads again when another font image arrives.
+    void set_font_atlas(const engine::FontImage& font);
+    // The display language's pictures (docs/L10N.md 3), taken instead of the
+    // USA textures of these pack hashes: the records show the picture by its
+    // own hash (a texture pack's replacement of it by that hash applies, the
+    // pack's one of the USA texture does not). Hashed uploads are shared by
+    // hash, so a switch only changes which hash a record draws; the game's
+    // own textures are hashed while a set with pictures is active. Empty:
+    // the game's own pictures.
+    void set_language_textures(LanguageTextures textures);
     GlRenderer(const GlRenderer&) = delete;
     GlRenderer& operator=(const GlRenderer&) = delete;
 
@@ -211,8 +230,15 @@ private:
         // hashes (the game's own textures are hashed only while a pack
         // streams or dumps): keyed when its document's scan is there.
         bool rekey{};
+        // The hashes and the size of the picture it shows: the original's,
+        // or the display language's picture for it (apply_language), whose
+        // own hash then keys the original's upload and the pack's
+        // replacement. usa_*: the game's own texture's.
         std::uint64_t pack_hash{}, pixel_hash{};
-        std::uint32_t width{}, height{};      // the original's size
+        std::uint32_t width{}, height{};
+        std::uint64_t usa_pack_hash{}, usa_pixel_hash{};
+        std::uint32_t usa_width{}, usa_height{};
+        bool language{};                      // shows the language's picture
         bool in_pack{};
         bool authored_mips{};                 // IGB mip images (never in this game's data): not shared
         bool failed{};
@@ -233,6 +259,15 @@ private:
     // The record's hashes from the loading thread's scan of its document
     // (false before the scan).
     bool key_from_scan(Texture& texture);
+    // The keyed record's shown picture (usa_* or the display language's
+    // picture for it) and whether the pack has it (docs/L10N.md 3).
+    void apply_language(Texture& texture);
+    // Whether a record's texture is the game font's atlas, which gets the
+    // composed glyph cells (set_font_atlas).
+    bool font_atlas(const Texture& texture) const;
+    // The composed glyph cells painted into every level of a pack's font
+    // atlas (block encodings are decoded to RGBA8 first).
+    void paint_font_payload(TexturePayload& payload) const;
     // After a pack or quality change: which records' textures the pack has,
     // and which are keyed again (Texture::rekey).
     void refresh_pack_flags();
@@ -317,6 +352,15 @@ private:
     TexturePack* pack_{};
     PromptSource* prompts_{};
     PromptGlyphs glyphs_;
+    // Translations: the font atlas's image (document, reference), its
+    // hashes (any texture of these pixels, and the pack's replacement, get
+    // the cells) and the font's glyphs the composed cells are painted from;
+    // the language's pictures by USA pack hash.
+    std::pair<const void*, std::uint32_t> atlas_key_{};
+    std::uint64_t atlas_pack_hash_{}, atlas_pixel_hash_{};
+    std::unique_ptr<engine::FontImage> atlas_font_;
+    LanguageTextures language_;
+    bool language_hashing_ = false; // (uploads hash while a set with pictures is active)
     std::unordered_map<const engine::GeometryData*, PromptSplit> splits_;
     // The title's PRESS START variants by PromptSource::art_key, the latest
     // first (a few kept: switching families back and forth draws none again).

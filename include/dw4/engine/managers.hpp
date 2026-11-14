@@ -1074,7 +1074,49 @@ struct FontImage {
 // The glyph quads of one text line node: 80116960 fills them on one pen,
 // 802FBF98 breaks the lines and measures them, 802FC2D0 aligns them
 // (align 1 RIGHT, 2 CENTER) inside max_width.
-GeometryData layout_text(const FontImage& font, std::u16string_view text, int align, float max_width);
+// Port additions for translations (presentation only, docs/L10N.md):
+// x_scale squeezes each line horizontally before the alignment (1 leaves
+// the original arithmetic untouched); line_widths, when given, receives the
+// width 802FBF98 measures for every line (the l10n lint's measure).
+GeometryData layout_text(const FontImage& font, std::u16string_view text, int align, float max_width, float x_scale = 1.0f,
+                         std::vector<float>* line_widths = nullptr);
+
+// The beFontImage fonts of bectext.igb (NORMAL, MINIMUM) with their glyph
+// metrics and atlas binding (TextCtlManager::load_fonts; the l10n tools).
+// The document must outlive the fonts (their bindings view it).
+std::map<std::string, std::unique_ptr<FontImage>> read_font_images(const IgbDocument& document);
+
+// Glyphs a translation needs that the US font lacks (docs/L10N.md 2):
+// „ “ ‘ are composed from ” and ’ into free cells of the same atlas (a text
+// line binds one texture), ‚ – — are aliases of ',' '-' and 'ー'. English
+// text uses none of these code points, so adding them changes nothing it
+// shows. The cells are placed in normalized atlas coordinates, so a texture
+// pack's larger font00 (same layout) gets them at its own resolution.
+struct ComposedGlyph {
+    char16_t code;        // the new code point
+    char16_t source;      // the cell it is made from
+    enum class Op : std::uint8_t { alias, shift_down, rotate_up } op;
+    int rows;             // shift_down: rows moved down; rotate_up: rows moved back up (in 512ths of the atlas)
+    float u, v;           // the new cell's corner (normalized; unused for aliases)
+};
+const std::vector<ComposedGlyph>& composed_glyphs();
+void add_composed_glyphs(FontImage& font);
+// The font a translation is laid out with (presentation only): the game
+// font's metrics plus the composed glyphs, and Ä Ö Ü ä ö ü ß raised by one
+// texel (their cells stand one texel lower than the base letters'). No
+// binding: a line keeps the original font's atlas. English text lays out
+// the same with it as with the original (none of its code points change).
+std::unique_ptr<FontImage> make_display_font(const FontImage& font);
+// Draws the composed cells into a decoded RGBA atlas of any size (rows run
+// with v, the atlas's own bottom-up order), from the font's source cells.
+void paint_composed_glyphs(std::vector<std::uint8_t>& rgba, int width, int height, const FontImage& font);
+// One line of text drawn with the font's atlas cells into an RGBA picture
+// (bottom-up rows like every decoded texture): white glyphs, a black
+// outline and a dark shadow (the travel dialog's look, stcngmoji), centred
+// on center_x and on the row band [row0, row1]. The atlas is the original
+// decoded font00 (atlas_width x atlas_height).
+void render_text_rgba(std::vector<std::uint8_t>& rgba, int width, int height, const std::vector<std::uint8_t>& atlas, int atlas_width,
+                      int atlas_height, const FontImage& font, std::u16string_view text, int center_x, int row0, int row1);
 
 // TEXTCTL (beFontInfo, commands 802FA900): text lines built from pack unicode
 // strings. Every beFontInfoData entry is one line: layer name [2], line node
@@ -1110,6 +1152,11 @@ public:
     std::optional<LineView> line_of(const GeometryData* geometry) const;
     // Round J: a journal entry's line copies made again (Engine::rerun).
     void replay_copies(Engine& engine, int slot, int ram, std::string_view layer, std::string_view name);
+    // Translations (docs/L10N.md): every line that shows a text is laid out
+    // again from its English source in the engine's display language
+    // (Engine::set_display_text, between two steps): originals, seamless
+    // copies and hidden lines. Presentation only.
+    void relayout_all(Engine& engine);
 
 private:
     struct Line {
@@ -1130,12 +1177,30 @@ private:
         // The text it was set with (round J: a joiner's picture lays it out
         // again; nothing in the simulation reads it).
         std::optional<std::u16string> text;
+        // Presentation only, never in the tick state (docs/L10N.md): the
+        // pack string index a TEXTSET took the text from (-1 none: a
+        // database or C++ text), for the translation's id override, and the
+        // geometry the line's text was laid out into (a relayout leaves a
+        // line alone that INITIALIZE emptied since).
+        int pack_index = -1;
+        const GeometryData* laid_out = nullptr;
+        // The alignment the text was laid out with (an ALIGN after the
+        // TEXTSET shows with the next TEXTSET; a relayout keeps it so).
+        int laid_align = 0;
     };
     // The member's own copies of the lines a command in its scope addresses
     // (made on first use, the same on every machine).
     void make_copies(Engine& engine, int slot, const Ram& ram, std::string_view layer, std::string_view name);
     void load_fonts(Engine& engine);
-    void set_text(Engine& engine, Line& line, const std::u16string& value);
+    void set_text(Engine& engine, Line& line, const std::u16string& value, int pack_index = -1);
+    // Lays out the line's text (its display form); `keep` replaces the
+    // geometry in geometry_ instead of adding one (a relayout).
+    void layout_line(Engine& engine, Line& line, bool keep);
+    // The display form of a line's English text (the text itself without a
+    // display catalog): the translation, or the English text when there is
+    // none or the font lacks one of its glyphs.
+    std::u16string display_text(Engine& engine, const Line& line, const std::u16string& english, const FontImage& font, float& squeeze);
+    std::u16string pack_string(const Line& line, std::size_t index) const;
     void switch_line(Engine& engine, const Line& line, bool on);
     void refresh_categories(Engine& engine);
     Node* root_switch(Engine& engine);
@@ -1143,6 +1208,8 @@ private:
     std::vector<Line> lines_;
     std::map<std::pair<const IgbDocument*, std::uint32_t>, std::vector<ObjectView>> strings_;
     std::map<std::string, std::unique_ptr<FontImage>> fonts_;
+    // The same fonts for translations (make_display_font; presentation only).
+    std::map<std::string, std::unique_ptr<FontImage>> display_fonts_;
     std::shared_ptr<const IgbDocument> font_document_;
     std::vector<std::shared_ptr<GeometryData>> geometry_;
 };

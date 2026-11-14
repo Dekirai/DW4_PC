@@ -218,7 +218,10 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK",
         // round I1a's ghost figure measurement (DW4_GHOST_PROBE test builds only, game_main.cpp, ghost_figures.cpp)
-        "DW4_PROBE_GHOSTS*"};
+        "DW4_PROBE_GHOSTS*",
+        // the display language of a test run (docs/L10N.md: the game text's presentation; the simulation and the
+        // wire keep the English text): the language, the packs' folder, its switches, picture dumps and misses log
+        "DW4_LANGUAGE", "DW4_LANG_DIR", "DW4_L10N_*"};
     return names;
 }
 
