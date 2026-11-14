@@ -3411,7 +3411,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
 #endif
+                const auto step_started = std::chrono::steady_clock::now();
                 engine.step(pads);
+                dw4::game::frame_stats_step(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - step_started).count());
                 if (online) {
                     online->session().after_step(steady_seconds());
                     online->after_live_step(steady_seconds());
@@ -4399,7 +4401,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::SameLine();
                                 // The target box beside the box it takes.
                                 ImGui::BeginDisabled(!tab.chosen[i]);
-                                ImGui::SetNextItemWidth(80);
+                                ImGui::SetNextItemWidth(dw4::game::ui_px(80));
                                 ImGui::Combo("##into", &tab.into[i], box_names, 4);
                                 ImGui::EndDisabled();
                                 ImGui::SameLine();
@@ -4409,7 +4411,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::PopID();
                             }
                             static const char* slots[] = {"Slot A", "Slot B"};
-                            ImGui::SetNextItemWidth(120);
+                            ImGui::SetNextItemWidth(dw4::game::ui_px(120));
                             ImGui::Combo("Into the save of", &tab.slot, slots, 2);
                             std::vector<dw4::save::BoxMove> moves;
                             bool clash = false;

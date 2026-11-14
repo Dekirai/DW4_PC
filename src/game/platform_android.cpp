@@ -107,6 +107,17 @@ void android_set_frame_rate(float hz) {
     env->DeleteLocalRef(activity);
 }
 
+void android_restart_text_input() {
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return;
+    jclass type = env->GetObjectClass(activity);
+    if (jmethodID method = type ? env->GetStaticMethodID(type, "restartTextInput", "()V") : nullptr) env->CallStaticVoidMethod(type, method);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (type) env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+}
+
 void install_bundled_language_packs(const std::filesystem::path& lang_root) {
     if (lang_root.empty()) return;
     int written = 0;

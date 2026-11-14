@@ -323,6 +323,9 @@ void finish_present(HostView& view, engine::Engine& engine, const std::function<
 // Frame limit (settings.ini fps_limit): presents are spaced out; the
 // simulation keeps its fixed 60 Hz steps.
 void pace_presents(HostView& view);
+// DW4_FRAME_STATS: one engine step's time (the story loop around
+// Engine::step; nothing is kept without the switch).
+void frame_stats_step(double ms);
 
 // ---- The F1 menu's settings sections (inside the Settings tab)
 void settings_display_section(HostView& view);
@@ -364,6 +367,14 @@ inline float ui_px(float pixels) { return pixels * ui_scale(); }
 // password field opens it as a password field's (no suggestions, nothing
 // learned). Once, after ImGui's SDL backend started.
 void install_text_input_hook();
+// Android: a tap on the active field (window pixels) after the player put
+// the keyboard away (Back, the keyboard's own button) brings the keyboard
+// back (the field stays active for ImGui, so its backend would not start
+// the text input again).
+void reopen_text_input(SDL_Window* window, float x, float y);
+// (SDL's SCREEN_KEYBOARD_SHOWN / HIDDEN events: whether the keyboard is on
+// the screen now.)
+void note_screen_keyboard(bool shown);
 
 // ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
 // The menu button's rectangle in window pixels: a small square in the top

@@ -140,9 +140,11 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     ImGui::PushTextWrapPos(0.0f);
     if (!logged_in_) {
         ImGui::TextDisabled("One backup of your local save per online account, plus its five earlier revisions.");
-        ImGui::SetNextItemWidth(220);
+        // (220 px at the menus' 1x; FontScaleDpi is their scale, host_view.hpp.)
+        const float field = 220.0f * ImGui::GetStyle().FontScaleDpi;
+        ImGui::SetNextItemWidth(field);
         ImGui::InputText("Account##cloud", account_, sizeof account_);
-        ImGui::SetNextItemWidth(220);
+        ImGui::SetNextItemWidth(field);
         ImGui::InputText("Password##cloud", password_, sizeof password_, ImGuiInputTextFlags_Password);
         ImGui::Checkbox("Remember me##cloud", &remember_);
         ImGui::BeginDisabled(login_id_ != 0);

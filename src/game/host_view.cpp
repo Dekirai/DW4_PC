@@ -134,6 +134,13 @@ bool host_event(HostView& view, const SDL_Event& event) {
         return false;
     }
     if (event.type == SDL_EVENT_FINGER_DOWN) view.last_touch = std::chrono::steady_clock::now();
+    if (event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN || event.type == SDL_EVENT_SCREEN_KEYBOARD_HIDDEN)
+        note_screen_keyboard(event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN);
+    if (event.type == SDL_EVENT_FINGER_DOWN && view.window) {
+        int width = 0, height = 0;
+        SDL_GetWindowSizeInPixels(view.window, &width, &height);
+        reopen_text_input(view.window, event.tfinger.x * float(width), event.tfinger.y * float(height));
+    }
     bool on_button = false;
     if (event.type == SDL_EVENT_FINGER_DOWN && view.window) {
         int width = 0, height = 0;
@@ -751,7 +758,7 @@ namespace {
 struct FrameStats {
     double period = 0;
     std::chrono::steady_clock::time_point started, last_swap;
-    std::vector<float> interval, work, swap;
+    std::vector<float> interval, work, swap, step;
 };
 FrameStats& frame_stats_state() {
     static FrameStats stats = [] {
@@ -761,6 +768,10 @@ FrameStats& frame_stats_state() {
     }();
     return stats;
 }
+void frame_stats_step_into(FrameStats& s, double ms) {
+    if (s.period > 0) s.step.push_back(float(ms));
+}
+
 float percentile(std::vector<float>& values, double p) {
     if (values.empty()) return 0;
     const auto at = std::size_t(std::clamp(p, 0.0, 1.0) * double(values.size() - 1) + 0.5);
@@ -786,19 +797,24 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
     float display_hz = 0;
     if (view.window)
         if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(view.window))) display_hz = mode->refresh_rate;
+    const std::size_t steps = s.step.size();
     std::printf("frames: %.1f presents/s over %.1f s (display %.0f Hz); interval p50 %.2f p90 %.2f p99 %.2f max %.2f ms; "
-                "work p50 %.2f p90 %.2f p99 %.2f max %.2f ms; swap p50 %.2f p99 %.2f ms\n",
+                "work p50 %.2f p90 %.2f p99 %.2f max %.2f ms; swap p50 %.2f p99 %.2f ms; %.1f steps/s, step p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n",
                 double(presents) / elapsed, elapsed, double(display_hz), double(percentile(s.interval, 0.5)), double(percentile(s.interval, 0.9)),
                 double(percentile(s.interval, 0.99)), double(percentile(s.interval, 1.0)), double(percentile(s.work, 0.5)),
                 double(percentile(s.work, 0.9)), double(percentile(s.work, 0.99)), double(percentile(s.work, 1.0)),
-                double(percentile(s.swap, 0.5)), double(percentile(s.swap, 0.99)));
+                double(percentile(s.swap, 0.5)), double(percentile(s.swap, 0.99)), double(steps) / elapsed, double(percentile(s.step, 0.5)),
+                double(percentile(s.step, 0.9)), double(percentile(s.step, 0.99)), double(percentile(s.step, 1.0)));
     std::fflush(stdout);
     s.interval.clear();
     s.work.clear();
     s.swap.clear();
+    s.step.clear();
     s.started = now;
 }
 } // namespace
+
+void frame_stats_step(double ms) { frame_stats_step_into(frame_stats_state(), ms); }
 
 void finish_present(HostView& view, engine::Engine& engine, const std::function<void()>& swapped) {
     // Keep about three frames of audio queued across frame hitches.
@@ -1406,6 +1422,10 @@ namespace {
 using ImeDataFn = void (*)(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData*);
 ImeDataFn g_backend_ime = nullptr;
 bool g_secret_input = false;
+// The system keyboard on the screen (SDL's SHOWN / HIDDEN events, from the
+// window's insets; SDL_ScreenKeyboardShown stays true while the input
+// connection lives, also after the player put the keyboard away).
+bool g_keyboard_visible = false;
 
 // Before the backend: a password field's text input starts with SDL's
 // password type and without autocorrection (Android's keyboard then offers
@@ -1416,15 +1436,25 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
     const bool wants = data->WantVisible || data->WantTextInput;
     const bool secret = wants && g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId &&
                         (g.InputTextState.Flags & ImGuiInputTextFlags_Password) != 0;
+    if (std::getenv("DW4_TRACE_IME"))
+        std::printf("text input: ime visible %d text %d, field %08x active %08x flags %x focus %p\n", int(data->WantVisible), int(data->WantTextInput),
+                    unsigned(g.InputTextState.ID), unsigned(g.ActiveId), unsigned(g.InputTextState.Flags), static_cast<void*>(SDL_GetKeyboardFocus()));
     if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && secret != g_secret_input) {
-        if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
+        const bool was_active = SDL_TextInputActive(window);
+        if (was_active) SDL_StopTextInput(window);
         if (secret) {
             const SDL_PropertiesID props = SDL_CreateProperties();
             SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
             SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
             SDL_StartTextInputWithProperties(window, props);
             SDL_DestroyProperties(props);
+        } else {
+            SDL_StartTextInput(window);
         }
+        // (The keyboard keeps the last field's kind until its input restarts.)
+        android_restart_text_input();
+        std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : "a text", was_active ? " restarted" : "");
+        std::fflush(stdout);
         g_secret_input = secret;
     }
     if (!wants) g_secret_input = false;
@@ -1432,6 +1462,46 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
 }
 #endif
 } // namespace
+
+void note_screen_keyboard(bool shown) {
+#ifdef SDL_PLATFORM_ANDROID
+    if (std::getenv("DW4_TRACE_IME")) std::printf("text input: the screen keyboard %s\n", shown ? "shown" : "hidden");
+    g_keyboard_visible = shown;
+#else
+    (void)shown;
+#endif
+}
+
+void reopen_text_input(SDL_Window* window, float x, float y) {
+#ifdef SDL_PLATFORM_ANDROID
+    // (Back on the keyboard also stops SDL's text input: SDLDummyEdit's
+    // onKeyPreIme. ImGui's field stays active, and its backend starts the
+    // input only when the field's IME data change.)
+    if (!ImGui::GetCurrentContext() || !ImGui::GetIO().WantTextInput) return;
+    if (SDL_TextInputActive(window) && g_keyboard_visible) return;
+    // Only a tap on the active field's line (a tap elsewhere leaves it, and
+    // the keyboard would only flash up).
+    const ImGuiPlatformImeData& ime = GImGui->PlatformImeData;
+    const float line = std::max(ime.InputLineHeight, 1.0f);
+    if (y < ime.InputPos.y - line * 0.75f || y > ime.InputPos.y + line * 1.75f) return;
+    (void)x;
+    if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
+    if (g_secret_input) {
+        const SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
+        SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+        SDL_StartTextInputWithProperties(window, props);
+        SDL_DestroyProperties(props);
+    } else {
+        SDL_StartTextInput(window);
+    }
+    android_restart_text_input();
+    std::printf("text input: the system keyboard again (a tap on the field after the keyboard was put away)\n");
+    std::fflush(stdout);
+#else
+    (void)window, (void)x, (void)y;
+#endif
+}
 
 void install_text_input_hook() {
 #ifdef SDL_PLATFORM_ANDROID

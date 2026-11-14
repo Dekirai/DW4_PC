@@ -78,6 +78,11 @@ bool host_key(SDL_Scancode code) {
     case SDL_SCANCODE_LALT: case SDL_SCANCODE_RALT: case SDL_SCANCODE_LGUI: case SDL_SCANCODE_RGUI:
     case SDL_SCANCODE_PRINTSCREEN: case SDL_SCANCODE_CAPSLOCK: case SDL_SCANCODE_NUMLOCKCLEAR: case SDL_SCANCODE_SCROLLLOCK:
         return true;
+#ifdef SDL_PLATFORM_ANDROID
+    // (Android's Back and Home keys are the system's, not a keyboard player's.)
+    case SDL_SCANCODE_AC_BACK: case SDL_SCANCODE_AC_HOME:
+        return true;
+#endif
     default: return false;
     }
 }

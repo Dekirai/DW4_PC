@@ -21,6 +21,7 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
@@ -104,6 +105,24 @@ public class DW4Activity extends SDLActivity {
             ((DW4Activity) activity).mMainHandler.post(() -> {
                 if (mSurface != null) {
                     applyFrameRate(mSurface.getHolder().getSurface(), "the game");
+                }
+            });
+        }
+    }
+
+    /**
+     * Called by the game (JNI, platform_android.cpp) after it started SDL's
+     * text input again with another kind (a password field after a text
+     * field): the keyboard keeps the text field's kind until its input is
+     * restarted. Runs after SDL's own show task (the same main looper).
+     */
+    public static void restartTextInput() {
+        final SDLActivity activity = mSingleton;
+        if (activity instanceof DW4Activity) {
+            ((DW4Activity) activity).mMainHandler.post(() -> {
+                InputMethodManager imm = (InputMethodManager) activity.getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null && mTextEdit != null) {
+                    imm.restartInput(mTextEdit);
                 }
             });
         }

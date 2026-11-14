@@ -71,6 +71,9 @@ std::string android_property(const char* name);
 // surface (DW4Activity.setFrameRate: Surface.setFrameRate, fixed source):
 // the Thor's top screen runs 60 or 120 Hz.
 void android_set_frame_rate(float hz);
+// The system keyboard takes the kind of SDL's text input started last
+// (DW4Activity.restartTextInput: InputMethodManager.restartInput).
+void android_restart_text_input();
 #endif
 
 } // namespace dw4::game
