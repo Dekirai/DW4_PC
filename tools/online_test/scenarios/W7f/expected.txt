@@ -15,5 +15,6 @@ a: online-script: step .* log: a joined b there, still host
 !relay: join_ready_timeout
 !relay: barrier_split
 !relay: fallback_new
+!relay: lag_leave  # (a back from its grace is not taken out by the lag rule before its re-sent barrier comes)
 !a: online-script: FAIL
 !b: online-script: FAIL
