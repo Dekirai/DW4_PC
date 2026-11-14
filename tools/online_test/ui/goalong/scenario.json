@@ -6,9 +6,9 @@
      "env": {"DW4_PROMPTS": "xbox_one"}},
     {"name": "b", "script": "b.txt", "registered": true, "card": "k10", "seed_story": true, "online_script": "b.script", "start": 3,
      "env": {"DW4_PROMPTS": "dualsense", "DW4_ONLINE_AUTOCHOICE": "cursor", "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "8000"},
-     "log_expect": ["^online: go along \(offer \d+\) at frame", "^online-script: step .* log: b went along into dng204b1"]},
+     "log_expect": ["^online: go along [(]offer [0-9]+[)] at frame", "^online-script: step .* log: b went along into dng204b1"]},
     {"name": "c", "script": "c.txt", "registered": true, "card": "k10", "seed_story": true, "online_script": "c.script", "start": 6,
      "env": {"DW4_PROMPTS": "switch_pro", "DW4_ONLINE_AUTOCHOICE": "cursor", "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "8000"},
-     "log_expect": ["^online: go along \(offer \d+\) at frame", "^online-script: step .* log: c went along into dng204b1"]}
+     "log_expect": ["^online: go along [(]offer [0-9]+[)] at frame", "^online-script: step .* log: c went along into dng204b1"]}
   ]
 }
