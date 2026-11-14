@@ -102,7 +102,7 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `dw4_texpack` (texture export for pack authors), `remaster/` (4x upscaling pipeline for texture packs), `verify_game.py` (read-only ISO identification) |
 | `tests` | Asset-free tests for the core formats and tools |
 | `cmake` | CMake includes of the root CMakeLists.txt: `third_party.cmake` (the pinned FetchContent sources, one list for the PC and the Android build) and `android.cmake` (its Android path) |
-| `android`, `src/android` | The Android port in progress (AYN Thor): the Gradle wrapper around the root CMakeLists.txt and, for now, a device probe app; see [ANDROID.md](docs/ANDROID.md) |
+| `android`, `src/android`, `tools/android` | The Android port in progress (AYN Thor): the Gradle wrapper around the root CMakeLists.txt, which builds the game itself as `libmain.so` into the APK (phases B and C), phase A's device probe (`src/android`) and the programs and scripts for `adb shell` runs on a device (`tools/android`, e.g. gles_check); see [ANDROID.md](docs/ANDROID.md) |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
 
 The engine design is described in [ARCHITECTURE.md](docs/ARCHITECTURE.md), the

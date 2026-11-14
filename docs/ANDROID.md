@@ -276,10 +276,19 @@ det runs. `adb shell` joins its arguments into one shell line on the device,
 so the whole `am start` goes in one pair of quotes and the extra's value in
 its own inner quotes; `... --es dw4args "--seconds 10"` without them reaches
 the app as just `--seconds`. The probe logs what it got (`arguments 2:
-[--seconds] [10]`). Only a debuggable build (`FLAG_DEBUGGABLE`, every debug
-APK) takes the extra: the launcher activity is exported, so a release build
-ignores it (and logs "dw4args ignored") instead of letting any app pass
-arguments. Two arguments exist for such runs: `--mute` (no audio device
+[--seconds] [10]`). The launcher activity is exported, so any app on the
+device may start it, also with an extra: the game takes `dw4args` only in a
+debuggable build (`FLAG_DEBUGGABLE`, every debug APK) and only while the
+file `dw4args.allow` is in the app's internal folder, which no other app
+can write (since 14.11.2026; a debug APK is what the owner plays on the
+Thor until phase F):
+
+    adb shell run-as org.dw4pc.game touch files/dw4args.allow
+    adb shell run-as org.dw4pc.game rm files/dw4args.allow
+
+Otherwise it ignores the extra and logs why ("dw4args ignored: not a
+debuggable build" / "... no files/dw4args.allow"). Two arguments exist for
+such runs: `--mute` (no audio device
 this run: silent on a device nobody listens to, settings.ini and the
 device's volume untouched) and `--env NAME=VALUE` (an environment variable
 set before the run reads any: the test switches such as `DW4_GL_CHECK=1`,
@@ -427,8 +436,14 @@ took SDL's UTF-8 text as the ANSI code page), and the start-up line
 `data: PATH` prints the path as UTF-8 (`path::string()` throws on MSVC for
 characters outside the ANSI code page; the game has no UTF-8 code page
 manifest). On Android stdout and stderr go
-to logcat line by line (tag `DW4`, stderr as warnings), so the game's own
-lines and the error texts before their message boxes are there.
+to logcat line by line (tag `DW4`), so the game's own lines and the error
+texts before their message boxes are there. stdout's lines are `I/DW4`;
+stderr carries the engine's trace (`[67] stage stagis08 section ...`) and
+SDL's echo of its own log next to the real problems, so its lines are
+`I/DW4` too unless their words name a problem: `W/DW4` for "error",
+"fail", "cannot", "could not", "unable", "warning", "refused", "invalid",
+"missing", "not found", "unsupported", "corrupt", `E/DW4` for "fatal",
+"crash", "abort", "exception" (`logcat *:W` shows the problems alone).
 
 ### The one window
 
@@ -890,8 +905,9 @@ gles_check.
   `window: 1920x1080, status bar hidden, navigation bar hidden, display 0
   at 60.00 Hz` (logcat tag `DW4`).
 - F11, "Fullscreen (F11)" and the window size buttons are PC only.
-- Emulator: hidden bars at the start (Android shows its one-time "Viewing
-  full screen" note per app, also on the Thor once), after F1 by the
+- Emulator: hidden bars at the start (the emulator shows Android's
+  one-time "Viewing full screen" note; the owner's Thor has it confirmed
+  for good, `immersive_mode_confirmations=confirmed`, so it shows none), after F1 by the
   button, after HOME and back, after the app switcher and back, and after
   a virtual pad (uinput) came and went; the first start's disc dialog is a
   system dialog and shows the bars while it is open.
@@ -932,6 +948,12 @@ gles_check.
 - Shown for 4 s after any touch (and at the start), always while F1 is
   open, then it fades out in 0.5 s. A tap on it (or in the top right
   corner as before) opens and closes F1. Touch still works only on menus.
+- The button is drawn over everything, so a tap on it is always the
+  button's (`menu: closed (the touch menu button)`), also where the F1
+  window reaches under it (a menu size of 300 % on the Thor's 1920 x 1080:
+  the window spans x 30-1890, the button x 1734-1866; before, ImGui took
+  that tap). A tap elsewhere in the top right corner is ImGui's when it
+  lands on an open menu.
 
 ### The AYN Thor's controller
 
@@ -981,6 +1003,14 @@ the printed letters' codes and Xbox = positions.
 - Android's Back and Home keys no longer switch the prompts to the
   keyboard (on the emulator `input keyevent BACK` did; the Thor's Back
   button is the controller's).
+- The Thor's controller has a Back button (`KEY_BACK`) and a Select button
+  (`BTN_SELECT`); SDL's Android backend makes both its gamepad button
+  BACK, so the Back button opened F1 only while no binding used BACK.
+  `DW4Activity.dispatchKeyEvent` hands `KEYCODE_BACK` from the Thor's
+  controller (2020:0111 or "Odin Controller", a gamepad source) to SDL as
+  Android's Back key: F1 always (`menu: open (the Back key)`), whatever
+  the bindings; Select stays the pad's BACK button (F1 while unbound, the
+  prompts' SELECT pill). Other controllers are unchanged.
 
 ### Lifecycle
 
@@ -989,10 +1019,27 @@ the printed letters' codes and Xbox = positions.
   blocks on pause) and SDL pauses the AAudio output. Coming back the loop
   starts its clock again (`lifecycle: the game goes on`; before, up to four
   steps caught up). The PC does not pause on focus loss, nor does it now.
-- `DW4Activity.onTrimMemory` passes only real memory warnings on:
-  `TRIM_MEMORY_UI_HIDDEN` (every HOME) is logged and dropped; the others
-  arrive as `SDL_EVENT_LOW_MEMORY`, on which the renderer lets go of the
-  hashed textures no picture drew in the last two frames
+- Another window in front while the game stays on the screen (the
+  notification shade, the quick settings with the Thor's "Controller style"
+  tile, a dialog): SDLActivity pauses nothing then (Android 7+ multi-window:
+  only `SDL_EVENT_WINDOW_FOCUS_LOST`), and the controller's input goes to
+  that window. The game pauses meanwhile like the F1 menu's pause and goes
+  quiet (`focus: another window is in front: the game pauses` / `focus:
+  back: the game goes on`), never in a LAN or online session (their steps
+  are every member's) or a test run. `[menu] pause_unfocused` (default
+  true, written only when false) and F1 > Settings "Pause the game while
+  another window is in front (notifications, quick settings)" (Android
+  only) switch it off; whether a touch on the Thor's lower screen takes the
+  focus (AYN's Focus Mode) is phase E0's question.
+- `DW4Activity.onTrimMemory` passes only real memory warnings on, the
+  `TRIM_MEMORY_RUNNING_*` levels (5, 10, 15: memory is short while the game
+  runs). `TRIM_MEMORY_UI_HIDDEN` (20, every HOME) and the background levels
+  `BACKGROUND`, `MODERATE`, `COMPLETE` (40, 60, 80) are logged and dropped:
+  in the background the game loop stands in SDL's pause, so they would act
+  only after coming back (letting go of the textures it is about to draw)
+  and never while the low memory killer decides. The passed ones arrive as
+  `SDL_EVENT_LOW_MEMORY`, on which the renderer lets go of the hashed
+  textures no picture drew in the last two frames
   (`GlRenderer::trim_textures`, as the memory budget would).
 - Emulator: HOME (`entering the background`, `settings saved` after F1 >
   VSync was switched, settings.ini `vsync=false`, `trim memory level 20
@@ -1014,7 +1061,11 @@ the printed letters' codes and Xbox = positions.
   _REFRESH_RATE` max 60); at 120 the vote picks a rate 60 divides.
 - `DW4_FRAME_STATS=SECONDS` (any platform; `--env` on Android) logs
   presents per second, the percentiles of the present interval, of the
-  pass's work up to the swap, of the swap and of the engine step. Emulator
+  pass's work up to the swap, of the swap and of the engine step, and a
+  second line with the presents after 0, 1 and 2+ engine steps and how
+  often a 0 and a 2+ follow each other (`frames: presents after 0 / 1 / 2+
+  steps: ...`): the game steps at 59.94 Hz, a 60 Hz panel repeats a picture
+  about every 16.7 s (a lone 0); 0 / 2+ pairs in a row are judder. Emulator
   (`-gpu host`, the debug APK), intro and title: 56.8 / 52.4 presents/s
   over 10 s (the second with a stage load), interval p50 16.7 ms, work p50
   4.4-4.8 ms, step p50 0.12 ms, p99 1-7 ms. On the Thor: open (locked).
@@ -1088,6 +1139,7 @@ closes), with these differences:
 | `[window] fps_limit` | 0 (the default): 60 Hz asked of the display; above 60: that rate up to 120 |
 | `[window] msaa` | 4 (the PC's default; Adreno 740: 4x) |
 | `[gamepad] thor_style` | auto (the Thor's Controller style) |
+| `[menu] pause_unfocused` | true (written only when false): the game pauses while another window is in front |
 | `[gamepad] gc_adapter` | not used (WinUSB, the PC's GameCube adapter reader) |
 
 ### Open after this lane
