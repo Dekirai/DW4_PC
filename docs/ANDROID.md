@@ -527,8 +527,10 @@ core) and one code path, with these differences on a GLES context
   framebuffer. The PC keeps `glCopyTexSubImage2D`. Android asks for an
   RGBA8 surface (the blit needs the texture's format).
 - No `GL_MULTISAMPLE` switches on GLES (multisampling follows the surface).
-- `read_depth` returns nothing on GLES (no depth read-back in ES 3.0): the
-  overhead name tags never hide behind the scene there yet (phase C).
+- The overhead name tags' depth probes (`read_depths`): ES 3.0 reads no
+  depth buffer, so the window's depth around the probes is blitted into a
+  depth texture of the window's own format and fetched there (since phase
+  C, "Phase C leftovers on the player's side").
 - `GL_SRC_ALPHA_SATURATE` is a source factor only on GLES; as a destination
   (never seen; GX has no such factor) it becomes `ONE` with one log line.
 - The full-screen strips (movie, kept picture, sharpening) draw with
@@ -564,7 +566,8 @@ core) and one code path, with these differences on a GLES context
   and the pack's textures, refused uploads, the upload in progress and the
   sharpening objects, and starts the loading thread again with the same
   configuration; the pack's textures come again as they are drawn
-  (untested: no context loss could be provoked).
+  (provoked on the emulator since phase C: `DW4_TEST_CONTEXT_LOSS`, "Phase
+  C leftovers on the player's side").
 
 ### Lifecycle and input
 
@@ -693,7 +696,8 @@ renderer section). Checked:
 
 - Depth read-back for the name tags on GLES; a debug walk through every
   menu with `DW4_GL_CHECK=1` (the title, the new game, the dungeon, the F1
-  menu and the Graphics options are checked, 14.11.2026).
+  menu and the Graphics options are checked, 14.11.2026). (Both done in
+  phase C, "Phase C leftovers on the player's side".)
 - ImGui's size on the Thor's 400 dpi screen (the menus are drawn at 1x),
   fullscreen without the status bar (immersive mode), a visible menu button
   for touch. (Done in phase C's UX lane: "Phase C: the player's side on
@@ -701,13 +705,14 @@ renderer section). Checked:
 - Pausing the sound and saving settings when going to the background;
   `LOW_MEMORY` (the texture cache). (Done, the same section.)
 - A context loss is handled but was not provoked on the emulator (nor the
-  texture pack streaming after one).
+  texture pack streaming after one). (Done in phase C, the same section.)
 - On the Thor, in the game itself: a multisampled surface (msaa=4) with
   the kept picture and the Sharpening option, a texture pack (BC7 / BC1 /
   BC3 compressed on Adreno), the language switch (gles_check ran the same
   GL calls without the app, 14.11.2026); a full external storage (the
   import's space check) and an unmounted one (`app_root_problem`), neither
-  provoked on the emulator.
+  provoked on the emulator. (Both provoked on the emulator in phase C, the
+  same section; the rest needs the Thor in the game.)
 - Measure on the Thor (correct, possibly expensive on a tiler):
   `keep_picture` blits the whole (with msaa=4 multisampled) window every
   frame, an extra resolve in the middle of the frame after which ImGui
@@ -728,7 +733,8 @@ renderer section). Checked:
 - The debug APK's native code is built without optimization (Gradle's
   Debug build type: `CMAKE_BUILD_TYPE=Debug`, no `-O`); performance on the
   Thor is measured with an optimized build (a release build type or
-  `RelWithDebInfo` for the native part).
+  `RelWithDebInfo` for the native part). (The profile build type since
+  phase C: "Phase C leftovers on the player's side".)
 - The F1 menu shows PC-only entries on Android too (Fullscreen (F11), the
   window size buttons, "Dump textures"); they go or change with phase C's
   menu work. (Fullscreen, the window sizes and the WinUSB GameCube adapter
@@ -1157,6 +1163,147 @@ closes), with these differences:
 | `[gamepad] thor_style` | auto (the Thor's Controller style) |
 | `[menu] pause_unfocused` | true (written only when false): the game pauses while another window is in front |
 | `[gamepad] gc_adapter` | not used (WinUSB, the PC's GameCube adapter reader) |
+
+### Phase C leftovers on the player's side (lane C2, 14.11.2026)
+
+The points of "Phase C status > Left" that need no device, on
+`feat-android-cux` (the determinism leftovers are on `feat-android-cdet`,
+"Determinism across platforms"). Checked on the emulator (`dw4cux33`,
+`-gpu host`, headless) and the PC; the Thor only by `adb shell`
+(gles_check), its lock screen still secure.
+
+**Measuring: the profile build type.** `android\gradlew-dw4.cmd --offline
+--no-daemon assembleProfile` builds `app-profile.apk`: the debug build
+(the SDK's debug key, the same application id, so `adb install -r` puts it
+over a debug APK and keeps the app's data; debuggable, so `run-as` and the
+`dw4args` test runs work) with the native code built as `RelWithDebInfo`
+(`-O2`; Gradle's Debug build type compiles it without optimization). Only
+the Java side differs from a release build (CheckJNI; the game makes a few
+JNI calls per frame at most). `-Pdw4.abis=x86_64` (or `arm64-v8a`) builds
+one ABI, half the native build's time (x86_64's `libmain.so`: 9.9 MB in the
+profile APK, 20.3 MB in the debug APK). Frame times on the emulator, debug
+against profile APK of this head
+(`DW4_FRAME_STATS=5`, `--mute`, the same 30 s from the start: the logos, the
+opening movie, the title):
+
+| 5 s period (two runs each) | debug APK | profile APK |
+| --- | --- | --- |
+| the logos | work p50 2.7-2.8 ms, step p50 0.03-0.10 ms | work p50 2.5-2.7 ms, step p50 0.02-0.04 ms |
+| the title stage's load | longest frame 1,123-1,182 ms (47 steps/s) | longest frame 126-138 ms (59 steps/s) |
+| the opening movie | work p50 6.8-8.3, p90 15.5-17.7 ms | work p50 5.0-5.3, p90 7.5-8.2 ms |
+
+60 presents/s in every period but the load's (interval p50 16.7 ms; the
+emulator's GPU, the NVIDIA card through the translator, sets the logos'
+work). The optimized native code cuts the movie's frame work (the MPEG
+decoder) by a third at the median and by half at the 90th percentile, and
+the load's hitch to a ninth; the step itself is 0.02-0.03 ms. The
+emulator's x86_64 cores (WHPX on the PC's CPU) say nothing about the Thor:
+its numbers need the owner's unlocked Thor ("Left").
+
+**The name tags' depth read-back on GLES.** `GlRenderer::read_depths`
+reads every shown tag's three occlusion probes of a frame in one go. OpenGL
+ES 3.0 has no depth read (`glReadPixels` takes no `GL_DEPTH_COMPONENT`), so
+there the window's depth inside the probes' bounding rectangle is blitted
+into a depth texture of the window's own depth and stencil format (a depth
+blit wants both sides equal; `DEPTH24_STENCIL8` on the emulator and the
+Thor; a multisampled window is resolved by the blit), one pass of points
+(`kDepthProbeVertex` / `kDepthProbeFragment`) fetches it at the probes into
+a row of an `R32UI` texture (the depth's float bits) and one `glReadPixels`
+takes the row back: the same values the PC's per-pixel `glReadPixels`
+gives. The pass keeps the frame's state (viewport, program, vertex array,
+texture unit 3, the enables); a context where a step fails logs it once
+(`renderer: no depth read-back on this OpenGL ES context (...)`) and keeps
+the old behaviour (no tag hides). The PC reads each pixel as before.
+
+- gles_check runs the same calls against known depths (scissored clears of
+  0.25, 0.75 and 1; twelve probes as four tags spread over 1801 x 971
+  pixels): every probe reads its depth on the emulator (`-gpu host`, no
+  multisampled pbuffer there) and on the Thor (Adreno 740, 4x multisampled
+  and without), PASSED. One read-back (blit, pass, read, which waits for the
+  GPU) takes 0.33 ms median on the Thor at 4x MSAA (0.31 ms without), 0.38
+  ms on the emulator.
+- The game: `det_walk3` with `DW4_LABELS=all DW4_TRACE_LABELS=10` (the
+  player's tag, traced every 10 frames, first 8,000 frames): the PC and the
+  emulator mark the tag "behind the scene" at exactly the same frames
+  (4350, 4530, 4850, 5100-5120, 6190-6210, 7570-7630, 7860-7870; before,
+  GLES marked none), and the pictures at frame 7600 show the faded tag
+  behind the same rock (`build/phe/shots/walk3_7600_pc_emu.png` and the
+  zoom `walk3_7600_tag_zoom.png` of the worktree, not committed). 0 GL
+  errors in 11,719 checks.
+
+**A walk through every F1 page with `DW4_GL_CHECK=1`** (the emulator, test
+runs from the start: Settings, Settings scrolled to Graphics, Controls,
+Gameplay, Saves, Online, Cheats, Achievements, Debug): 0 GL errors in each
+(700 checks per run). The first start's screens: `DW4_GL_CHECK=1` now also
+checks the status screens (the copy and conversion of the first start, the
+LAN lobby: `status screen: GL error check (SCREEN): N errors in M
+frames`); the import of the disc image by `--import-disc` drew 362 frames
+of the copy's progress with 0 GL errors (the message box and Android's
+picker are system UI). A test run has no online lobby, so its Online tab is
+empty; a normal start shows the refusal ("Online play is not available in
+this build yet: the server's certificate is not set up."). The offline
+menus said "this PC" on Android: "Offline achievements stay on this
+device" and the texture pack's "this device uses its own" now
+(`kThisMachine`, app_paths.hpp; the online screens' wording is phase D's).
+
+**A lost OpenGL context.** `DW4_TEST_CONTEXT_LOSS=1` (Android, a test
+switch through `--env`, refused online) destroys the game's EGL context
+while the game is in the background (`eglDestroyContext` when SDL sends
+`WILL_ENTER_FOREGROUND`, before it makes the context current again), so
+SDL finds it lost, makes a new one and sends `SDL_EVENT_RENDER_DEVICE_RESET`:
+the path of a device that loses its context. The emulator, the det route
+`newgame_dng101b1` with the synthetic texture pack (`DW4_TEXTURE_PACK`,
+format 2: BC7 / BC1 / RGBA8, decoded on the loading thread there), HOME at
+24 s (the title) and back after 4 s: `lifecycle: test: the OpenGL context
+destroyed in the background`, `lifecycle: the OpenGL context was
+recreated`, `the game goes on`; the dungeon's four pack textures stream in
+again (`uploads 4 (14.4 MiB)`, as in the run without HOME) and the pictures
+at frames 4300, 5000 and 6000 are pixel-identical to that run's; 0 GL
+errors. The renderer's GL and depth clamp checks now count across a reset
+(one total at the end; before, the lost context's Impl printed its own).
+
+**"Don't keep activities"** (the emulator only: `settings put global
+always_finish_activities 1` and a reboot, which Android needs to take it;
+deleted and rebooted again afterwards): HOME ends the activity, the game
+gets `terminating` and its main returns (`GL error check: 0 errors`); coming
+back, SDLActivity starts a new process (`Process org.dw4pc.game has died`,
+`Start proc`) and the game starts again from the logos, twice in a row,
+without a crash. What was not saved is gone, as in any game Android ends.
+
+**The external storage.**
+
+- Full: a file of 2,500 MB (`fallocate`) left 1,378 MB free;
+  `--import-disc` of the disc copy stopped before copying with "There is
+  not enough free space for the game data: 1456 MB needed, 1378 MB free."
+  (logged as `E/DW4` and shown in the message box). With the file removed
+  the same import copied the 1,459,978,240 bytes in 8 s and the game
+  started with the same `data_hash 1c693d45198dd6c1`.
+- Unmounted: `sm unmount emulated;0` (mounted again afterwards): the start
+  stops with `app_root_problem()`'s message ("The game's folder
+  (Android/data/org.dw4pc.game/files) cannot be written: the device's
+  shared storage is not available. ...").
+
+**Mods, PNG texture packs and offline achievements on Android** (the
+player's folders in `Android/data/org.dw4pc.game/files`; folders made by
+`adb shell` need `chmod 777`, files `666`, or the app cannot enter them):
+
+- A synthetic mod (`mods/c2synth/mod.ini` and one added text file, no game
+  data): `mod: C2 synthetic check 1.0 (1 files)` and the data identity
+  follows it (`data_hash 28d995fccac778ee` instead of `1c693d45198dd6c1`,
+  as on the PC).
+- A synthetic PNG pack of format 1 (`mods/textures/synthpng_<hash>.png`:
+  red and white checkerboards at twice the size of the synthetic DDS pack's
+  eight textures, `work/c2/png_pack.py`, local) replaces the logo in a
+  normal start.
+- Offline achievements: the det_walk3 run with `DW4_ACHIEVEMENTS=1` writes
+  a profile byte for byte the PC's (186 bytes, md5 d5797351..., in-game
+  minutes 4); the F1 Achievements tab of a normal start shows the profile
+  in `files/saves/profile.dat`.
+
+**Seen on the way (not changed):** at the start the touch menu button
+stands at the top centre for the first seconds (the logos), then in the
+bar right of the picture (the reason is not known yet). `adb push` / `adb shell` stdin is not binary safe for `run-as ... cat
+> file` (a PNG arrived as 5 bytes): `adb exec-in` is.
 
 ### Open after this lane
 
