@@ -67,7 +67,8 @@ namespace dw4::game {
     X(PFNGLGENERATEMIPMAPPROC, GenerateMipmap) X(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers) \
     X(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer) X(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D) \
     X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers) \
-    X(PFNGLBLITFRAMEBUFFERPROC, BlitFramebuffer) X(PFNGLGETSTRINGIPROC, GetStringi)
+    X(PFNGLBLITFRAMEBUFFERPROC, BlitFramebuffer) X(PFNGLGETSTRINGIPROC, GetStringi) \
+    X(PFNGLGETFRAMEBUFFERATTACHMENTPARAMETERIVPROC, GetFramebufferAttachmentParameteriv) X(PFNGLCLEARBUFFERUIVPROC, ClearBufferuiv)
 
 struct GlRenderer::Impl {
 #define DECLARE(type, name) type name{};
@@ -91,7 +92,8 @@ struct GlRenderer::Impl {
     PFNGLTEXSTORAGE2DPROC TexStorage2D{}; // GL 4.2 / ARB_texture_storage (null without)
     // OpenGL ES 3 (the Android port, docs/ANDROID.md) instead of OpenGL 3.3
     // core: the shaders' #version line, no GL_MULTISAMPLE switch, the kept
-    // picture by a blit, no depth read. Depth clamping is the context's own
+    // picture by a blit, the depth read through a texture (depth_probe_es).
+    // Depth clamping is the context's own
     // where it has it (OpenGL 3.3, GL_EXT_depth_clamp), else the vertex
     // shader clamps z (u_depth_clamp).
     bool gles = gl_is_es();
@@ -113,6 +115,19 @@ struct GlRenderer::Impl {
     // to GL_TEXTURE_2D. (The PC copies the window directly.)
     unsigned resolve_fbo{}, resolve_texture{};
     int resolve_width{}, resolve_height{};
+    // OpenGL ES 3.0 reads no depth buffer (its glReadPixels takes no
+    // GL_DEPTH_COMPONENT), so the name tags' occlusion probes go through a
+    // texture (depth_probe_es): the window's depth around them is blitted
+    // into depth_texture (the window's own depth and stencil format: a depth
+    // blit wants them equal; a multisampled window is resolved by it), one
+    // pass of points (kDepthProbe*) fetches it at the probes into a row of
+    // probe_texture (R32UI, the depth's float bits) and one glReadPixels
+    // takes the row back. depth_read_off: the window has no depth buffer or
+    // a step failed once (logged): no tag hides behind the scene then.
+    unsigned depth_fbo{}, depth_texture{}, probe_fbo{}, probe_texture{}, probe_program{}, probe_vao{}, probe_vbo{};
+    int depth_width{}, depth_height{}, probe_slots{}, u_probe_slots{-1}, u_probe_depth{-1};
+    unsigned depth_internal{}, depth_format{}, depth_type{};
+    bool depth_read_ready{}, depth_read_off{};
     // DW4_CHECK_DEPTH_CLAMP=1 (any platform, a CPU check that changes no
     // picture): the vertex shader's clamp (GLES without GL_EXT_depth_clamp)
     // equals GL_DEPTH_CLAMP's per-pixel clamp only for triangles that lie
@@ -418,6 +433,28 @@ void main() { o_color = vec4(texture(u_tex, v_uv).rgb, 1.0); }
 constexpr std::string_view kCoreHeader = "#version 330 core\n";
 constexpr const char* kEsHeader = "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n";
 
+// The name tags' depth probes on OpenGL ES (GlRenderer::read_depths): one
+// point per probe, in a row of an R32UI target, each fetching the window's
+// depth (blitted into a depth texture) at its pixel and writing the float's
+// bits, which one glReadPixels takes back exactly.
+const char* kDepthProbeVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_probe; // the window pixel (x, y) and the probe's slot in the row
+uniform float u_slots;
+flat out ivec2 v_pixel;
+void main() {
+    v_pixel = ivec2(a_probe.xy);
+    gl_Position = vec4((a_probe.z + 0.5) / u_slots * 2.0 - 1.0, 0.0, 0.0, 1.0);
+    gl_PointSize = 1.0;
+}
+)";
+
+const char* kDepthProbeFragment = R"(#version 330 core
+flat in ivec2 v_pixel;
+uniform sampler2D u_depth;
+out uvec4 o_bits;
+void main() { o_bits = uvec4(floatBitsToUint(texelFetch(u_depth, v_pixel, 0).r), 0u, 0u, 1u); }
+)";
+
 // The Sharpening option: contrast adaptive sharpening of the game picture
 // (written after the published description of AMD FidelityFX CAS, MIT: a
 // cross-shaped negative lobe whose weight follows how far the 3x3
@@ -526,13 +563,145 @@ GLenum take_gl_error() {
     }
     return first;
 }
+
+// The window's depth (and stencil) format as a texture's (Impl::depth_*): a
+// depth blit wants the formats of both sides equal. False without a depth
+// buffer or in a format OpenGL ES has no texture for.
+bool window_depth_format(GlRenderer::Impl& gl, std::string& name) {
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    auto query = [&](GLenum attachment, GLenum what) {
+        GLint type = GL_NONE, value = 0;
+        gl.GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+        if (type != GL_NONE) gl.GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, attachment, what, &value);
+        return value;
+    };
+    const GLint depth = query(GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE);
+    const GLint stencil = query(GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE);
+    const GLint kind = depth ? query(GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE) : 0;
+    take_gl_error();
+    struct Format {
+        GLint depth, stencil;
+        bool floating;
+        GLenum internal, format, type;
+        const char* name;
+    };
+    static const Format formats[] = {
+        {16, 0, false, GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, "DEPTH_COMPONENT16"},
+        {24, 0, false, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, "DEPTH_COMPONENT24"},
+        {24, 8, false, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, "DEPTH24_STENCIL8"},
+        {32, 0, true, GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT, "DEPTH_COMPONENT32F"},
+        {32, 8, true, GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, "DEPTH32F_STENCIL8"},
+    };
+    name = "depth " + std::to_string(depth) + (kind == GL_FLOAT ? " float" : "") + ", stencil " + std::to_string(stencil);
+    for (const auto& f : formats)
+        if (f.depth == depth && f.stencil == stencil && f.floating == (kind == GL_FLOAT)) {
+            gl.depth_internal = f.internal;
+            gl.depth_format = f.format;
+            gl.depth_type = f.type;
+            name = f.name;
+            return true;
+        }
+    return false;
+}
+
+// GlRenderer::read_depths' objects on OpenGL ES (Impl::depth_*, probe_*) for
+// a window of this size and `slots` probes; false with the reason when they
+// cannot be made. Texture work on unit 3 (the renderer's units are 0..2).
+bool prepare_depth_probe(GlRenderer::Impl& gl, int width, int height, int slots, std::string& failure) {
+    if (!gl.depth_read_ready) {
+        std::string format;
+        if (!window_depth_format(gl, format)) {
+            failure = "the window's depth buffer (" + format + ") has no texture format";
+            return false;
+        }
+        unsigned vs = 0, fs = 0;
+        try {
+            vs = compile(gl, GL_VERTEX_SHADER, kDepthProbeVertex);
+            fs = compile(gl, GL_FRAGMENT_SHADER, kDepthProbeFragment);
+        } catch (const std::exception& e) {
+            if (vs) gl.DeleteShader(vs);
+            failure = std::string("the probe shader does not compile: ") + e.what();
+            return false;
+        }
+        gl.probe_program = gl.CreateProgram();
+        gl.AttachShader(gl.probe_program, vs);
+        gl.AttachShader(gl.probe_program, fs);
+        gl.LinkProgram(gl.probe_program);
+        gl.DeleteShader(vs);
+        gl.DeleteShader(fs);
+        int ok = 0;
+        gl.GetProgramiv(gl.probe_program, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[1024]{};
+            gl.GetProgramInfoLog(gl.probe_program, sizeof log, nullptr, log);
+            failure = std::string("the probe shader does not link: ") + log;
+            return false;
+        }
+        gl.u_probe_slots = gl.GetUniformLocation(gl.probe_program, "u_slots");
+        gl.u_probe_depth = gl.GetUniformLocation(gl.probe_program, "u_depth");
+        gl.GenFramebuffers(1, &gl.depth_fbo);
+        gl.GenFramebuffers(1, &gl.probe_fbo);
+        glGenTextures(1, &gl.depth_texture);
+        glGenTextures(1, &gl.probe_texture);
+        gl.GenVertexArrays(1, &gl.probe_vao);
+        gl.GenBuffers(1, &gl.probe_vbo);
+        gl.BindVertexArray(gl.probe_vao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.probe_vbo);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        gl.BindVertexArray(0);
+        gl.depth_read_ready = true;
+        std::cout << "renderer: the name tags' depth read-back through a " << format << " texture (OpenGL ES)\n";
+    }
+    gl.ActiveTexture(GL_TEXTURE3);
+    gl.BindSampler(3, 0);
+    if (width != gl.depth_width || height != gl.depth_height) {
+        glBindTexture(GL_TEXTURE_2D, gl.depth_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GLint(gl.depth_internal), width, height, 0, gl.depth_format, gl.depth_type, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, gl.depth_fbo);
+        gl.FramebufferTexture2D(GL_FRAMEBUFFER, gl.depth_format == GL_DEPTH_STENCIL ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT,
+                                GL_TEXTURE_2D, gl.depth_texture, 0);
+        if (const GLenum status = gl.CheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE) {
+            char text[64];
+            std::snprintf(text, sizeof text, "the depth texture's framebuffer is incomplete (0x%x)", status);
+            failure = text;
+            return false;
+        }
+        gl.depth_width = width;
+        gl.depth_height = height;
+    }
+    if (slots > gl.probe_slots) {
+        int row = 32;
+        while (row < slots) row *= 2;
+        glBindTexture(GL_TEXTURE_2D, gl.probe_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, row, 1, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, gl.probe_fbo);
+        gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl.probe_texture, 0);
+        if (const GLenum status = gl.CheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE) {
+            char text[64];
+            std::snprintf(text, sizeof text, "the probe row's framebuffer is incomplete (0x%x)", status);
+            failure = text;
+            return false;
+        }
+        gl.probe_slots = row;
+    }
+    return true;
+}
 } // namespace
 
 GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) { create_objects(); }
 
-void GlRenderer::check_gl_errors(const char* where) {
+void GlRenderer::check_gl_errors(const char* where) { note_gl_error(take_gl_error(), where); }
+
+void GlRenderer::note_gl_error(unsigned error, const char* where) {
     auto& gl = *gl_;
-    const GLenum error = take_gl_error();
     if (!gl.check_gl) return;
     ++gl.gl_checks;
     if (error == GL_NO_ERROR) return;
@@ -683,6 +852,13 @@ GlRenderer::~GlRenderer() {
     if (gl_->kept_fbo) gl_->DeleteFramebuffers(1, &gl_->kept_fbo);
     if (gl_->resolve_fbo) gl_->DeleteFramebuffers(1, &gl_->resolve_fbo);
     if (gl_->resolve_texture) glDeleteTextures(1, &gl_->resolve_texture);
+    if (gl_->depth_fbo) gl_->DeleteFramebuffers(1, &gl_->depth_fbo);
+    if (gl_->probe_fbo) gl_->DeleteFramebuffers(1, &gl_->probe_fbo);
+    if (gl_->depth_texture) glDeleteTextures(1, &gl_->depth_texture);
+    if (gl_->probe_texture) glDeleteTextures(1, &gl_->probe_texture);
+    if (gl_->probe_program) gl_->DeleteProgram(gl_->probe_program);
+    if (gl_->probe_vao) gl_->DeleteVertexArrays(1, &gl_->probe_vao);
+    if (gl_->probe_vbo) gl_->DeleteBuffers(1, &gl_->probe_vbo);
     if (gl_->palette_texture) glDeleteTextures(1, &gl_->palette_texture);
     if (movie_program_) gl_->DeleteProgram(movie_program_);
     if (program_) gl_->DeleteProgram(program_);
@@ -763,16 +939,123 @@ void GlRenderer::keep_picture(int window_width, int window_height) {
 }
 
 std::optional<float> GlRenderer::read_depth(int x, int y, int window_width, int window_height) {
-    if (x < 0 || y < 0 || x >= window_width || y >= window_height) return std::nullopt;
-    // (OpenGL ES reads no depth buffer: no tag hides behind the scene yet,
-    // docs/ANDROID.md phase C.)
-    if (gl_->gles) return std::nullopt;
-    for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {
+    return read_depths({{x, y}}, window_width, window_height).front();
+}
+
+std::vector<std::optional<float>> GlRenderer::read_depths(const std::vector<std::array<int, 2>>& pixels, int window_width,
+                                                          int window_height) {
+    std::vector<std::optional<float>> depths(pixels.size());
+    auto inside = [&](const std::array<int, 2>& p) { return p[0] >= 0 && p[1] >= 0 && p[0] < window_width && p[1] < window_height; };
+    auto& gl = *gl_;
+    if (!gl.gles) {
+        for (std::size_t i = 0; i < pixels.size(); ++i) {
+            if (!inside(pixels[i])) continue;
+            for (int k = 0; k < 16 && glGetError() != GL_NO_ERROR; ++k) {
+            }
+            float depth = 1.0f;
+            glReadPixels(pixels[i][0], pixels[i][1], 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+            if (glGetError() == GL_NO_ERROR) depths[i] = depth;
+        }
+        return depths;
     }
-    float depth = 1.0f;
-    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
-    if (glGetError() != GL_NO_ERROR) return std::nullopt;
-    return depth;
+    // OpenGL ES (Impl::depth_*): the window's depth inside the probes'
+    // bounding rectangle blitted into the depth texture, one pass of points
+    // fetching it into the probe row, one read of that row.
+    if (gl.depth_read_off) return depths;
+    std::vector<std::size_t> slots;
+    int x0 = window_width, y0 = window_height, x1 = -1, y1 = -1;
+    for (std::size_t i = 0; i < pixels.size(); ++i) {
+        if (!inside(pixels[i])) continue;
+        slots.push_back(i);
+        x0 = std::min(x0, pixels[i][0]);
+        y0 = std::min(y0, pixels[i][1]);
+        x1 = std::max(x1, pixels[i][0]);
+        y1 = std::max(y1, pixels[i][1]);
+    }
+    if (slots.empty()) return depths;
+    check_gl_errors("before the name tags' depth read-back");
+    // (The state the frame's later passes and ImGui's backend find.)
+    GLint viewport[4]{}, program = 0, active = GL_TEXTURE0, vao = 0, array_buffer = 0, unit3 = 0;
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &array_buffer);
+    GLboolean color_mask[4]{GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
+    const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST), depth_test = glIsEnabled(GL_DEPTH_TEST), blend = glIsEnabled(GL_BLEND),
+                    cull = glIsEnabled(GL_CULL_FACE);
+    gl.ActiveTexture(GL_TEXTURE3);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &unit3);
+    std::string failure;
+    std::vector<GLuint> bits;
+    const int count = int(slots.size());
+    if (prepare_depth_probe(gl, window_width, window_height, count, failure)) {
+        // (A blit is scissored; a multisampled window wants the same
+        // rectangle on both sides.)
+        glDisable(GL_SCISSOR_TEST);
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, gl.depth_fbo);
+        gl.BlitFramebuffer(x0, y0, x1 + 1, y1 + 1, x0, y0, x1 + 1, y1 + 1, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        std::vector<float> points;
+        points.reserve(slots.size() * 3);
+        for (std::size_t k = 0; k < slots.size(); ++k) {
+            points.push_back(float(pixels[slots[k]][0]));
+            points.push_back(float(pixels[slots[k]][1]));
+            points.push_back(float(k));
+        }
+        gl.BindFramebuffer(GL_FRAMEBUFFER, gl.probe_fbo);
+        glViewport(0, 0, count, 1);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        const GLuint unwritten[4]{0, 0, 0, 0};
+        gl.ClearBufferuiv(GL_COLOR, 0, unwritten);
+        gl.UseProgram(gl.probe_program);
+        gl.Uniform1f(gl.u_probe_slots, float(count));
+        gl.Uniform1i(gl.u_probe_depth, 3);
+        glBindTexture(GL_TEXTURE_2D, gl.depth_texture);
+        gl.BindVertexArray(gl.probe_vao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.probe_vbo);
+        gl.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(points.size() * sizeof(float)), points.data(), GL_STREAM_DRAW);
+        glDrawArrays(GL_POINTS, 0, count);
+        bits.assign(std::size_t(count) * 4, 0);
+        glReadPixels(0, 0, count, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, bits.data());
+        if (const GLenum error = take_gl_error(); error != GL_NO_ERROR) {
+            note_gl_error(error, "in the name tags' depth read-back");
+            char text[64];
+            std::snprintf(text, sizeof text, "GL error 0x%x", error);
+            failure = text;
+        }
+    }
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, GLuint(unit3));
+    gl.ActiveTexture(GLenum(active));
+    gl.BindVertexArray(GLuint(vao));
+    gl.BindBuffer(GL_ARRAY_BUFFER, GLuint(array_buffer));
+    gl.UseProgram(GLuint(program));
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
+    if (depth_test) glEnable(GL_DEPTH_TEST);
+    if (blend) glEnable(GL_BLEND);
+    if (cull) glEnable(GL_CULL_FACE);
+    take_gl_error();
+    if (!failure.empty()) {
+        gl.depth_read_off = true;
+        std::cerr << "renderer: no depth read-back on this OpenGL ES context (" << failure
+                  << "): the name tags never hide behind the scene\n";
+        return depths;
+    }
+    for (std::size_t k = 0; k < slots.size(); ++k) {
+        // (The fourth component marks a probe the pass wrote.)
+        if (bits[k * 4 + 3] != 1u) continue;
+        float depth = 1.0f;
+        std::memcpy(&depth, &bits[k * 4], sizeof depth);
+        depths[slots[k]] = depth;
+    }
+    return depths;
 }
 
 bool GlRenderer::draw_kept_picture(int window_width, int window_height) {

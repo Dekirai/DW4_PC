@@ -609,11 +609,32 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
                                 tag.head = remote_head(tag.feet, sample.species);
                             }
             view.traced_occlusion.clear();
-            for (auto& tag : tags) {
+            // Every shown tag's probes read in one go (on OpenGL ES one pass
+            // and one read-back, GlRenderer::read_depths).
+            struct Probed {
+                std::size_t tag{}, first{};
+                std::vector<OcclusionProbe> probes;
+            };
+            std::vector<Probed> probed;
+            std::vector<std::array<int, 2>> pixels;
+            for (std::size_t i = 0; i < tags.size(); ++i) {
+                const auto& tag = tags[i];
                 if ((tag.hp <= 0 && !tag.capsule) || !label_visible(tag_mode, tag.own, labels.players())) continue;
+                auto probes = occlusion_probes(tag.head, tag_view);
+                const std::size_t first = pixels.size();
+                for (const auto& probe : probes) pixels.push_back({int(probe.x), height - 1 - int(probe.y)});
+                probed.push_back({i, first, std::move(probes)});
+            }
+            const auto depths = renderer->read_depths(pixels, width, height);
+            for (const auto& entry : probed) {
+                auto& tag = tags[entry.tag];
                 const bool hidden_now = occluded_in_picture(
-                    occlusion_probes(tag.head, tag_view),
-                    [&](float x, float y) { return renderer->read_depth(int(x), height - 1 - int(y), width, height); },
+                    entry.probes,
+                    [&](float x, float y) -> std::optional<float> {
+                        for (std::size_t k = 0; k < entry.probes.size(); ++k)
+                            if (entry.probes[k].x == x && entry.probes[k].y == y) return depths[entry.first + k];
+                        return std::nullopt;
+                    },
                     tag_view.camera.projection);
                 tag.occlusion = labels.ease_occlusion(tag.key, hidden_now);
                 if (hidden_now) view.traced_occlusion.insert(tag.key);

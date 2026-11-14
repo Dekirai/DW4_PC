@@ -152,7 +152,9 @@ const std::vector<std::string_view>& online_forbidden_env() {
         // opened at once, the first meeting counted as done, run keys for a run started from the select
         "DW4_OVERFLOW", "DW4_OVERFLOW_SCREEN", "DW4_OVERFLOW_SEEN", "DW4_OVERFLOW_TEST_RUN",
         // round 63's analysis switch: parts of the status window's pause left out (subwnd.cpp)
-        "DW4_TEST_SUBWND_SKIP"};
+        "DW4_TEST_SUBWND_SKIP",
+        // Android's context loss test (game_main.cpp: the OpenGL context destroyed in the background on purpose)
+        "DW4_TEST_CONTEXT_LOSS"};
     return names;
 }
 

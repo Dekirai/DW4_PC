@@ -86,6 +86,15 @@ def jobPoolArguments = nativeJobs > 0
         ? ["-DCMAKE_JOB_POOLS=dw4_jobs=${nativeJobs}".toString(), '-DCMAKE_JOB_POOL_COMPILE=dw4_jobs', '-DCMAKE_JOB_POOL_LINK=dw4_jobs']
         : []
 
+// The ABIs built (-Pdw4.abis=x86_64 for an emulator-only test build, half the
+// native build's time); default both: arm64-v8a for the Thor, x86_64 for the
+// emulator.
+def knownAbis = ['arm64-v8a', 'x86_64']
+def buildAbis = ((project.findProperty('dw4.abis') ?: knownAbis.join(',')) as String).split(',')*.trim().findAll { it }
+if (buildAbis.isEmpty() || !knownAbis.containsAll(buildAbis)) {
+    throw new GradleException("dw4.abis=${buildAbis.join(',')}: only ${knownAbis.join(', ')}")
+}
+
 android {
     namespace 'org.dw4pc.game'
     compileSdk 35
@@ -99,8 +108,8 @@ android {
         versionCode dw4VersionCode
         versionName dw4VersionName
         ndk {
-            // arm64-v8a for the Thor, x86_64 for the emulator.
-            abiFilters 'arm64-v8a', 'x86_64'
+            // arm64-v8a for the Thor, x86_64 for the emulator (dw4.abis above).
+            abiFilters(*buildAbis)
         }
         externalNativeBuild {
             cmake {
@@ -137,6 +146,26 @@ android {
         // outside the repository, never another project's) comes in phase F.
         release {
             minifyEnabled false
+        }
+        // profile (assembleProfile): the debug build with the native code
+        // optimized as a release build's. The debug build type compiles it
+        // without optimization (CMAKE_BUILD_TYPE Debug, -O0), so measurements
+        // (frame and step times) use this one: RelWithDebInfo (-O2; the
+        // APK's libraries are stripped as usual). It is the debug build
+        // otherwise: the SDK's debug key and the same application id (it
+        // installs over a debug APK with `install -r` and keeps the app's
+        // data), debuggable (run-as, the dw4args test runs). Debuggable does
+        // not slow the native code; only the Java side checks its JNI calls
+        // (CheckJNI; the game makes a few per frame at most).
+        // docs/ANDROID.md, "Measuring".
+        profile {
+            initWith debug
+            matchingFallbacks = ['debug']
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCMAKE_BUILD_TYPE=RelWithDebInfo'
+                }
+            }
         }
     }
 }

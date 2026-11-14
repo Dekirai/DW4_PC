@@ -182,6 +182,15 @@ public:
     // the depth cannot be read. It waits for the picture to be drawn (the
     // overhead name tags' occlusion reads a few pixels per frame).
     std::optional<float> read_depth(int x, int y, int window_width, int window_height);
+    // The same for several pixels, in their order (the name tags' probes of
+    // a frame in one go). OpenGL ES 3.0 has no depth read (its glReadPixels
+    // takes no GL_DEPTH_COMPONENT): there the window's depth around the
+    // pixels is blitted into a depth texture, one pass of points fetches it
+    // at the pixels and one glReadPixels of a small integer row takes the
+    // values back (the same bits a depth read gives); the PC reads each
+    // pixel with glReadPixels. A context whose depth cannot be read this way
+    // (no depth buffer, a failed step: logged once) gives nullopt.
+    std::vector<std::optional<float>> read_depths(const std::vector<std::array<int, 2>>& pixels, int window_width, int window_height);
     // The projected shadow drawn with the next render (null: none).
     void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
     // Drop the stage's GPU resources (call when the engine changed stage):
@@ -212,6 +221,8 @@ public:
 
 private:
     void create_objects();
+    // check_gl_errors' counting and logging of an error already taken.
+    void note_gl_error(unsigned error, const char* where);
     struct Mesh {
         unsigned vao{}, vbo{}, ibo{};
         int index_count{};

@@ -56,6 +56,9 @@
 #ifdef SDL_PLATFORM_ANDROID
 // (SDLActivity calls SDL_main in libmain.so: main below is renamed to it.)
 #include <SDL3/SDL_main.h>
+// (DW4_TEST_CONTEXT_LOSS: the context destroyed by EGL itself.)
+#include <EGL/egl.h>
+#include <SDL3/SDL_egl.h>
 #endif
 // (Data Overflow's meta file of lane F, round O1b, once merged: the records
 // page reads its Data Records, SURVIVAL.md 9.2.)
@@ -369,6 +372,26 @@ bool SDLCALL context_reset_watch(void*, SDL_Event* event) {
         if (SDL_GLContext current = SDL_GL_GetCurrentContext()) g_game_window.context = current;
     return true;
 }
+
+// DW4_TEST_CONTEXT_LOSS=1 (a test switch; Android's --env in dw4args,
+// docs/ANDROID.md "Robustness"): every time the game comes back from the
+// background its OpenGL context is destroyed first (EGL's own
+// eglDestroyContext; SDL let go of it on the way into the background), so
+// SDL cannot make it current again, makes a new one and sends
+// SDL_EVENT_RENDER_DEVICE_RESET (SDL_androidevents.c,
+// android_egl_context_restore): the path of a device that lost the context.
+// Read when the game comes back (--env sets it after the start).
+bool SDLCALL context_loss_test_watch(void*, SDL_Event* event) {
+    if (event->type != SDL_EVENT_WILL_ENTER_FOREGROUND || !g_game_window.context) return true;
+    const char* value = std::getenv("DW4_TEST_CONTEXT_LOSS");
+    if (!value || !*value || *value == '0') return true;
+    const EGLDisplay display = static_cast<EGLDisplay>(SDL_EGL_GetCurrentDisplay());
+    const bool destroyed = display != EGL_NO_DISPLAY && eglDestroyContext(display, static_cast<EGLContext>(g_game_window.context)) == EGL_TRUE;
+    if (destroyed) std::printf("lifecycle: test: the OpenGL context destroyed in the background (DW4_TEST_CONTEXT_LOSS)\n");
+    else std::printf("lifecycle: test: the OpenGL context could not be destroyed (EGL error 0x%x)\n", unsigned(eglGetError()));
+    std::fflush(stdout);
+    return true;
+}
 #endif
 
 // Opens the window once (SDL's video must be started); test runs open it
@@ -440,6 +463,7 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
     SDL_GL_MakeCurrent(w.window, w.context);
 #ifdef SDL_PLATFORM_ANDROID
     SDL_AddEventWatch(context_reset_watch, nullptr);
+    SDL_AddEventWatch(context_loss_test_watch, nullptr);
 #endif
     SDL_GL_SetSwapInterval(test_run || !settings.vsync ? 0 : 1);
     if (!test_run && settings.fullscreen) SDL_SetWindowFullscreen(w.window, true);
@@ -483,6 +507,36 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
     return w;
 }
 
+// DW4_GL_CHECK=1 (the renderer's switch, docs/ANDROID.md): the GL errors the
+// status screens raise (the first start's copy and conversion, the LAN
+// lobby: no renderer exists yet, whose check counts the game's frames), read
+// after every frame of theirs; the first 20 logged, the totals when a screen
+// ends ("status screen: GL error check (SCREEN): N errors in M frames").
+struct StatusGlCheck {
+    int on = -1; // (read at the first frame: Android's --env sets it after the start)
+    std::uint64_t frames = 0, errors = 0;
+    bool active() {
+        if (on < 0) {
+            const char* value = std::getenv("DW4_GL_CHECK");
+            on = value && *value && *value != '0' ? 1 : 0;
+        }
+        return on == 1;
+    }
+    void frame() {
+        if (!active()) return;
+        ++frames;
+        for (int i = 0; i < 8; ++i) {
+            const GLenum error = glGetError();
+            if (error == GL_NO_ERROR) break;
+            if (++errors <= 20) std::cerr << "status screen: GL error 0x" << std::hex << error << std::dec << " (frame " << frames << ")\n";
+        }
+    }
+    void report(const std::string& screen) {
+        if (active()) std::cout << "status screen: GL error check (" << screen << "): " << errors << " errors in " << frames << " frames\n";
+    }
+};
+StatusGlCheck g_status_gl;
+
 // One frame of a screen in the game window before the game runs (the first
 // start's copy or conversion, the LAN lobby): a panel with the lines, a
 // progress bar when progress >= 0, and a Cancel button. False once the
@@ -522,6 +576,7 @@ bool status_frame(GameWindow& w, const char* title, const std::vector<std::strin
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     SDL_GL_SwapWindow(w.window);
+    g_status_gl.frame();
     return keep;
 }
 
@@ -539,6 +594,7 @@ void show_progress(GameWindow* w, const char* title, const std::string& line, st
         }
         SDL_Delay(16);
     }
+    if (w) g_status_gl.report(line);
 }
 
 // An RVZ image becomes a plain disc image once, in data/ next to the program
@@ -1203,7 +1259,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             SDL_Delay(10);
         }
-        if (lobby_window) std::cout << "online: the lobby drew in the game window\n";
+        if (lobby_window) {
+            std::cout << "online: the lobby drew in the game window\n";
+            g_status_gl.report("the LAN lobby");
+        }
         if (!error.empty()) throw std::runtime_error("online: " + error);
         const auto& started = net.start();
         first_stage = started.stage;
