@@ -420,6 +420,9 @@ if(DW4_BUILD_APP)
     target_include_directories(dw4_menu_ops_tests PRIVATE src/game)
     target_link_libraries(dw4_menu_ops_tests PRIVATE dw4_engine dw4_core SDL3::SDL3)
     add_test(NAME menu_ops COMMAND dw4_menu_ops_tests)
+    # The console F1 menu's navigation model (focus, pages, buttons, touch).
+    add_executable(dw4_console_nav_tests tests/console_nav_tests.cpp src/game/console_nav.cpp)
+    add_test(NAME console_nav COMMAND dw4_console_nav_tests)
     # Controller families: classification, binding spaces, prompt pictures,
     # the prompts in the game's text lines (laid out by the engine's
     # layout_text), settings migration (no device), and detection through
