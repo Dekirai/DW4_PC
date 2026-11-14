@@ -1,6 +1,6 @@
 namespace DW4Online.Relay.Protocol;
 
-// Round I1b, the arrival prompt (protocol 49, SEAMLESS.md 19.7, 19.18; the layouts agreed in i1b-contract.md, "prompt 16:30").
+// Round I1b, the arrival prompt (protocol 50, SEAMLESS.md 19.7, 19.18; the layouts agreed in i1b-contract.md, "prompt 16:30").
 
 /// <summary>PLAN's purpose: the hub departure the gate form holds (the census of 19.7.4).</summary>
 public enum PlanPurpose : byte

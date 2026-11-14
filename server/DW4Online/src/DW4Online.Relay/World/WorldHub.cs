@@ -533,7 +533,8 @@ public sealed partial class RoomHub
     private void TrySoloHome(HubInstance g, long now)
     {
         if (g.PendingHome is not { } p || g.Mode != InstanceMode.SoloLed || g.Barrier is not null || now < p.NotBefore) return;
-        if (g.SoloJoin is not null || g.AskedJoin is not null || g.AskedHome is not null) return;
+        // (One JOIN_REQ at a time: a go's too, round I1b's integration review; JOIN_AT names no kind.)
+        if (g.SoloJoin is not null || g.AskedJoin is not null || g.AskedHome is not null || g.AskedGo is not null) return;
         // (Slots stamped meanwhile, a JOIN_AT home before the group led alone again, are not asked twice.)
         var open = (byte)(p.Mask & g.PresentMask & ~g.HomeStamped);
         if (open == 0)
@@ -982,6 +983,18 @@ public sealed partial class RoomHub
     }
 
     // Notices, member info, instance info ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// <paramref name="m"/> left the stage group <paramref name="group"/> but keeps its seat (a lag LEAVE, a split barrier, 6.9): the
+    /// group's other members get WORLD_NOTICE apart, "&lt;name&gt; plays apart for now." Round I1b's integration took the stage group's
+    /// own LEAVE toast away (the world's notices tell joins and leaves, 19.5.6), which left this LEAVE without a word.
+    /// </summary>
+    private void TellApart(HubInstance group, HubMember m)
+    {
+        if (m.World is not { Ending: false } w || !_worlds.ContainsKey(w.Wid)) return;
+        foreach (var o in group.Members)
+            if (o != m && o.World == w) o.Peer?.Send(Notice(o, WorldNoticeKind.Apart, m, 0, ""));
+    }
 
     /// <summary>MEMBER_INFO before a member's first mention to a receiver (and when its flags change), then the notice.</summary>
     private byte[] Notice(HubMember receiver, WorldNoticeKind kind, HubMember? about, uint argument, string text)

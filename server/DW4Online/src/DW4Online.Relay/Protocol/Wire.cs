@@ -70,13 +70,13 @@ public static class Msg
     public const byte Checkpoint = 0x16;
     /// <summary>Round J: a joiner's rebuild from a checkpoint failed.</summary>
     public const byte CheckpointBad = 0x17;
-    /// <summary>Round I1b (protocol 49, 19.7.4): the gate form's plan while the confirming press is held (PromptMessages.cs).</summary>
+    /// <summary>Round I1b (protocol 50, 19.7.4): the gate form's plan while the confirming press is held (PromptMessages.cs).</summary>
     public const byte Plan = 0x18;
-    /// <summary>Round I1b (protocol 49): the prompt's answer (PromptMessages.cs).</summary>
+    /// <summary>Round I1b (protocol 50): the prompt's answer (PromptMessages.cs).</summary>
     public const byte Choice = 0x19;
     /// <summary>Round I1 (protocol 49): the host's or staff's instance operation (visibility, remove, end).</summary>
     public const byte InstanceOp = 0x1B;
-    /// <summary>Round I1b (protocol 49, i1b-contract.md moderation 16:25): *Report player* from the player card.</summary>
+    /// <summary>Round I1b (protocol 50, i1b-contract.md moderation 16:25): *Report player* from the player card.</summary>
     public const byte Report = 0x1E;
 
     // server -> client
@@ -97,7 +97,7 @@ public static class Msg
     public const byte Reassign = 0x8E;
     public const byte NetStat = 0x8F;
     public const byte Presence2Out = 0x90;
-    /// <summary>Round I1b (protocol 49, 19.7.3): the arrival prompt's rows (PromptMessages.cs).</summary>
+    /// <summary>Round I1b (protocol 50, 19.7.3): the arrival prompt's rows (PromptMessages.cs).</summary>
     public const byte Options = 0x91;
     /// <summary>Round J: the donor uploads its tick state at its next state-safe tick.</summary>
     public const byte CheckpointAsk = 0x92;
@@ -107,7 +107,7 @@ public static class Msg
     public const byte WorldNotice = 0x96;
     /// <summary>Round I1 (protocol 49): a member's name, level and relation, before its first mention to a receiver.</summary>
     public const byte MemberInfo = 0x97;
-    /// <summary>Round I1b (protocol 49, 19.30.5): a go-along offer for the receiver (open, changed, closed).</summary>
+    /// <summary>Round I1b (protocol 50, 19.30.5): a go-along offer for the receiver (open, changed, closed).</summary>
     public const byte Offer = 0x9B;
     /// <summary>Protocol 50 (round I1b's integration, W7e): upload the visit's load snapshot now (its uploader left before the upload
     /// was complete).</summary>
@@ -302,6 +302,9 @@ public enum WorldNoticeKind : byte
     GoRefused = 13,
     /// <summary>Round I1b: the answer to REPORT (argument <see cref="ReportResult"/>; member and name: the reported player).</summary>
     Report = 14,
+    /// <summary>Round I1b's integration: a member left the receiver's stage group but stays in the instance (a lag LEAVE, a split
+    /// barrier, 6.9): "&lt;name&gt; plays apart for now." (the stage group's own LEAVE toast went, 19.5.6).</summary>
+    Apart = 15,
 }
 
 /// <summary>WORLD_NOTICE 14's argument: what became of a REPORT (i1b-contract.md moderation 16:25).</summary>
