@@ -1399,6 +1399,49 @@ void draw_touch_menu_button(HostView& view) {
 
 // ---------------------------------------------------------------- display rate, lifecycle
 
+// ---------------------------------------------------------------- text input
+
+namespace {
+#ifdef SDL_PLATFORM_ANDROID
+using ImeDataFn = void (*)(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData*);
+ImeDataFn g_backend_ime = nullptr;
+bool g_secret_input = false;
+
+// Before the backend: a password field's text input starts with SDL's
+// password type and without autocorrection (Android's keyboard then offers
+// no suggestions and learns nothing); the backend sees it active and only
+// places it.
+void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeData* data) {
+    const ImGuiContext& g = *context;
+    const bool wants = data->WantVisible || data->WantTextInput;
+    const bool secret = wants && g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId &&
+                        (g.InputTextState.Flags & ImGuiInputTextFlags_Password) != 0;
+    if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && secret != g_secret_input) {
+        if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
+        if (secret) {
+            const SDL_PropertiesID props = SDL_CreateProperties();
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
+            SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+            SDL_StartTextInputWithProperties(window, props);
+            SDL_DestroyProperties(props);
+        }
+        g_secret_input = secret;
+    }
+    if (!wants) g_secret_input = false;
+    if (g_backend_ime) g_backend_ime(context, viewport, data);
+}
+#endif
+} // namespace
+
+void install_text_input_hook() {
+#ifdef SDL_PLATFORM_ANDROID
+    auto& platform = ImGui::GetPlatformIO();
+    if (platform.Platform_SetImeDataFn == ime_data) return;
+    g_backend_ime = platform.Platform_SetImeDataFn;
+    platform.Platform_SetImeDataFn = ime_data;
+#endif
+}
+
 void request_frame_rate(const Settings& settings) {
 #ifdef SDL_PLATFORM_ANDROID
     const float hz = settings.fps_limit > 60 ? float(std::min(settings.fps_limit, 120)) : 60.0f;

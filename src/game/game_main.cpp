@@ -446,6 +446,7 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
     ImGui::GetIO().IniFilename = nullptr;
     ImGui::StyleColorsDark();
     ImGui_ImplSDL3_InitForOpenGL(w.window, w.context);
+    dw4::game::install_text_input_hook();
     ImGui_ImplOpenGL3_Init(dw4::game::gl_is_es() ? "#version 300 es" : "#version 330");
     // The menus keep ImGui's own font (the first one added is the
     // default); the overhead name tags take a bold system face when

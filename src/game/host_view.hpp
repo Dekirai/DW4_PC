@@ -357,6 +357,14 @@ float ui_scale();
 // A length of the menus' layout at the scale in use (12 px at 1x).
 inline float ui_px(float pixels) { return pixels * ui_scale(); }
 
+// ---- Text input
+// The system keyboard for the menus' text fields: ImGui's SDL backend starts
+// SDL's text input while a field is active, which opens Android's keyboard
+// (no hardware keyboard: SDL shows its screen keyboard). Android only: a
+// password field opens it as a password field's (no suggestions, nothing
+// learned). Once, after ImGui's SDL backend started.
+void install_text_input_hook();
+
 // ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
 // The menu button's rectangle in window pixels: a small square in the top
 // right corner, inside the bar the 4:3 picture leaves on a wider window (the

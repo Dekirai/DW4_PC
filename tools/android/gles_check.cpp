@@ -20,14 +20,23 @@
 //     copy_window_es) and the kept picture's blit (keep_picture), with the
 //     sharpening pass drawn from it;
 //   - the skinning palette (RGBA32F, texelFetch);
-//   - GL_DEPTH_CLAMP_EXT where the extension is there.
+//   - GL_DEPTH_CLAMP_EXT where the extension is there;
+//   - with a third argument (frames, phase C): the cost of a whole frame of
+//     the window (a scene stand-in of blended full-screen quads, then an
+//     overlay quad as ImGui's) plain, with the Sharpening option's resolve,
+//     copy and pass, with the kept picture's blit in the middle of the frame
+//     (a tiler stores the window and loads it again for the overlay), and
+//     with both: the GPU's own time (GL_EXT_disjoint_timer_query) and the
+//     wall time to glFinish, median and 90th percentile, after warm-up frames
+//     so the GPU's clock rises; the GPU clock is read before and after where
+//     sysfs lets the shell read it.
 //
 // Build (NDK clang, see docs/ANDROID.md):
 //   clang++ --target=aarch64-linux-android33 -std=c++20 -O1 -static-libstdc++ \
 //           tools/android/gles_check.cpp -lEGL -lGLESv3 -o gles_check
 // Run:
 //   adb push gles_check gl_renderer.cpp /data/local/tmp/dw4c/
-//   adb shell /data/local/tmp/dw4c/gles_check /data/local/tmp/dw4c/gl_renderer.cpp [samples]
+//   adb shell /data/local/tmp/dw4c/gles_check /data/local/tmp/dw4c/gl_renderer.cpp [samples] [frames]
 // Exit code 0: every step without a GL error and every program linked.
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -180,15 +189,35 @@ double ms_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
+// A sysfs value the shell may read (the Adreno's clock), or "-".
+std::string read_line(const char* path) {
+    std::ifstream in(path);
+    std::string line;
+    if (!in || !std::getline(in, line)) return "-";
+    return line;
+}
+
+std::string gpu_clock() {
+    return "gpuclk " + read_line("/sys/class/kgsl/kgsl-3d0/gpuclk") + " Hz, devfreq " +
+           read_line("/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq") + " Hz, busy " + read_line("/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage");
+}
+
+double percentile(std::vector<double> values, double p) {
+    if (values.empty()) return 0;
+    std::sort(values.begin(), values.end());
+    return values[std::size_t(p * double(values.size() - 1) + 0.5)];
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: gles_check <copy of src/game/gl_renderer.cpp> [samples (4)]\n");
+        std::fprintf(stderr, "usage: gles_check <copy of src/game/gl_renderer.cpp> [samples (4)] [frames (0: no frame costs)]\n");
         return 2;
     }
     const auto shaders = read_shaders(argv[1]);
     const int samples = argc > 2 ? std::atoi(argv[2]) : 4;
+    const int bench_frames = argc > 3 ? std::atoi(argv[3]) : 0;
     std::printf("shader sources read: %zu\n", shaders.size());
 
     // EGL: an ES 3 context on a pbuffer the size of the Thor's upper screen
@@ -558,6 +587,108 @@ int main(int argc, char** argv) {
             std::printf("     per frame over %d rounds: sharpening %.2f ms, kept picture %.2f ms\n", rounds, sharpen_ms / rounds,
                         kept_ms / rounds);
             check("sharpening and kept picture, 60 rounds");
+        }
+        // Whole frames (phase C): what the kept picture and the Sharpening
+        // option cost inside a frame, where a tiler must store the window
+        // before the blit and load it again for what is drawn after it.
+        if (bench_frames > 0 && sharpen && kept) {
+            const bool timer = has_extension("GL_EXT_disjoint_timer_query");
+            constexpr GLenum kTimeElapsed = 0x88BF, kGpuDisjoint = 0x8FBB;
+            GLuint query = 0;
+            if (timer) glGenQueries(1, &query);
+            std::printf("frames: %d per case after %d warm-up frames, timer query %s; %s\n", bench_frames, bench_frames / 2,
+                        timer ? "yes" : "no", gpu_clock().c_str());
+            const auto frame = [&](bool sharpening, bool keep) {
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(0, 0, width, height);
+                glClearColor(0.1f, 0.2f, 0.3f, 1);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                // The scene's stand-in: three blended full-screen quads of a
+                // 1920 x 1080 texture over the 4:3 picture.
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glViewport(x, y, w, h);
+                glUseProgram(kept);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, kept_texture);
+                glUniform1i(glGetUniformLocation(kept, "u_tex"), 0);
+                glBindVertexArray(vao);
+                for (int i = 0; i < 3; ++i) glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glBindVertexArray(0);
+                glDisable(GL_BLEND);
+                if (sharpening) {
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                    glBlitFramebuffer(x, y, x + w, y + h, x, y, x + w, y + h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, resolve_fbo);
+                    glBindTexture(GL_TEXTURE_2D, sharpen_texture);
+                    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, w, h);
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glViewport(x, y, w, h);
+                    glUseProgram(sharpen);
+                    glUniform1i(glGetUniformLocation(sharpen, "u_tex"), 0);
+                    glUniform1f(glGetUniformLocation(sharpen, "u_sharpness"), 1.0f);
+                    glUniform2i(glGetUniformLocation(sharpen, "u_origin"), x, y);
+                    glUniform2i(glGetUniformLocation(sharpen, "u_size"), w, h);
+                    glBindVertexArray(vao);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    glBindVertexArray(0);
+                }
+                if (keep) {
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, kept_fbo);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                }
+                // The menus' stand-in after it: one blended quad over a
+                // quarter of the window.
+                glEnable(GL_BLEND);
+                glViewport(width / 4, height / 4, width / 2, height / 2);
+                glUseProgram(kept);
+                glBindTexture(GL_TEXTURE_2D, kept_texture);
+                glBindVertexArray(vao);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glBindVertexArray(0);
+                glDisable(GL_BLEND);
+            };
+            struct Case {
+                const char* name;
+                bool sharpening, keep;
+            };
+            const Case cases[] = {{"plain", false, false}, {"kept picture", false, true}, {"sharpening", true, false}, {"both", true, true}};
+            double plain_gpu = 0, plain_wall = 0;
+            for (const auto& c : cases) {
+                for (int i = 0; i < bench_frames / 2; ++i) frame(c.sharpening, c.keep);
+                glFinish();
+                std::vector<double> gpu, wall;
+                int disjoint_frames = 0;
+                for (int i = 0; i < bench_frames; ++i) {
+                    const auto at = std::chrono::steady_clock::now();
+                    if (timer) glBeginQuery(kTimeElapsed, query);
+                    frame(c.sharpening, c.keep);
+                    if (timer) glEndQuery(kTimeElapsed);
+                    glFinish();
+                    wall.push_back(ms_since(at));
+                    if (timer) {
+                        GLuint ns = 0;
+                        glGetQueryObjectuiv(query, GL_QUERY_RESULT, &ns);
+                        GLint disjoint = 0;
+                        glGetIntegerv(kGpuDisjoint, &disjoint);
+                        if (disjoint) ++disjoint_frames;
+                        else gpu.push_back(double(ns) / 1e6);
+                    }
+                }
+                const double gpu_median = percentile(gpu, 0.5), wall_median = percentile(wall, 0.5);
+                if (!c.sharpening && !c.keep) plain_gpu = gpu_median, plain_wall = wall_median;
+                std::printf("     frame %-13s GPU median %.3f ms p90 %.3f (+%.3f), wall median %.3f ms p90 %.3f (+%.3f)%s\n", c.name,
+                            gpu_median, percentile(gpu, 0.9), gpu_median - plain_gpu, wall_median, percentile(wall, 0.9),
+                            wall_median - plain_wall, disjoint_frames ? " (some timer results disjoint)" : "");
+                char step[64];
+                std::snprintf(step, sizeof step, "frames: %s", c.name);
+                check(step);
+            }
+            std::printf("frames done: %s\n", gpu_clock().c_str());
+            if (timer) glDeleteQueries(1, &query);
         }
         glDeleteFramebuffers(1, &resolve_fbo);
         glDeleteFramebuffers(1, &kept_fbo);
