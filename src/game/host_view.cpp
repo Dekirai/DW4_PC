@@ -341,17 +341,28 @@ bool note_stage(HostView& view, engine::Engine& engine, GhostFigures* ghosts) {
 
 PictureMade make_picture(HostView& view, engine::Engine& engine, int steps, bool smooth_blending) {
     auto& picture = view.picture;
-    // A field the running update covers (Engine::held: the movie's 30 Hz
-    // frames) shows the last update's picture again, without a traversal
-    // (only a catch-up that left no draw list draws it).
-    if (engine.held() && steps > 0 && (picture.items_current || !view.draw)) return PictureMade::kept;
     // The module reload's held fields (a stage change's teardown, Engine::
     // step): the outgoing stage's managers are reset and its scene graph is
     // half gone until the next stage's load starts, and the screen keeps its
     // last picture (present_scene's kept picture). Nothing is traversed then,
     // also in a pass without a step (a display faster than the game, a pass
-    // the step clock left without one) or after a catch-up.
-    if (engine.held() && !engine.presenting()) return PictureMade::kept;
+    // the step clock left without one) or after a catch-up. The draw list
+    // goes too: its items point into what the resets freed (the texture
+    // control's bindings; the managers' nodes, attributes and geometry), so
+    // a pass whose kept picture cannot be drawn (Android's context loss, a
+    // window that changed its size) draws an empty picture, never that list.
+    // (Also in an update's held fields between the stage change and the
+    // reload, where the list is still whole: the kept picture covers them.)
+    if (engine.held() && !engine.presenting()) {
+        picture.items.clear();
+        picture.shadow = {};
+        picture.items_current = false;
+        return PictureMade::kept;
+    }
+    // A field the running update covers (Engine::held: the movie's 30 Hz
+    // frames) shows the last update's picture again, without a traversal
+    // (only a catch-up that left no draw list draws it).
+    if (engine.held() && steps > 0 && (picture.items_current || !view.draw)) return PictureMade::kept;
     if (!view.draw) {
         engine.traverse_scene();
         return PictureMade::traversed;
