@@ -3,7 +3,9 @@
 Branch `int-i1b` from main 463c7a5b (DW4Online 0.1.9 server-only fixes of fix-019, the controller families and prompts,
 the Switch 2 Pro reader), worktree `DW4_PC-wt/int-i1b`. It merges the three I1b lanes (moderation, prompt, go along;
 each from `int-i1a` bfc3b0a5), resolves them against fix-019, and adds the integration's own tasks. Release: DW4Online
-**0.2.0**, protocol **50**, schema **14**. Not pushed, not merged into main. Data Overflow untouched.
+**0.2.0**, protocol **50**, schema **14**. Not pushed, not merged into main. Data Overflow untouched. Main 12f6a1a8
+(the display languages, texture pack format 2, tools/remaster) is merged in since 2026-11-14 (d80617ef, see "The merge
+of main" below).
 
 Own resources: mysqld 3681 (root password in `tools/online_test/.work/mysql-root.txt`, stopped with SQL `SHUTDOWN`),
 scenario and relay ports 60000-60399, build dirs `build/int/*` (gitignored). The coordination contract with every merge
@@ -146,6 +148,63 @@ W7, W7b, W7c, W7d, S11a, S11b, W10b, W10c, W10d, W10s, the UI set (accounts, are
 newchars, offline, unreachable), W2, W2b, W11, W11b, W11r and W30c (every one passed). Logs `build/fx/scen_*.log`, `marathon.log`;
 the relays' world logs show no desync, mismatch, resync or exception beyond S11a / S11b's injected ones and w7e3's split.
 
+## The merge of main (2026-11-14)
+
+Main 12f6a1a8 (18 commits after 463c7a5b: the display languages, phase 1, with the German fan translation's engine, host
+and tool side; texture pack format 2 with its streaming thread and the F1 Graphics options; tools/remaster) is merged as
+d80617ef. The textual merge was clean (CMakeLists.txt, README.md, engine.hpp, managers.hpp, engine.cpp, online.cpp,
+ui.cpp and game_main.cpp merged by git). A PC restart (~13:20) cut the first run after the merge commit, in its first
+Release build (`build/mg/bld_rel1.log`); the second run went on from d80617ef.
+
+The semantic overlaps the textual merge cannot show; none needed a code change:
+
+| Overlap | Finding |
+| --- | --- |
+| l10n export and lint, I1b's texts | Both cover the game's own text (pack strings with the lines Lua sets them on, the database's display columns, card names). I1b adds none: its player-visible texts are the port UI's (ImGui), its one game-side change (subwnd.cpp) resets a counter. The port UI is not linted (a language pack's `[files] ui` is reserved). The merged build's export is main's corpus (4,512 texts, revision 44d775ae; against the l10n worktree's older export only the enemy info card's field differs, "-" since 25066ab7). |
+| settings.ini | I1b adds no key (Online > Settings are the server's); main adds `[graphics]` and `[preferences] language`. |
+| F1 menu | Main: *Language* at the top of the Settings tab, the *Graphics* section in place of *Texture packs*. I1b: the Online tab (the Instance page, the Go along rows and box, the player card). The Go along box's focus request and the pad latch concern the menu's own closings on the Online tab; main's combos never close the menu. The UI scripts open the Online tab by name. |
+| Tick state, StageSnapshot | Main adds no engine state: a text line's pack index, laid-out geometry and alignment are presentation only and not in the tick state (its reading passes the line's pack index on). The texture streaming lives in `src/game` (renderer, `texture_stream`, `host_view`), which hands the engine's loaded documents to the reader thread as const shared pointers. `kSnapshotVersion` stays 44, the tick state's version too. |
+| Environment lists | `online_presentation_env` holds both sides (I1b's `DW4_ONLINE_TEST_CUT_AT_ANSWER`, main's Graphics and streaming switches, `DW4_LANGUAGE`, `DW4_LANG_DIR`, `DW4_L10N_*`); `online_tests`' grep of `getenv("DW4_` passes. |
+| Online UI | ImGui texts with the port's own tables (`presence_data`: area, stage and form names), the relay's names and story labels: English whatever the game text's language (the German runs below). |
+| Docs | SEAMLESS 6.12 (presentation per machine) and 19.5.6 (the online UI stays English): 389bbb1d. README has main's Graphics options and texture pack sections and names no version that changes; the CMake project version is 0.46.0 on both sides. |
+
+Checks on the merge's code (d80617ef; 389bbb1d and this notes commit change docs only), logs in `build/mg/`:
+
+- **Builds**: Release DEV=OFF with tests (`build/mg/rel`, `bld_rel1.log` cut by the restart, `bld_rel2.log`) and Release
+  DEV=ON with tests (`build/mg/dev`, `bld_dev1.log`); the warnings are the base's (getenv's C4996).
+- **ctest**: 78/78 on both (66 + main's 12: i18n, l10n_lint, texpack and nine graphics_* cases): `ctest_rel1.log`, `ctest_dev1.log`.
+- **Server**: unit 560/560 (`unit1.log`), integration 152 passed / 3 skipped (`it1.log`; an own mysqld on 3691, shut
+  down by SQL).
+- **det.sh**: two DEV=OFF copies (`build/mg/off/dw4_mg_off.exe`, `dw4_mg_off_b.exe`, md5 a1b6b420), det.sh twice each
+  (8 runs): every run 4004f056 / audio 396cb219 (`det1.log`, `work/dref/checks/det/det_mg1_*`).
+- **Save state suite** (a private copy in `build/mg/st`; `ST_ENV` adds environment to every case, `ST_RUNS` names the
+  runs folder): 17/17 in English (`st_en1.log`) and 17/17 with the German game text (`st_de1.log`: `DW4_LANGUAGE=de`,
+  every case "game.tsv 4515 texts, 0 rejected", "3 of 3 pictures ready").
+- **l10n lint** of `local/lang/de/game.tsv` (copied from the main repo, git-ignored) against the merged build's export:
+  4,424 OK, 88 squeezed, 0 need a squeeze, **0 errors**, 3 warnings (the travel dialog's two texts and "Lv", L10N.md's
+  known ones): passed (`l10n/export.log`, `l10n/lint.log`, `l10n/lint_report.txt`).
+- **r25c** (`dw4_mg_r25c.exe`, 4 at a time): 10 of 10 segments reached their checkpoint, 1,748,011 frames (`r25c1.log`,
+  `work/campaign/runs/seg/seg_r25c_mg_int_i1b`).
+- **Scenarios** (real hidden clients, `build/mg/marathon.sh`, run.py `--parallel 1`; client DEV=ON md5 71496d63 built
+  from d80617ef; the Android workflow beside them; `marathon.log`): RGJ1, S22b, W1, W10, W4c, W5s passed, W7f failed
+  once and passed on the repeat (`scen_smoke.log`, `scen_smoke_rep.log`, below), `ui home` and `ui goalong` passed
+  (`scen_uihome.log`, `scen_goalong.log`). With the German game text (`MG_LANG=de`: `DW4_LANGUAGE=de`, the packs from
+  `build/mg/scen/lang`): W1 (`scen_w1_de.log`), `ui home` (`scen_uihome_de.log`) and `ui goalong`
+  (`scen_goalong_de.log`) passed; every client printed "language: de" with 4,515 texts and 0 rejected; the screenshots
+  show the online UI in English (home, Online tab, the gate form's prompt with its pad line, the Go along box, the
+  notice and the own line), nothing cut or overflowing. W7f twice more: passed both times by `barrier_apart` (`scen_w7f_a.log`, `scen_w7f_b.log`). The relays' world logs show no
+  desync, mismatch, resync, split or exception; no client log has an error.
+
+**W7f's first run** missed only its expected `barrier_apart`. a's link went as the sealed NEW's answer came (as
+designed), b took the upload over (SNAPSHOT_ASK), a came back after the host's grace (20 s, `host_back`). The relay's
+housekeeping (every 250 ms) ran 8 ms after a's resumed connection, before a's re-sent old barrier (12 ms): a's slot had
+been filled with neutral pads for the whole grace, so its fill streak was far past `LagLeaveSeconds`, and with the grace
+over the lag rule took a out (`lag_leave`, LEAVE, the *apart* notice); the old barrier then came as a straggler's
+(`barrier_alone`) and was decided as a JOIN of b's stage group. The result is the one `barrier_apart` gives (a joined
+visit 3 from checkpoint 1179 with READY, still the host, one instance, 0 of 168 fingerprint ticks differ); only the path
+differs, the one the fix stage's W7e runs took once too. In the repeat the barrier came first (13 ms,
+`barrier_apart`). Not a matter of the merge: the relay and the client's resume are I1b's, main changed neither.
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
@@ -162,6 +221,10 @@ the relays' world logs show no desync, mismatch, resync or exception beyond S11a
 - From fix-019: the load gate on a quiet machine (no workflow beside it).
 - No automatic test: the pad latch when the F1 menu closes by its own request (UI script keys reach ImGui, not the game's
   pad) and the boss fight's go-along line; the prompt's ImGui hint lines (the goalong screenshots show the gate form's).
+- W7f's path depends on a race (the merge's first W7f run): a host who comes back after his grace in a sealed instance
+  can be taken out by the lag rule before his re-sent barrier arrives (the same JOIN in the end, by `lag_leave` and
+  `barrier_alone` instead of `barrier_apart`). Either the relay starts the slot's fill streak anew at `host_back` (the
+  resumed host gets `LagLeaveSeconds` before the lag rule) or W7f accepts both paths; not changed here.
 - Later: a client flag in BARRIER for a barrier of a visit the member never loaded would let the relay decide it apart
   also when its tick lies inside what the new visit sealed (now the split after `Instances:BarrierReportSeconds`, the
   others stalled 5 s; it needs the old visit to have run shorter than the new one has when the member comes back).
@@ -170,6 +233,11 @@ the relays' world logs show no desync, mismatch, resync or exception beyond S11a
 
 - The fix stage: `build/fx/` holds copies of `build/ii1b/`'s scripts (`utest.sh`, `itest.sh`, `scen.sh`, `marathon*.sh`,
   the save state suite in `build/fx/st`); the builds stay in `build/ii1b/rel` and `build/ii1b/dev` (`build\ii1b\bld.cmd`).
+- The merge of main: `build/mg/` (`bld.cmd DIR TESTING [dev|nodev]`: `rel ON nodev`, `dev ON dev`; `ctest.cmd DIR`;
+  `utest.sh`, `itest.sh` with an own mysqld on **3691** and test ports 59600-59799; `scen.sh` with mysqld 3691 and ports
+  59400-59599, `MG_LANG=de` for the German game text; `marathon.sh` batches, a batch ending in `_de` runs in German; the
+  save state suite in `build/mg/st` with `ST_ENV` / `ST_RUNS`). German runs need `local/lang/de/game.tsv` (git-ignored,
+  copied from the main repo) and `build/mg/scen/lang/de` (data/lang/de plus that game.tsv).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the
