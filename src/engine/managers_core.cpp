@@ -120,6 +120,29 @@ void LayerManager::add_info(Engine& engine, const ObjectView& info) {
 void LayerManager::clear_stage(Engine&) {
     rams_.clear();
     groups_.clear();
+    // The switch leaves the scene graph before it goes: its parent belongs
+    // to the outgoing stage's scenes, which stay loaded through the module
+    // reload's held fields (Engine::step) until begin_stage_load releases
+    // them. A pointer left in the parent's children was a dangling node for
+    // anything that walked the graph meanwhile (the picture of a pass
+    // without a step): freed memory read, and on Android a crash once that
+    // memory was used again.
+    if (layer_switch_ && layer_parent_) {
+        auto& siblings = layer_parent_->children;
+        if (const auto it = std::find(siblings.begin(), siblings.end(), layer_switch_.get()); it != siblings.end()) {
+            // (A switch parent keeps its other children's bits.)
+            std::vector<bool> bits;
+            if (layer_parent_->kind == NodeKind::switch_node)
+                for (std::size_t i = 0; i < siblings.size(); ++i)
+                    if (siblings[i] != layer_switch_.get()) bits.push_back(layer_parent_->child_enabled(i));
+            siblings.erase(it);
+            if (layer_parent_->kind == NodeKind::switch_node) {
+                layer_parent_->mask.assign((bits.size() + 31) / 32, 0);
+                for (std::size_t i = 0; i < bits.size(); ++i) layer_parent_->set_child_enabled(i, bits[i]);
+            }
+        }
+    }
+    layer_parent_ = nullptr;
     layer_switch_.reset();
     group_nodes_.clear();
     ordered_ = false;
@@ -141,7 +164,8 @@ void LayerManager::order(Engine& engine, Ram&) {
         }
         Node* parent = nullptr;
         for (auto* child : host->children) if (child->name == "LAYERPARENT") parent = child;
-        (parent ? parent : host)->children.push_back(layer_switch_.get());
+        layer_parent_ = parent ? parent : host;
+        layer_parent_->children.push_back(layer_switch_.get());
         ordered_ = true;
     }
     for (const auto& name : groups_) {
