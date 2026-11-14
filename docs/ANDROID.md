@@ -26,7 +26,11 @@ leftovers of lane C2 (the name tags' depth read-back on GLES, a profile
 build type, the context loss, the storage cases; "Phase C leftovers on the
 player's side"). Phase E, the Thor's lower screen (`feat-android-e`), is
 merged into this branch (14.11.2026, "Phase E: the second screen"): the
-player's side with phase E goes to main before the determinism part.
+player's side with phase E goes to main before the determinism part. The
+owner's Thor ran it in the game on 14.11.2026; that check's review and its
+fixes (among them a crash of the scene traversal in a stage change's held
+fields, the judder at 60 Hz, the START / SELECT pictures, the keyboard):
+"The Thor check and its review fixes".
 
 ## Decisions this port follows
 
@@ -471,8 +475,14 @@ window" on both, starts both players and ends with the same fingerprint.
 
 ### The first start and the disc
 
-- The PC is unchanged: a message box (disc image or extracted folder), the
-  file or folder dialog, an RVZ converted once into `data/`.
+- The PC: a message box (disc image or extracted folder), the file or
+  folder dialog and an RVZ converted once into `data/` as before; what
+  changed is where an RVZ conversion's progress shows (and the LAN lobby of
+  `--host` / `--join`): in the game window, with its size, full screen and
+  MSAA from settings.ini, instead of a small window of its own ("The one
+  window"). Checked hidden for the LAN lobby; an RVZ of the game was never
+  converted on the PC this way (no DW4 RVZ exists here: one made by Dolphin
+  outside its folder is the check before the merge into main).
 - Android: the message box offers the disc image only (SDL has no folder
   picker there), then `SDL_ShowOpenFileDialog` with the filter `*` (with
   `iso;gcm;rvz` Android's picker would hide `.rvz` / `.gcm`, which have no
@@ -1001,9 +1011,10 @@ the printed letters' codes and Xbox = positions.
   button (swapped by label, as a Switch Pro). `persist.sys.gamepad.type` 1
   is taken as Xbox; only 0 = Standard was seen on the device.
 - Pictures: round dark buttons with the letters in their colours, L1 / R1,
-  L2 / R2, and START / SELECT as pills with the words (the printed icons
-  of these two were not found: a look at the device decides; one table
-  entry in `pad_family.cpp`).
+  L2 / R2, and START / SELECT as printed on the owner's Thor (PlayStation 2
+  style, its answer of 14.11.2026): START a right-pointing arrow, SELECT a
+  square, each on a round dark button (`Face::start_arrow`,
+  `select_square`; before the Thor check they were pills with the words).
 - L2 / R2: SDL's Android backend makes the GAS / BRAKE axes the triggers
   (the generic mapping `lefttrigger:a4,righttrigger:a5`) and the L2 / R2
   keys joystick buttons 15 and 16 outside the gamepad mapping, so in
@@ -1325,7 +1336,8 @@ bar right of the picture (the reason is not known yet). `adb push` / `adb shell`
   mapping), L2 / R2 in Digital and Both, HOME / app switcher, the keyboard,
   `DW4_FRAME_STATS` in the intro, the title and the det route
   (`newgame_dng101b1`, `--mute`), the save round trip on arm64.
-- START / SELECT: the printed icons.
+- START / SELECT: the printed icons. (Since the Thor check: the arrow and
+  the square.)
 - The online screens on the Thor at their window-height size (24 px text):
   the owner's judgement.
 
@@ -1402,8 +1414,9 @@ checklist below is open.
   Off" (`[screen2] mode`) with what the device reports ("Now on display 4
   "Screen-2", 1240 x 1080 at 369 dpi" / "No second screen now ..."), on
   both the overlay switch. The last tab is remembered (`[screen2] tab`).
-  Each key is written only once it is not its default, so a PC's
-  settings.ini stays as it was.
+  Each key is written only while it is not its default and the section
+  goes with its last key (also after a setting went back to its default),
+  so a PC's settings.ini stays as it was.
 
 ### How it works on Android
 
@@ -1438,12 +1451,24 @@ checklist below is open.
   top) and SDL's surface current again, the GL state the frame touched put
   back. The panels' frame runs every other pass (30 a second beside the
   game's 60) unless a touch waits (and for half a second after one) or the
-  F1 menu shows there (every pass).
-- **Touch**: the SurfaceView's touches (the first finger: down, move, up,
-  cancel; surface pixels) go through JNI into a queue and from there into
-  the second context as touch-screen mouse events; after a release the
-  pointer leaves (no hover stays). A drag on an empty part of a panel
-  scrolls it.
+  controller moves through the F1 menu there (and half a second after it);
+  the F1 menu's live frame time graph alone would swap the lower screen
+  every pass on the game's thread.
+- **Touch**: the SurfaceView's touches (the first finger, followed by its
+  pointer id: down, move, up, cancel; surface pixels) go through JNI into a
+  queue and from there into the second context as touch-screen mouse
+  events; after a release the pointer leaves (no hover stays). A cancelled
+  touch (Android took the gesture over, the palm rejection, the panels
+  going while it lasted) and the first finger's lift while another one
+  stays are no click: the pointer leaves before the release. A drag on an
+  empty part of a panel scrolls it.
+- **Text fields**: a field of the lower screen starts the game window's
+  text input with the field's kind, the top screen's code
+  (`start_text_input`: a password field's without suggestions), again when
+  the kind changes or a tap on a field follows a keyboard the player put
+  away (Back); when the lower screen goes while one has the keyboard
+  (its surface or display, mode off) the text input stops and the field is
+  left (`screen2_release_input`).
 - **The surface's end**: `surfaceDestroyed` waits (at most 2 s) for a frame
   that is drawing into it (the frame holds the surface's lock), then the
   EGL surface and the window reference go; a frame that takes longer lets
@@ -1466,11 +1491,15 @@ checklist below is open.
   second screen`). One case did move the focus away on the emulator: a
   display added at run time gets Android's secondary home screen, which
   took the focus under the panels (the game paused, the controller's input
-  went there). Within 3 s of the panels' coming, a focus loss makes the
+  went there). Within 3 s of a display event (a display added, or one
+  switched on from off), while the panels show, a focus loss makes the
   activity take the focus back (its task to the front again): `second
   screen: the display that came took the focus; the game takes it back`.
-  Every other focus loss (the notification shade, a dialog) is left to the
-  cux lane's pause.
+  Every other focus loss (the notification shade, a dialog, HOME and the
+  app switcher also in the first seconds after a return, when the panels
+  come back too) is left to the cux lane's pause (until the Thor check the
+  3 s counted from every show of the panels, so the game came back to the
+  front by itself after HOME in those seconds).
 - **Without a second screen** (none, switched off, mode=off, the game
   itself on the only presentation display such as with AYN's "Screen
   Launch: Bottom"): no Presentation; the panels are the overlay window when
@@ -1680,7 +1709,7 @@ choice; `rm` it afterwards).
    emulator it stood at the top centre during the logos) shows after a
    touch, fades after 4 s, and a tap on it opens and closes F1.
 3. **The controller**: the Thor's prompts (round letter buttons, START /
-   SELECT pills: do they fit the printed icons?); the quick settings tile
+   SELECT as the printed arrow and square); the quick settings tile
    "Controller style" switched while the game runs: the printed A confirms
    in Standard, the bottom button in Xbox (`adb shell getevent -l` of the
    printed A in each style); "L2/R2 mode" Analog, Digital and Both: one
@@ -1713,6 +1742,137 @@ choice; `rm` it afterwards).
     the save round trip).
 12. **The online screens** over the title at their window-height size (24 px
     text): the owner's judgement (online play on Android is phase D).
+
+## The Thor check and its review fixes (14.11.2026)
+
+The owner's Thor ran the integrated head (feat-android 57278b1d, the debug
+APK 7f50cfea, and a profile APK for the frame times) from 14:48 to 15:27; its
+results and a review of the merged head and of the release pipeline gave the
+points below. Each fix is on the lane branch it belongs to (phase E's on
+`feat-android-e`, the player's side and the engine fix on
+`feat-android-cux`, the pipeline's on `feat-android-f`, RELEASE.md) and
+merged again into cux and feat-android, so the lines stay separable.
+
+| Finding | Fix | Commits |
+| --- | --- | --- |
+| **A SIGSEGV at the Thor's title** (once, 42 s after the start, 7-15 steps before the attract switch stagis10 -> stagis09, F1 open, `[menu] pause=false`): `visit()` read a node's children through garbage | A heap-use-after-free, reproduced at once by MSVC's AddressSanitizer in hidden runs over that switch with `DW4_DEV_PRESENT=90` and `40` (passes without a step and with two): a stage change's module reload (`reset_modules`) freed the layer switch `LayerSwt` and its groups (`LayerManager::clear_stage`) while the outgoing stage's `LAYERPARENT` still linked it, and a pass without a step inside the reload's held fields traversed the graph for its picture (`make_picture` kept the picture only after a step). The PC read the freed node (MSVC's destructor had emptied its children), Android crashed once the memory was used again (the F1 menu's allocations). Now the switch leaves its parent before it goes, the seamless scene copies go before the managers' resets (a window copy hangs under a layer group), and no picture is traversed in a teardown's held fields (the screen shows the kept picture anyway). ASan afterwards: no report in the title over the switch (F1 open, 90 and 40 Hz) and `newgame_dng101b1` (6000 steps, 90 and 40 Hz) | cux 778eb680 |
+| Judder at 60 Hz: 10-20 pairs of a 0 next to a 2+ per 10 s on the Thor | `RefreshClock` (`interpolation.hpp`): with VSync a pass counts as whole refreshes of the display's measured period, so the jitter of a pass's start no longer decides between 0 and 2 steps; only while the display is steady (a confidence from the passes), never online or in test runs; `DW4_DEV_MEASURED_CLOCK=1` for a comparison; tests (a simulation with 0-3 ms jitter over 6000 passes: measured 134 pairs, counted none and 5 lone repeats; a 59.94 Hz display that says 60: no judder; 120 Hz: never 2 steps; an uneven display: as measured) | cux 1d1f073f, ba2bb7a0 |
+| START / SELECT pictures did not match the Thor's printing | an arrow and a square (`Face::start_arrow`, `select_square`) | cux 1d1f073f |
+| MSAA 8x offered on Adreno 740 (4x at most), and 8x gave none | only the levels of `GL_MAX_SAMPLES`; a level the surface cannot have falls back to the next lower one | cux 1d1f073f |
+| The top screen's password field lay under the keyboard | the picture panned to the last field: Android takes SDL's text input area only when the keyboard shows, and ImGui's backend set it after the IME hook. The field's area first; another field takes the keyboard that is up in place (SDL's show task again with the field's type and area, `DW4Activity.showTextInputAgain`: a stop and a start in one frame hid the keyboard for good, seen on the emulator) | cux 1d1f073f, fbcfa753, 9b6a26b9 |
+| The lower screen's password field opened a normal keyboard (suggestions) | the top's code (`start_text_input`, `password_field_active`): `inputType=0x20081` | e 10f20fc4 |
+| A cancelled touch on the lower screen clicked ("Open the menu") | the pointer leaves before the release; the first finger by its pointer id, its lift while another stays is a cancel | e 10f20fc4 |
+| HOME, the shade or the app switcher in the first 3 s after a return were undone (the game came back to the front) | the focus is taken back only within 3 s of a display event (added, or switched on from off) | e 10f20fc4 |
+| The keyboard stayed after the lower screen went; the field took it again when the screen came back | `screen2_release_input` every frame without a lower screen; the keyboard only for a field that is active now | e 10f20fc4, 6d1f0853 |
+| After Back no tap brought the keyboard back for a lower field | a tap on a field (or another field) starts it again | e 10f20fc4 |
+| F1 on the lower screen swapped every pass | every pass only while the controller moves through it, else every other pass | e 10f20fc4 |
+| F1 > Online and the Online panel gave different reasons | one order: Android's refusal first, then the server's state; the PC's CPU refusal after it once logged in (`online_refusal_first`) | e 10f20fc4 |
+| `[screen2] mode=auto` written after off and on | a key only while it is not its default, the section with its last key (`IniFile::remove_section_if_empty`, tests) | e 10f20fc4 |
+| PC-only texts on Android, cut lines | no Discord, Wii U Pro driver or keyboard binding entries on Android; "this device"; no F5 / F9; a long press clears a controller binding; the sections' lines wrap; the Menu panel names no F1 key | cux 1d1f073f, e 10f20fc4 |
+| The GLES depth probes could not tell an unwritten probe (R32UI has no alpha) | the probe row cleared with a NaN's bits; gles_check checks a slot the pass never writes | cux 1d1f073f |
+| The depth read-back's cost in the game, the lower F1 with `pause=false` | measurements on the Thor (the checklist below) | - |
+| The Online panel shows counts, not an instance list or the friends | the owner's decision (below) | - |
+| The Status panel's area names stay English in German | the owner's decision (below) | - |
+| "The PC is unchanged" in the first start's section | made exact: the RVZ conversion's progress shows in the game window ("The first start and the disc") | docs |
+| The release pipeline: the key scan in the main worktree, the SDK for Gradle, a TEST server zip under the live name, the development notes in the zip, the debug-to-release key change, the changelog's footer, UTF-8, the password at the start, the device folder after a failed gate | RELEASE.md and `scripts/release.ps1` (phase F) | f 47a4793a |
+
+Checked (logs in `build/phx/` of the worktrees):
+
+- **The PC** (`build/Clean`, MSVC, idle priority, 4 jobs): `ctest` 78 of 78
+  on cux and e, 80 of 80 on feat-android; `det.sh` twice on an exe copy:
+  4004f056 / 396cb219 in all four runs on each; the save state suite (a
+  private copy) 17 of 17. MSVC ASan (`build/asan` of the cux worktree,
+  RelWithDebInfo with `/fsanitize=address`): see the first row.
+- **The emulator** (`dw4thor33`, `-gpu host`, headless, idle priority; the
+  debug APK of feat-android built offline): the lower screen's password
+  field `inputType=0x20081`, Account `0x3c001`, the switch between them and
+  Back then a tap with the keyboard shown again; a DOWN and a CANCEL on
+  "Open the menu" opened nothing, a tap did; HOME 1.2 s after a return
+  went to the background, the shade stayed, nothing came back to the front;
+  the display removed while a lower field had the keyboard: `its text field
+  let go of the keyboard`, `mInputShown=false`; the display added again:
+  `the display that came took the focus; the game takes it back`, no text
+  input started; the top screen's Password field above the keyboard
+  (inputType 0x20081), Account then Tab to Password with the keyboard up;
+  F1 offers Off / 2x / 4x (the emulator's `GL_MAX_SAMPLES` 4); "this
+  device" in the cloud backup's line. On the emulator the step clock stayed on the measured time: its display presented at uneven times under the PC's load (intervals of 15.6 and 27 ms at
+  the median and the 90th percentile), so the passes never came steadily enough in whole
+  refreshes, as the clock wants it; with `DW4_DEV_MEASURED_CLOCK=1` the same
+  regime (60 s each, twice: 40-155 against 41-188 pairs of a 0 next to a 2+ per
+  10 s). The emulator cannot show the fix; the Thor's steady 60 Hz is where it
+  counts (the owner's point 3 below).
+- **The Thor**: `adb install -r` of this debug APK (the disc copy, settings.ini with md5
+  0de27a40 and the internal folder kept, no `dw4args.allow`); the game was not
+  started there in this round (its test switches need `dw4args.allow`, which
+  this round did not create); `/data/local/tmp` is empty.
+
+### The owner's checks on the Thor after these fixes
+
+The debug APK of feat-android (both ABIs; `adb install -r` keeps the disc
+copy, settings.ini and game.tsv) and, for the frame times, the profile APK
+(arm64-v8a, `assembleProfile`). Points 3, 8 and 9 run test switches through
+`dw4args` (`adb shell run-as org.dw4pc.game touch files/dw4args.allow`, `rm`
+afterwards; `--mute` in every such run).
+
+1. **The crash's case**: the title with F1 open and `[menu] pause=false`
+   (the owner's settings), left alone over the attract switch (about 40 s
+   after the title), three times: no crash (`adb shell dumpsys dropbox
+   --print data_app_native_crash` stays without a new entry).
+2. **START / SELECT**: the title's PRESS START, the name entry's prompt and
+   F1 > Controls show the printed arrow and square.
+3. **Frame pacing** (the profile APK, `--mute --env DW4_FRAME_STATS=10`, at
+   the title and in a dungeon): `frames: the step clock counts in the
+   display's refreshes (16.667 ms)` and "a 0 next to a 2+" at 0 (a lone 0
+   about every 16.7 s); for a comparison the same with `--env
+   DW4_DEV_MEASURED_CLOCK=1` (the old clock: 10-20 pairs per 10 s); at Smooth
+   Display 120 no pass with 2+ steps.
+4. **MSAA**: F1 > Settings offers Off, 2x and 4x; an `msaa=8` in
+   settings.ini starts with 4x (`window: 8x anti-aliasing is not offered
+   here; 4x instead`).
+5. **The keyboard**: F1 > Saves, the cloud backup's Password field stays
+   above Gboard's taller password keyboard; Account to Password and back
+   with the keyboard up keeps it up; on the lower screen (its Menu tab, F1
+   there > Saves) the Password field opens the keyboard without suggestions,
+   and switching the lower screen off while typing there puts the keyboard
+   away.
+6. **Controls**: a long press on a controller binding in F1 > Controls
+   clears it.
+7. **HOME and the notification shade** within the first seconds after a
+   return: the game stays in the background (no `the display that came took
+   the focus` line).
+8. **The lower F1 with `pause=false`** (`--env DW4_FRAME_STATS=10`):
+   `frames: second screen ...` about 30 drawn and swapped a second while the
+   controller rests, every pass while it moves through the menu; the top
+   screen's presents/s as without it.
+9. **The name tags' depth read-back** (the profile APK, a dungeon, `--env
+   DW4_LABELS=all --env DW4_FRAME_STATS=10` against a run without
+   `DW4_LABELS`): the work's p50 and the interval's p99 with and without the
+   tags (an asynchronous read through a pixel pack buffer only if it costs).
+10. The hand points of the earlier list that stay open: Focus Mode Auto and
+    Top while walking, Screen Launch: Bottom, the lower screen off and on
+    with AYN's switch, L2 / R2 in every mode, the touch feel, the sound after
+    HOME and the shade, the controller style switched while the game runs, a
+    binding on BACK, the online screens' text size.
+
+### The owner's decisions from this review
+
+- **The Online panel** shows the world's counts and the number of friends
+  online (the client knows no more today; the seamless model has no list of
+  open instances; the running instance with its members is shown). Keep it,
+  or with phase D a friends list (names, online) from `GET /friends`?
+- **The Status panel's area names** ("Death Valley: Humid Cave") stay
+  English when the game text is German (the port's UI is English); or from
+  the language catalog, as game text?
+- **The release** (RELEASE.md): which documents players get (none now:
+  README, LICENSE, notices, licenses, lang), the exe's name (`DW4_PC.exe` or
+  `dw4_game.exe`), the version players see (DW4_PC 0.46.0 or DW4Online
+  0.1.x), the two TEST server zips in the `android-f` worktree's `dist/`.
+- **The engine fix 778eb680** is main's bug too (every stage change; a
+  picture traversal in the held fields read freed memory, and the seamless
+  copies' clean-up right after the reset could write into a freed layer
+  group; harmless on the PC so far only because MSVC's destructor had
+  emptied the node): it goes to main with the player's side, or to main and
+  int-i1b on its own first.
 
 ## The Thor
 
