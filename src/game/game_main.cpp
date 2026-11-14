@@ -3010,7 +3010,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // refreshes (RefreshClock: the jitter of a pass's start no longer
             // decides between 0 and 2 steps); an online room's session paces
             // its steps from the measured time itself, test runs step once.
-            const bool refresh_paced = settings.vsync && !dev.presenting() && !options.smoke_frames && !online && !net.active() && view.window;
+            // (DW4_DEV_MEASURED_CLOCK=1: the measured time as before, for a
+            // comparison with DW4_FRAME_STATS.)
+            static const bool measured_clock = std::getenv("DW4_DEV_MEASURED_CLOCK") && std::atoi(std::getenv("DW4_DEV_MEASURED_CLOCK")) != 0;
+            const bool refresh_paced = settings.vsync && !measured_clock && !dev.presenting() && !options.smoke_frames && !online && !net.active() && view.window;
             if (refresh_paced) {
                 double refresh_hz = 0;
                 if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(view.window)))
@@ -3021,6 +3024,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
             } else {
                 refresh_clock.reset();
                 accumulator += pass_seconds;
+            }
+            // (DW4_FRAME_STATS: when the step clock starts and stops counting
+            // in refreshes; the first 20 changes.)
+            static const bool pacing_trace = std::getenv("DW4_FRAME_STATS") != nullptr;
+            static bool counting_before = false;
+            static int counting_changes = 0;
+            if (pacing_trace && refresh_clock.counting() != counting_before && counting_changes < 20) {
+                counting_before = refresh_clock.counting();
+                ++counting_changes;
+                if (counting_before) std::printf("frames: the step clock counts in the display's refreshes (%.3f ms)\n", refresh_clock.period() * 1000.0);
+                else std::printf("frames: the step clock takes the measured time (the passes do not come in whole refreshes)\n");
+                std::fflush(stdout);
             }
             last = now;
             // (Online rooms keep real time in test runs too: the relay seals on its clock.)

@@ -130,7 +130,11 @@ private:
 // rate is not quite the reported one; what a pass differs from its count
 // is kept and given back once it reaches a field. Any other pass (VSync
 // off, a frame limit off the refresh, a hitch of more than 4 refreshes)
-// counts as measured.
+// counts as measured, and so does every pass while the display is not
+// steady: whole refreshes only count once most passes have come in them
+// (a confidence that rises by 1 with such a pass and falls by 10 with any
+// other, counted from 30 of at most 60; an emulator whose display presents
+// at irregular times stays measured).
 class RefreshClock {
 public:
     // The seconds a pass adds to the step clock: `measured` (the time since
@@ -139,8 +143,11 @@ public:
     // The period in use (seconds; 0 before a pass with a known rate).
     double period() const { return refresh_hz_ > 0 ? (refreshes_ >= kMeanAfter ? measured_sum_ / refreshes_ : 1.0 / refresh_hz_) : 0.0; }
     void reset();
+    // Whether the last pass was counted in refreshes.
+    bool counting() const { return confidence_ >= kCountFrom; }
 
     static constexpr double kMeanAfter = 120;                // refreshes counted before their mean is the period
+    static constexpr int kCountFrom = 30, kConfidenceMost = 60;
     static constexpr double kStepSeconds = 1001.0 / 60000.0; // one step (engine::kFieldSeconds): what is owed at most
 
 private:
@@ -148,6 +155,7 @@ private:
     double measured_sum_ = 0;  // the counted passes' measured seconds ...
     double refreshes_ = 0;     // ... and their refreshes
     double owed_ = 0;          // measured minus counted, not yet given back
+    int confidence_ = 0;       // how steadily passes come in whole refreshes
 };
 
 } // namespace dw4::game

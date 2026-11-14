@@ -305,7 +305,7 @@ struct PacingRun {
     int zeros = 0, doubles = 0, pairs = 0;
     double counted = 0, real = 0;
 };
-PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, double jitter = 0.003) {
+PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, double jitter = 0.003, bool irregular = false) {
     constexpr double kField = 1001.0 / 60000.0;
     dw4::game::RefreshClock clock;
     PacingRun run;
@@ -317,7 +317,9 @@ PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, 
     double previous = noise(), accumulator = 0;
     int last_steps = 1;
     for (int k = 1; k <= passes; ++k) {
-        const double stamp = double(k) / display_hz + noise();
+        // (irregular: a display that presents at uneven times, the emulator's:
+        // a pass now and then 10 ms late, the next one early.)
+        const double stamp = double(k) / display_hz + noise() + (irregular && k % 7 == 3 ? 0.010 : 0.0);
         const double measured = stamp - previous;
         previous = stamp;
         const double dt = snapped ? clock.pass(measured, reported_hz) : measured;
@@ -356,11 +358,17 @@ void test_refresh_clock() {
     // 120 Hz: a step every other pass, never two.
     const auto fast = pace(120.0, 120.0, 6000, true, 0.0015);
     check(fast.doubles == 0, "120 Hz: never two steps in a pass");
+    // A display that presents at uneven times: as measured (the same steps).
+    const auto uneven_raw = pace(60.0, 60.0, 6000, false, 0.003, true);
+    const auto uneven = pace(60.0, 60.0, 6000, true, 0.003, true);
+    check(uneven.zeros == uneven_raw.zeros && uneven.doubles == uneven_raw.doubles && uneven.pairs == uneven_raw.pairs,
+          "an uneven display: counted as measured");
+    check(std::abs(uneven.counted - uneven.real) < 1e-9, "an uneven display: real time");
     // A display that is not what it reports (a variable refresh at the game's
     // own pace under a 144 Hz mode): every pass as measured.
     dw4::game::RefreshClock clock;
     check(near(float(clock.pass(1001.0 / 60000.0, 144.0)), float(1001.0 / 60000.0)), "not a whole number of refreshes: as measured");
-    check(clock.pass(0.2, 60.0) == 0.2, "a hitch of more than four refreshes: as measured");
+    check(clock.pass(0.2, 60.0) == 0.2 && !clock.counting(), "a hitch of more than four refreshes: as measured");
     check(clock.pass(0.016, 0.0) == 0.016 && clock.period() == 0.0, "no known rate: as measured");
 }
 

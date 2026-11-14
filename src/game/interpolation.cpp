@@ -268,6 +268,7 @@ void RefreshClock::reset() {
     measured_sum_ = 0;
     refreshes_ = 0;
     owed_ = 0;
+    confidence_ = 0;
 }
 
 double RefreshClock::pass(double measured, double refresh_hz) {
@@ -287,9 +288,19 @@ double RefreshClock::pass(double measured, double refresh_hz) {
         period_now = period();
     }
     const double count = std::round(measured / period_now);
-    if (count < 1.0 || count > 4.0 || std::abs(measured - count * period_now) > 0.25 * period_now) return measured;
+    if (count < 1.0 || count > 4.0 || std::abs(measured - count * period_now) > 0.25 * period_now) {
+        confidence_ = std::max(confidence_ - 10, 0);
+        if (confidence_ < kCountFrom && owed_ != 0) {
+            // (No longer counting: what was owed goes with this pass.)
+            measured += owed_;
+            owed_ = 0;
+        }
+        return std::max(measured, 0.0);
+    }
     measured_sum_ += measured;
     refreshes_ += count;
+    confidence_ = std::min(confidence_ + 1, kConfidenceMost);
+    if (confidence_ < kCountFrom) return measured;
     double counted = count * period_now;
     owed_ += measured - counted;
     if (std::abs(owed_) >= kStepSeconds) {
