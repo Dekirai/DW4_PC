@@ -9698,7 +9698,12 @@ catch-up whose target leaves the stage).
   `World:MemberTimeoutMarginSeconds` (10).
 - **A solo-led host stage group** plays on in the host's client until its
   barrier (6.10); the relay counts the grace all the same.
-- **Back in time:** RESUME, "Kim is back."
+- **Back in time:** RESUME, "Kim is back." His slot's fill streak counts
+  for `lagOut` from his return, not from the grace's start: his client has
+  `Relay:LagLeaveSeconds` to catch up to the ticks sealed meanwhile and then
+  plays on in his stage group (round I1b's fix stage after the merge of main:
+  before, a host away longer than that was taken out by `lag_leave` a quarter
+  second after `host_back`).
 - **A crash** (the engine lost): within the grace only with round I5 (a
   checkpoint rejoin of his own slot, 19.15); before I5 a crashed host ends
   his instance after 60 s.

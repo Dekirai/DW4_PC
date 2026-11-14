@@ -3376,11 +3376,13 @@ public sealed partial class RoomHub
                     }
                 }
                 // The host in his grace (19.6.7): his slot fills with neutral pads until the grace's end, no lagOut, no reconnect LEAVE.
+                // Back in time, his lagOut counts from his return (WorldHub.HostBack restarts his fill streak's clock).
                 var inGrace = m.World is { HostAway: true } hw && hw.Host == m;
                 var gone = !inGrace && !m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0;
                 var lagOut = !inGrace && lagging && !everyoneLags && !m.Resyncing && Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0;
                 if (gone || lagOut)
                 {
+                    Count(gone ? "reconnect_timeout" : "lag_leave");
                     Note(gone ? "reconnect_timeout" : "lag_leave", i, ("member", m.Index));
                     StampLeave(i, s, now);
                     if (!gone) TellApart(i, m);

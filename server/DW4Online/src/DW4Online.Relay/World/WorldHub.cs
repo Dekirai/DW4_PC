@@ -650,13 +650,19 @@ public sealed partial class RoomHub
         MarkInfoDirty(w);
     }
 
-    /// <summary>The host is back within his grace (RESUME, a reconnect, INPUT after silence): play on, the held values merge.</summary>
+    /// <summary>The host is back within his grace (RESUME, a reconnect, INPUT after silence): play on, the held values merge. The lag
+    /// rule gives his slot Relay:LagLeaveSeconds from now (his client catches up to the ticks sealed meanwhile), not from the grace's
+    /// start.</summary>
     private void HostBack(WorldInstance w, long now)
     {
         if (!w.HostAway) return;
         w.HostAwaySince = 0;
         w.GraceUntil = 0;
-        if (w.Host.Instance is { } g && w.Host.Slot >= 0 && g.Streams[w.Host.Slot] is { } st) st.NeutralFill = false;
+        if (w.Host.Instance is { } g && w.Host.Slot >= 0 && g.Streams[w.Host.Slot] is { } st)
+        {
+            st.NeutralFill = false;
+            st.RestartFillStreakClock(now);
+        }
         Note("host_back", null, ("wid", w.Wid));
         foreach (var x in w.Members)
             if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostBack, w.Host, 0, ""));

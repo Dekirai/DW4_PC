@@ -567,6 +567,68 @@ public partial class HubLogicTests
         Assert.False(h.Hub.Counters.ContainsKey("lag_leave"));
     }
 
+    /// <summary>
+    /// Back in time, the host plays on (19.6.7) also after more than Relay:LagLeaveSeconds away: the lag rule counts his slot's fill
+    /// streak from his return, not from the grace's start. (Before, the housekeeping right after host_back took him out of his own
+    /// stage group by lag_leave: the merge of main's first W7f run, and a quarter second after host_back in every W7, W7c and W7d
+    /// run.) A returned host whose pads still come late LagLeaveSeconds after his return is taken out as any member.
+    /// </summary>
+    [Fact]
+    public void A_host_back_after_more_than_the_lag_limit_away_plays_on_and_the_lag_rule_counts_from_his_return()
+    {
+        foreach (var catchesUp in new[] { true, false })
+        {
+            var h = SealedPair(out _, relay: new RelayOptions { LagLeaveSeconds = 10 });
+            var w = W(h, "a");
+            var i = h.I("a");
+            var aPads = 2; // a's pads: 0 none (away), 1 late ones (its resumed client catches up), 2 in time
+            void Pads(double ms)
+            {
+                var end = h.Now + (long)(ms * System.Diagnostics.Stopwatch.Frequency / 1000);
+                for (var k = 0; h.Now < end; ++k)
+                {
+                    h.Send("b", new InputMsg(i.Id, i.Visit, i.NextSeal + 3, [new Pad(1, 0, 0, 0, 0), new Pad(1, 0, 0, 0, 0)]).Frame());
+                    if (aPads == 1) h.Send("a", new InputMsg(i.Id, i.Visit, i.NextSeal - 300, [new Pad(2, 0, 0, 0, 0)]).Frame());
+                    if (aPads == 2) h.Send("a", new InputMsg(i.Id, i.Visit, i.NextSeal + 3, [new Pad(2, 0, 0, 0, 0), new Pad(2, 0, 0, 0, 0)]).Frame());
+                    h.Seal(17);
+                    if (k % 15 == 0) h.Housekeep();
+                }
+            }
+            Pads(1000);
+            // a's connection goes for 15 s (inside his 60 s grace, past LagLeaveSeconds of neutral fills).
+            h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
+            aPads = 0;
+            Assert.True(w.HostAway);
+            Pads(15_000);
+            Assert.Same(i, h.Mem("a").Instance);
+            // Back (a reconnect, resumed): his client catches up, its pads still late for five seconds.
+            h.Connect("a", 0);
+            Assert.False(w.HostAway);
+            aPads = 1;
+            Pads(5000);
+            Assert.Same(i, h.Mem("a").Instance);
+            Assert.False(h.Hub.Counters.ContainsKey("lag_leave"));
+            Assert.DoesNotContain(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
+            if (catchesUp)
+            {
+                // Caught up: his pads come in time, he plays on as host of his stage group.
+                aPads = 2;
+                Pads(15_000);
+                Assert.Same(i, h.Mem("a").Instance);
+                Assert.False(h.Hub.Counters.ContainsKey("lag_leave"));
+                Assert.True(i.Streams[h.Mem("a").Slot]!.FillStreak < SlotStream.LagFills);
+            }
+            else
+            {
+                // Still late LagLeaveSeconds after his return: the lag rule takes him out as any member (b is told he plays apart).
+                Pads(6000);
+                Assert.NotSame(i, h.Mem("a").Instance);
+                Assert.Equal(1, h.Hub.Counters["lag_leave"]);
+                Assert.Contains(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
+            }
+        }
+    }
+
     [Fact]
     public void Instance_op_visibility_is_the_hosts_and_staffs_and_is_remembered()
     {
