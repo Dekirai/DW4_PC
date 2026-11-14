@@ -1804,7 +1804,11 @@ Checked (logs in `build/phx/` of the worktrees):
 - **The Thor**: `adb install -r` of this debug APK (the disc copy, settings.ini with md5
   0de27a40 and the internal folder kept, no `dw4args.allow`); the game was not
   started there in this round (its test switches need `dw4args.allow`, which
-  this round did not create); `/data/local/tmp` is empty.
+  this round did not create); gles_check of this code by `adb shell`
+  (`/data/local/tmp/dw4c`, removed afterwards; `/data/local/tmp` is empty):
+  PASSED, 0 failures with 4x multisampling and without, the depth probes
+  with the new marker (the slot after the probes keeps it), one read-back
+  0.48 / 0.50 ms median.
 
 ### The owner's checks on the Thor after these fixes
 
