@@ -1890,9 +1890,11 @@ afterwards; `--mute` in every such run).
    controller rests, every pass while it moves through the menu; the top
    screen's presents/s as without it.
 9. **The name tags' depth read-back** (the profile APK, a dungeon, `--env
-   DW4_LABELS=all --env DW4_FRAME_STATS=10` against a run without
-   `DW4_LABELS`): the work's p50 and the interval's p99 with and without the
-   tags (an asynchronous read through a pixel pack buffer only if it costs).
+   DW4_FRAME_STATS=10`, with a settings.ini copy that has `[hud]
+   overhead_labels=all` against one with `off`; `DW4_LABELS` is read in
+   test runs only, `dw4args` runs are not): the work's p50 and the
+   interval's p99 with and without the tags (an asynchronous read through a
+   pixel pack buffer only if it costs).
 10. The hand points of the earlier list that stay open: Focus Mode Auto and
     Top while walking, Screen Launch: Bottom, the lower screen off and on
     with AYN's switch, L2 / R2 in every mode, the touch feel, the sound after
@@ -1918,6 +1920,121 @@ afterwards; `--mute` in every such run).
   group; harmless on the PC so far only because MSVC's destructor had
   emptied the node): it goes to main with the player's side, or to main and
   int-i1b on its own first.
+
+## The Thor re-check and its fixes (14.11.2026, evening)
+
+The owner's Thor ran the fix stage above (16:32-18:38, debug APK f4031258,
+profile APK a9149d43, both displays at 60 Hz): 9 of its 10 points passed
+(no crash in 14 sessions with about 40 attract switches with F1 open, also
+opened 0.04 s before a switch and during a load; the arrow and the square;
+the step clock 0-1 pairs of a 0 next to a 2+ per 10 s in the title, a
+dungeon and the fields against 3-28 with the old clock; MSAA, the keyboard,
+the long press, the focus, the name tags; det 4004f056 / 396cb219 twice).
+That check, and a review of the engine fix 778eb680 with MSVC ASan, gave
+three fixes, all on `feat-android-cux` (the engine's and the player's side)
+and merged into feat-android; the lower screen's lane needed none.
+
+| Finding | Fix | Commit |
+| --- | --- | --- |
+| **The top screen juddered again with F1 on the lower screen** (`pause=false`, the pad resting: 6-42 pairs per 10 s with the profile APK, 94-152 with the debug APK; the presents and the lower screen's swaps right) | The lower screen draws every other pass after the top swap (2.9 ms, 4.6 ms in the debug build): the next pass starts that much later and the one after it earlier. `RefreshClock` judged each pass's measured time alone (a refresh plus or minus a quarter): the alternation and the usual jitter left that often enough for its confidence to fall, and the measured time put the passes on 0 and 2 steps. The clock is phase locked now: every pass's start is placed on the grid of the reported rate's refreshes and counts the refreshes from the last pass's grid point to its own, nearest to where passes usually start (a running mean); the late pass and the early one after it count 1 each. A pass is steady within 0.35 of a refresh of that place; while the clock counts, an unsteady pass counts its refreshes on the grid too (a late start and an early one: 1 and 1). The period is the reported one plus the usual place's drift per refresh (the mean of the steady passes' measured times was biased by the passes it left out and made the owed time reach a field: a lone double). Tests (6000 passes, 0-3 ms jitter): 3 and 5 ms every other pass, the measured clock 798 / 1495 pairs, counted none; 6 ms with 3.5 ms jitter: none; a 5 ms late start every 50 passes: none, 7 ms: under a tenth of the measured clock's | cux 0cb06d9a |
+| **The opening and the attract movie (stagis09) juddered**, the profile APK too (every fourth pass 36-46 ms, 20-45 pairs per 10 s; older than this stage) | The pass decoded the next picture with pl_mpeg, converted it to RGBA and uploaded it, the upload in every pass into the one texture the frames before still drew. Now a worker thread decodes and converts two pictures ahead (`MovieDecoder`; `seek` takes the picture and waits only when the worker is behind, so the pictures stay exact: the PC's screenshots in the attract movie are byte-identical to before), each picture is uploaded once, into the next of three textures, and `DW4_FRAME_STATS` adds `frames: movie ...` (the worker's decoding and RGBA times, the pass's wait, upload and draw) | cux 1b6cf72d |
+| **A heap-use-after-free left after 778eb680** (the review: a context loss, or a window size change, in a stage change's held fields: the kept picture cannot be drawn and present_scene rendered the draw list from before the module reload, whose texture bindings `TextureCtrlManager::clear_stage` had freed; ASan at stag0101's teardown; not new, the same case crashed at the layer switch before) | `make_picture` drops the draw list and the shadow in the reload's held fields (held and not presenting): such a pass draws an empty picture (the clear colour) and keeps it. One rule for all the list's pointers into what the resets free (the texture control's bindings, the managers' nodes, attributes and geometry); the engine's own state is unchanged (presentation only, no traversal changes) | cux 42825960 |
+
+**The 0.2.0 line (int-i1b) takes the engine fix with its follow-up:
+778eb680, then 42825960** (both are main's bug too). A dry run on the
+`ef-i1b` worktree: both cherry-picked onto int-i1b 0ef550e9 without a
+conflict and with identical patches (`git patch-id`); ctest 78 of 78, det.sh
+twice 4004f056 / 396cb219 (four runs), the save state suite 17 of 17, the
+scenarios W1, W4c, W7 and W8 with real hidden clients (mysqld 3720, ports
+60000-60199, loopback): 4 of 4 passed, no fingerprint differed (W8 is
+the seamless stage change into dng101b1 with a stage group's join; the
+worktree's `build/efi/round3.log`, `scen_3.log`). The other two commits are the
+player's side (the step clock exists on `feat-android-cux` only; the movie
+decoder helps the PC, too, but fixes nothing there).
+
+Checked (logs in `build/phx2/` of the cux worktree, `build/phx3/` and
+`build/thor3/` of the feat-android worktree):
+
+- **The PC** (`build/Clean`, MSVC, idle priority, 4 jobs): cux: ctest 78 of
+  78 (`presence`, a wall-clock test, failed once under `-j 2` and passes
+  alone), det.sh twice on an exe copy: 4004f056 / 396cb219 in all four
+  runs, the save state suite 17 of 17. feat-android (the merge 02f838eb):
+  ctest 80 of 80, det.sh twice 4004f056 / 396cb219, the save state suite 17
+  of 17. The attract
+  movie's pictures at 9 frames (2420-3250) are byte-identical between the
+  old and the new exe; on the PC a picture takes 3 ms to decode and 0.8 ms
+  to convert on the worker, the pass 0.1 ms to upload and draw it.
+- **MSVC ASan** (`build/asan` of the cux worktree, RelWithDebInfo with
+  `/fsanitize=address`, rendered with `thor_like.ini`): the review's case
+  (`DW4_TEST_CONTEXT_LOSS=4605` inside stag0101's teardown, 60 Hz) reports
+  the use-after-free with 778eb680 alone and nothing with 42825960; nine more
+  runs clean: context losses inside the teardowns of stag0101 and dng101b1
+  at 40, 60, 90 and 144 Hz and without pacing (F1 open at 144 Hz; three or
+  four losses a run), the title's attract switch at 90 Hz with F1 open, the
+  new game into dng101b1 at 61 Hz; stag0101 <-> dng101b1 at 90 Hz with F1
+  and the title at 40 Hz without a loss.
+- **The Thor** (19:03-19:28, display 60 Hz under Smooth Display 60, both
+  displays in their 60 Hz mode; the debug APK 605d79be and the profile APK
+  00c73f7f of feat-android 02f838eb; `adb install -r`, the user's files
+  restored byte-identical by md5 afterwards). Pairs of a 0 next to a 2+ per
+  10 s, the windows after the start's:
+
+  | | new clock | the old measured clock (`DW4_DEV_MEASURED_CLOCK=1`) | before (the re-check) |
+  | --- | --- | --- | --- |
+  | title, F1 on the lower screen, profile APK | 0 (the attract switch's window 2-3) | 71-118 | 6-42 |
+  | title, F1 on the lower screen, debug APK | 0 (once 7: a lower frame of 18 ms) | 123-167 | 94-152 |
+  | dungeon dng101b1, F1 on the lower screen, profile APK | 0 | - | - |
+  | title and dungeon without the lower F1, profile APK | 0 | - | 0-1 |
+  | the attract movie, profile APK | 0-1 | - | 20-45 |
+
+  The top screen with the lower F1: 59.8 presents/s, interval p50 16.7 ms,
+  p90 17.8-17.9 ms (as without it), the lower screen 29.9 swaps/s at 2.9 ms
+  (4.5 ms in the debug APK). The movie (profile APK): interval p90 18.3-18.7
+  ms, p99 19.7-19.9 ms (before: p90 36-40, p99 44-47), work p99 17.7-18.3 ms
+  (before 42-46); the worker decodes a picture in 11-14 ms at the median
+  (p99 22-25, at most 28.5) and converts it in 3.6-5.2 ms, the pass waits
+  0.05 ms (p99 0.2) and uploads and draws in 0.65 ms (p99 1.3); the debug
+  APK's worker 9-14 ms (p99 26-29, at most 35.5), the pass's wait p99 0.1 ms,
+  0 pairs. The crash's case (the debug APK, F1 open, three sessions of 120 s
+  over two attract switches each): no crash, `dumpsys dropbox` without a
+  new entry. The Thor's 60 Hz mode presents 59.8 times a second (the clock
+  measures 16.72 ms): a lone double about every 7 s is the game's 59.94 Hz
+  on that panel, not judder.
+
+Left from the re-check's smaller points: a test run with `--stage` and
+`--card-dir` on Android is no test run for the achievements (a `dw4args`
+run writes `saves/profile.dat` like a player's; none was written in this
+round's runs); `DW4_GL_CHECK`'s total line is printed at the game's end,
+which a force-stop skips; the debug APK is for checks, the profile APK
+(`-O2`) is the one to play with until a release build.
+
+### The owner's checks on the Thor after these fixes
+
+The debug APK of feat-android is installed; the hand points that only the
+owner can check:
+
+1. Focus Mode Auto and Top: walking in the game, tap the lower screen; the
+   controller's input stays with the game.
+2. Screen Launch: Bottom: where the game lands, and whether the lower
+   screen's panels come.
+3. AYN's switch for the lower screen, once while playing and once while
+   typing into a lower field: the keyboard goes, the panels come back, and
+   the game takes the focus back only when the screen has just come.
+4. L2 / R2 in all three trigger modes (Analog, Digital, Both): one press
+   each, analog in steps.
+5. The touch feel on both screens: a tap, a long press, dragging F1's
+   scroll bar.
+6. Smooth Display 120 Hz: in a dungeon never a pass with 2+ steps, even
+   movement.
+7. The sound after HOME and after the notification shade: it comes back,
+   without a crackle.
+8. The controller style switched in the quick settings while the game
+   runs: the A / B pictures and the binding change within about a second.
+9. A binding on the BACK key: Back still opens F1.
+10. The online screens' text size.
+11. F1 on the lower screen with `pause=false` while walking in a dungeon
+    (no judder now), the opening movie (smooth now), and whether Gboard's
+    hint banner at the first password field gets in the way.
 
 ## The Thor
 
