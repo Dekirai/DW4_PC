@@ -542,6 +542,12 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             const std::string label = (row.own && !live->go_line.empty() ? live->go_line : row.text) + "##go" + std::to_string(row.id);
             if (s.focus_go && (s.focus_go_id == 0 ? first : row.id == s.focus_go_id) && !ImGui::IsWindowAppearing()) {
                 ImGui::SetKeyboardFocusHere();
+                // (The menu opened by a button, View or F1: the cursor shows
+                // on the row, so the first A goes along or cancels. ImGui
+                // activates only with a visible cursor, and the focus request
+                // leaves it hidden: the first A only showed it; round I1b's
+                // integration review.)
+                ImGui::SetNavCursorVisible(true);
                 s.focus_go = false;
                 s.focus_pending = false;
             }
@@ -566,8 +572,8 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         // (The row to focus is gone: the first row then.)
         if (s.focus_go && !ImGui::IsWindowAppearing()) s.focus_go_id = 0;
         // (A View press within a notice's first half second: the cursor goes
-        // to the page's first item below the box, so a reflexive A goes
-        // nowhere.)
+        // to the page's first item below the box, hidden, so a reflexive A
+        // goes nowhere: it only shows the cursor.)
         if (s.focus_below_go && !ImGui::IsWindowAppearing()) {
             ImGui::SetKeyboardFocusHere();
             s.focus_below_go = false;
@@ -595,6 +601,7 @@ void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             // request would find no item.)
             if (s.focus_visibility && !ImGui::IsWindowAppearing()) {
                 ImGui::SetKeyboardFocusHere();
+                ImGui::SetNavCursorVisible(true); // (the first A changes it, as on the Go along row)
                 s.focus_visibility = false;
                 s.focus_pending = false;
             }

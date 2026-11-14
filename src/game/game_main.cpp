@@ -4389,9 +4389,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     online_ui.go_closed = 0;
                 }
                 if (online_ui.close_requested) {
-                    // ("Play" on the playing screen, here or in F1 Online.)
+                    // ("Play" on the playing screen, here or in F1 Online; A on a
+                    // Go along row; B in the box.) The game's pad waits until
+                    // every button is up: the A or B that closed the menu is
+                    // still held, and the game (a swing, a talk) or an open
+                    // arrival prompt took it as a press (round I1b's
+                    // integration review).
                     online_ui.close_requested = false;
-                    if (title_online.active) pad_latch = true;
+                    pad_latch = true;
                     title_online.active = false;
                     show_menu = false;
                 }
@@ -4492,7 +4497,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // Seamless co-op notices, bottom centre (presentation only):
                 // the defeated member's hint, the exit prompt's names.
                 // Round I1b: the arrival prompt (19.5.3), in the gate form over the frozen game or on the loading screen.
-                if (online && online->session().prompt()) dw4::game::draw_arrival_prompt(*online->session().prompt(), gamepads.empty());
+                // (Its hint line: the keyboard's keys while the keyboard is the
+                // device in use, as every other hint of the port; the pad's
+                // pictures otherwise. Round I1b's integration review: it asked
+                // whether a pad was plugged in.)
+                if (online && online->session().prompt()) {
+                    const auto* prompts = dw4::game::ButtonPrompts::active_prompts();
+                    const bool keyboard = prompts ? prompts->family() == dw4::game::PadFamily::keyboard : gamepads.empty();
+                    dw4::game::draw_arrival_prompt(*online->session().prompt(), keyboard);
+                }
                 if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
                     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 24), ImGuiCond_Always, ImVec2(0.5f, 1));
@@ -4559,7 +4572,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                         if (!line.empty()) {
                             const auto state = session.go_state();
-                            const bool cancellable = state == dw4::game::online::GoState::asked || state == dw4::game::online::GoState::waiting;
+                            // (The boss fight's wait too: the box's row cancels it, 19.30.6.)
+                            const bool cancellable = state == dw4::game::online::GoState::asked || state == dw4::game::online::GoState::waiting ||
+                                                     state == dw4::game::online::GoState::boss;
                             // ({MENU}: the F1 menu's button as player 1's device shows it: View / Back / Share / Minus, F1 on
                             // the keyboard; round I1b's integration.)
                             dw4::game::prompt_text(line + (cancellable ? "  {MENU} cancel" : ""));

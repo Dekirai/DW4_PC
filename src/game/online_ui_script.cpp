@@ -340,6 +340,15 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
         const auto& want = arg(1);
         return want.starts_with("<=") ? members <= std::atoi(want.c_str() + 2) : members >= std::atoi(want.c_str());
     }
+    if (c == "wait-go") {
+        // (Round I1b's integration: until the Instance page's Go along box
+        // has a row A can take: another player's offer, not closing, not
+        // greyed. Its notice shows from the same OFFER.)
+        timed(1, 120);
+        if (!host.live) return false;
+        return std::any_of(host.live->go_rows.begin(), host.live->go_rows.end(),
+                           [](const RoomLive::GoRow& r) { return !r.own && !r.closing && r.grey.empty(); });
+    }
     if (c == "visibility") {
         host.state.visibility_requested = std::clamp(std::atoi(arg(1).c_str()), 0, 2);
         return true;

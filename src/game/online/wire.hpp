@@ -678,7 +678,8 @@ struct InstanceInfo {
 enum class NoticeKind : std::uint8_t {
     joined = 1, left = 2, went_to = 3, visibility = 4, removed = 5, host_away = 6, host_back = 7, ended = 8,
     lagging = 9, lag_over = 10, shared_progress = 11, restart_in = 12, go_refused = 13,
-    report = 14 // round I1b: the answer to REPORT (argument ReportResult; member and name: the reported player)
+    report = 14, // round I1b: the answer to REPORT (argument ReportResult; member and name: the reported player)
+    apart = 15   // round I1b's integration: a member left the own stage group but stays in the instance (lag, a split barrier)
 };
 // WORLD_NOTICE 14's argument (i1b-contract.md moderation 16:25).
 enum class ReportResult : std::uint32_t { sent = 0, limit = 1, not_available = 2, failed = 3 };

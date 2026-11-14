@@ -17,6 +17,15 @@ namespace dw4::game::online {
 
 namespace w = wire;
 
+namespace {
+// Stage folders compared as the game names them (any case).
+bool is_same_stage(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return (x >= 'A' && x <= 'Z' ? x + 32 : x) == (y >= 'A' && y <= 'Z' ? y + 32 : y);
+           });
+}
+} // namespace
+
 const char* mode_name(Mode mode) noexcept {
     switch (mode) {
     case Mode::connecting: return "connecting";
@@ -376,6 +385,7 @@ void Session::poll(double now) {
     if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && !prompt_hold_ && now - parked_at_ > config_.barrier_timeout)
         barrier_fallback(now);
     if (prompt_ && auto_answer_at_ >= 0 && now >= auto_answer_at_) auto_answer(now);
+    if (join_toast_due_ >= 0 && now >= join_toast_due_) join_toast(now);
     if (leave_wanted_) send_pending_leave();
     tick_go(now);
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
@@ -669,8 +679,11 @@ void Session::handle(const w::Frame& frame, double now) {
         for (const auto& x : m.members)
             if (x.flags & w::InstanceMember::lagging) lagging_members_.insert(x.member);
         if (m.wid != 0 && m.host) host_ = m.host;
+        // (A new instance: an earlier one's end says nothing about its members.)
+        if (!instance_ || instance_->wid != m.wid) ended_by_ = 0;
         instance_ = std::move(m);
         arrival_toast();
+        join_toast(now);
         break;
     }
     case w::Type::world_notice: on_world_notice(w::decode_world_notice(p)); break;
@@ -964,14 +977,22 @@ void Session::take_decision(const w::BarrierOk& ok) {
     if (ok.notice != w::Notice::none) {
         std::string names;
         for (std::size_t i = 0; i < ok.names.size(); ++i) names += (i ? (i + 1 == ok.names.size() ? " and " : ", ") : "") + ok.names[i];
-        if (names.empty()) names = "Your friends";
+        // (Without names: "the group", never "Your friends is ..."; round I1b's
+        // integration review, W7e's fallback.)
+        const bool named = !names.empty();
+        const bool many = ok.names.size() > 1;
         switch (ok.notice) {
-        case w::Notice::other_context: notice(names + (ok.names.size() > 1 ? " are" : " is") + " on another quest; you play this stage on your own."); break;
-        case w::Notice::full: notice(names + "'s group is full; you play this stage on your own."); break;
-        case w::Notice::too_long: notice(names + (ok.names.size() > 1 ? " have" : " has") + " been there too long to catch up; you play this stage on your own."); break;
+        case w::Notice::other_context:
+            notice((named ? names + (many ? " are" : " is") : std::string("The group is")) + " on another quest; you play this stage on your own.");
+            break;
+        case w::Notice::full: notice((named ? names + "'s group" : std::string("The group")) + " is full; you play this stage on your own."); break;
+        case w::Notice::too_long:
+            notice((named ? names + (many ? " have" : " has") : std::string("The group has")) +
+                   " been there too long to catch up; you play this stage on your own.");
+            break;
         case w::Notice::hold_expired: notice("The scene did not end in time; you play this stage on your own."); break;
         case w::Notice::went_alone: notice("You went alone."); break;
-        case w::Notice::join_failed: notice("Joining " + names + " failed; you play this stage on your own."); break;
+        case w::Notice::join_failed: notice("Joining " + (named ? names : std::string("the group")) + " failed; you play this stage on your own."); break;
         default: break;
         }
     }
@@ -1002,14 +1023,16 @@ void Session::arrival_toast() {
     // stays for an arrival nobody asked, the relay's choice.)
     const bool chosen = chosen_join_;
     chosen_join_ = false;
+    // ({MENU}: the F1 menu's button as the device in use shows it, View /
+    // Back / Share / Minus or F1; round I1b's integration review.)
     switch (arrival) {
-    case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + "). View: Online menu"); break;
+    case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + ").  {MENU} Online menu"); break;
     case w::Arrival::auto_join:
-        if (!chosen) notice("You joined " + host + "'s instance." + where + " Leave: Online menu");
+        if (!chosen) notice("You joined " + host + "'s instance." + where + "  Leave: {MENU} Online menu");
         break;
     case w::Arrival::co_arrival: notice("You arrived together with " + host + ": you're a guest in " + host + "'s story."); break;
     case w::Arrival::guest_new:
-        if (!chosen) notice("You joined " + host + "'s instance." + where + " Leave: Online menu");
+        if (!chosen) notice("You joined " + host + "'s instance." + where + "  Leave: {MENU} Online menu");
         else if (!where.empty()) notice(where.substr(1));
         break;
     default: return;
@@ -1028,13 +1051,22 @@ void Session::on_world_notice(const w::WorldNotice& m) {
         if (m.member != member_id_) notice(name + " joined.");
         break;
     case w::NoticeKind::left:
-        if (m.member != member_id_) notice(name + " left.");
+        // (The host's leave ended the instance: "Kim left. The instance ends."
+        // said it already; round I1b's integration review.)
+        if (m.member != member_id_ && m.member != ended_by_) notice(name + " left.");
         remote_.erase(m.member);
         tracks_.forget(m.member);
         lagging_members_.erase(m.member);
         break;
     case w::NoticeKind::went_to:
-        if (m.member != member_id_ && !m.text.empty()) notice(name + " went to " + stage_title(m.text) + ".");
+        // (With the floor, as the go-along texts: "Kim went to Sand Labyrinth
+        // B2."; round I1b's integration review.)
+        if (m.member != member_id_ && !m.text.empty()) notice(name + " went to " + (config_.floor_name ? config_.floor_name(m.text) : stage_title(m.text)) + ".");
+        break;
+    case w::NoticeKind::apart:
+        // (Round I1b's integration: the stage group's own LEAVE toast went;
+        // a member taken out by lag or a split barrier stays in the instance.)
+        if (m.member != member_id_) notice(name + " plays apart for now.");
         break;
     case w::NoticeKind::visibility:
         notice(name + " made the instance " + visibility_name(w::Visibility(std::min<std::uint32_t>(m.argument, 2))) + ".");
@@ -1055,6 +1087,7 @@ void Session::on_world_notice(const w::WorldNotice& m) {
         break;
     case w::NoticeKind::ended:
         host_away_until_ = -1;
+        ended_by_ = m.member;
         // 19.6.10: an engine playing on apart from its instance after a
         // reconnect (no stage group of the instance holds it, so no HOME
         // comes for it) takes the home departure itself; its next barrier
@@ -2271,19 +2304,38 @@ void Session::become_member(double now) {
     // off the raster: a report the relay never completes, 5-10 ms in the
     // moment of the join).
     next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
-    // Who is there: the own instance's members in this stage group
-    // (INSTANCE_INFO; a JOIN names no member), else the slots' known names.
+    // Who is there: the toast waits for INSTANCE_INFO to name this stage
+    // group (the relay sends it at the JOIN), two seconds at most.
+    join_toast_due_ = now + 2.0;
+    join_toast(now);
+}
+
+void Session::join_toast(double now) {
+    if (join_toast_due_ < 0) return;
+    // The own instance's members in this stage group (INSTANCE_INFO's flag
+    // 16; a JOIN names no member), once INSTANCE_INFO has this member at the
+    // engine's stage: before, it may still describe the stage group it came
+    // from.
     std::vector<std::string> names;
-    if (instance_)
+    bool current = false;
+    if (instance_) {
+        const std::string stage = engine_.stage();
         for (const auto& m : instance_->members)
-            if ((m.flags & w::InstanceMember::same_group) && m.member != member_id_) names.push_back(member_name(m.member));
+            if (m.member == member_id_ && is_same_stage(m.stage, stage)) current = true;
+        if (current)
+            for (const auto& m : instance_->members)
+                if ((m.flags & w::InstanceMember::same_group) && m.member != member_id_) names.push_back(member_name(m.member));
+    }
+    if (names.empty() && now < join_toast_due_) return;
+    join_toast_due_ = -1;
     if (names.empty()) {
-        const int other = lowest(std::uint8_t(present_ & ~(1u << slot_)));
-        if (other >= 0 && slot_members_[std::size_t(other)] != kNoMember) names.push_back(slot_name(other));
+        // (No INSTANCE_INFO in time: the slots' known names.)
+        for (int s = 0; s < 4; ++s)
+            if (s != slot_ && (present_ & (1u << s)) && slot_members_[std::size_t(s)] != kNoMember) names.push_back(slot_name(s));
     }
     std::string list;
     for (std::size_t i = 0; i < names.size(); ++i) list += (i ? (i + 1 == names.size() ? " and " : ", ") : "") + names[i];
-    notice(list.empty() ? std::string("You joined the group") : "You joined " + list);
+    notice(list.empty() ? std::string("You joined the group.") : "You joined " + list + ".");
 }
 
 // ---- choices and presentation

@@ -1,0 +1,24 @@
+# Go along (UI scenario), guest c: once a's offer is up (and its notice half a second), the F1 menu opens (menu online) and one A
+# goes along: the focused row takes it, no direction first (round I1b's integration review). Then the own line where the notice
+# was, and the arrival.
+open
+login $UI_C_NAME $UI_C_PASSWORD
+play
+wait-session
+wait-members 3 900
+wait-go 600
+sleep 1
+menu online
+sleep 1
+shot cg1_box
+key pad-a
+sleep 1
+shot cg2_after_a
+sleep 2
+shot cg3_own_line
+wait-stage dng204b1 240
+sleep 5
+shot cg4_arrived
+leave
+wait-left 60
+end

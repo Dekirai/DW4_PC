@@ -9315,16 +9315,37 @@ Close", the go-along line's "`{MENU}` answer" / "`{MENU}` cancel" (one text
 for the pad and the keyboard: `{MENU}` shows F1 there), the held GO
 barrier's "`{B}` Back to the lobby" and "`{A}` Yes   `{B}` No". The prompt's
 keyboard line names its keys (Enter, Backspace), which are not the game's
-bindings.
+bindings; it shows while the keyboard is the device in use (player 1's
+prompt family, as every other hint; the integration's review: it showed
+whenever no pad was plugged in, and a plugged pad's player on the keyboard
+got the pad line). The arrival toasts name the menu's button too since the
+review: "New instance (<visibility>).  `{MENU}` Online menu", "...  Leave:
+`{MENU}` Online menu".
+
+Since the integration's review (2026-11-14) the instance's toasts are the
+world's notices alone, each once: the host's leave says "<host> left. The
+instance ends." (the seat's "<host> left." right after it is not shown); a
+member taken out of the receiver's stage group who keeps his seat (a lag
+LEAVE, a split barrier, 6.9) is "<name> plays apart for now." (WORLD_NOTICE
+15 *apart*: the stage group's own LEAVE toast went with the integration,
+which left that LEAVE without a word); "<name> went to <stage>." names the
+floor as the go-along texts ("Sand Labyrinth B2"); the JOIN's own toast
+"You joined <names>." waits for INSTANCE_INFO to name the stage group
+(two seconds at most, then the slots' known names, else "You joined the
+group."); a decision's notice without names says "the group" ("Joining the
+group failed; you play this stage on your own."), never "Your friends is
+...". The go-along notice goes once the player answered it: the own
+request's line stands where it was (a *Cancel* brings it back while its
+20 s run).
 
 | Where | Text |
 | --- | --- |
 | Home screen | "Play: <form> Lv <n> (Box <b>)", "Choose character", "Friends (<n> online)", "Party", "Instances", "Settings", "Account", "Log out", "Online now: <n> players, <m> instances" |
 | Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Story not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; with the keyboard (19.5.7: arrows, Enter, Backspace; no key for X): "Enter: Choose   Left/Right: visibility   Backspace: Back" / "Backspace: Back to the lobby", round I1b's prompt lane, for the user's OK as the go-along line's "F1: answer"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
 | Loading | "Joining <host>...", "Joining <name>...", "Waiting for <name>'s floor...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "End the instance for everyone?   A: Yes   B: No" (the host's B on a held GO barrier, 19.30.7; added by the go lane's review fix of 2026-11-12, for the user's OK), "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
-| Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
+| Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>).  View: Online menu" (`{MENU}`), "You arrived together with <host>: you're a guest in <host>'s story.", "You joined <name> and <name>." (a JOIN of a stage group; "You joined the group." without names) |
 | Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "<name> is in <stage>. Go along?" (a late notice), "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Close", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Going along when <name>'s floor is ready...", "<name> is in a boss fight. Going along when it ends.", "View: cancel", "A: Cancel", "Going along...", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "Couldn't go along: <name>'s floor stayed busy.", "Couldn't go along: a scene here took too long.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
-| In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>.", "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
+| In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>." (the floor in a dungeon), "<name> plays apart for now." (WORLD_NOTICE 15, the integration's review), "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
 | Player card (round I1b, the Instance page) | "Report", "Remove", "Report <name> for:", "Griefing", "Cheating", "Name", "Other", "Cancel", "Remove <name> from your instance? They can't rejoin it for a while." (the bar's length is the server's `World:RemovedBarMinutes`, so the question names no number), "You can't send more reports today.", "Couldn't send the report. Try again later.", "This player is not available." (REPORT's answer for a member the client knows no name of) |
 | End | "<host> left. The instance ends.", "<host> lost the connection. Waiting for <host>... <s> s", "<host> is back.", "<host> did not come back. The instance ends.", "<host> was defeated. Waiting for <host>... <s> s", "<host> was defeated. The instance ends.", "The instance has ended.", "A moderator ended this instance.", "You were removed from <host>'s instance.", "Back on your own story.", "The server restarted. Back on your own story.", "Server restart in <s> s." |
 | Leaving | "Leave <host>'s instance? You return to your lobby.", "End the instance for everyone?", "Your guests will return to their lobbies.", "Leave <host>'s instance and join <name>?" |
@@ -11025,7 +11046,7 @@ a hundred requests are one toast, not two hundred seconds of them).
 | A modified host client writes into guests' stories through the mirror | the mirror copies only what the guest's own STORY of the same visit also reported (19.8.6) |
 | A removed guest's modified client keeps sending STORY | its owner switches at the removal, its stage group is detached (19.6.6) |
 | Cheated characters among strangers | the Cheats tab fix before round I1 (19.25); round D's server character later; *Report player* from round I1b |
-| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor in code equal to round I1's protocol (49 or the next free), 410 on `/rooms*` (19.18) |
+| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor in code equal to the newest released protocol (49 since 0.1.7, 50 since 0.2.0, round I1b), 410 on `/rooms*` (19.18) |
 | Free text | none anywhere; quick chat (I6) uses fixed phrases; reports pick a reason from a fixed list |
 
 ### 19.17 Server
@@ -11784,7 +11805,7 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 | 0x91 | OPTIONS | plan id or (inst, visit), stage, remembered visibility, preselected row (or *New instance*, decision 40), rows: wid, host member and name, relation flags (party, friend host, friends inside), the host's stage (round 72), players, players at the arrival stage (round 72), seats (taken, held, reserved), story label, same story point, difficulty, settings flags (randomizer, other settings), state (joinable, boss fight, loading, host away, full, arriving now, other quest, story not here yet), visibility (staff only), worst round trip ms | the answer to PLAN; at a held barrier; again on change, at most once a second |
 | 0x94 | INSTANCE_LIST | page, total, rows as OPTIONS plus area, stage and age | the answer to BROWSE |
 | 0x95 | INSTANCE_INFO | wid, host member, visibility, settings, story label, members (member, slot, stage, level, flags connected / lagging / staff), seats, grace seconds left, own role (host, guest, staff, spectator) | on change (the Online menu, the status line, the lag icons) |
-| 0x96 | WORLD_NOTICE | kind, member, name, argument | joined, left, went to a stage, visibility changed, removed, host away (seconds), host back, ended (reason), lagging, lag over, shared progress saved, friend online / offline / request / accepted, invite, party joined / left / leader / heading, go refused (round 72: the reason, offer closed or the member moved) |
+| 0x96 | WORLD_NOTICE | kind, member, name, argument | joined, left, went to a stage, visibility changed, removed, host away (seconds), host back, ended (reason), lagging, lag over, shared progress saved, friend online / offline / request / accepted, invite, party joined / left / leader / heading, go refused (round 72: the reason, offer closed or the member moved), report (14, round I1b), apart (15, round I1b's integration: the member left the receiver's stage group but keeps its seat, a lag LEAVE or a split barrier) |
 | 0x97 | MEMBER_INFO | member, name, level, flags (friend, party, staff tag) | before a member's first mention to this receiver; on a relation change |
 | 0x98 | FRIENDS_STATE | online friends: member, name, area, stage, wid, flags (host, joinable for this viewer, private, hidden) | on change, at most once per 2 s per friend (I2) |
 | 0x99 | GOTO_RESULT | request id, result (ok, boss wait, full, not found, ended, removed, busy, other settings, too long), stage, token (0 for a GOTO inside the own instance, 19.9.6), seconds | the answer to GOTO |
@@ -12857,7 +12878,7 @@ file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
   reviews (the progress note has the numbers of each round) also W10d.
 *Built, lane go along (2026-11-07, branch `feat-i1b-go` from `int-i1a`
 bfc3b0a5; notes `docs/ROUND_I1B_GO_NOTES.md`; wire layout in the lanes'
-contract, protocol 49).* The first task is measured in 19.30.7. Engine:
+contract; built for protocol 49, released with 50 since the integration).* The first task is measured in 19.30.7. Engine:
 `Engine::online_go`, `ForkKind::go`, the GO's departure (the half fade the
 prompt would start, the exit motion, NEXTSTAGE taken as named),
 `ExitHeading::asked`, the 300-tick expiry in the session. Relay
@@ -14354,7 +14375,7 @@ round I1b; the lanes *moderation* and *go along* ran beside it and agreed
 the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
 `docs/ROUND_I1B_PROMPT_NOTES.md`. The census is measured in 19.7.4.
 
-**Wire** (protocol 49; golden vectors equal in `PromptTests` and
+**Wire** (protocol 50 since round I1b's integration, the lanes built it as 49; golden vectors equal in `PromptTests` and
 `online_wire_tests.cpp`):
 
 - PLAN 0x18 (client): plan u16 (1..0xFFFE) | purpose u8 (1 gate, 2 return

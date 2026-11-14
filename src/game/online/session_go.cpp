@@ -85,6 +85,10 @@ std::vector<const GoOffer*> Session::go_notices(double now) const {
     std::vector<const GoOffer*> out;
     for (const auto& o : go_offers_) {
         if (!o.open || o.closed_by_b || o.notice_at < 0 || now >= o.notice_at + o.notice_seconds) continue;
+        // (Answered: the own request's line stands where its notice was,
+        // 19.30.6; the notice asked on above it. Round I1b's integration
+        // review. A Cancel brings it back while its 20 s run.)
+        if (go_state_ != GoState::none && o.id == go_offer_) continue;
         out.push_back(&o);
         if (out.size() == kMaxNotices) break;
     }

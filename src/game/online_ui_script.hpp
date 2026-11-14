@@ -49,6 +49,7 @@
 //   wait-instance [SECONDS]    until the session is in an instance (60 s; "home": until it is home)
 //   wait-members N [SECONDS]   until the own instance lists N players or more (60 s; <=N: N or fewer)
 //   wait-stage STAGE [SECONDS] until the engine is in that stage (120 s)
+//   wait-go [SECONDS]          until the Instance page's Go along box has a row A can take (120 s; round I1b's integration)
 //   visibility N               the host's visibility choice (0 Public, 1 Friends, 2 Private; INSTANCE_OP)
 //   leave-instance             *Leave instance* (INTENT leave)
 //   card NAME                  the player card of the member NAME on the Instance page (round I1b)

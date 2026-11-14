@@ -1,0 +1,18 @@
+# Go along (UI scenario), host a (k10): Dry Land from the gate, waits for b and c in stag0201, then takes matz01 into dng204b1
+# alone (the offer with its notice for b and c) and stays there.
+campaign until stage=stagml11,control
+idle until frames>=600
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+idle until present=3,sealed>=300 or frames>=9000 fail stagechange
+log b and c joined
+idle until frames>=600
+explore matz01 yes until stage=dng204b1,control or hp<=350
+disk 1 until hp>=700 or frames>=900
+explore matz01 yes until stage=dng204b1,control or hp<=350
+disk 1 until hp>=700 or frames>=900
+explore matz01 yes until stage=dng204b1,control
+log a in dng204b1
+disk 1 until hp>=700 or frames>=900
+idle until frames>=400000

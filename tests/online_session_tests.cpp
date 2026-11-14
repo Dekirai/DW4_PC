@@ -1440,7 +1440,7 @@ void world_session() {
     info.taken = 1;
     world.hub.send(1, w::Type::instance_info, w::encode(info), world.now);
     world.run(0.3);
-    check(has_notice(a.session->take_notices(), "New instance (Public). View: Online menu"), "A's toast: a new instance");
+    check(has_notice(a.session->take_notices(), "New instance (Public).  {MENU} Online menu"), "A's toast: a new instance");
     auto& b = world.add("lee", 2);
     b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
     check(world.run_until(30, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "B joined A");
@@ -1454,9 +1454,13 @@ void world_session() {
     world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
     world.run(0.3);
     const auto b_notices = b.session->take_notices();
-    check(has_notice(b_notices, "You joined kim's instance. kim is in stag0101. Leave: Online menu") &&
+    check(has_notice(b_notices, "You joined kim's instance. kim is in stag0101.  Leave: {MENU} Online menu") &&
               has_notice(b_notices, "You're a guest in kim's story. Your level, items and Digimon stay yours."),
           "B's toasts name the host and where he is");
+    // (Round I1b's integration review: the JOIN's toast names the stage group
+    // once INSTANCE_INFO has B in it, "You joined kim.", not the old one's or
+    // none's "You joined the group".)
+    check(has_notice(b_notices, "You joined kim."), "B's JOIN toast names the stage group from INSTANCE_INFO");
     // B's STORY goes to the host's keeper (the host's owner key).
     const auto stories = world.hub.stories;
     b.engine.story.flags[19] = 1;
@@ -2104,6 +2108,72 @@ fake::Client& lone_in_instance(World& world, std::uint32_t host) {
 // the held GO screen, a Cancel that crossed the stamp, the client's own
 // report of a GO that ended without a departure (-1), the membership events
 // behind a GO, "went on to" and the late form of a notice that waited.
+// Round I1b's integration review: the world's toasts (WORLD_NOTICE ended and
+// left of one member, went_to with the floor, apart), a BARRIER_OK notice
+// without names, and the go-along notice once answered.
+void review_toasts() {
+    {
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        auto& b = guest_of_nine(world, 2, [](SessionConfig& c) {
+            c.floor_name = [](std::string_view s) { return s == "dng101b2" ? std::string("Sand Labyrinth B2") : std::string(s); };
+        });
+        world.run(1.0);
+        b.session->take_notices();
+        world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::went_to, 9, "kim", 0, "dng101b2"}), world.now);
+        world.run(0.2);
+        auto told = b.session->take_notices();
+        check(has_notice(told, "kim went to Sand Labyrinth B2."), "went_to names the floor");
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::apart, 9, "kim", 0, {}}), world.now);
+        world.run(0.2);
+        told = b.session->take_notices();
+        check(has_notice(told, "kim plays apart for now."), "apart: the member left the stage group, not the instance");
+        // The host leaves: "kim left. The instance ends." once; the seat's
+        // "kim left." right after says nothing new.
+        world.hub.send(2, w::Type::world_notice,
+                       w::encode(w::WorldNotice{w::NoticeKind::ended, 9, "kim", std::uint32_t(w::EndReason::host_left), {}}), world.now);
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::left, 9, "kim", 0, {}}), world.now);
+        world.run(0.2);
+        told = b.session->take_notices();
+        check(has_notice(told, "kim left. The instance ends.") && std::count(told.begin(), told.end(), std::string("kim left.")) == 0,
+              "one toast for the host's leave");
+    }
+    {
+        // A notice without names (W7e's fallback): "the group", never "Your friends is ...".
+        World world;
+        world.hub.shape_ok = [](std::uint32_t, w::BarrierOk& ok) {
+            if (ok.decision != w::Decision::new_instance) return;
+            ok.notice = w::Notice::join_failed;
+            ok.names.clear();
+        };
+        auto& a = world.add("kim", 1);
+        a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+        std::vector<std::string> notices;
+        world.run_until(10, [&] {
+            for (auto& n : a.session->take_notices()) notices.push_back(n);
+            return has_notice(notices, "failed");
+        });
+        check(has_notice(notices, "Joining the group failed; you play this stage on your own.") && !has_notice(notices, "Your friends"),
+              "the fallback's notice without names");
+    }
+    {
+        // The notice goes once answered: the own request's line stands where it was.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        auto& b = guest_of_nine(world);
+        world.run(1.0);
+        world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+        w::Offer offer{5, w::OfferOp::open, w::Offer::notice, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_notices(world.now).size() == 1, "the notice shows");
+        check(b.session->go_along(5), "A goes along");
+        check(b.session->go_notices(world.now).empty() && !b.session->go_line().empty(), "the notice gave way to the own request's line");
+        check(b.session->cancel_go_along() && b.session->go_notices(world.now).size() == 1, "after Cancel the notice runs on");
+    }
+}
+
 void go_along_review() {
     for (const bool host : {false, true}) {
         // A GO's barrier held over 10 s: the guest's B goes back to the lobby
@@ -2541,6 +2611,8 @@ int main(int argc, char** argv) {
         go_along_session();
         std::cout << "world: go along, the review's cases\n";
         go_along_review();
+        std::cout << "world: the toasts, round I1b's integration review\n";
+        review_toasts();
         std::cout << "checkpoint reports\n";
         checkpoint_reports();
         std::cout << "READY after a refused READY\n";

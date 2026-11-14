@@ -524,6 +524,12 @@ private:
     void park(double now);
     void report_state(double now, bool force);
     void become_member(double now);
+    // "You joined Kim and Lee." once INSTANCE_INFO names the stage group this
+    // member joined (its own entry at the engine's stage), at the latest
+    // after join_toast_due_ (round I1b's integration review: it named the
+    // group by whatever INSTANCE_INFO held at the JOIN, the old stage group's
+    // or none).
+    void join_toast(double now);
     void finish_resync(double now);
     void go_alone();
     std::uint32_t roster_member_for(int slot) const;
@@ -698,6 +704,8 @@ private:
     std::string gone_notice_;         // its text once the departure ran
     std::string host_away_name_;      // WORLD_NOTICE host_away: the running line's host and its end (-1: none)
     double host_away_until_ = -1;
+    std::uint32_t ended_by_ = 0;      // WORLD_NOTICE ended's member: its "left." right after says nothing new
+    double join_toast_due_ = -1;      // the JOIN's toast waits for INSTANCE_INFO until then (-1: none)
     std::uint8_t own_box_ = 1;
     // Round I1b: go along (session_go.cpp).
     std::vector<GoOffer> go_offers_;
