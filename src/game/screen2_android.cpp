@@ -330,6 +330,10 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
         const bool start = !g_text_window || secret != g_text_secret || (away && (tapped || field != g_text_field));
         if (window && start) {
             const bool again = g_text_window != nullptr;
+            // (The field is on the lower screen: the top screen's picture
+            // need not pan for the keyboard, so the area is its top corner.)
+            const SDL_Rect corner{0, 0, 1, 1};
+            SDL_SetTextInputArea(window, &corner, 0);
             start_text_input(window, secret);
             std::printf("second screen: a %s field takes the keyboard%s\n", secret ? "password" : "text", again ? " (again)" : "");
             std::fflush(stdout);
