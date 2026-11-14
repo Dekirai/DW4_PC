@@ -187,8 +187,8 @@ public partial class HubLogicTests
     [Fact]
     public void A_remembered_private_arrival_without_an_answer_refuses_a_strangers_base_and_its_starting_instance_with_the_world_log_lines()
     {
-        // s's base (no answer, Public) would hold for p, but p's remembered Private lets no stranger in: no hold for p; s's instance
-        // starts at once; p's barrier (no answer) refuses it and makes p's own Private instance.
+        // s's base (no answer, Public) would hold for p, but p's remembered Private lets nobody else in (not even a friend, the matrix): no
+        // hold for p; s's instance starts at once; p's barrier (no answer) refuses it and makes p's own Private instance.
         var r = WithoutAnAnswer(Visibility.Private, friends: false, PairBlock.None, hold: true, playerFirst: false);
         Assert.False(r.Together);
         Assert.False(r.H.P("s").Has(Msg.BarrierWait)); // (s's base waited for nobody)

@@ -8880,7 +8880,7 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
   who take the gate up to about ten seconds after each other land together
   without a question while the first one's new instance is still starting,
   as far as each one's visibility (chosen, else remembered) lets the other
-  in (decisions 48 and 49: Private never with a stranger).
+  in (decisions 48 and 49: Private with nobody else, not even a friend).
   Choosing an instance whose players are elsewhere in the area puts him
   into it where he walked in, as a guest in the host's story (19.30.3).
 - **Go along.** When a member goes from a field into a dungeon, every
@@ -8971,7 +8971,7 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 | 46 (2026-11-12) | *Arriving now*: a stage group of an instance at a barrier heading to the arrival stage (or its members parked on the way there) shows as a row *Arriving now* with its host's name; selectable (the arrival waits for their stage group at the stage, then joins it), never preselected (decision 40 unchanged), never the automatic join; built in round I1b's integration | 19.7.2, 19.7.3, 19.32 |
 | 47 (2026-11-12) | The prompt review's finding 8 (a fresh arrival without an answer becomes a co-arrival base before its own loading-screen prompt) is accepted as built: no extra handling | 19.7.6, 19.32 |
 | 48 (2026-11-14) | Private stays private: a player whose choice was *New instance* with Private is never the co-arrival of another player's base nor joins another's starting instance; with Friends only one whose host is his friend (no block either way); with Public as decision 43 says. A base whose chooser picked Private or Friends takes no co-arrival its visibility does not let in (as before). Both barrier orders give the same result; the members leaving through the same barrier (one stage group) stay together | 19.7.6, 19.7.7, 19.32 |
-| 49 (2026-11-14) | Decision 48 applies to an explicit *New instance* choice; without any choice the remembered default visibility (the one the player last chose) decides the same way: a player at the gate while a stranger's instance is starting lands in it automatically (no form, OPTIONS *starting*) only where his remembered visibility lets its host in (Public as before; Friends only a friend's, no block either way; Private never a stranger's), else that instance is as if it did not exist for him (the form for the other rows, else a new instance with his remembered visibility); an arrival with no answer at all (a plan never answered, a CHOICE the relay never got, a plan id unknown after a reconnect) is the co-arrival of a base or joins a starting instance only where its remembered visibility lets that host in, else a new instance with it. Unchanged: the members of one stage group passing the same barrier together, travel inside an instance, rows chosen explicitly, GO barriers | 19.7.1, 19.7.6, 19.7.7, 19.32 |
+| 49 (2026-11-14) | Decision 48 applies to an explicit *New instance* choice; without any choice the remembered default visibility (the one the player last chose) decides the same way: a player at the gate while a stranger's instance is starting lands in it automatically (no form, OPTIONS *starting*) only where his remembered visibility lets its host in (Public as before; Friends only a friend's, no block either way; Private nobody else's, not even a friend's, as decision 48), else that instance is as if it did not exist for him (the form for the other rows, else a new instance with his remembered visibility); an arrival with no answer at all (a plan never answered, a CHOICE the relay never got, a plan id unknown after a reconnect) is the co-arrival of a base or joins a starting instance only where its remembered visibility lets that host in, else a new instance with it. Unchanged: the members of one stage group passing the same barrier together, travel inside an instance, rows chosen explicitly, GO barriers | 19.7.1, 19.7.6, 19.7.7, 19.32 |
 
 **Standing decisions that stay:** at most four players per stage group (the
 engine's slots 0-3; staff bypass the visibility always, the blocks and the
@@ -10104,7 +10104,9 @@ later groups spawned in the base's load step). In the world:
   (a) A player at the gate while a stranger's instance is starting gets
   OPTIONS *starting* (no form, the automatic landing) only where his
   remembered visibility lets its host in: *Public* as before, *Friends*
-  only a friend's (no block either way), *Private* never a stranger's.
+  only a friend's (no block either way), *Private* nobody else's (not
+  even a friend's: decision 48's rule, as his own Private instance would
+  let nobody in, `Matching.MayEnter`).
   Otherwise that starting instance is as if it did not exist for him while
   it starts: it is no row (no form for it alone, and no preselected
   stranger's row under a quick A, also not in the form's refresh), so he
@@ -14865,6 +14867,18 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   `run_20261114_165503`) W4f, W4g, W4h (new, 19.24), W4, W4b, W4c, W4d,
   W4e, W7e and W7f pass; W4f and W4h fail without the relay change (b's
   PLAN says *starting* and b is a's guest; run `run_20261114_173352`).
+- **Decision 49's review** (fix-d43, 2026-11-14; docs only). One finding,
+  fixed: the README and 19.1's row 49 and 19.7.6 said a remembered
+  *Private* never lands in a *stranger's* instance, which reads as if a
+  friend's were open to it (then Private would land as Friends does). The
+  code, as decision 48 and the `ChoiceAdmits` rule the user named, lets a
+  remembered (or chosen) Private land in nobody else's instance, not
+  even a friend's; the texts say so now (the user's "never a stranger's"
+  read as "never another player's", the case his question described).
+  No code changed: the matrix of `PromptRememberedTests` pins it (the
+  cells Private x friends x no block in all three theories: the friend's
+  starting instance or base refused, apart; they fail without decision
+  49's relay change, `build/d49/unit_counter_none.log`).
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 
