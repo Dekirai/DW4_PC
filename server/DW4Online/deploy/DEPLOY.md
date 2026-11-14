@@ -327,10 +327,10 @@ if something is wrong, the reason and the way out on the screen (section 9), not
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online
-.\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # ... "Migrating database 'dw4online' done in N s: schema 10"
+.\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # ... "Migrating database 'dw4online' done in N s: schema 14"
 Start-Service DW4Online
 Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 30
-curl.exe http://127.0.0.1:5280/health          # {"status":"ok","schema":10}, on the server itself
+curl.exe http://127.0.0.1:5280/health          # {"status":"ok","schema":14}, on the server itself
 curl.exe -k https://88.198.52.221/health      # the same over HTTPS (:8443 in section 4.1); -k: the certificate is self-signed (section 6.1)
 .\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
 powershell -ExecutionPolicy Bypass -File app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate the HTTPS port really serves (-PinServedPort 8443 in section 4.1)
@@ -887,7 +887,7 @@ Every release carries its database migrations (`sql/NNNN_*.sql`, inside the exec
 - **in the console**, `DW4Online.Server.exe migrate --settings config\appsettings.Production.json`, which is the way
   this document uses before every start that brings new migrations (sections 5 and 8): it shows the database it
   talks to, each migration with its time (`Applied migration 0003 rooms in 0.01 s`) and the total
-  (`Migrating database 'dw4online' done in 0.25 s: schema 10`), and exits with 1 and a `FAIL:` message if it refuses or
+  (`Migrating database 'dw4online' done in 0.25 s: schema 14`), and exits with 1 and a `FAIL:` message if it refuses or
   fails;
 - **at the service start** (`Database:AutoMigrate`, on by default), so a start after a forgotten `migrate` still
   works. The service connects to the Service Control Manager first and reports "start pending" with a new checkpoint
