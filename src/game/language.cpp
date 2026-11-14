@@ -264,33 +264,9 @@ void Languages::build_textures(Pack& pack, engine::Engine& engine) {
     }
 }
 
-bool Languages::parse_schedule(std::string_view text, std::string* error) {
-    while (!text.empty()) {
-        const auto comma = text.find(',');
-        const auto item = text.substr(0, comma);
-        text = comma == std::string_view::npos ? std::string_view{} : text.substr(comma + 1);
-        const auto colon = item.find(':');
-        if (colon == std::string_view::npos || colon == 0 || colon + 1 >= item.size()) {
-            if (error) *error = "expected FRAME:CODE, got '" + std::string(item) + "'";
-            return false;
-        }
-        int frame = 0;
-        for (const char c : item.substr(0, colon)) {
-            if (c < '0' || c > '9' || frame > 100000000) {
-                if (error) *error = "a frame is a number: '" + std::string(item) + "'";
-                return false;
-            }
-            frame = frame * 10 + (c - '0');
-        }
-        schedule_.emplace_back(frame, std::string(item.substr(colon + 1)));
-    }
-    return true;
-}
+bool Languages::parse_schedule(std::string_view text, std::string* error) { return switches_.parse(text, error); }
 
-void Languages::switch_every(int frames, std::string other) {
-    every_ = frames;
-    every_other_ = std::move(other);
-}
+void Languages::switch_every(int frames, std::string other) { switches_.every(frames, std::move(other)); }
 
 void Languages::at_frame(int frame) {
     auto change = [&](const std::string& code) {
@@ -298,9 +274,10 @@ void Languages::at_frame(int frame) {
         if (select(code, &message)) note("now " + code + " (frame " + std::to_string(frame) + ")");
         else note(message);
     };
-    for (const auto& [due, code] : schedule_)
-        if (due == frame) change(code);
-    if (every_ > 0 && frame > 0 && frame % every_ == 0) change(selected_ == "en" ? every_other_ : std::string("en"));
+    // (Once per frame: a pass without a step asks again at the same frame.)
+    const auto due = switches_.due(frame);
+    for (const auto& code : due.codes) change(code);
+    if (due.alternate) change(selected_ == "en" ? switches_.other() : std::string("en"));
 }
 
 TextureImage render_travel_dialog(const i18n::GameTextCatalog& catalog, const engine::FontImage& font, const std::vector<std::uint8_t>& atlas,
