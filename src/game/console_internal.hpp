@@ -177,6 +177,8 @@ struct State {
     float stick_scroll = 0;
     TouchPlace touch[2];
     std::string last_layout_log[2];
+    std::string last_hits[2];
+    float hint_width = 0, hint_room = 0; // the hint bar's entries and the room for them (px)
     std::string last_focus_trace;
     // a row's result line for a while (a saved state, a cloud answer)
     std::string note_row, note_text;

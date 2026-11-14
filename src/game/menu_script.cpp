@@ -267,18 +267,22 @@ void MenuScript::update(Host& host) {
         break;
     }
     case MenuCommand::Kind::tap:
-        finger(host, phase_ == 0 ? 0 : 2, c.x0, c.y0, c.lower);
-        done = phase_ == 1;
-        phase_ = 1;
+        // (Down, up, then a few passes: ImGui takes one button change per
+        // frame, the lower screen draws every other pass.)
+        if (phase_ == 0) finger(host, 0, c.x0, c.y0, c.lower);
+        else if (phase_ == 1) finger(host, 2, c.x0, c.y0, c.lower);
+        done = ++phase_ > 6;
         break;
     case MenuCommand::Kind::longpress:
         if (phase_ == 0) {
             finger(host, 0, c.x0, c.y0, c.lower);
             started_ = now;
             phase_ = 1;
+        } else if (phase_ >= 2) {
+            done = ++phase_ > 7;
         } else if (now - started_ >= 0.8) {
             finger(host, 2, c.x0, c.y0, c.lower);
-            done = true;
+            phase_ = 2;
         } else {
             finger(host, 1, c.x0, c.y0, c.lower);
         }
@@ -288,11 +292,13 @@ void MenuScript::update(Host& host) {
             finger(host, 0, c.x0, c.y0, c.lower);
             started_ = now;
             phase_ = 1;
+        } else if (phase_ >= 2) {
+            done = ++phase_ > 7;
         } else {
             const double t = c.count > 0 ? std::clamp((now - started_) / (c.count / 1000.0), 0.0, 1.0) : 1.0;
             const float x = c.x0 + (c.x1 - c.x0) * float(t), y = c.y0 + (c.y1 - c.y0) * float(t);
             finger(host, t >= 1.0 ? 2 : 1, x, y, c.lower);
-            done = t >= 1.0;
+            if (t >= 1.0) phase_ = 2;
         }
         break;
     case MenuCommand::Kind::type:

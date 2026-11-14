@@ -520,7 +520,8 @@ void ConsoleMenu::opened(HostView& view, const std::string& tab, const std::stri
         row = "display.screen2_mode";
     }
     static bool page_done = false;
-    if (!page_done && view.test_run) {
+    std::optional<InputMode> input_mode;
+    if (!page_done && (view.test_run || st.platform == MenuPlatform::android)) {
         page_done = true;
         if (const char* page = std::getenv("DW4_MENU_PAGE")) {
             const std::string text(page);
@@ -528,7 +529,7 @@ void ConsoleMenu::opened(HostView& view, const std::string& tab, const std::stri
             target = text.substr(0, hash);
             row = hash == std::string::npos ? std::string() : text.substr(hash + 1);
         }
-        if (const char* input = std::getenv("DW4_MENU_INPUT")) st.nav.mode = std::string(input) == "touch" ? InputMode::touch : InputMode::pad;
+        if (const char* input = std::getenv("DW4_MENU_INPUT")) input_mode = std::string(input) == "touch" ? InputMode::touch : InputMode::pad;
     }
     if (!target.empty()) {
         st.nav.request_focus(target, row, true);
@@ -538,12 +539,13 @@ void ConsoleMenu::opened(HostView& view, const std::string& tab, const std::stri
         st.nav.select_category(0);
         st.nav.area = Area::sidebar;
     }
+    if (input_mode) st.nav.mode = *input_mode;
     st.latch_next = true;
     st.reveal = true;
     rebuild(st, view);
     menu_log("menu: page " + st.nav.path() + " (opened)");
     static bool dialog_done = false;
-    if (!dialog_done && view.test_run) {
+    if (!dialog_done && (view.test_run || st.platform == MenuPlatform::android)) {
         dialog_done = true;
         if (const char* dialog = std::getenv("DW4_MENU_DIALOG")) open_dialog(view, dialog, now);
     }
@@ -779,6 +781,13 @@ RowGeom measure(const State& st, const Ink& ink, const Row& r, float w) {
     if (has_value_zone(r)) {
         if (r.kind == RowKind::cells || r.kind == RowKind::binding) g.value_w = std::max(float(r.cells.size()) * ink.u(r.kind == RowKind::binding ? 96 : 104), ink.u(130));
         else g.value_w = std::clamp(0.38f * w, ink.u(130), ink.u(220));
+        // (A choice's value wider than its zone: the zone grows, else it
+        // takes a line of its own.)
+        if ((r.kind == RowKind::choice || r.kind == RowKind::stepper) && r.current >= 0 && r.current < int(r.options.size())) {
+            const float need = ink.size(19, r.options[std::size_t(r.current)].label).x + ink.u(96);
+            if (need > g.value_w) g.value_w = std::min(need, inner * 0.62f);
+            if (need > g.value_w) g.value_w = inner + 1.0f; // (below)
+        }
         g.label_w = inner - g.value_w - ink.u(12);
         if (g.label_w < std::max(inner * 0.32f, ink.u(90))) {
             g.value_below = true;
@@ -796,7 +805,7 @@ RowGeom measure(const State& st, const Ink& ink, const Row& r, float w) {
     if (!r.badge.empty()) g.badge_h = ink.u(6 + 20);
     float content = g.label_h + g.desc_h + g.extra_h + g.locked_h + g.badge_h;
     if (g.value_below) {
-        g.value_h = r.kind == RowKind::toggle ? ink.u(30) : ink.u(44);
+        g.value_h = r.kind == RowKind::toggle ? ink.u(30) : ink.u(48);
         content += ink.u(8) + g.value_h;
     }
     g.h = std::max(ink.u(52), content + ink.u(20));
@@ -805,7 +814,13 @@ RowGeom measure(const State& st, const Ink& ink, const Row& r, float w) {
 
 // The value zone of a row (toggle, choice / stepper with arrows, text, cells).
 void draw_value(State& st, HostView& view, const Ink& ink, const Row& r, float x0, float y0, float x1, float y1, bool focused, int row_index,
-                TouchPlace& tp, float alpha) {
+                TouchPlace& tp, float alpha, float clip0, float clip1) {
+    // (A target of a row the list's edge cuts is cut there too: never over the header.)
+    const auto hit = [&](Hit::Kind kind, float hx0, float hy0, float hx1, float hy1, int cell) {
+        hy0 = std::max(hy0, clip0);
+        hy1 = std::min(hy1, clip1);
+        if (hy1 > hy0) tp.hits.push_back({kind, hx0, hy0, hx1, hy1, row_index, cell});
+    };
     const float cy = (y0 + y1) * 0.5f;
     const ImU32 value_col = faded(kValue, alpha);
     switch (r.kind) {
@@ -833,8 +848,8 @@ void draw_value(State& st, HostView& view, const Ink& ink, const Row& r, float x
         if (ts.y > ink.u(26)) ink.text(19, x0 + aw, cy - ts.y * 0.5f, value_col, text, tw);
         else ink.text(19, x0 + aw + (tw - ts.x) * 0.5f, cy - ts.y * 0.5f, value_col, text);
         ink.dl->PopClipRect();
-        tp.hits.push_back({Hit::arrow_left, x0, y0, x0 + aw, y1, row_index});
-        tp.hits.push_back({Hit::arrow_right, x1 - aw, y0, x1, y1, row_index});
+        hit(Hit::arrow_left, x0, y0, x0 + aw, y1, -1);
+        hit(Hit::arrow_right, x1 - aw, y0, x1, y1, -1);
         break;
     }
     case RowKind::text:
@@ -876,7 +891,8 @@ void draw_value(State& st, HostView& view, const Ink& ink, const Row& r, float x
             const float text_x = cell.has_glyph ? tx : cx0 + std::max(ink.u(4), (cw - ts.x) * 0.5f);
             ink.text(r.kind == RowKind::binding ? 15 : 19, text_x, cy - ts.y * 0.5f, tc, cell.label);
             ink.dl->PopClipRect();
-            tp.hits.push_back({Hit::cell_button, cx0, cy0, cx1, cy1, row_index, i});
+            // (The cell takes the row's whole height: a 48 u target at least.)
+            hit(Hit::cell_button, cx0, std::min(cy0, y0), cx1, std::max(cy1, y1), i);
         }
         break;
     }
@@ -1199,7 +1215,7 @@ void ConsoleMenu::draw(HostView& view, ConsolePlace place) {
                 vy0 = y0;
                 vy1 = y1;
             }
-            draw_value(st, view, ink, r, vx0, vy0, vx1, vy1, focused, int(i), tp, alpha);
+            draw_value(st, view, ink, r, vx0, vy0, vx1, vy1, focused, int(i), tp, alpha, by0, by1);
         } else if (r.kind == RowKind::link) {
             ink.chevron(x1 - pad - U(8), (y0 + y1) * 0.5f, U(18), true, faded(kText, alpha), U(2.5f));
         } else if (r.kind == RowKind::entry) {
@@ -1297,6 +1313,8 @@ void ConsoleMenu::draw(HostView& view, ConsolePlace place) {
             right_w -= entry_width(right.front()) + gap;
             right.erase(right.begin()); // ("Category" goes first)
         }
+        st.hint_width = left_w + right_w;
+        st.hint_room = width;
         ink.dl->AddLine(ImVec2(a0.x, hy - U(2)), ImVec2(a1.x, hy - U(2)), rgba(1, 1, 1, 0.08f));
         const auto draw_entries = [&](const std::vector<HintEntry>& entries, float x) {
             for (const auto& e : entries) {
@@ -1485,7 +1503,9 @@ void ConsoleMenu::draw(HostView& view, ConsolePlace place) {
     {
         const ImVec2 m = io.MousePos;
         const auto hit_at = [&](float x, float y) -> const Hit* {
-            // (The last pushed is on top: modals last.)
+            // (The last pushed is on top: modals last; a row's arrows and
+            // cells before the row itself.)
+            const Hit* row_hit = nullptr;
             for (auto it = tp.hits.rbegin(); it != tp.hits.rend(); ++it)
                 if (it->contains(x, y)) {
                     if (st.nav.modal.kind != ModalKind::none) {
@@ -1493,9 +1513,13 @@ void ConsoleMenu::draw(HostView& view, ConsolePlace place) {
                                                it->kind == Hit::capture_cancel || it->kind == Hit::capture_clear || it->kind == Hit::card;
                         if (!modal_hit) continue;
                     }
+                    if (it->kind == Hit::row) {
+                        if (!row_hit) row_hit = &*it;
+                        continue;
+                    }
                     return &*it;
                 }
-            return nullptr;
+            return row_hit;
         };
         const bool text_window_hovered = modal == ModalKind::text && ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
         if (io.MouseClicked[0] && !text_window_hovered && modal != ModalKind::text) {
@@ -1604,6 +1628,29 @@ void ConsoleMenu::draw(HostView& view, ConsolePlace place) {
             tp.active = nullptr;
         }
         if (tp.sidebar.flinging()) tp.sidebar_scroll += tp.sidebar.fling(dt) * ink.scale;
+    }
+    // DW4_MENU_LAYOUT_LOG: the touch targets too ("menu-hit: kind x0 y0 x1 y1 scale", px), and the hint bar's width.
+    if (st.layout_log) {
+        std::string hits;
+        char line[128];
+        for (const Hit& h : tp.hits) {
+            std::snprintf(line, sizeof line, "menu-hit: %d %.0f %.0f %.0f %.0f %.3f", int(h.kind), double(h.x0), double(h.y0), double(h.x1),
+                          double(h.y1), double(ink.scale));
+            hits += line;
+            hits += '\n';
+        }
+        char bar[96];
+        std::snprintf(bar, sizeof bar, "menu-hint: %.0f of %.0f %.3f", double(st.hint_width), double(st.hint_room), double(ink.scale));
+        hits += bar;
+        hits += '\n';
+        if (hits != st.last_hits[pi]) {
+            st.last_hits[pi] = hits;
+            for (std::size_t at = 0; at < hits.size();) {
+                const auto end = hits.find('\n', at);
+                menu_log(hits.substr(at, end - at));
+                at = end + 1;
+            }
+        }
     }
 }
 

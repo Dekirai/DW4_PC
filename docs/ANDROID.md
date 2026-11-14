@@ -37,7 +37,9 @@ fields, the judder at 60 Hz, the START / SELECT pictures, the keyboard):
 - The Thor's lower screen shows online panels (instance list, friends, lobby
   status) and a status mirror (party, HP/SP) switchable by tabs, the F1 menu by
   touch on demand, and "off" as a setting. Every one of these also exists on
-  the PC as an overlay or F1 panel; there is no Android-only UI.
+  the PC as an overlay or F1 panel. The one Android-only presentation is the
+  F1 menu's console style ("The console F1 menu" below, docs/CONSOLE_MENU.md):
+  the same settings as the PC's F1 menu, laid out for a controller and touch.
 - Touch serves menus only (both screens); gameplay uses the controller.
 - Simulation math: the original's bit-exact MSL routines on every platform (a
   later phase). The det reference is re-based once and must then match on PC,
@@ -1034,8 +1036,10 @@ the printed letters' codes and Xbox = positions.
   `DW4Activity.dispatchKeyEvent` hands `KEYCODE_BACK` from the Thor's
   controller (2020:0111 or "Odin Controller", a gamepad source) to SDL as
   Android's Back key: F1 always (`menu: open (the Back key)`), whatever
-  the bindings; Select stays the pad's BACK button (F1 while unbound, the
-  prompts' SELECT pill). Other controllers are unchanged.
+  the bindings. Since the console F1 menu (14.11.2026) Select on the Thor no
+  longer opens F1 on Android: it stays a game button (bindable, the prompts'
+  SELECT square), and `{MENU}` shows the Back key. Other controllers are
+  unchanged.
 
 ### Lifecycle
 
@@ -1340,6 +1344,43 @@ bar right of the picture (the reason is not known yet). `adb push` / `adb shell`
   the square.)
 - The online screens on the Thor at their window-height size (24 px text):
   the owner's judgement.
+
+## The console F1 menu (14.11.2026)
+
+The F1 menu was hard to use on the AYN Thor in every way (controller
+navigation, touch, too much at once). Android has its own F1 menu now, in
+console style; docs/CONSOLE_MENU.md has the whole design, its files, test
+switches and checks. In short:
+
+- Categories as large entries on the left (Saves, General, Display,
+  Graphics, Controls, Cheats, Achievements, Online), a list of large rows on
+  the right. D-pad + A / B reach everything; L1 / R1 change the category,
+  Left / Right a value; a hint bar at the bottom shows the buttons with the
+  controller's own pictures. Touch: targets of 48 u or more, a tap acts on
+  release, a drag scrolls, a fling glides.
+- The same settings and the same apply and save paths as the PC's F1 menu
+  (`menu_ops.hpp`, `f1_actions.hpp`): nothing new in settings.ini, saved when
+  the menu closes and in the lifecycle as before. Only what makes sense on
+  Android: no window size, Discord, keyboard bindings, Wii U / GameCube
+  adapter switches, texture dumps or Data Overflow switches; the GameCube
+  save import waits for `content://` support.
+- It shows on the top screen and in the lower screen's Menu panel (the same
+  page and row on both); the panel's own header has *Close menu*.
+- Text fields (the cloud backup's login, the texture pack folder, the
+  randomizer's seed) open a text sheet with the system keyboard; a password
+  field's keyboard has no suggestions as before, the seed's is a number
+  keyboard.
+- The Thor's Back key opens and closes F1 everywhere (during a binding
+  capture it only cancels the capture); SELECT stays a game button.
+- Save states (Save / Load with a confirm), the binding capture (A, L2 / R2
+  analog and digital, Select; cancelled by Back, after 10 s or by touch;
+  cleared by X or a long press), the cloud backup, the presets (with a
+  confirm), achievements and cheats as on the PC.
+- The PC's F1 menu is unchanged (pictures of every tab and page before and
+  after compared); on the PC the console menu shows only in a test run
+  (`DW4_MENU_STYLE=console`), which the menu script (`--menu-script`, a
+  virtual SDL gamepad, the Thor's own by default) drives on the PC, the
+  emulator and the Thor alike.
 
 ## Compile status (NDK clang 21, phase A)
 
