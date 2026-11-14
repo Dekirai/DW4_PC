@@ -2509,6 +2509,18 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
   and fails for a variable that is neither on it nor marked presentation-only),
   and after every online engine construction and restore `cheats_` is set from
   the room settings. The settings hash (6.2) covers the rest.
+- **Presentation per machine** (main's display languages and texture pack
+  format 2, merged into round I1b's integration on 2026-11-14): the display
+  language ([L10N.md](L10N.md): the game text laid out again at display time,
+  the English text stays in the tick state, the snapshot and the wire), the
+  texture packs, their streaming thread and the Graphics options
+  ([TEXTURES.md](TEXTURES.md): the renderer's, outside the engine) are no
+  part of the simulation, the StageSnapshot, the data hash or the settings
+  hash: the members of one instance may differ in all of them. Their test
+  variables are on the presentation list (`DW4_LANGUAGE`, `DW4_LANG_DIR`,
+  `DW4_L10N_*` and the Graphics and streaming switches such as
+  `DW4_TEXTURE_QUALITY`, `DW4_LOD_BIAS`, `DW4_SHADOW_QUALITY`). The online UI
+  (19.5.6) stays English whatever the game text shows.
 - One deterministic engine per process (the system RNG is a static,
   `combat.cpp:36-39`, reseeded by every engine construction): a client never
   constructs a second while one runs (6.6). Moving the RNG into the engine
@@ -9344,6 +9356,13 @@ group failed; you play this stage on your own."), never "Your friends is
 ...". The go-along notice goes once the player answered it: the own
 request's line stands where it was (a *Cancel* brings it back while its
 20 s run).
+
+These texts are the port UI's: they stay English when the game text shows
+another display language (main's F1 > Settings > Language, merged into the
+integration on 2026-11-14; [L10N.md](L10N.md) 4: a language pack's
+`[files] ui` is reserved for a later catalog of them). The area, stage and
+form names in them come from the port's own tables (`presence_data`), the
+story label and the names from the relay, never from the game text catalog.
 
 | Where | Text |
 | --- | --- |
