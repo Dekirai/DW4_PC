@@ -779,6 +779,8 @@ What the Graphics options and the languages do on GLES:
 
 Checked on 14.11.2026:
 
+- `git merge-tree` of feat-android's head with int-i1b 446595aa,
+  feat-remaster 150f42a2 and main / feat-l10n 12f6a1a8: no conflict.
 - **The PC** (`build/Clean`, MSVC, after the merge and every change):
   `ctest` 78 of 78 (main brought the i18n and l10n lint tests);
   `det.sh` twice on an exe copy, `4004f056` / `396cb219` in both runs both
