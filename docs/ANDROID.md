@@ -15,7 +15,13 @@ below, with what is left for phase C). Phase A (toolchain, the Gradle build
 offline, the device probe) is done. Phase B's APK reached the title on the
 owner's Thor (13.11.2026). main 12f6a1a8 (the display languages with the
 live switch, the remaster's Graphics options and texture streaming) is merged
-in (14.11.2026, "The main merge of 14.11.2026" below).
+in (14.11.2026, "The main merge of 14.11.2026" below). Phase C's player
+side (branch feat-android-cux, 14.11.2026): immersive full screen, the
+menus at the display's scale, a menu button for touch, the AYN Thor's
+controller family, the lifecycle (settings saved, no catch-up, low
+memory), the display's frame rate, the system keyboard for text fields
+and the save round trip PC / emulator / PC ("Phase C: the player's side on
+Android" below; the Thor was locked, its in-game checks are open).
 
 ## Decisions this port follows
 
@@ -674,9 +680,10 @@ renderer section). Checked:
   menu and the Graphics options are checked, 14.11.2026).
 - ImGui's size on the Thor's 400 dpi screen (the menus are drawn at 1x),
   fullscreen without the status bar (immersive mode), a visible menu button
-  for touch.
+  for touch. (Done in phase C's UX lane: "Phase C: the player's side on
+  Android".)
 - Pausing the sound and saving settings when going to the background;
-  `LOW_MEMORY` (the texture cache).
+  `LOW_MEMORY` (the texture cache). (Done, the same section.)
 - A context loss is handled but was not provoked on the emulator (nor the
   texture pack streaming after one).
 - On the Thor, in the game itself: a multisampled surface (msaa=4) with
@@ -708,7 +715,8 @@ renderer section). Checked:
   `RelWithDebInfo` for the native part).
 - The F1 menu shows PC-only entries on Android too (Fullscreen (F11), the
   window size buttons, "Dump textures"); they go or change with phase C's
-  menu work.
+  menu work. (Fullscreen, the window sizes and the WinUSB GameCube adapter
+  are PC only now; "Dump textures" stays, not checked on Android.)
 - The RVZ import was not run on the emulator (no RVZ of the game); it uses
   the PC's converter on the copied file.
 
@@ -859,6 +867,241 @@ read back; the multisampled window resolved by a blit, copied, sharpened,
 and blitted into the kept picture; `GL_DEPTH_CLAMP_EXT` on and off:
 **PASSED, 0 failures** (with and without multisampling).
 
+## Phase C: the player's side on Android (UX lane, 14.11.2026)
+
+Branch `feat-android-cux` (from feat-android 0dc24e67). The owner's Thor was
+locked with a PIN or pattern the whole time (`KeyguardServiceDelegate
+secure=true`), so the game itself was not started there: everything below
+that runs the game was checked on the emulator (an AVD of this lane's own,
+`dw4cux33`: the Thor's 1920 x 1080 at 369 dpi, a navigation bar, no
+hardware keyboard, 2 GB, `-gpu host`; `dw4thor33` belongs to the
+determinism lane) and on the PC; on the Thor ran only `adb shell` reads and
+gles_check.
+
+### Full screen (immersive)
+
+- The Android window opens with `SDL_WINDOW_FULLSCREEN` (SDL's immersive
+  window style) and `DW4Activity` hides the status and navigation bars
+  itself (`WindowInsetsController.hide(systemBars)`, transient bars by a
+  swipe, `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS`, `setDecorFitsSystemWindows
+  (false)`), again on every focus gain, resume, configuration change and
+  input device added, removed or changed (a controller reconnect, the
+  Thor's controller style switched), and logs the result 0.6 s later:
+  `window: 1920x1080, status bar hidden, navigation bar hidden, display 0
+  at 60.00 Hz` (logcat tag `DW4`).
+- F11, "Fullscreen (F11)" and the window size buttons are PC only.
+- Emulator: hidden bars at the start (Android shows its one-time "Viewing
+  full screen" note per app, also on the Thor once), after F1 by the
+  button, after HOME and back, after the app switcher and back, and after
+  a virtual pad (uinput) came and went; the first start's disc dialog is a
+  system dialog and shows the bars while it is open.
+
+### The menus' size
+
+- `[window] ui_scale` (percent; `auto`, the default, is not written into a
+  file that has none): auto is the display's scale on Android
+  (`SDL_GetWindowDisplayScale`, Android's `densityDpi / 160`: 369 dpi is
+  **231 %**) and 1x on the PC, whose look stays as it was. A set percent
+  (100-400) counts on both. F1 > Settings > Display > "Menu size": Automatic
+  (N %), 100 ... 300 %.
+- At a scale above 1: ImGui's style sizes scaled from the dark style
+  (`ScaleAllSizes`), the font size (`FontScaleDpi`), ImGui's scalable font
+  instead of its 13 px pixel font, the F1 window as large as the display
+  allows (620 x 560 at 1x scaled, centred, scrolling inside), the notices'
+  places, the first start's screen, the frame time graph and the fixed
+  widths of the saves and cloud backup fields. The online screens over the
+  title keep sizing themselves by the window's height like the game's own
+  text (22 px at 1009 lines, 24 px on the Thor); their PushFont sizes are
+  taken before the menus' scale.
+- PC (`DW4_UI_SCALE=percent` shows a scale in a test run): at 1x the game's
+  pictures are byte for byte the same as before (title, name entry,
+  dungeon, Xbox prompts: same md5); the F1 menu's pictures differ only
+  where the new "Menu size" line and the changed controllers note stand
+  (and below, moved down; the scrollbar), the lines above them
+  pixel-identical. The Thor's look on the PC (1920 x 1080, 231 %,
+  `build/phc/ui_thor/`): every tab readable and inside the window.
+
+### The menu button for touch
+
+- Android only (`DW4_TOUCH_UI=1` draws it in a PC test run): three lines on
+  a dark rounded square, 44 px at 1x (102 px on the Thor), in the middle of
+  the bar right of the 4:3 picture, so never over the HUD (which stays on
+  the 4:3 picture, also in widescreen); in a window too narrow for that, in
+  the top right corner.
+- Shown for 4 s after any touch (and at the start), always while F1 is
+  open, then it fades out in 0.5 s. A tap on it (or in the top right
+  corner as before) opens and closes F1. Touch still works only on menus.
+
+### The AYN Thor's controller
+
+What the device reports (read only, 14.11.2026): the controller is USB HID
+`2020:0111` "Odin Controller" (`Vendor_2020_Product_0111.kl`: `BTN_SOUTH`
+`BUTTON_A`, `BTN_EAST` `BUTTON_B`, `BTN_NORTH` (0x133) `BUTTON_X`,
+`BTN_WEST` (0x134) `BUTTON_Y`, `BTN_TL2` / `BTN_TR2` `BUTTON_L2` / `R2`,
+`BTN_SELECT`, `BTN_START`, `BTN_MODE`, `KEY_BACK` `BACK`, `KEY_HOME`,
+`KEY_APPSELECT`; axes X, Y, Z, RZ, GAS 0..32767, BRAKE, HAT). The key
+layout is fixed, so the face buttons' codes change in the controller
+itself. Its settings: `persist.sys.gamepad.type` **0** while the quick
+settings tile "Controller style" says **Standard**; `trigger_input_mode`
+0 with the tile "L2/R2 mode" **Analog**; "Smooth Display" (peak refresh
+rate) 60; `global_gamepad_to_mouse_mode` 0 (the stick mouse off). Reviews
+and AYN's settings: face buttons printed in the Nintendo layout (A right,
+B bottom, X top, Y left; the Super Famicom colours A red, B yellow, X blue,
+Y green), shoulders L1 / R1, analog triggers L2 / R2, Start and Select
+above the lower screen; "Style: Xbox or Standard", "L2/R2 mode: Analog,
+Digital or Both". A tester's report for the Odin's styles fits Standard =
+the printed letters' codes and Xbox = positions.
+
+- `PadFamily::thor` ("AYN Thor", settings id `thor`): 2020:0111 or a name
+  with "Odin Controller". It reads like the Nintendo pads: by label (the
+  default `nintendo_layout`) the printed A is the game's A and the menus'
+  confirm, by position the bottom button is.
+- `[gamepad] thor_style` = auto (the device's setting, read every second,
+  so the quick settings tile takes effect while the game runs; Standard
+  when it cannot be read), standard or xbox (F1 > Controls, "AYN Thor
+  controller style", shown when a Thor pad is connected). Standard: SDL's
+  SOUTH is the printed A (no swap by label); Xbox: SOUTH is the bottom
+  button (swapped by label, as a Switch Pro). `persist.sys.gamepad.type` 1
+  is taken as Xbox; only 0 = Standard was seen on the device.
+- Pictures: round dark buttons with the letters in their colours, L1 / R1,
+  L2 / R2, and START / SELECT as pills with the words (the printed icons
+  of these two were not found: a look at the device decides; one table
+  entry in `pad_family.cpp`).
+- L2 / R2: SDL's Android backend makes the GAS / BRAKE axes the triggers
+  (the generic mapping `lefttrigger:a4,righttrigger:a5`) and the L2 / R2
+  keys joystick buttons 15 and 16 outside the gamepad mapping, so in
+  "Both" a pull counts once already; in "Digital" (keys only) the triggers
+  did nothing. The keys are now folded into the trigger axes
+  (`with_digital_triggers`, `read_pad`): one pull in every mode, and a
+  binding captured from them binds the trigger.
+- The "ODIN Station Virtual Mouse" (the same USB id, `Sources: MOUSE`) is
+  no joystick for SDL and takes no player slot; with the stick mouse off it
+  sends nothing.
+- Android's Back and Home keys no longer switch the prompts to the
+  keyboard (on the emulator `input keyevent BACK` did; the Thor's Back
+  button is the controller's).
+
+### Lifecycle
+
+- Going to the background saves changed settings (`lifecycle: settings
+  saved`); the game loop stands in `SDL_PollEvent` (the game pauses: SDL
+  blocks on pause) and SDL pauses the AAudio output. Coming back the loop
+  starts its clock again (`lifecycle: the game goes on`; before, up to four
+  steps caught up). The PC does not pause on focus loss, nor does it now.
+- `DW4Activity.onTrimMemory` passes only real memory warnings on:
+  `TRIM_MEMORY_UI_HIDDEN` (every HOME) is logged and dropped; the others
+  arrive as `SDL_EVENT_LOW_MEMORY`, on which the renderer lets go of the
+  hashed textures no picture drew in the last two frames
+  (`GlRenderer::trim_textures`, as the memory budget would).
+- Emulator: HOME (`entering the background`, `settings saved` after F1 >
+  VSync was switched, settings.ini `vsync=false`, `trim memory level 20
+  ... not passed on`), back (`in the foreground`, `the game goes on`, the
+  surface's frame rate asked again, bars hidden), `am send-trim-memory ...
+  RUNNING_LOW` (`trim memory level 10 (passed on as low memory)`, `low
+  memory: 0 textures (0 KiB) let go`: no pack loaded). The app switcher
+  (Launcher3's live tile) neither paused the app nor took its focus there.
+
+### Frame pacing
+
+- Every game surface asks for the game's rate: `Surface.setFrameRate(60,
+  FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, CHANGE_FRAME_RATE_ALWAYS)` in
+  `DW4Activity.GameSurface.surfaceChanged`, and the game passes a frame
+  limit above 60 (up to 120) through JNI (`DW4Activity.setFrameRate`).
+  SurfaceFlinger on the emulator: the game's layer votes `60.00 Hz
+  ExactOrMultiple SeamedAndSeamless`. On the Thor the display runs mode 1
+  (60 Hz) under the owner's Smooth Display 60 (`PRIORITY_USER_SETTING_PEAK
+  _REFRESH_RATE` max 60); at 120 the vote picks a rate 60 divides.
+- `DW4_FRAME_STATS=SECONDS` (any platform; `--env` on Android) logs
+  presents per second, the percentiles of the present interval, of the
+  pass's work up to the swap, of the swap and of the engine step. Emulator
+  (`-gpu host`, the debug APK), intro and title: 56.8 / 52.4 presents/s
+  over 10 s (the second with a stage load), interval p50 16.7 ms, work p50
+  4.4-4.8 ms, step p50 0.12 ms, p99 1-7 ms. On the Thor: open (locked).
+- gles_check on the Thor (`gles_check gl_renderer.cpp SAMPLES FRAMES`, a
+  frame stand-in of three blended full-screen quads and an overlay quad,
+  GPU time by `GL_EXT_disjoint_timer_query`, wall time to `glFinish`;
+  medians; the GPU clock rose from 401 to 615 MHz of 680 during the runs):
+
+  | 1920 x 1080 | GPU, 4x MSAA | wall, 4x MSAA | GPU, no MSAA | wall, no MSAA |
+  | --- | --- | --- | --- | --- |
+  | plain frame | 0.37-0.52 ms | 2.3-3.2 ms | 0.27 ms | 1.0 ms |
+  | + kept picture | +0.06-0.11 ms | +0.5-0.8 ms | +0.03 ms | +0.23 ms |
+  | + Sharpening | +0.35-0.37 ms | +1.1-1.8 ms | +0.28 ms | +0.39 ms |
+  | + both | +0.36-0.50 ms | +1.5-2.4 ms | +0.27 ms | +0.97 ms |
+
+  The kept picture's blit in the middle of a multisampled frame costs the
+  GPU about 0.1 ms, the Sharpening option about 0.4 ms (the wall times add
+  the flushes a `glFinish` per frame forces): no reason to change a GLES
+  default. Thermal (sysfs, read only, after the runs): CPU 33-39 °C, GPU
+  30-33 °C, battery 20 °C, thermal status 0 (the thermal HAL reported "not
+  ready").
+
+### Text input
+
+- ImGui's SDL backend starts SDL's text input while a field is active;
+  without a hardware keyboard SDL shows Android's keyboard and pans the
+  picture so the field stays above it (emulator: the Saves tab's cloud
+  backup Account field, `mInputShown=true`, `inputType=0x3c001`).
+- A password field opens it as a password field's: SDL's
+  `TEXT_PASSWORD_HIDDEN` without autocorrection, and the keyboard's input
+  restarted (`DW4Activity.restartTextInput`), since it keeps a field's kind
+  otherwise (emulator: `inputType=0x20081`).
+- Back on the keyboard stops SDL's text input while ImGui's field stays
+  active; a tap on that field brings the keyboard back (`text input: the
+  system keyboard again`). `DW4_TRACE_IME=1` logs the IME calls.
+- The game's own name entry is the original's letter grid (controller);
+  the port's on-screen keyboard of the online screens stays for the
+  controller.
+
+### Saves between the PC and Android
+
+`DW4_CAMPAIGN_SAVE_NOW=NAME` (test runs with the campaign driver,
+`DW4_CAMPAIGN_LOAD=1`: Call Digimon at the title with Card A's character)
+makes a save due at once; the driver saves in the save room and keeps the
+card as checkpoint NAME. The det route itself never saves, so the PC's save
+came from r25c's k2 checkpoint (a PC campaign run), loaded and saved again
+in a hidden PC run (`work/cux/rt_pc.sh`, private copies):
+
+| step | where | loaded | saved |
+| --- | --- | --- | --- |
+| pc1 | PC (hidden test run) | r25c k2: level 7, phase 2, keys 0,1,2 at frame 3197 | frame 6279 |
+| emu1 | x86_64 emulator, the debug APK (pc1's GCI in the app's folder, `--card-dir`) | the same at 3197 | 6279 |
+| pc2 | PC from emu1's GCI pulled back | the same at 3197 | 6279 |
+
+The three GCI files differ only in bytes 0x2a-0x2b (the header's
+modification time). The same file is the player's `saves/savedata.dat`
+("the same bytes as Dolphin's B2-GDJE-NDMWSaveData.gci"). The Thor's turn
+(arm64) waits for an unlocked device: put the GCI into `files/rt/...`
+through `run-as` as the game.tsv above and run the same `dw4args`.
+
+### settings.ini on Android
+
+The same file and defaults as on the PC (`Android/data/org.dw4pc.game/
+files/settings.ini`, written on the way to the background and when F1
+closes), with these differences:
+
+| key | Android |
+| --- | --- |
+| `[window] width`, `height`, `fullscreen` | not used: always the whole screen |
+| `[window] ui_scale` | auto = the display's scale (231 % on the Thor) |
+| `[window] fps_limit` | 0 (the default): 60 Hz asked of the display; above 60: that rate up to 120 |
+| `[window] msaa` | 4 (the PC's default; Adreno 740: 4x) |
+| `[gamepad] thor_style` | auto (the Thor's Controller style) |
+| `[gamepad] gc_adapter` | not used (WinUSB, the PC's GameCube adapter reader) |
+
+### Open after this lane
+
+- On the Thor in the game (it was locked): the immersive window and its
+  log line, the menus at 231 %, the touch button, the Thor family's
+  prompts and the controller style (also switched while the game runs:
+  one getevent capture of the printed A in each style confirms the
+  mapping), L2 / R2 in Digital and Both, HOME / app switcher, the keyboard,
+  `DW4_FRAME_STATS` in the intro, the title and the det route
+  (`newgame_dng101b1`, `--mute`), the save round trip on arm64.
+- START / SELECT: the printed icons.
+- The online screens on the Thor at their window-height size (24 px text):
+  the owner's judgement.
+
 ## Compile status (NDK clang 21, phase A)
 
 - `dw4_core`, `dw4_engine`, `dw4_online`: no errors for arm64-v8a and x86_64.
@@ -957,10 +1200,9 @@ Output in `work/android_research/thor/` (gitignored; it holds the serial).
     `HAT_X`/`HAT_Y` (D-pad, -1..1). The layout also names RX/RY/THROTTLE/
     RUDDER/WHEEL, which this controller does not report.
   - So the triggers come both as buttons (L2/R2) and as analog axes; SDL's
-    Android joystick path sees a standard gamepad. The pad family code
-    (`src/game/pad_family.cpp`) has no entry for `2020:0111` yet: phase E
-    adds a "Thor" family (button labels per AYN's layout setting) instead of
-    Generic.
+    Android joystick path sees a standard gamepad. Phase C added the "AYN
+    Thor" pad family (`PadFamily::thor`; "The AYN Thor's controller" in
+    phase C's section).
 - **"ODIN Station Virtual Mouse"**: the same USB id (version 0x00c8),
   CURSOR_ICON | EXTERNAL: AYN's mouse emulation. The game ignores mouse
   input from it.
