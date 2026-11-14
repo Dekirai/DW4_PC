@@ -1,4 +1,6 @@
-# The player card's guest b (k2): joins a in stag0101 (I1a's automatic join) and follows a until a removes it.
+# The player card's guest b (k2): joins a in stag0101 and follows a until a removes it. (Round I1b: the gate form lists a's
+# row, preselected since a plays at stag0101 (19.7.3, decision 40); the prompt has no time limit (decision 30), so b answers
+# it with the preselection: DW4_ONLINE_AUTOCHOICE cursor in scenario.json. Before, b waited at the open prompt.)
 campaign until stage=stagml11,control
 idle until frames>=1500
 explore mate00 yes until stage=stag0101,control
