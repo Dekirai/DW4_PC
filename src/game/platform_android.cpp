@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -24,6 +25,8 @@ namespace {
 // warning (or an error) only when its words say so: logcat's W/DW4 and E/DW4
 // are the problems alone, everything else is I/DW4 like stdout.
 int stderr_line_priority(const std::string& line) {
+    // (main's catch: the reason the game stops, before its message box.)
+    if (line.rfind("dw4_game: ", 0) == 0) return ANDROID_LOG_ERROR;
     std::string lower(line);
     for (char& c : lower)
         if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
@@ -163,4 +166,17 @@ void install_bundled_language_packs(const std::filesystem::path& lang_root) {
     if (written) std::printf("language: %d language pack files from the APK into %s\n", written, lang_root.c_str());
 }
 
+namespace {
+std::atomic<bool> g_game_paused{false};
+} // namespace
+
+void android_note_game_paused(bool paused) { g_game_paused.store(paused); }
+
 } // namespace dw4::game
+
+// DW4Activity.nativeGamePaused: whether the game's thread has reached SDL's
+// pause (DID_ENTER_BACKGROUND seen by the lifecycle watch; SDL lets go of the
+// OpenGL context right after it), for the surface's end to wait for.
+extern "C" JNIEXPORT jboolean JNICALL Java_org_dw4pc_game_DW4Activity_nativeGamePaused(JNIEnv*, jclass) {
+    return dw4::game::g_game_paused.load() ? JNI_TRUE : JNI_FALSE;
+}

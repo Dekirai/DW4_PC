@@ -72,6 +72,48 @@ public class DW4Activity extends SDLActivity {
             super.surfaceChanged(holder, format, width, height);
             applyFrameRate(holder.getSurface(), "surface " + width + "x" + height);
         }
+
+        /**
+         * SDL releases the EGL surface after waiting at most 0.5 s for the
+         * game's thread to reach its pause (onNativeSurfaceDestroyed); a
+         * stage load keeps that thread longer (the debug build: about 1.1 s
+         * on the emulator), and the game's next swap met the released
+         * surface (EGL_BAD_SURFACE). The pause is asked for first, and the
+         * game gets up to 3 s to reach it before SDL goes on.
+         */
+        @Override
+        public void surfaceDestroyed(SurfaceHolder holder) {
+            SDLActivity.mNextNativeState = SDLActivity.NativeState.PAUSED;
+            SDLActivity.handleNativeState();
+            waitForGamePause(3000);
+            super.surfaceDestroyed(holder);
+        }
+    }
+
+    /** DID_ENTER_BACKGROUND reached the game's thread (platform_android.cpp). */
+    static native boolean nativeGamePaused();
+
+    static void waitForGamePause(long timeoutMs) {
+        if (mSDLThread == null || !mSDLThread.isAlive()) {
+            return;
+        }
+        final long start = System.nanoTime();
+        try {
+            while (!nativeGamePaused()) {
+                final long waited = (System.nanoTime() - start) / 1000000;
+                if (waited >= timeoutMs) {
+                    Log.w(GAME_TAG, "lifecycle: the game did not reach its pause in " + waited + " ms");
+                    return;
+                }
+                Thread.sleep(5);
+            }
+        } catch (UnsatisfiedLinkError | InterruptedException e) {
+            return;
+        }
+        final long waited = (System.nanoTime() - start) / 1000000;
+        if (waited >= 100) {
+            Log.i(GAME_TAG, "lifecycle: the surface waited " + waited + " ms for the game to reach its pause");
+        }
     }
 
     /**

@@ -74,6 +74,11 @@ void android_set_frame_rate(float hz);
 // The system keyboard takes the kind of SDL's text input started last
 // (DW4Activity.restartTextInput: InputMethodManager.restartInput).
 void android_restart_text_input();
+// The game's thread reached SDL's pause (true) or comes back (false): the
+// end of the game's surface waits for it (DW4Activity.GameSurface
+// .surfaceDestroyed asks nativeGamePaused), so a long pass (a stage load)
+// never draws into a released surface.
+void android_note_game_paused(bool paused);
 #endif
 
 } // namespace dw4::game

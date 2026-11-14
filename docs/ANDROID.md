@@ -443,7 +443,8 @@ SDL's echo of its own log next to the real problems, so its lines are
 `I/DW4` too unless their words name a problem: `W/DW4` for "error",
 "fail", "cannot", "could not", "unable", "warning", "refused", "invalid",
 "missing", "not found", "unsupported", "corrupt", `E/DW4` for "fatal",
-"crash", "abort", "exception" (`logcat *:W` shows the problems alone).
+"crash", "abort", "exception" and the reason the game stops (`dw4_game:
+...`, before its message box); `logcat *:W` shows the problems alone.
 
 ### The one window
 
@@ -1048,6 +1049,21 @@ the printed letters' codes and Xbox = positions.
   RUNNING_LOW` (`trim memory level 10 (passed on as low memory)`, `low
   memory: 0 textures (0 KiB) let go`: no pack loaded). The app switcher
   (Launcher3's live tile) neither paused the app nor took its focus there.
+- HOME inside a long pass: SDL releases the EGL surface after waiting at
+  most 0.5 s for the game's thread to reach its pause, and a stage load
+  holds that thread longer (stagis09's load: about 1.1 s in the debug
+  APK on the emulator). On the emulator (14.11.2026, HOME 0.4-1.0 s after
+  `stage stagis09 section ...`, three of four rounds inside the load)
+  `surfaceDestroyed` came while the load ran, the game logged `in the
+  background` only after it, and one of the three met the released surface
+  at its swap (`E/libEGL eglSwapBuffersWithDamageKHRImpl: error 300d
+  (EGL_BAD_SURFACE)`); no crash, and the game drew on after coming back.
+  Since then `DW4Activity.GameSurface.surfaceDestroyed` asks for the pause
+  itself and waits (at most 3 s) until the game's lifecycle watch has seen
+  `DID_ENTER_BACKGROUND` (`nativeGamePaused`, `platform_android.cpp`;
+  SDL lets go of the context right after that) before SDL releases the
+  surface; a wait of 100 ms or more is logged (`lifecycle: the surface
+  waited N ms for the game to reach its pause`).
 
 ### Frame pacing
 

@@ -337,6 +337,12 @@ bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
         }
     if (event->type == SDL_EVENT_DID_ENTER_FOREGROUND) dw4::game::note_lifecycle(dw4::game::LifecycleNote::foreground);
     if (event->type == SDL_EVENT_LOW_MEMORY) dw4::game::note_lifecycle(dw4::game::LifecycleNote::low_memory);
+#ifdef SDL_PLATFORM_ANDROID
+    // (SDL lets go of the OpenGL context right after this; the surface's end
+    // waits for it: DW4Activity.GameSurface.surfaceDestroyed.)
+    if (event->type == SDL_EVENT_DID_ENTER_BACKGROUND) dw4::game::android_note_game_paused(true);
+    if (event->type == SDL_EVENT_WILL_ENTER_FOREGROUND) dw4::game::android_note_game_paused(false);
+#endif
     return true;
 }
 
