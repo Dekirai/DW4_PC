@@ -38,13 +38,15 @@ import java.io.File;
  * Phase C: the window full screen without the status and navigation bars
  * (immersive, kept after the menu, HOME and back and a controller coming
  * again), the game's frame rate asked of the display, and memory warnings
- * passed on only when memory is short.
+ * passed on only when memory is short. Phase E: the second screen's panels
+ * on the AYN Thor's lower screen (LowerScreen).
  */
 public class DW4Activity extends SDLActivity {
     private static final String TAG = "DW4probe";
     private static final String GAME_TAG = "DW4";
 
     private DisplayManager.DisplayListener mDisplayListener;
+    private LowerScreen mLowerScreen;
     private InputManager.InputDeviceListener mInputDeviceListener;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private final Runnable mImmersive = this::applyImmersive;
@@ -157,6 +159,14 @@ public class DW4Activity extends SDLActivity {
     }
 
     /**
+     * Called by the game (JNI, screen2_android.cpp) with [screen2] mode: the
+     * second screen's panels on a second display, or not.
+     */
+    public static void setLowerScreenWanted(boolean wanted) {
+        LowerScreen.setWanted(wanted);
+    }
+
+    /**
      * Called by the game (JNI, platform_android.cpp) after it started SDL's
      * text input again with another kind (a password field after a text
      * field): the keyboard keeps the text field's kind until its input is
@@ -228,6 +238,27 @@ public class DW4Activity extends SDLActivity {
     protected void onResume() {
         super.onResume();
         scheduleImmersive(0);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (mLowerScreen != null) {
+            mLowerScreen.start();
+        }
+    }
+
+    /**
+     * SDL pauses the game in onStop (Android 7+); the second screen's
+     * surface goes before that (LowerScreen.stop: its end waits for a frame
+     * drawing into it), so the game's thread never meets it released.
+     */
+    @Override
+    protected void onStop() {
+        if (mLowerScreen != null) {
+            mLowerScreen.stop();
+        }
+        super.onStop();
     }
 
     @Override
@@ -332,6 +363,7 @@ public class DW4Activity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         scheduleImmersive(0);
+        mLowerScreen = new LowerScreen(this);
         InputManager im = (InputManager) getSystemService(Context.INPUT_SERVICE);
         if (im != null) {
             // A controller coming again (a USB reconnect, the Thor's
@@ -380,6 +412,10 @@ public class DW4Activity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
+        if (mLowerScreen != null) {
+            mLowerScreen.release();
+            mLowerScreen = null;
+        }
         mMainHandler.removeCallbacks(mImmersive);
         mMainHandler.removeCallbacks(mReportWindow);
         InputManager im = (InputManager) getSystemService(Context.INPUT_SERVICE);

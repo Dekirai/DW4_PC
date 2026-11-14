@@ -383,6 +383,13 @@ Settings Settings::parse(IniFile document) {
     settings.achievements = ini.get_bool("achievements", "enabled", settings.achievements);
     settings.achievement_popups = ini.get_bool("achievements", "popups", settings.achievement_popups);
     settings.net_indicator = ini.get_bool("online", "net_indicator", settings.net_indicator);
+    settings.screen2_mode = ini.get_or("screen2", "mode", "auto") == "off" ? Screen2Mode::off : Screen2Mode::automatic;
+    {
+        const std::string tab = ini.get_or("screen2", "tab", screen2_tab_id(settings.screen2_tab));
+        for (const Screen2Tab t : {Screen2Tab::online, Screen2Tab::status, Screen2Tab::menu})
+            if (tab == screen2_tab_id(t)) settings.screen2_tab = t;
+    }
+    settings.screen2_overlay = ini.get_bool("screen2", "overlay", settings.screen2_overlay);
     settings.data = ini.get_or("data", "path", "");
     settings.save_file = ini.get_or("data", "save", settings.save_file.string());
     settings.save_file_b = ini.get_or("data", "save_b", settings.save_file_b.string());
@@ -450,6 +457,10 @@ void Settings::store() {
     ini_.set("gamepad", "wii_driver", wii_driver == WiiDriver::on ? "on" : wii_driver == WiiDriver::off ? "off" : "auto");
     ini_.set("gamepad", "menu_buttons", menu_buttons == MenuButtons::bindings ? "bindings" : "layout");
     ini_.set_bool("gamepad", "gc_adapter", gc_adapter);
+    if (screen2_mode != Screen2Mode::automatic || ini_.get("screen2", "mode"))
+        ini_.set("screen2", "mode", screen2_mode == Screen2Mode::off ? "off" : "auto");
+    if (screen2_tab != Screen2Tab::status || ini_.get("screen2", "tab")) ini_.set("screen2", "tab", screen2_tab_id(screen2_tab));
+    if (screen2_overlay || ini_.get("screen2", "overlay")) ini_.set_bool("screen2", "overlay", screen2_overlay);
     if (thor_style != ThorStyle::automatic || ini_.get("gamepad", "thor_style"))
         ini_.set("gamepad", "thor_style", thor_style == ThorStyle::standard ? "standard" : thor_style == ThorStyle::xbox ? "xbox" : "auto");
     {
@@ -495,6 +506,15 @@ float ui_scale_factor(int setting_percent, float display_scale, bool follow_disp
     if (setting_percent > 0) return std::clamp(float(setting_percent) / 100.0f, 1.0f, 4.0f);
     if (!follow_display || !(display_scale > 0.0f)) return 1.0f;
     return std::clamp(display_scale, 1.0f, 4.0f);
+}
+
+const char* screen2_tab_id(Screen2Tab tab) {
+    switch (tab) {
+    case Screen2Tab::online: return "online";
+    case Screen2Tab::menu: return "menu";
+    case Screen2Tab::status: break;
+    }
+    return "status";
 }
 
 } // namespace dw4::game

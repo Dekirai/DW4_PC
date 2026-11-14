@@ -383,6 +383,9 @@ if(DW4_BUILD_APP)
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
   target_sources(dw4_game PRIVATE src/game/overflow_profile.cpp)
+  # The second screen's panels (docs/ANDROID.md phase E): the PC's overlay,
+  # Android's lower screen (cmake/android.cmake adds its own frame).
+  target_sources(dw4_game PRIVATE src/game/screen2.cpp)
   if(WIN32)
     # (setupapi, winusb: the GameCube adapter in Wii U mode, gc_adapter.cpp;
     # with hid, cfgmgr32 also the Switch 2 Pro Controller, switch2_pro.cpp)
