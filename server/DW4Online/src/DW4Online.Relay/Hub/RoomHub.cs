@@ -1287,12 +1287,26 @@ public sealed partial class RoomHub
         // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
         // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead). A group that chose a
         // row in the prompt joins its row; one that chose *New instance* (or plan 0xFFFF) lands with the others leaving with it
-        // (decision 43, 2026-11-11: two players who leave together and both choose New instance land together).
+        // (decision 43, 2026-11-11: two players who leave together and both choose New instance land together), only where its own
+        // choice lets the base's host in (decision 48, 2026-11-14, "Private stays private": a Private chooser is nobody's co-arrival,
+        // a Friends chooser only a friend's; ChoiceAdmits).
         // (A GO's barrier joins its offer's stage group: never a co-arrival base or one of its co-arrivals, 19.30.7.)
-        var holder = g.Go is not null ? null : _holds.FirstOrDefault(h => h.Hold == HoldKind.CoArrival && h != g && h.Go is null && SameStage(h.Stage, g.Stage) &&
-                                                h.Context == g.Context && h.World == w &&
-                                                (w is not null || (g.PromptChoice is not { Choice: ChoiceKind.Join } && MaySeeBase(h, g))) &&
-                                                h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity);
+        bool Fits(ArrivalGroup h) => h.Hold == HoldKind.CoArrival && h != g && h.Go is null && SameStage(h.Stage, g.Stage) && h.Context == g.Context &&
+                                     h.World == w && (w is not null || (g.PromptChoice is not { Choice: ChoiceKind.Join } && MaySeeBase(h, g))) &&
+                                     h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity;
+        var holder = g.Go is not null ? null : _holds.FirstOrDefault(h => Fits(h) && (w is not null || ChoiceAdmits(g, h.Members[0].Member)));
+        if (holder is null && w is null && g.Go is null && _holds.Where(Fits).ToList() is { Count: > 0 } refused)
+        {
+            // (Decision 48: a base would take this group, but the group's own *New instance* choice does not let its host in. The
+            // bases stop waiting for its members, who decide on their own now; CheckHolds ends a hold left waiting for nobody.)
+            Count("co_arrival_refused_choice");
+            foreach (var r in refused)
+            {
+                r.Awaited.RemoveAll(x => g.Members.Any(a => a.Member == x));
+                Note("co_arrival_refused", r.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("host", r.Members[0].Member.Id),
+                    ("visibility", Visibilities.Text(ChosenNew(g) ?? Visibility.Public)));
+            }
+        }
         if (holder is not null)
         {
             holder.CoArrivals.Add(g);
@@ -1307,13 +1321,15 @@ public sealed partial class RoomHub
         // announced member fit). Groups another base already waits for are that base's. A fresh group that chose a row in the
         // prompt is no base (19.7.6: automatic only where the base starts a new instance): its choice decides at once (round
         // I1b's review: it held for a stranger's HEADING, and the co-arrival's NEW dropped the chosen join). A GO's barrier is no
-        // base either (19.30.7), and a member whose GO is stamped is nobody's co-arrival.
+        // base either (19.30.7), and a member whose GO is stamped is nobody's co-arrival. A base holds for no member whose *New
+        // instance* choice would not let the base's host in (decision 48: it would never come).
         List<HubMember> announced = g.Go is not null || (w is null && g.PromptChoice is { Choice: ChoiceKind.Join }) ? [] :
             _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Go is not { Stamped: true } &&
                                        x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
                                        Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
                                        h.Context == g.Context && x.Instance is not null && x.Connected &&
-                                       (w is not null ? x.World == w : x.World is null && !x.Prompt.ChoseRow && MaySeeHost(g.Members[0].Member, g, x)) &&
+                                       (w is not null ? x.World == w : x.World is null && !x.Prompt.ChoseRow && MaySeeHost(g.Members[0].Member, g, x) &&
+                                                                       ChoiceAdmits(x.Prompt.ChoseNew, x, g.Members[0].Member)) &&
                                        !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
         var awaited = new List<HubMember>();
         var room = Capacity - g.Members.Count;

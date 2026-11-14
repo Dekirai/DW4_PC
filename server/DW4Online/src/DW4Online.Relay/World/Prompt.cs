@@ -29,8 +29,13 @@ namespace DW4Online.Relay.World
         public Dictionary<uint, string> Hosts { get; set; } = [];
 
         /// <summary>The member chose a row in the gate form: no automatic co-arrival base waits for it, and it joins no foreign base
-        /// (19.7.6). A *New instance* chooser groups with the others leaving with it (decision 43).</summary>
+        /// (19.7.6). A *New instance* chooser groups with the others leaving with it (decision 43) where its chosen visibility lets
+        /// their host in (decision 48).</summary>
         public bool ChoseRow => Plan != 0 && Choice is { Choice: ChoiceKind.Join };
+
+        /// <summary>The visibility the member chose with *New instance* for the open plan (null: none, or a row). Decision 48: a base
+        /// holds only for an announced member whose choice would let the base's host in (<see cref="Hub.RoomHub"/>.ChoiceAdmits).</summary>
+        public Visibility? ChoseNew => Plan != 0 && Choice is { Choice: ChoiceKind.New } c ? c.Visibility : null;
 
         public void Clear()
         {
@@ -257,7 +262,8 @@ namespace DW4Online.Relay.Hub
                     m.DefaultVisibility = c.Visibility;
                     // Decision 43: *New instance* choosers who leave together land together. One whose base went a moment earlier
                     // finds the base's starting instance (19.7.6) and joins it as its co-arrival, as an arrival without a choice
-                    // does, if it may see it, has seats and was never offered to it (a row it saw and passed over stays passed over).
+                    // does, if it may see it, has seats and was never offered to it (a row it saw and passed over stays passed over),
+                    // and if the chosen visibility lets that instance's host in (decision 48: Private stays private).
                     if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
                     {
                         Note("prompt_new", g.From, ("member", m.Id), ("visibility", Visibilities.Text(c.Visibility)), ("starting", start.World.Wid));
@@ -389,10 +395,26 @@ namespace DW4Online.Relay.Hub
                 .Any(x => !w.Seats.ContainsKey(x) && Unseatable(w, x, now));
 
         /// <summary>Decision 43: a starting instance at the arrival's stage (19.7.6) that the arrival may see and fits, and that was never
-        /// offered to it (the base of the others leaving with it went a moment earlier); null: none.</summary>
-        private CandidateRow? StartingNotOffered(ArrivalGroup g, long now) =>
-            Candidates(g, now).FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !g.PromptHosts.ContainsKey(r.World.Wid) &&
-                                                   !SeatsRefused(g, r.World, now));
+        /// offered to it (the base of the others leaving with it went a moment earlier), whose host the arrival's own *New instance*
+        /// choice lets in (decision 48: a Private chooser joins nobody's, a Friends chooser only a friend's); null: none.</summary>
+        private CandidateRow? StartingNotOffered(ArrivalGroup g, long now)
+        {
+            CandidateRow? refused = null;
+            foreach (var r in Candidates(g, now))
+            {
+                if (r.World.StartingUntil == 0 || r.Group is null || !r.Choosable || g.PromptHosts.ContainsKey(r.World.Wid) || SeatsRefused(g, r.World, now))
+                    continue;
+                if (ChoiceAdmits(g, r.World.Host)) return r;
+                refused ??= r;
+            }
+            if (refused is not null)
+            {
+                Count("new_choice_starting_refused");
+                Note("starting_refused", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", refused.World.Wid),
+                    ("visibility", Visibilities.Text(ChosenNew(g) ?? Visibility.Public)));
+            }
+            return null;
+        }
 
         /// <summary>A *New instance* chooser joins a starting instance as its co-arrival (decision 43): a JOIN at the entrance with 3.4's
         /// hold, as an arrival without a choice does (19.7.6), with the co-arrival's toast.</summary>

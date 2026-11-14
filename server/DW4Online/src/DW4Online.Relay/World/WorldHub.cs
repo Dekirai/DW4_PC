@@ -1185,7 +1185,8 @@ public sealed partial class RoomHub
     {
         // The choice *New instance* (plan 0xFFFF) holds whatever came before this decision (a co-arrival hold nobody joined, a
         // redecision after its target ended): no row joined. Like the prompt's New instance (decision 43) it lands with the others
-        // leaving with it: a starting instance it may see takes it as a co-arrival.
+        // leaving with it: a starting instance it may see takes it as a co-arrival, where its remembered default visibility (the
+        // one its own instance would get) lets that instance's host in (decision 48).
         if (g.PlanNew)
         {
             if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
@@ -1299,6 +1300,28 @@ public sealed partial class RoomHub
         }
         return host.DataHash == g.Members[0].Member.DataHash;
     }
+
+    /// <summary>Decision 48: the visibility a fresh group chose with *New instance*: the gate form's or the held prompt's CHOICE, or plan
+    /// 0xFFFF (the client's *New instance* without a plan) with the member's remembered default, the visibility its instance gets; null:
+    /// no *New instance* choice (no answer: the loading-screen form, an arrival nobody asked; or a row).</summary>
+    private static Visibility? ChosenNew(ArrivalGroup g) =>
+        g.PromptChoice is { } c ? (c.Choice == ChoiceKind.New ? c.Visibility : null) :
+        g.PlanNew && g.Members.Count > 0 ? g.Members[0].Member.DefaultVisibility : null;
+
+    /// <summary>
+    /// Decision 48 (the user's answer of 2026-11-14, "Private stays private"): a *New instance* chooser lands with another player's
+    /// base or starting instance only where its own choice would let that host in, as the base's visibility must let the chooser in
+    /// (<see cref="MaySeeBase"/>, <see cref="Matching.Visible"/>): Public as before; Friends only with a host who is the chooser's friend
+    /// (the blocks count in both checks); Private with nobody's (the members leaving with it through the same barrier are its own
+    /// arrival group and stay with it). Both checks together are symmetric in the two players, so both barrier orders give the same
+    /// result. Staff are ordinary players here (fix-019). A group without a *New instance* choice: true, as before.
+    /// </summary>
+    private static bool ChoiceAdmits(Visibility? chosen, HubMember chooser, HubMember host) =>
+        chosen is not { } v || Matching.MayEnter(v, chooser.AccountId, host);
+
+    /// <summary><see cref="ChoiceAdmits(Visibility?, HubMember, HubMember)"/> for a fresh arrival group (its first member chose).</summary>
+    private static bool ChoiceAdmits(ArrivalGroup g, HubMember host) =>
+        g.Members.Count == 0 || ChoiceAdmits(ChosenNew(g), g.Members[0].Member, host);
 
     /// <summary>The world part of BARRIER_OK for a member arriving in an instance (19.18): the story owner is the instance's host (his
     /// member id also after he left the world while the instance ends).</summary>

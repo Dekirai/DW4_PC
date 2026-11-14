@@ -8968,6 +8968,7 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 | 45 (2026-11-12) | Go along: a context that changes on the target after the stamp is decided as built, as any arrival's decision (a stage group of its own there with the notice *other quest*), not a wait on the loading screen | 19.30.7, 19.25 |
 | 46 (2026-11-12) | *Arriving now*: a stage group of an instance at a barrier heading to the arrival stage (or its members parked on the way there) shows as a row *Arriving now* with its host's name; selectable (the arrival waits for their stage group at the stage, then joins it), never preselected (decision 40 unchanged), never the automatic join; built in round I1b's integration | 19.7.2, 19.7.3, 19.32 |
 | 47 (2026-11-12) | The prompt review's finding 8 (a fresh arrival without an answer becomes a co-arrival base before its own loading-screen prompt) is accepted as built: no extra handling | 19.7.6, 19.32 |
+| 48 (2026-11-14) | Private stays private: a player whose choice was *New instance* with Private is never the co-arrival of another player's base nor joins another's starting instance; with Friends only one whose host is his friend (no block either way); with Public as decision 43 says. A base whose chooser picked Private or Friends takes no co-arrival its visibility does not let in (as before). Both barrier orders give the same result; the members leaving through the same barrier (one stage group) stay together | 19.7.6, 19.7.7, 19.32 |
 
 **Standing decisions that stay:** at most four players per stage group (the
 engine's slots 0-3; staff bypass the visibility always, the blocks and the
@@ -10062,6 +10063,23 @@ later groups spawned in the base's load step). In the world:
   like any arrival (below), unless that instance was a row of its own
   prompt that it passed over (then it gets its own new instance). A member
   who chose a row joins its row and is nobody's base or co-arrival.
+- **Private stays private** (decision 48, 2026-11-14): a *New instance*
+  chooser lands with another player's base or starting instance only where
+  its own chosen visibility would let that host in, just as the base's
+  visibility must let the chooser in: *Public* as above; *Friends* only
+  with a host who is his friend (no block either way); *Private* with
+  nobody's. Both checks together are symmetric, so the two barrier orders
+  give the same result for every pair of choices (before, a Private
+  chooser whose barrier came after a stranger's Public base became that
+  base's co-arrival, a guest on the stranger's story, and got an instance
+  of his own in the other order). A base holds for no announced member
+  whose choice would refuse it, and a base that held for a member who then
+  refused it stops waiting for him (world log `co_arrival_refused`,
+  `starting_refused`). Plan 0xFFFF counts as *New instance* with the
+  member's remembered default. An arrival without a choice (no answer:
+  the loading-screen form, decision 47) keeps the automatic co-arrival;
+  the members of one stage group leaving through the same barrier are one
+  arrival and stay together whatever the visibility.
 - **The window is ten seconds, not one.** `Decide` (`RoomHub.cs`) holds a
   base only for groups whose HEADING was already there at its barrier, and
   HEADING is sent at the fade's start (`Engine::note_departure`), so the
@@ -10099,7 +10117,9 @@ CHOICE is checked again at the decision:
   loading-screen form: the barrier keeps waiting).
 - **New:** NEW with the visibility; a base for automatic co-arrivals,
   and itself the co-arrival of another base it may see or of a starting
-  instance it was not offered (decision 43, 19.7.6).
+  instance it was not offered (decision 43, 19.7.6), where the chosen
+  visibility lets that host in (decision 48: Private nobody's, Friends a
+  friend's).
 
 ### 19.8 Story only in the field
 
@@ -12217,6 +12237,8 @@ means round I1a):
 | W4 | I1 | a and b, strangers, take the gate 2 s apart with nothing running: co-arrival without a prompt, host a, b's toast |
 | W4b | I1 | b takes the gate 6 s after a, a's instance still *starting*: b joins it without a prompt (counter-proof: with `World:StartingSeconds` 0 b gets the prompt) |
 | W4c | I1b | (decision 43) k's instance plays at stag0101; a and b, strangers, take the gate there at the same moment, both get the gate form (k's row, *Here (1)*) and both choose *New instance* (autochoice new): one new instance with both (a co-arrival, or a join of its starting instance), two in the history with k's |
+| W4d | I1b | (decision 48) as W4c, but a chooses *New instance* Public at once and b, a stranger, *New instance* Private 1.5 s later (`DW4_ONLINE_AUTOCHOICE_DELAY_MS`: a's barrier comes first): a's base holds for nobody, b refuses a's starting instance (`starting_refused`): three instances, b's Private with b alone, b nobody's guest |
+| W4e | I1b | (decision 48) the other order of W4d: b's Private choice at once, a's Public 1.5 s later: b's base holds for nobody, a never sees b's instance: three instances, the same result as W4d |
 | W5 | I1 / I2 | a Private: b gets no prompt and a NEW; a moderator c sees a's row marked Private. a Friends: b not a friend, NEW; after the friendship (I2) listed |
 | W5s | I1b | (the integration's review) a Private; the moderator c chooses a's row himself in the gate form (the row only the staff bypass shows, never preselected): an audited staff join of a's instance (`instance_join role=staff how=join`, one `staff_join` in the audit) |
 | W6 | I1 | a's gate disc with b in another stage group: b sees the notice, takes the home departure 3 s later, is in its lobby on its own story within 5 s; `instance_history.end_reason` = host_left |
@@ -13075,15 +13097,15 @@ UI, privacy and deployment) and the fix stage:
   W5, `ui goalong`, the smoke set (W1, W4c, W10, W31, S22b, RGJ1, `ui home`),
   W31b-W31i (W31h2 on its repeat: a bot's timing), W7-W7d, S11a, S11b,
   W10b-W10d, W10s, the UI set, W2, W2b, W11, W11b, W11r, W30c (every one passed).
-- **Open for the user (decision 43 and an explicit Private):** a player who
-  chooses *New instance* with *Private* becomes the co-arrival of a
-  stranger's Public base when the stranger's barrier comes first (a guest
-  on the stranger's story); the other order gives two instances. Decision
-  43 says "the same visibility rules as every co-arrival", which only ask
-  whether the chooser may see the base. Either (1) a *New instance,
-  Private* chooser is never a co-arrival of another's base and a *Friends*
-  chooser only of a friend's, or (2) the order-dependent result is
-  recorded as intended (19.7.6, 19.32).
+- **Decision 43 and an explicit Private** (answered by the user on
+  2026-11-14, decision 48, "Private stays private"; built on `fix-d43`): a
+  player who chose *New instance* with *Private* became the co-arrival of a
+  stranger's Public base when the stranger's barrier came first (a guest
+  on the stranger's story) and got two instances in the other order. Now a
+  *New instance, Private* chooser is never a co-arrival of another's base
+  nor joins another's starting instance, a *Friends* chooser only a
+  friend's; both orders give the same result (19.7.6, 19.32; unit tests
+  `PromptPrivateTests`, scenarios W4d and W4e).
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
@@ -14491,7 +14513,8 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   So at HEADING the relay knows the choice: a member that chose a row is no
   automatic co-arrival base for others and joins no foreign base; one that
   chose *New instance* groups with the others leaving with it (decision 43,
-  below); *New instance* sets the member's default visibility at once
+  below) where its chosen visibility lets them in (decision 48, below);
+  *New instance* sets the member's default visibility at once
   (remembered off the lock, Q9). At its own BARRIER a member that chose a row holds for
   nobody: its choice decides at once (round I1b's review: the base check
   looked only at the others' choices, so a chosen row held for a stranger's
@@ -14603,6 +14626,42 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   `PromptTogetherTests` (two choosers -> one NEW, a block or a Private
   choice -> two, the starting window, plan 0xFFFF, a passed-over row);
   scenario W4c.
+- **Decision 48** (the user's answer of 2026-11-14 to the fix stage's open
+  question, "Private stays private"; branch `fix-d43`, relay only, protocol
+  50 unchanged, no migration): the chooser's side of the co-arrival check.
+  `RoomHub.ChoiceAdmits` (WorldHub.cs) asks `Matching.MayEnter` with the
+  chooser's own *New instance* visibility and the other host
+  (`ChosenNew`: the gate form's or the held prompt's CHOICE, or plan
+  0xFFFF with the remembered default; null for an arrival without a choice
+  or a row): `Decide`'s holder filter takes a group only where both the
+  base's visibility (`MaySeeBase`) and the group's choice let the other in;
+  `announced` keeps out a member whose open plan's choice
+  (`PromptPlan.ChoseNew`) would refuse the base; `StartingNotOffered` joins
+  only a starting instance whose host the choice lets in. Since
+  `MayEnter(base's, host, chooser)` and `MayEnter(chooser's, chooser, host)`
+  together are symmetric, both barrier orders give the same result. A base
+  refused by an arriving group stops waiting for its members at once
+  (CheckHolds ends the hold at its next pass; before, it waited
+  `Instances:CoArrivalHoldMs`). World log `co_arrival_refused {members,
+  host, visibility}` and `starting_refused {members, wid, visibility}`;
+  counters `co_arrival_refused_choice`, `new_choice_starting_refused`. The
+  base's side needed no change: a *New instance* sets the member's default
+  visibility at the CHOICE, so `MaySeeHost` / `MaySeeBase` already asked the
+  base's chosen visibility (shown by a test that passes without the
+  change). Unit tests `PromptPrivateTests` (the full matrix Public /
+  Friends / Private x Public / Friends / Private x friends or not, both
+  orders, the co-arrival hold and the starting instance: 18 cases; the
+  review's case; a base that held for a member who then chose Private; plan
+  0xFFFF with a Private default; friends with a block; the base's side; a
+  Private instance's stage group crossing a barrier together). Without the
+  change 11 of them fail (the 8 asymmetric matrix cells and three cases).
+  Two earlier tests changed with the rule: `PromptTogetherTests`' first
+  (decision 43's case is two Public choosers now; its second chooser chose
+  Private) and `PromptReviewTests`' base test (its Friends chooser and the
+  base's host are friends now; a stranger's case added, which fails
+  without the change as well: 12 of 29). Scenarios W4d and
+  W4e (both orders with real clients; the second chooser's
+  `DW4_ONLINE_AUTOCHOICE_DELAY_MS` 1500 makes the order).
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 

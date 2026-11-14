@@ -97,11 +97,12 @@ public partial class HubLogicTests
         Assert.NotSame(W(h, "x"), W(h, "lee"));
 
         // Decision 43 (2026-11-11): lee chooses *New instance* instead: x's base holds for him as well and takes him as its co-arrival;
-        // the three land in x's instance (x's visibility; lee's Friends is only remembered).
+        // the three land in x's instance (x's visibility; lee's Friends is only remembered). Lee and x are friends: a Friends chooser is
+        // the co-arrival only of a friend's base (decision 48, 2026-11-14; the stranger's case below).
         var g = PromptHarness();
         Admit(g, "k", Player(100, "k"));
-        Admit(g, "lee", Player(101, "lee"));
-        Admit(g, "x", Player(102, "x"));
+        Admit(g, "lee", Player(101, "lee") with { Friends = [102] });
+        Admit(g, "x", Player(102, "x") with { Friends = [101] });
         Admit(g, "y", Player(103, "y"));
         HostJoinable(g, "k", "dng101b1");
         Plan(g, "lee", 1, "stag0101");
@@ -121,6 +122,26 @@ public partial class HubLogicTests
         Assert.Same(W(g, "x"), W(g, "lee"));
         Assert.Same(W(g, "x"), W(g, "y"));
         Assert.Equal(Visibility.Friends, g.Mem("lee").DefaultVisibility);
+
+        // Decision 48: with x a stranger, lee's Friends choice does not let x in: x's base holds only for y, lee gets his own instance.
+        var s = PromptHarness();
+        Admit(s, "k", Player(100, "k"));
+        Admit(s, "lee", Player(101, "lee"));
+        Admit(s, "x", Player(102, "x"));
+        Admit(s, "y", Player(103, "y"));
+        HostJoinable(s, "k", "dng101b1");
+        Plan(s, "lee", 1, "stag0101");
+        Choose(s, "lee", 1, ChoiceKind.New, visibility: Visibility.Friends);
+        foreach (var n in new[] { "lee", "x", "y" }) Heading(s, n, "stag0101");
+        s.Advance(300);
+        s.Barrier("x", "stag0101");
+        Assert.Equal([s.Mem("y")], s.Mem("x").Arrival!.Awaited);
+        BarrierPlan(s, "lee", "stag0101", 1);
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, Visibility.Friends),
+            (s.Decision("lee").Decision, s.Decision("lee").World.Arrival, s.Decision("lee").World.Visibility));
+        s.Barrier("y", "stag0101");
+        Assert.Same(W(s, "x"), W(s, "y"));
+        Assert.NotSame(W(s, "x"), W(s, "lee"));
     }
 
     [Fact]
