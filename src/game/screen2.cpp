@@ -1,6 +1,8 @@
 #include "screen2.hpp"
 
 #include "host_view.hpp"
+#include "menu_choices.hpp"
+#include "menu_ops.hpp"
 #include "overhead_labels.hpp"
 #include "presence_data.hpp"
 
@@ -376,11 +378,8 @@ void settings_screen2_section(Settings& settings, bool& settings_changed, std::s
 #ifdef SDL_PLATFORM_ANDROID
     {
         int mode = settings.screen2_mode == Screen2Mode::off ? 1 : 0;
-        static const char* kModes[] = {"Automatic (a second screen shows the panels)", "Off"};
-        if (ImGui::Combo("Lower screen", &mode, kModes, 2)) {
-            settings.screen2_mode = mode == 1 ? Screen2Mode::off : Screen2Mode::automatic;
-            settings_changed = true;
-        }
+        if (ImGui::Combo("Lower screen", &mode, menu::kScreen2ModeNames, 2))
+            ops::set_screen2_mode({settings, settings_changed, ops::no_effects()}, mode == 1 ? Screen2Mode::off : Screen2Mode::automatic);
         const Screen2Display display = screen2_display();
         if (settings.screen2_mode == Screen2Mode::off)
             ImGui::TextDisabled("The panels (Status, Online, Menu) are not shown on a second screen.");
@@ -394,7 +393,8 @@ void settings_screen2_section(Settings& settings, bool& settings_changed, std::s
                                 "on this screen.");
     }
 #endif
-    if (ImGui::Checkbox("Panels over the game (Status, Online)", &settings.screen2_overlay)) settings_changed = true;
+    if (bool on = settings.screen2_overlay; ImGui::Checkbox("Panels over the game (Status, Online)", &on))
+        ops::set_screen2_overlay({settings, settings_changed, ops::no_effects()}, on);
 #ifdef SDL_PLATFORM_ANDROID
     ImGui::TextDisabled("A small window with the second screen's tabs, while no second screen shows them.");
 #else

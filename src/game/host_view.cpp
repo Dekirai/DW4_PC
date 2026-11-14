@@ -18,6 +18,7 @@
 #include <imgui_internal.h>
 
 #include "app_paths.hpp"
+#include "menu_choices.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -90,6 +91,25 @@ bool back_button_free(const Settings& settings) {
     return true;
 }
 } // namespace
+
+namespace {
+// The window's side effects of the ops (menu_ops.hpp).
+struct ViewEffects final : ops::Effects {
+    HostView* view = nullptr;
+    void swap_interval(bool vsync) override { SDL_GL_SetSwapInterval(vsync ? 1 : 0); }
+    void frame_rate(const Settings& settings) override { request_frame_rate(settings); }
+    void graphics(const GraphicsOptions& options) override {
+        if (view && view->renderer) view->renderer->set_graphics(options);
+    }
+    void thor_style() override; // (update_thor_style, below)
+};
+ViewEffects g_view_effects;
+} // namespace
+
+ops::Target host_ops(HostView& view) {
+    g_view_effects.view = &view;
+    return {view.settings, view.settings_changed, g_view_effects};
+}
 
 void toggle_menu(HostView& view) {
     view.show_menu = !view.show_menu;
@@ -299,6 +319,10 @@ void update_thor_style(HostView& view) {
     }
 }
 } // namespace
+
+void ViewEffects::thor_style() {
+    if (view) update_thor_style(*view);
+}
 
 void update_controllers(HostView& view) {
     if (!view.draw) return;
@@ -970,6 +994,27 @@ bool menu_still() { return g_menu_still; }
 
 int f1_tree_flags(int flags) { return g_menu_expand ? flags | ImGuiTreeNodeFlags_DefaultOpen : flags; }
 
+int msaa_levels_offered() {
+    // Only the levels the GPU has (GL_MAX_SAMPLES: 4 on the AYN Thor's
+    // Adreno 740; a PC's GPU has 8 or more).
+    static const int offered = [] {
+        GLint most = 0;
+        glGetIntegerv(GL_MAX_SAMPLES, &most);
+        int count = 1;
+        while (count < 4 && (most <= 0 || menu::kMsaaValues[count] <= most)) ++count;
+        return count;
+    }();
+    return offered;
+}
+
+int texture_filters_offered(const GlRenderer::Caps& caps) {
+    int count = 6;
+    if (!caps.anisotropic) count = 2;
+    else
+        while (count > 2 && float(anisotropy(TextureFilter(count - 1))) > caps.max_anisotropy) --count;
+    return count;
+}
+
 void settings_display_section(HostView& view) {
     auto& settings = view.settings;
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -996,24 +1041,18 @@ void settings_display_section(HostView& view) {
             if (ImGui::BeginCombo("Menu size", choice == 0 ? automatic.c_str() : (std::to_string(settings.ui_scale) + " %").c_str())) {
                 for (int i = 0; i < int(std::size(kUiScaleChoices)); ++i) {
                     const std::string name = i == 0 ? automatic : std::to_string(kUiScaleChoices[i]) + " %";
-                    if (ImGui::Selectable(name.c_str(), i == choice) && i != choice) {
-                        settings.ui_scale = kUiScaleChoices[i];
-                        view.settings_changed = true;
-                    }
+                    if (ImGui::Selectable(name.c_str(), i == choice) && i != choice) ops::set_ui_scale(host_ops(view), kUiScaleChoices[i]);
                 }
                 ImGui::EndCombo();
             }
         }
-        if (ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &settings.widescreen)) view.settings_changed = true;
-        if (ImGui::Checkbox("VSync", &settings.vsync)) {
-            SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
-            view.settings_changed = true;
-        }
-        if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off")) {
-            view.settings_changed = true;
-            request_frame_rate(settings);
-        }
-        if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) view.settings_changed = true;
+        // (Every change through the ops: menu_ops.hpp, the console menu's too.)
+        if (bool on = settings.widescreen; ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &on))
+            ops::set_widescreen(host_ops(view), on);
+        if (bool on = settings.vsync; ImGui::Checkbox("VSync", &on)) ops::set_vsync(host_ops(view), on);
+        if (int fps = settings.fps_limit; ImGui::SliderInt("Frame limit", &fps, 0, 300, settings.fps_limit ? "%d fps" : "off"))
+            ops::set_frame_limit(host_ops(view), fps);
+        if (bool on = settings.smooth_motion; ImGui::Checkbox("Smooth motion above 60 fps", &on)) ops::set_smooth_motion(host_ops(view), on);
         ImGui::SameLine();
         ImGui::TextDisabled("(now %.0f fps)", g_menu_still ? 60.0 : view.present_interval > 0 ? 1.0 / view.present_interval : 0.0);
         ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
@@ -1032,24 +1071,12 @@ void settings_display_section(HostView& view) {
             ImGui::PlotLines("Frame time", frame_times.data(), int(frame_times.size()), g_menu_still ? 0 : int(view.frame_time_at % frame_times.size()),
                              overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, ui_px(48)));
         }
-        static const int sample_choices[] = {0, 2, 4, 8};
-        static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
-        // Only the levels the GPU has (GL_MAX_SAMPLES: 4 on the AYN Thor's
-        // Adreno 740; a PC's GPU has 8 or more).
-        static const int offered = [] {
-            GLint most = 0;
-            glGetIntegerv(GL_MAX_SAMPLES, &most);
-            int count = 1;
-            while (count < 4 && (most <= 0 || sample_choices[count] <= most)) ++count;
-            return count;
-        }();
+        const auto& sample_choices = menu::kMsaaValues;
+        const int offered = msaa_levels_offered();
         int choice = 0;
         for (int i = 0; i < offered; ++i)
             if (settings.msaa >= sample_choices[i]) choice = i;
-        if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, offered)) {
-            settings.msaa = sample_choices[choice];
-            view.settings_changed = true;
-        }
+        if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, menu::kMsaaNames, offered)) ops::set_msaa(host_ops(view), sample_choices[choice]);
         ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", view.samples > 1 ? view.samples : 0);
 #ifndef SDL_PLATFORM_ANDROID
         static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
@@ -1136,10 +1163,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
         static const char* names[] = {texture_filter_label(TextureFilter::bilinear), texture_filter_label(TextureFilter::trilinear),
                                       texture_filter_label(TextureFilter::aniso2),   texture_filter_label(TextureFilter::aniso4),
                                       texture_filter_label(TextureFilter::aniso8),   texture_filter_label(TextureFilter::aniso16)};
-        int count = 6;
-        if (!caps.anisotropic) count = 2;
-        else
-            while (count > 2 && float(anisotropy(TextureFilter(count - 1))) > caps.max_anisotropy) --count;
+        const int count = texture_filters_offered(caps);
         int value = std::min(int(g.texture_filter), count - 1);
         if (ImGui::Combo("Texture filtering", &value, names, count)) {
             g.texture_filter = TextureFilter(value);
@@ -1171,7 +1195,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
         ImGui::TextDisabled("The resolution of the characters' shadow map (the game's own is 128 x 128).");
     }
     {
-        static const int sizes[] = {512, 1024, 2048, 4096};
+        const auto& sizes = menu::kTextureMemoryValues;
         // (A value settings.ini set that is none of these shows as itself,
         // as a fifth entry, until another one is chosen.)
         std::string other;
@@ -1179,7 +1203,8 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
         for (int i = 0; i < 4; ++i)
             if (g.texture_memory_mb == sizes[i]) value = i;
         if (value < 0) other = std::to_string(g.texture_memory_mb) + " MiB (settings.ini)";
-        const char* names[] = {"512 MiB", "1 GiB", "2 GiB", "4 GiB", other.c_str()};
+        const char* names[] = {menu::kTextureMemoryNames[0], menu::kTextureMemoryNames[1], menu::kTextureMemoryNames[2], menu::kTextureMemoryNames[3],
+                               other.c_str()};
         const int count = value < 0 ? 5 : 4;
         if (value < 0) value = 4;
         if (ImGui::Combo("Texture memory", &value, names, count) && value < 4) {
@@ -1195,11 +1220,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
                                 s.pending ? ", more loading" : "");
         }
     }
-    if (changed) {
-        g = g.clamped();
-        if (view.renderer) view.renderer->set_graphics(g);
-        view.settings_changed = true;
-    }
+    if (changed) ops::set_graphics(host_ops(view), g); // (clamped, the renderer's, settings.ini's)
     // The pack folder (empty: mods/textures beside the program).
     {
         static char folder[1024]{};
@@ -1210,18 +1231,12 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
         }
         ImGui::InputTextWithHint("Texture pack folder", "mods/textures", folder, sizeof folder);
         editing = ImGui::IsItemActive();
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            settings.texture_pack = from_utf8(folder);
-            view.settings_changed = true;
-            if (panel.reload) panel.reload();
-        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) ops::set_texture_pack_folder(host_ops(view), from_utf8(folder), panel.reload);
     }
     if (ImGui::Button("Reload texture pack") && panel.reload) panel.reload();
     ImGui::SameLine();
-    if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
-        view.settings_changed = true;
-        if (panel.reload) panel.reload();
-    }
+    if (bool on = settings.dump_textures; ImGui::Checkbox("Dump textures (to mods/dump/textures)", &on))
+        ops::set_dump_textures(host_ops(view), on, panel.reload);
     ImGui::TextDisabled("A pack is a folder with a dw4pack.tsv manifest and DDS files, or loose PNG / DDS files named ..._<16 hex "
                         "digit hash>.png / .dds (docs/TEXTURES.md).");
     ImGui::PopTextWrapPos();
@@ -1229,7 +1244,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
 
 void settings_audio_section(HostView& view) {
     if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::SliderInt("Volume", &view.settings.volume, 0, 100, "%d%%")) view.settings_changed = true;
+        if (int volume = view.settings.volume; ImGui::SliderInt("Volume", &volume, 0, 100, "%d%%")) ops::set_volume(host_ops(view), volume);
     }
 }
 
@@ -1244,27 +1259,23 @@ void settings_presence_section(HostView& view, const char* discord_status) {
     if (open) {
         ImGui::PushTextWrapPos(0.0f);
         // (LabelMode order: automatic, all, others, off.)
-        static const char* label_modes[] = {"Auto (two or more players)", "All players", "Other players", "Off"};
         int mode = int(parse_label_mode(settings.overhead_labels));
-        if (ImGui::Combo("Name tags", &mode, label_modes, 4)) {
-            settings.overhead_labels = label_mode_name(LabelMode(mode));
-            view.settings_changed = true;
-        }
-        if (ImGui::SliderInt("Name tag size", &settings.label_scale, 50, 200, "%d%%")) view.settings_changed = true;
-        if (ImGui::Checkbox("HP / MP numbers on name tags", &settings.label_numbers)) view.settings_changed = true;
+        if (ImGui::Combo("Name tags", &mode, menu::kLabelModeNames, 4)) ops::set_label_mode(host_ops(view), LabelMode(mode));
+        if (int size = settings.label_scale; ImGui::SliderInt("Name tag size", &size, 50, 200, "%d%%")) ops::set_label_scale(host_ops(view), size);
+        if (bool on = settings.label_numbers; ImGui::Checkbox("HP / MP numbers on name tags", &on)) ops::set_label_numbers(host_ops(view), on);
         ImGui::TextDisabled("Name, level, HP and MP over the players' Digimon (not in cutscenes, menus and loads).");
 #ifndef SDL_PLATFORM_ANDROID
-        if (ImGui::Checkbox("Discord Rich Presence", &settings.discord)) view.settings_changed = true;
+        if (bool on = settings.discord; ImGui::Checkbox("Discord Rich Presence", &on)) ops::set_discord(host_ops(view), on);
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", discord_status);
         ImGui::TextDisabled("Shows your form, level, area and difficulty in Discord while the Discord app runs.");
 #else
         (void)discord_status;
 #endif
-        if (ImGui::Checkbox("Achievements", &settings.achievements)) view.settings_changed = true;
+        if (bool on = settings.achievements; ImGui::Checkbox("Achievements", &on)) ops::set_achievements(host_ops(view), on);
         ImGui::SameLine();
-        if (ImGui::Checkbox("Unlock notices", &settings.achievement_popups)) view.settings_changed = true;
-        if (ImGui::Checkbox("Network indicator in online sessions", &settings.net_indicator)) view.settings_changed = true;
+        if (bool on = settings.achievement_popups; ImGui::Checkbox("Unlock notices", &on)) ops::set_achievement_popups(host_ops(view), on);
+        if (bool on = settings.net_indicator; ImGui::Checkbox("Network indicator in online sessions", &on)) ops::set_net_indicator(host_ops(view), on);
         ImGui::TextDisabled("Ping and input delay in the lower left corner while you play online (details in F1 > Online).");
         ImGui::PopTextWrapPos();
     }
@@ -1363,18 +1374,12 @@ void settings_controllers_section(HostView& view) {
         if (view.controller_log) ImGui::TextDisabled("Controller log: %s", view.controller_log->path().string().c_str());
         // Button prompts: automatic (player 1's last device) or one family.
         {
-            static constexpr PadFamily kChoices[] = {PadFamily::ps5,         PadFamily::ps4,      PadFamily::xbox360,  PadFamily::xbox_one,
-                                                     PadFamily::switch_pro,  PadFamily::switch2_pro, PadFamily::wiiu_pro, PadFamily::gamecube,
-                                                     PadFamily::thor,        PadFamily::keyboard};
-            static constexpr const char* kNames[] = {"Automatic", "DualSense", "DualShock 4", "Xbox 360", "Xbox One/Series", "Switch Pro",
-                                                     "Switch 2 Pro", "Wii U Pro", "GameCube", "AYN Thor", "Keyboard"};
+            const auto& kChoices = menu::kPromptFamilies;
             int choice = 0;
             for (int i = 0; i < int(std::size(kChoices)); ++i)
                 if (settings.prompts == family_id(kChoices[i])) choice = i + 1;
-            if (ImGui::Combo("Button prompts", &choice, kNames, int(std::size(kNames)))) {
-                settings.prompts = choice == 0 ? "auto" : family_id(kChoices[choice - 1]);
-                view.settings_changed = true;
-            }
+            if (ImGui::Combo("Button prompts", &choice, menu::kPromptNames, int(std::size(menu::kPromptNames))))
+                ops::set_prompts(host_ops(view), choice == 0 ? std::nullopt : std::optional<PadFamily>(kChoices[choice - 1]));
             ImGui::TextDisabled("Automatic: every player's own controller; player 1's is the controller or keyboard used last.");
             // What the game's button pictures show now.
             prompt_text_disabled(std::string("Now: ") + family_name(view.prompt_family()) +
@@ -1385,11 +1390,8 @@ void settings_controllers_section(HostView& view) {
         }
         {
             int layout = settings.nintendo_layout == NintendoLayout::by_position ? 1 : 0;
-            static const char* kLayouts[] = {"By label (the A button is A)", "By position (like an Xbox controller)"};
-            if (ImGui::Combo("Nintendo layout", &layout, kLayouts, 2)) {
-                settings.nintendo_layout = layout ? NintendoLayout::by_position : NintendoLayout::by_label;
-                view.settings_changed = true;
-            }
+            if (ImGui::Combo("Nintendo layout", &layout, menu::kLayoutNames, 2))
+                ops::set_nintendo_layout(host_ops(view), layout ? NintendoLayout::by_position : NintendoLayout::by_label);
             ImGui::TextDisabled("Switch Pro, Switch 2 Pro, Wii U Pro controllers and the AYN Thor.");
             bool thor_pad = false;
             for (const auto& pad : known) thor_pad = thor_pad || pad.family == PadFamily::thor;
@@ -1399,36 +1401,25 @@ void settings_controllers_section(HostView& view) {
                 int style = settings.thor_style == ThorStyle::standard ? 1 : settings.thor_style == ThorStyle::xbox ? 2 : 0;
                 const std::string automatic = std::string("As the Thor's setting (") +
                                               (view.thor_device ? (*view.thor_device == ThorStyle::xbox ? "Xbox" : "Standard") : "unknown") + ")";
-                const char* kStyles[] = {automatic.c_str(), "Standard", "Xbox"};
-                if (ImGui::Combo("AYN Thor controller style", &style, kStyles, 3)) {
-                    settings.thor_style = style == 1 ? ThorStyle::standard : style == 2 ? ThorStyle::xbox : ThorStyle::automatic;
-                    view.settings_changed = true;
-                }
+                const char* kStyles[] = {automatic.c_str(), menu::kThorStyleNames[0], menu::kThorStyleNames[1]};
+                if (ImGui::Combo("AYN Thor controller style", &style, kStyles, 3))
+                    ops::set_thor_style(host_ops(view), style == 1 ? ThorStyle::standard : style == 2 ? ThorStyle::xbox : ThorStyle::automatic);
                 ImGui::TextDisabled("Thor Settings > Controller style (Standard: the A button sends A; Xbox: the bottom button sends A).");
             }
             int gc = settings.gamecube_layout == GameCubeLayout::bindings ? 1 : 0;
-            static const char* kGameCube[] = {"Original (every button is its own)", "Use the bindings below"};
-            if (ImGui::Combo("GameCube controller", &gc, kGameCube, 2)) {
-                settings.gamecube_layout = gc ? GameCubeLayout::bindings : GameCubeLayout::original;
-                view.settings_changed = true;
-            }
+            if (ImGui::Combo("GameCube controller", &gc, menu::kGameCubeNames, 2))
+                ops::set_gamecube_layout(host_ops(view), gc ? GameCubeLayout::bindings : GameCubeLayout::original);
             int menu = settings.menu_buttons == MenuButtons::bindings ? 1 : 0;
-            static const char* kMenus[] = {"The controller's own A / B", "The game's A / B bindings"};
-            if (ImGui::Combo("Menu buttons", &menu, kMenus, 2)) {
-                settings.menu_buttons = menu ? MenuButtons::bindings : MenuButtons::layout;
-                view.settings_changed = true;
-            }
+            if (ImGui::Combo("Menu buttons", &menu, menu::kMenuButtonNames, 2))
+                ops::set_menu_buttons(host_ops(view), menu ? MenuButtons::bindings : MenuButtons::layout);
             prompt_text_disabled("This menu and the online screens: {OK} confirms, {BACK} goes back.");
 #ifndef SDL_PLATFORM_ANDROID
             int wii = settings.wii_driver == WiiDriver::on ? 1 : settings.wii_driver == WiiDriver::off ? 2 : 0;
-            static const char* kWii[] = {"Automatic (while one is connected)", "On", "Off"};
-            if (ImGui::Combo("Wii U Pro support", &wii, kWii, 3)) {
-                settings.wii_driver = wii == 1 ? WiiDriver::on : wii == 2 ? WiiDriver::off : WiiDriver::automatic;
-                view.settings_changed = true;
-            }
+            if (ImGui::Combo("Wii U Pro support", &wii, menu::kWiiNames, 3))
+                ops::set_wii_driver(host_ops(view), wii == 1 ? WiiDriver::on : wii == 2 ? WiiDriver::off : WiiDriver::automatic);
             ImGui::TextDisabled("(SDL's Wii driver, now %s. Wii remotes, also on a DolphinBar, never take a player's place.)",
                                 view.wii_hint ? "on" : "off");
-            if (ImGui::Checkbox("GameCube adapter in Wii U mode (WinUSB)", &settings.gc_adapter)) view.settings_changed = true;
+            if (bool on = settings.gc_adapter; ImGui::Checkbox("GameCube adapter in Wii U mode (WinUSB)", &on)) ops::set_gc_adapter(host_ops(view), on);
             ImGui::TextDisabled("(released while the game is in the background, so Dolphin can use it then)");
 #endif
         }
@@ -1465,18 +1456,16 @@ void settings_controllers_section(HostView& view) {
                     // (A right-click clears it; on a touch screen a long press, which
                     // then is no tap: the button lets go of the finger.)
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right) || touch_long_press()) {
-                        settings.pad[b][k] = {};
+                        ops::clear_pad_binding(host_ops(view), PadKey(b), k);
                         capture.reset();
-                        view.settings_changed = true;
                     }
                 }
             }
             ImGui::EndTable();
         }
         if (ImGui::Button("Default controller layout")) {
-            settings.reset_pad();
+            ops::reset_pad_bindings(host_ops(view));
             capture.reset();
-            view.settings_changed = true;
         }
         ImGui::PopTextWrapPos();
     }

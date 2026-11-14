@@ -386,6 +386,8 @@ if(DW4_BUILD_APP)
   # The second screen's panels (docs/ANDROID.md phase E): the PC's overlay,
   # Android's lower screen (cmake/android.cmake adds its own frame).
   target_sources(dw4_game PRIVATE src/game/screen2.cpp)
+  # The F1 menu's one apply layer and option tables (docs/CONSOLE_MENU.md).
+  target_sources(dw4_game PRIVATE src/game/menu_choices.cpp src/game/menu_ops.cpp)
   if(WIN32)
     # (setupapi, winusb: the GameCube adapter in Wii U mode, gc_adapter.cpp;
     # with hid, cfgmgr32 also the Switch 2 Pro Controller, switch2_pro.cpp)
@@ -410,6 +412,14 @@ if(DW4_BUILD_APP)
     add_executable(dw4_controls_tests tests/controls_tests.cpp src/game/controls.cpp src/game/settings.cpp src/game/graphics_options.cpp)
     target_link_libraries(dw4_controls_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME controls COMMAND dw4_controls_tests)
+    # The F1 menu's apply layer: every op against the direct assignment the
+    # PC's menu made (settings.ini bytes, side effects), the option tables,
+    # the choice and stepper arithmetic (docs/CONSOLE_MENU.md).
+    add_executable(dw4_menu_ops_tests tests/menu_ops_tests.cpp src/game/menu_ops.cpp src/game/menu_choices.cpp src/game/settings.cpp
+      src/game/graphics_options.cpp src/game/controls.cpp src/game/pad_family.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
+    target_include_directories(dw4_menu_ops_tests PRIVATE src/game)
+    target_link_libraries(dw4_menu_ops_tests PRIVATE dw4_engine dw4_core SDL3::SDL3)
+    add_test(NAME menu_ops COMMAND dw4_menu_ops_tests)
     # Controller families: classification, binding spaces, prompt pictures,
     # the prompts in the game's text lines (laid out by the engine's
     # layout_text), settings migration (no device), and detection through

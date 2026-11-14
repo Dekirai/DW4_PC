@@ -14,6 +14,7 @@
 #include "dev_present.hpp"
 #include "gl_renderer.hpp"
 #include "interpolation.hpp"
+#include "menu_ops.hpp"
 #include "movie_decoder.hpp"
 #include "overhead_labels.hpp"
 #include "pad_family.hpp"
@@ -347,6 +348,16 @@ void frame_stats_step(double ms);
 // DW4_FRAME_STATS: one frame of the second screen after the window's swap
 // (screen2.hpp): its time and whether it drew and swapped its surface.
 void frame_stats_screen2(double ms, bool swapped);
+
+// ---- The F1 menu's one apply layer (menu_ops.hpp) with this view's side
+// effects: the swap interval, the display's rate, the renderer's graphics,
+// the Thor's controller style.
+ops::Target host_ops(HostView& view);
+// The anti-aliasing levels the GPU offers (menu_choices.hpp kMsaaValues'
+// first ones; GL_MAX_SAMPLES) and the texture filters (TextureFilter's first
+// ones; anisotropic only as far as the GPU goes).
+int msaa_levels_offered();
+int texture_filters_offered(const GlRenderer::Caps& caps);
 
 // ---- The F1 menu's picture hooks (test runs only, docs/CONSOLE_MENU.md:
 // the proof that the PC's F1 menu stays as it was): DW4_MENU_EXPAND=1 every
