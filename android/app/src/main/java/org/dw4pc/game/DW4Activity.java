@@ -14,6 +14,8 @@ import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
+import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
@@ -25,6 +27,8 @@ import android.view.inputmethod.InputMethodManager;
 
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
+
+import java.io.File;
 
 /**
  * The app's activity: SDL's SDLActivity (its Java sources are copied from the
@@ -202,16 +206,51 @@ public class DW4Activity extends SDLActivity {
      * SDL passes every onTrimMemory on as SDL_EVENT_LOW_MEMORY, also
      * TRIM_MEMORY_UI_HIDDEN, which only says the app's window went out of
      * sight (every HOME): the game would let its texture cache go each time.
-     * Only the levels that mean memory is short reach the game.
+     * Only the RUNNING_* levels (memory is short while the game runs) reach
+     * the game. BACKGROUND, MODERATE and COMPLETE come only while the app is
+     * in the background, where the game loop stands in SDL's pause: the game
+     * would let its textures go only after coming back (the ones it is about
+     * to draw), never while the low memory killer decides.
      */
     @Override
     public void onTrimMemory(int level) {
-        if (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-            Log.i(GAME_TAG, "lifecycle: trim memory level " + level + " (the window is hidden; not passed on)");
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            Log.i(GAME_TAG, "lifecycle: trim memory level " + level + " ("
+                    + (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ? "the window is hidden" : "in the background")
+                    + "; not passed on)");
             return;
         }
         Log.i(GAME_TAG, "lifecycle: trim memory level " + level + " (passed on as low memory)");
         super.onTrimMemory(level);
+    }
+
+    /**
+     * The AYN Thor's controller has a Back button (KEY_BACK) besides Select
+     * (BTN_SELECT), and SDL makes both its gamepad button BACK, so the Back
+     * button would open the F1 menu only while no binding uses BACK. From
+     * the Thor's controller KEYCODE_BACK is Android's Back key instead (the
+     * F1 menu, always); Select stays the pad's BACK button.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && isThorController(event.getDevice())) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_BACK);
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_BACK);
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    /** The AYN Thor's built-in controller ("Odin Controller", USB 2020:0111; not AYN's virtual mouse). */
+    static boolean isThorController(InputDevice device) {
+        if (device == null || (device.getSources() & InputDevice.SOURCE_GAMEPAD) != InputDevice.SOURCE_GAMEPAD) {
+            return false;
+        }
+        return (device.getVendorId() == 0x2020 && device.getProductId() == 0x0111)
+                || device.getName().contains("Odin Controller");
     }
 
     @Override
@@ -222,9 +261,12 @@ public class DW4Activity extends SDLActivity {
 
     /**
      * Command line arguments: adb shell am start ... --es dw4args "--seconds 10".
-     * Debuggable builds only: the launcher activity is exported, so in a
-     * release build any app could start it with arguments; there the extra is
-     * ignored.
+     * The launcher activity is exported, so any app on the device could start
+     * it with arguments (--import-disc, --env, --card-dir, a save state). The
+     * extra counts only in a debuggable build and only while the file
+     * dw4args.allow is in the app's internal folder, which no other app can
+     * write: adb shell run-as org.dw4pc.game touch files/dw4args.allow (and
+     * rm to close it again). Otherwise it is ignored with a log line.
      */
     @Override
     protected String[] getArguments() {
@@ -235,6 +277,10 @@ public class DW4Activity extends SDLActivity {
         }
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
             Log.w(TAG, "dw4args ignored: not a debuggable build");
+            return new String[0];
+        }
+        if (!new File(getFilesDir(), "dw4args.allow").exists()) {
+            Log.w(TAG, "dw4args ignored: no files/dw4args.allow (adb shell run-as org.dw4pc.game touch files/dw4args.allow)");
             return new String[0];
         }
         return args.trim().split("\\s+");
