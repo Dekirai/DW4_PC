@@ -14879,6 +14879,20 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   cells Private x friends x no block in all three theories: the friend's
   starting instance or base refused, apart; they fail without decision
   49's relay change, `build/d49/unit_counter_none.log`).
+  Runs on `ddfedaf0`: unit 657/657, integration 154 (3 skipped); real
+  clients W4, W4b-W4h and W7e pass, W7f failed once (run
+  `run_20261114_180539`) and passed again (`run_20261114_185917`). Left,
+  older than decisions 48 and 49 (`OnState`'s reporter rule, round S1):
+  the STATE flags of a stage group come from its connected member in it
+  longest, so b's joinable STATE, sent at b's entry scene's end in the
+  26 ms between a's reconnect (a holds slot 0 again, its engine still at
+  the old barrier) and a's LEAVE, was ignored (`state_ignored`); b sends
+  STATE only on a change, so the relay kept b's earlier *Scene*, a's JOIN
+  waited `Instances:JoinHoldSeconds` and became a stage group of its own
+  (`HoldExpired`). W7f's 20 s cut ends about when stag0102's entry scene
+  does, so the window is hit now and then. A fix (the relay asks the new
+  reporter for STATE when the reporter changes, or the client re-sends
+  its STATE at a LEAVE) belongs to its own change.
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 
