@@ -1600,6 +1600,12 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
                     unsigned(g.InputTextState.ID), unsigned(g.ActiveId), unsigned(g.InputTextState.Flags), static_cast<void*>(SDL_GetKeyboardFocus()));
     if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && secret != g_secret_input) {
         const bool was_active = SDL_TextInputActive(window);
+        // The new field's place first, as the backend sets it only after this
+        // hook: Android takes SDL's text input area only when the keyboard
+        // shows (SDL places its text edit there and the picture pans to it),
+        // so with the last field's area the keyboard covered the new field.
+        const SDL_Rect area{int(data->InputPos.x), int(data->InputPos.y), 1, int(data->InputLineHeight)};
+        SDL_SetTextInputArea(window, &area, 0);
         start_text_input(window, secret);
         std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : "a text", was_active ? " restarted" : "");
         std::fflush(stdout);

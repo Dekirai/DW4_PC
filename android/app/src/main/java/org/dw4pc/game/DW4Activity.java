@@ -188,11 +188,14 @@ public class DW4Activity extends SDLActivity {
      * field): the keyboard keeps the text field's kind until its input is
      * restarted. Runs after SDL's own show task (the same main looper).
      *
-     * The restarted keyboard can be taller than the one Android panned the
-     * picture for (Gboard's password layout adds a row of digits), which then
-     * covered the field: once the keyboard has its new size, the field's
-     * place (SDL's text edit) asks to be on the screen again, and Android
-     * pans the picture for the keyboard as it is now.
+     * SDL's stop and start of the text input (a hide right before the show)
+     * can leave the keyboard away when the kind changes while it is up (seen
+     * on the emulator: a text field to a password field by Tab, and back), and
+     * a keyboard of another height can cover the field: twice after the
+     * restart, while SDL's text edit has the focus, the keyboard is shown
+     * again when it is not on the screen and the field's place (the text
+     * edit, at the field's area) asks to be on the screen, so Android pans
+     * the picture for the keyboard as it is now.
      */
     public static void restartTextInput() {
         final SDLActivity activity = mSingleton;
@@ -205,17 +208,25 @@ public class DW4Activity extends SDLActivity {
                 }
             });
             for (long delay : new long[] {150, 400}) {
-                handler.postDelayed(DW4Activity::keepTextFieldInSight, delay);
+                handler.postDelayed(() -> keepTextFieldInSight(activity), delay);
             }
         }
     }
 
-    /** The text field's place above the keyboard (the restarted keyboard's size; see restartTextInput). */
-    private static void keepTextFieldInSight() {
+    /** The keyboard up and the text field's place above it (see restartTextInput). */
+    private static void keepTextFieldInSight(Context context) {
         final View edit = mTextEdit;
-        if (edit != null && edit.isShown() && edit.hasFocus()) {
-            edit.requestRectangleOnScreen(new Rect(0, 0, edit.getWidth(), edit.getHeight()), true);
+        if (edit == null || !edit.isShown() || !edit.hasFocus()) {
+            return; // (the field was left meanwhile: SDL's hide gives the focus back to its surface)
         }
+        WindowInsets insets = edit.getRootWindowInsets();
+        if (insets != null && !insets.isVisible(WindowInsets.Type.ime())) {
+            InputMethodManager imm = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(edit, 0);
+            }
+        }
+        edit.requestRectangleOnScreen(new Rect(0, 0, edit.getWidth(), edit.getHeight()), true);
     }
 
     /**
