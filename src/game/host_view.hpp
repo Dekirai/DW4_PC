@@ -173,6 +173,10 @@ struct HostView {
 
     // The F1 menu.
     bool show_menu = false;
+    // It shows on the second screen (its Menu tab, screen2.hpp), where it was
+    // opened by touch; the window shows the game meanwhile. Closing it ends
+    // that.
+    bool menu_on_screen2 = false;
     std::string menu_tab; // a tab to select when it first shows (DW4_MENU_TAB)
     std::string menu_section; // a Settings section scrolled to when it first shows (DW4_MENU_SECTION: Graphics)
     std::optional<KeyCapture> capture;
@@ -310,6 +314,10 @@ void update_sdl_and_adapter(HostView& view);
 // A new ImGui frame (`test_gamepad`: a UI test run's controller keys count
 // as a controller's).
 void new_ui_frame(bool test_gamepad);
+// Player 1's controller as ImGui's gamepad keys into the current ImGui
+// context (new_ui_frame does it for the window's; the second screen's context
+// takes them while the F1 menu shows there).
+void feed_menu_pad(HostView& view);
 // A pad's input through the bindings in its family's binding space (a
 // GameCube pad on its original layout: 1:1).
 HostPadInput pad_input(const HostView& view, SDL_Gamepad* pad);
@@ -331,6 +339,9 @@ void pace_presents(HostView& view);
 // DW4_FRAME_STATS: one engine step's time (the story loop around
 // Engine::step; nothing is kept without the switch).
 void frame_stats_step(double ms);
+// DW4_FRAME_STATS: one frame of the second screen after the window's swap
+// (screen2.hpp): its time and whether it drew and swapped its surface.
+void frame_stats_screen2(double ms, bool swapped);
 
 // ---- The F1 menu's settings sections (inside the Settings tab)
 void settings_display_section(HostView& view);
@@ -362,6 +373,12 @@ void set_ui_fonts(ImFont* pixel, ImFont* scalable);
 float update_ui_scale(SDL_Window* window, const Settings& settings, bool test_run);
 // The scale in use (1 until update_ui_scale set another).
 float ui_scale();
+// The second screen's ImGui context (screen2.hpp) at its own scale: the dark
+// style at 1x scaled to `scale` and the font that scale takes, into the
+// current context; and the scale ui_px uses while it draws (returns the one
+// before).
+void apply_ui_style(float scale);
+float exchange_ui_scale(float scale);
 // A length of the menus' layout at the scale in use (12 px at 1x).
 inline float ui_px(float pixels) { return pixels * ui_scale(); }
 

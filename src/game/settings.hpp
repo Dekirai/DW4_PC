@@ -81,6 +81,13 @@ enum class MenuButtons : std::uint8_t { layout, bindings };
 // Android reports it (persist.sys.gamepad.type), read again while the game
 // runs (pad_family.hpp).
 enum class ThorStyle : std::uint8_t { automatic, standard, xbox };
+// [screen2] mode: the second screen's panels (screen2.hpp: Online, Status,
+// Menu) on a second display of the device (the AYN Thor's lower screen):
+// auto (the default) uses one when Android reports it, off never does.
+// Nothing on the PC, which shows the same panels as an overlay instead.
+enum class Screen2Mode : std::uint8_t { automatic, off };
+// [screen2] tab: the panel the second screen shows (the last one chosen).
+enum class Screen2Tab : std::uint8_t { online, status, menu };
 
 struct Settings {
     // [window]
@@ -168,6 +175,14 @@ struct Settings {
     // [online] net_indicator: the small ping / input delay box in online
     // sessions (round 62).
     bool net_indicator = true;
+    // [screen2] the second screen's panels (screen2.hpp): the lower screen's
+    // use (Screen2Mode), its tab, and the same panels as an overlay window
+    // over the game (the PC's form, and Android's without a second screen;
+    // off by default). Each is written only once it is not its default (a
+    // PC's file stays as it was).
+    Screen2Mode screen2_mode = Screen2Mode::automatic;
+    Screen2Tab screen2_tab = Screen2Tab::status;
+    bool screen2_overlay = false;
     // [data]
     std::filesystem::path data;
     // The save files of memory card slots A and B (GCI bytes; relative paths
@@ -216,5 +231,7 @@ private:
 float ui_scale_factor(int setting_percent, float display_scale, bool follow_display);
 // The menu sizes the F1 menu offers (percent; 0 = auto).
 inline constexpr int kUiScaleChoices[] = {0, 100, 125, 150, 175, 200, 225, 250, 300};
+// The [screen2] tab's names in settings.ini ("online", "status", "menu").
+const char* screen2_tab_id(Screen2Tab tab);
 
 } // namespace dw4::game

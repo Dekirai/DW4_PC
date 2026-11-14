@@ -79,6 +79,9 @@ endmacro()
 function(dw4_android_game)
   set_target_properties(dw4_game PROPERTIES OUTPUT_NAME main)
   target_sources(dw4_game PRIVATE ${PROJECT_SOURCE_DIR}/src/game/platform_android.cpp)
+  # The second screen's own frame (docs/ANDROID.md phase E: the AYN Thor's
+  # lower screen through a Presentation, its EGL surface and ImGui context).
+  target_sources(dw4_game PRIVATE ${PROJECT_SOURCE_DIR}/src/game/screen2_android.cpp)
   # (The NDK makes -Wformat-security an error; the F1 menu's wrapped text
   # helpers pass their literal formats through a variadic lambda.)
   target_compile_options(dw4_game PRIVATE ${DW4_ANDROID_FP_FLAGS} -Wno-error=format-security)

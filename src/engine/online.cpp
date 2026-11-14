@@ -152,9 +152,7 @@ const std::vector<std::string_view>& online_forbidden_env() {
         // opened at once, the first meeting counted as done, run keys for a run started from the select
         "DW4_OVERFLOW", "DW4_OVERFLOW_SCREEN", "DW4_OVERFLOW_SEEN", "DW4_OVERFLOW_TEST_RUN",
         // round 63's analysis switch: parts of the status window's pause left out (subwnd.cpp)
-        "DW4_TEST_SUBWND_SKIP",
-        // Android's context loss test (game_main.cpp: the OpenGL context destroyed in the background on purpose)
-        "DW4_TEST_CONTEXT_LOSS"};
+        "DW4_TEST_SUBWND_SKIP"};
     return names;
 }
 
@@ -181,6 +179,11 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_UI_SCALE", "DW4_TOUCH_UI", "DW4_FRAME_STATS",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
+        // the second screen's panels in a test run (screen2.hpp: the overlay window, its tab, the F1 menu there;
+        // presentation only) and a provoked loss of the OpenGL context (game_main.cpp, context_loss_test: at given
+        // frames, or Android's EGL context destroyed in the background; every GL object made again, presentation
+        // only)
+        "DW4_SCREEN2_*", "DW4_TEST_CONTEXT_LOSS",
         // a test run's controller log and the Switch 2 Pro reader in a test run (pad_usb.hpp: a file about the
         // controllers, and a look at Windows' device list; a test run's pads are its script's)
         "DW4_CONTROLLER_LOG", "DW4_TEST_SWITCH2",

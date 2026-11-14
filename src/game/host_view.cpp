@@ -1,6 +1,7 @@
 #include "host_view.hpp"
 
 #include "button_prompts.hpp"
+#include "screen2.hpp"
 #include "controls.hpp"
 #include "gc_adapter.hpp"
 #include "ghost_figures.hpp"
@@ -21,6 +22,7 @@
 #include "app_paths.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -93,6 +95,7 @@ bool back_button_free(const Settings& settings) {
 
 void toggle_menu(HostView& view) {
     view.show_menu = !view.show_menu;
+    if (!view.show_menu) view.menu_on_screen2 = false;
     view.capture.reset();
     if (!view.show_menu && view.settings_changed && view.settings.save()) view.settings_changed = false;
 }
@@ -115,6 +118,9 @@ bool host_event(HostView& view, const SDL_Event& event) {
     // (SDL_androidevents.c): every GL object again, ImGui's too.
     if (event.type == SDL_EVENT_RENDER_DEVICE_RESET && view.draw) {
         std::cout << "lifecycle: the OpenGL context was recreated\n";
+        // (The second screen's context first: the shared font texture is
+        // then the window's to make again.)
+        screen2_device_reset();
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplOpenGL3_Init(gl_is_es() ? "#version 300 es" : "#version 330");
         if (view.renderer) view.renderer->reset_context();
@@ -129,11 +135,23 @@ bool host_event(HostView& view, const SDL_Event& event) {
     // tap in the window's top right corner does too, unless it lands on an
     // open menu's window (then ImGui gets it; the menus are the only things
     // touch works on, docs/ANDROID.md).
+    // (Typing for a text field of the second screen's panels: screen2.hpp.)
+    if (screen2_take_event(event)) return true;
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat) {
         toggle_menu_by(view, "the Back key");
         return false;
     }
-    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) view.unfocused = true;
+    // (A touch on the second screen's panels takes no focus: its window is
+    // not focusable. Should a device's focus rules move it all the same, the
+    // game does not pause for it: the player looks at the panels.)
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        const double since = screen2_seconds_since_touch();
+        view.unfocused = since >= 1.0;
+        if (!view.unfocused) {
+            std::printf("focus: lost %.0f ms after a touch on the second screen (the game goes on)\n", since * 1000.0);
+            std::fflush(stdout);
+        }
+    }
     if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) view.unfocused = false;
     if (event.type == SDL_EVENT_FINGER_DOWN) view.last_touch = std::chrono::steady_clock::now();
     if (event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN || event.type == SDL_EVENT_SCREEN_KEYBOARD_HIDDEN)
@@ -729,6 +747,8 @@ void menu_pad(HostView& view) {
 }
 } // namespace
 
+void feed_menu_pad(HostView& view) { menu_pad(view); }
+
 void new_ui_frame(bool test_gamepad) {
     if (g_ui_view && g_ui_view->window) update_ui_scale(g_ui_view->window, g_ui_view->settings, g_ui_view->test_run);
     ImGui_ImplOpenGL3_NewFrame();
@@ -793,6 +813,8 @@ struct FrameStats {
     double period = 0;
     std::chrono::steady_clock::time_point started, last_swap;
     std::vector<float> interval, work, swap, step;
+    std::vector<float> screen2; // the second screen's frames (screen2.hpp)
+    std::size_t screen2_swaps = 0;
     std::size_t steps_at_present = 0;           // s.step.size() at the last present
     std::array<std::size_t, 3> by_steps{};      // presents after 0, 1, 2+ steps
     std::size_t flips = 0;                      // a 0 next to a 2+
@@ -853,7 +875,13 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
                 double(percentile(s.step, 0.9)), double(percentile(s.step, 0.99)), double(percentile(s.step, 1.0)));
     std::printf("frames: presents after 0 / 1 / 2+ steps: %zu / %zu / %zu, a 0 next to a 2+: %zu\n", s.by_steps[0], s.by_steps[1], s.by_steps[2],
                 s.flips);
+    if (!s.screen2.empty())
+        std::printf("frames: second screen %.1f frames/s (%.1f drawn and swapped), p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n",
+                    double(s.screen2.size()) / elapsed, double(s.screen2_swaps) / elapsed, double(percentile(s.screen2, 0.5)),
+                    double(percentile(s.screen2, 0.9)), double(percentile(s.screen2, 0.99)), double(percentile(s.screen2, 1.0)));
     std::fflush(stdout);
+    s.screen2.clear();
+    s.screen2_swaps = 0;
     s.interval.clear();
     s.work.clear();
     s.swap.clear();
@@ -866,6 +894,13 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
 } // namespace
 
 void frame_stats_step(double ms) { frame_stats_step_into(frame_stats_state(), ms); }
+
+void frame_stats_screen2(double ms, bool swapped) {
+    if (auto& s = frame_stats_state(); s.period > 0) {
+        s.screen2.push_back(float(ms));
+        s.screen2_swaps += swapped ? 1 : 0;
+    }
+}
 
 void finish_present(HostView& view, engine::Engine& engine, const std::function<void()>& swapped) {
     // Keep about three frames of audio queued across frame hitches.
@@ -1386,6 +1421,20 @@ void set_ui_fonts(ImFont* pixel, ImFont* scalable) {
 }
 
 float ui_scale() { return g_ui_scale; }
+
+void apply_ui_style(float scale) {
+    if (!ImGui::GetCurrentContext()) return;
+    auto& style = ImGui::GetStyle();
+    // (The window's dark style at 1x, kept by update_ui_scale; before it ran,
+    // ImGui's dark style.)
+    if (g_ui_style_kept) style = g_ui_base_style;
+    else ImGui::StyleColorsDark(&style);
+    if (scale != 1.0f) style.ScaleAllSizes(scale);
+    style.FontScaleDpi = scale;
+    ImGui::GetIO().FontDefault = scale != 1.0f && g_scalable_font ? g_scalable_font : g_pixel_font;
+}
+
+float exchange_ui_scale(float scale) { return std::exchange(g_ui_scale, scale); }
 
 float update_ui_scale(SDL_Window* window, const Settings& settings, bool test_run) {
     if (!ImGui::GetCurrentContext()) return g_ui_scale;

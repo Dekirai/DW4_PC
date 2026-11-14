@@ -33,6 +33,7 @@
 #include "cloud_backup_panel.hpp"
 #include "online_ui.hpp"
 #include "online_ui_script.hpp"
+#include "screen2.hpp"
 #include "title_entry.hpp"
 #include "app_paths.hpp"
 #include "online/lobby.hpp"
@@ -72,6 +73,7 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <deque>
 #include <thread>
 #include <chrono>
@@ -344,6 +346,8 @@ bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
     // (SDL lets go of the OpenGL context right after this; the surface's end
     // waits for it: DW4Activity.GameSurface.surfaceDestroyed.)
     if (event->type == SDL_EVENT_DID_ENTER_BACKGROUND) dw4::game::android_note_game_paused(true);
+    // (The second screen's EGL surface before SDL's pause, screen2.hpp.)
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND) dw4::game::screen2_enter_background();
     if (event->type == SDL_EVENT_WILL_ENTER_FOREGROUND) dw4::game::android_note_game_paused(false);
 #endif
     return true;
@@ -362,6 +366,39 @@ struct GameWindow {
 };
 GameWindow g_game_window;
 
+// DW4_TEST_CONTEXT_LOSS (a test switch, presentation only): a comma list of
+// frame numbers and the word "background". At each frame of a test run the
+// game does what SDL does after a lost context (run(): a new context made
+// current, the old one destroyed, SDL_EVENT_RENDER_DEVICE_RESET pushed; any
+// platform). "background" (Android): every time the game comes back from
+// the background its EGL context is destroyed first, so SDL itself finds
+// it lost (context_loss_test_watch). Read when used (Android's --env sets
+// it after the start).
+struct ContextLossTest {
+    std::vector<int> frames;
+    bool background = false;
+};
+ContextLossTest context_loss_test() {
+    ContextLossTest test;
+    const char* list = std::getenv("DW4_TEST_CONTEXT_LOSS");
+    if (!list) return test;
+    std::string_view rest(list);
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        const std::string_view item = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        if (item == "background") {
+            test.background = true;
+            continue;
+        }
+        int frame = 0;
+        const auto [end, error] = std::from_chars(item.data(), item.data() + item.size(), frame);
+        if (error == std::errc() && end == item.data() + item.size()) test.frames.push_back(frame);
+    }
+    std::sort(test.frames.begin(), test.frames.end());
+    return test;
+}
+
 #ifdef SDL_PLATFORM_ANDROID
 // A lost OpenGL context: SDL makes a new one current before it sends
 // SDL_EVENT_RENDER_DEVICE_RESET (SDL_androidevents.c), the window keeps that
@@ -373,9 +410,9 @@ bool SDLCALL context_reset_watch(void*, SDL_Event* event) {
     return true;
 }
 
-// DW4_TEST_CONTEXT_LOSS=1 (a test switch; Android's --env in dw4args,
-// docs/ANDROID.md "Robustness"): every time the game comes back from the
-// background its OpenGL context is destroyed first (EGL's own
+// DW4_TEST_CONTEXT_LOSS=background (context_loss_test; Android's --env in
+// dw4args, docs/ANDROID.md "Robustness"): every time the game comes back
+// from the background its OpenGL context is destroyed first (EGL's own
 // eglDestroyContext; SDL let go of it on the way into the background), so
 // SDL cannot make it current again, makes a new one and sends
 // SDL_EVENT_RENDER_DEVICE_RESET (SDL_androidevents.c,
@@ -383,8 +420,7 @@ bool SDLCALL context_reset_watch(void*, SDL_Event* event) {
 // Read when the game comes back (--env sets it after the start).
 bool SDLCALL context_loss_test_watch(void*, SDL_Event* event) {
     if (event->type != SDL_EVENT_WILL_ENTER_FOREGROUND || !g_game_window.context) return true;
-    const char* value = std::getenv("DW4_TEST_CONTEXT_LOSS");
-    if (!value || !*value || *value == '0') return true;
+    if (!context_loss_test().background) return true;
     const EGLDisplay display = static_cast<EGLDisplay>(SDL_EGL_GetCurrentDisplay());
     const bool destroyed = display != EGL_NO_DISPLAY && eglDestroyContext(display, static_cast<EGLContext>(g_game_window.context)) == EGL_TRUE;
     if (destroyed) std::printf("lifecycle: test: the OpenGL context destroyed in the background (DW4_TEST_CONTEXT_LOSS)\n");
@@ -1817,6 +1853,24 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto& menu_tab = view.menu_tab;
         menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
         view.menu_section = std::getenv("DW4_MENU_SECTION") ? std::getenv("DW4_MENU_SECTION") : "";
+        // The second screen's panels in a test run (screen2.hpp; test runs
+        // read no settings.ini): DW4_SCREEN2_OVERLAY=1 shows the overlay
+        // window (the PC's form), DW4_SCREEN2_TAB=status|online|menu chooses
+        // the tab, DW4_SCREEN2_MENU=1 puts DW4_OPEN_MENU's F1 menu on the
+        // second screen. DW4_TEST_CONTEXT_LOSS's frames (context_loss_test):
+        // at those frames the OpenGL context is lost and made again as
+        // Android's SDL does after a lost context (a new context, the old
+        // one gone, SDL_EVENT_RENDER_DEVICE_RESET), so both screens' rebuild
+        // runs.
+        std::vector<int> context_loss_frames;
+        if (options.smoke_frames) {
+            if (const char* overlay = std::getenv("DW4_SCREEN2_OVERLAY")) settings.screen2_overlay = std::atoi(overlay) != 0;
+            if (const char* tab = std::getenv("DW4_SCREEN2_TAB"))
+                for (const auto id : {dw4::game::Screen2Tab::online, dw4::game::Screen2Tab::status, dw4::game::Screen2Tab::menu})
+                    if (std::string_view(tab) == dw4::game::screen2_tab_id(id)) settings.screen2_tab = id;
+            view.menu_on_screen2 = view.show_menu && std::getenv("DW4_SCREEN2_MENU") != nullptr;
+            context_loss_frames = context_loss_test().frames;
+        }
         auto tab_flags = [&](const char* name) -> ImGuiTabItemFlags {
             if (menu_tab != name) return ImGuiTabItemFlags_None;
             menu_tab.clear();
@@ -2142,6 +2196,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         dw4::game::TitleOnline title_online;
         bool title_online_shown = false; // the screens over the title (the last frame)
         bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
+        bool screen2_online_shown = false; // the second screen's Online panel showed (the last frame; screen2.hpp)
         bool menu_shown_before = false;  // the F1 menu was open in the last frame (it opens on Online in the world)
         bool instance_line_shown = false; // the line under the own status window showed in the last frame (19.5.4)
         dw4::game::RoomLive last_room_live; // the last frame's session facts (a UI test run's wait-instance and wait-members)
@@ -2792,6 +2847,25 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto pass_start = std::chrono::steady_clock::now();
             view.pass_started = pass_start;
             bool pass_presented = false; // (online.log's pictures per second)
+            if (draw && !context_loss_frames.empty() && frame >= context_loss_frames.front()) {
+                context_loss_frames.erase(context_loss_frames.begin());
+                // (DW4_TEST_CONTEXT_LOSS: SDL_androidevents.c's restore after a
+                // lost context, with the old context really gone.)
+                SDL_GLContext lost = g_game_window.context;
+                if (SDL_GLContext fresh = SDL_GL_CreateContext(window)) {
+                    SDL_GL_MakeCurrent(window, fresh);
+                    SDL_GL_DestroyContext(lost);
+                    g_game_window.context = fresh;
+                    SDL_GL_SetSwapInterval(0);
+                    SDL_Event reset{};
+                    reset.type = SDL_EVENT_RENDER_DEVICE_RESET;
+                    reset.render.windowID = SDL_GetWindowID(window);
+                    SDL_PushEvent(&reset);
+                    std::cout << "test: the OpenGL context lost and made again at frame " << frame << '\n';
+                } else {
+                    std::cout << "test: no second OpenGL context at frame " << frame << ": " << SDL_GetError() << '\n';
+                }
+            }
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 // A binding being edited, ImGui, quit, the window size,
@@ -3868,7 +3942,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (lobby) {
                 const auto* sys = engine.get<dw4::engine::GameSystem>();
                 lobby->set_offline_game(!online && ((sys && sys->game_started) || !dw4::game::is_menu_stage(engine.stage_name())));
-                lobby->update(steady_seconds(), title_online_shown || (show_menu && online_tab_shown) || ui_script.active());
+                lobby->update(steady_seconds(), title_online_shown || (show_menu && online_tab_shown) || ui_script.active() || screen2_online_shown);
                 if (online && lobby->take_leave_request()) {
                     online->leave_prompt = false;
                     leave_room();
@@ -4124,7 +4198,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // the game reads the pad.
                 // (Over the title the cursor always shows, as in the game's
                 // own menus: A presses the highlighted button at once.)
-                dw4::game::set_menu_navigation(show_menu || title_online.active, title_online.active && !show_menu);
+                dw4::game::set_menu_navigation((show_menu && !view.menu_on_screen2) || title_online.active, title_online.active && !show_menu);
                 // (A UI test run's keys: last frame's go up, this frame's go down.)
                 for (const int key : ui_keys_down) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), false);
                 ui_keys_down.clear();
@@ -4177,7 +4251,32 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 menu_shown_before = show_menu;
                 // Overhead name tags over the picture, under the menus.
                 dw4::game::draw_tags(view, scene);
-                if (show_menu) {
+                // The second screen's panels (screen2.hpp): this frame's facts
+                // (read from the game after its step, presentation only), and
+                // their overlay window over the game, the PC's form (Android's
+                // while no second screen shows them), off unless [screen2]
+                // overlay.
+                const auto screen2_lower = dw4::game::screen2_display();
+                const bool screen2_on_lower = screen2_lower.surface && settings.screen2_mode == dw4::game::Screen2Mode::automatic;
+                dw4::game::Screen2Status screen2_facts;
+                dw4::game::Screen2Online screen2_net;
+                if (screen2_on_lower || settings.screen2_overlay) {
+                    screen2_facts = dw4::game::screen2_status(engine, view.labels, online ? online->session().own_slot() : 0);
+                    screen2_net.lobby = lobby.get();
+                    screen2_net.live = online ? &room_live : nullptr;
+                    if (net.active())
+                        screen2_net.direct = "Player " + std::to_string(net.local_slot() + 1) + " of " + std::to_string(net.start().players) +
+                                             " (input delay " + std::to_string(net.start().delay) + ")";
+                    else if (net.in_lobby())
+                        screen2_net.direct = lobby_status;
+                }
+                screen2_online_shown = false;
+                if (!screen2_on_lower)
+                    screen2_online_shown = dw4::game::draw_screen2_overlay(settings, settings_changed, screen2_facts, screen2_net);
+                // The F1 menu: in the window, or on the second screen's Menu
+                // tab when it was opened there (the same tabs either way).
+                const auto draw_f1_menu = [&](bool on_screen2) {
+                    if (!on_screen2) {
                     if (const float s = dw4::game::ui_scale(); s == 1.0f) {
                         ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
                     } else {
@@ -4195,6 +4294,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), cond, ImVec2(0.5f, 0.5f));
                     }
                     ImGui::Begin("DW4 PC (F1)");
+                    }
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
                         {
@@ -4330,6 +4430,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
+                        dw4::game::settings_screen2_section(settings, settings_changed, view.menu_section);
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
@@ -4829,8 +4930,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     ImGui::EndTabBar();
                     }
-                    ImGui::End();
-                }
+                    if (!on_screen2) ImGui::End();
+                };
+                if (show_menu && !view.menu_on_screen2) draw_f1_menu(false);
                 online_tab_shown = show_menu && online_tab_now;
                 // The online screens over the title (its menu's third entry
                 // opens them; a room started from them shows there until Play).
@@ -5048,6 +5150,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     dw4::game::write_screenshot(path, width, height);
                     std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
+                    if (screen2_on_lower) {
+                        const auto dot = path.rfind('.');
+                        dw4::game::screen2_request_shot(path.substr(0, dot) + "_screen2" + (dot == std::string::npos ? ".bmp" : path.substr(dot)));
+                    }
                 }
                 // DW4_DEV_DUMP / DW4_DEV_IDS: every present of the window,
                 // then the same draw list as item numbers (not presented).
@@ -5079,6 +5185,53 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     pass_presented = true;
                     if (online) online->session().presented(steady_seconds());
                 });
+                // The second screen (screen2.hpp): Android's lower screen shown
+                // or not ([screen2] mode), then its own frame after the window's
+                // swap (its panels, the F1 menu when it was opened there); what
+                // its touches asked for. Nothing on the PC.
+                dw4::game::screen2_request(settings.screen2_mode == dw4::game::Screen2Mode::automatic);
+                if (screen2_on_lower) {
+                    dw4::game::Screen2Menu screen2_menu;
+                    screen2_menu.open = show_menu;
+                    screen2_menu.here = view.menu_on_screen2;
+                    screen2_menu.pauses = settings.pause_in_menu && !options.smoke_frames && !net.active() && !online;
+                    screen2_menu.draw = [&] { draw_f1_menu(true); };
+                    const bool menu_here = show_menu && view.menu_on_screen2;
+                    bool lower_online = false;
+                    const bool drawn = dw4::game::screen2_frame(
+                        [&] {
+                            // (The controller moves through the F1 menu where it shows.)
+                            dw4::game::set_menu_navigation(menu_here, false);
+                            if (menu_here) dw4::game::feed_menu_pad(view);
+                        },
+                        [&] { lower_online = dw4::game::draw_screen2_screen(settings, settings_changed, screen2_facts, screen2_net, screen2_menu); },
+                        settings.ui_scale, menu_here);
+                    if (drawn) {
+                        screen2_online_shown = screen2_online_shown || lower_online;
+                        if (menu_here) online_tab_shown = show_menu && online_tab_now;
+                    }
+                    switch (screen2_menu.ask) {
+                    case dw4::game::Screen2Menu::Ask::open:
+                        if (!show_menu) dw4::game::toggle_menu(view);
+                        view.menu_on_screen2 = true;
+                        std::cout << "menu: open (the second screen)\n";
+                        break;
+                    case dw4::game::Screen2Menu::Ask::move_here:
+                        view.menu_on_screen2 = show_menu;
+                        std::cout << "menu: moved to the second screen\n";
+                        break;
+                    case dw4::game::Screen2Menu::Ask::close:
+                        if (show_menu) dw4::game::toggle_menu(view);
+                        std::cout << "menu: closed (the second screen)\n";
+                        break;
+                    case dw4::game::Screen2Menu::Ask::none: break;
+                    }
+                    if (!screen2_menu.tab.empty()) menu_tab = screen2_menu.tab;
+                } else if (view.menu_on_screen2) {
+                    // (The second screen went: the F1 menu shows in the window.)
+                    view.menu_on_screen2 = false;
+                    std::cout << "menu: back in the window (no second screen)\n";
+                }
                 present_max = std::max(present_max, view.last_present_seconds * 1000.0);
 #ifdef DW4_GHOST_PROBE
                 if (probe_report && ghosts.drawn() > 0) {
@@ -5391,6 +5544,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (button_prompts) dw4::game::ButtonPrompts::set_active(nullptr);
     }
     if (draw) {
+        dw4::game::screen2_shutdown();
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();

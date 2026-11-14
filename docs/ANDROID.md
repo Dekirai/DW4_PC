@@ -21,7 +21,12 @@ menus at the display's scale, a menu button for touch, the AYN Thor's
 controller family, the lifecycle (settings saved, no catch-up, low
 memory), the display's frame rate, the system keyboard for text fields
 and the save round trip PC / emulator / PC ("Phase C: the player's side on
-Android" below; the Thor was locked, its in-game checks are open).
+Android" below; the Thor was locked, its in-game checks are open), and its
+leftovers of lane C2 (the name tags' depth read-back on GLES, a profile
+build type, the context loss, the storage cases; "Phase C leftovers on the
+player's side"). Phase E, the Thor's lower screen (`feat-android-e`), is
+merged into this branch (14.11.2026, "Phase E: the second screen"): the
+player's side with phase E goes to main before the determinism part.
 
 ## Decisions this port follows
 
@@ -74,6 +79,8 @@ ABIs: `arm64-v8a` (the Thor) and `x86_64` (the emulator), `c++_static`.
 | `cmake/android.cmake` | The Android path of the root `CMakeLists.txt`: SDL3 shared, the PC's target `dw4_game` as `libmain.so`, the floating-point flags |
 | `src/game/app_paths.hpp` | `app_root()` and `private_root()`: the game's folders on each platform |
 | `src/game/platform_android.cpp` | Android only: stdout and stderr into logcat (tag `DW4`) |
+| `src/game/screen2.hpp`, `src/game/screen2.cpp` | The second screen's panels (Status, Online, Menu) for both platforms: the lower screen's form, the PC's overlay, F1 > Settings > Second screen ("Phase E") |
+| `src/game/screen2_android.cpp`, `android/app/src/main/java/org/dw4pc/game/LowerScreen.java` | Android only: the second display's Presentation, its EGL surface, the second ImGui context and its touch |
 | `src/android/probe_main.cpp` | Phase A's device probe (`-DDW4_ANDROID_PROBE=ON` builds it as `libmain.so` instead of the game) |
 | `android/` | Gradle wrapper project: `settings.gradle`, `build.gradle`, `app/build.gradle`, manifest, resources, `DW4Activity.java` |
 | `android/gradlew-dw4.cmd`, `android/gradlew-dw4.sh` | The Gradle entry points: `gradlew` in DW4_PC's own Gradle user home ("Gradle user home") |
@@ -1036,8 +1043,9 @@ the printed letters' codes and Xbox = positions.
   are every member's) or a test run. `[menu] pause_unfocused` (default
   true, written only when false) and F1 > Settings "Pause the game while
   another window is in front (notifications, quick settings)" (Android
-  only) switch it off; whether a touch on the Thor's lower screen takes the
-  focus (AYN's Focus Mode) is phase E0's question.
+  only) switch it off. A touch on the second screen's panels takes no focus
+  (their window is not focusable) and never pauses the game ("Phase E:
+  the second screen"; AYN's Focus Mode on the Thor: its checklist).
 - `DW4Activity.onTrimMemory` passes only real memory warnings on, the
   `TRIM_MEMORY_RUNNING_*` levels (5, 10, 15: memory is short while the game
   runs). `TRIM_MEMORY_UI_HIDDEN` (20, every HOME) and the background levels
@@ -1163,6 +1171,8 @@ closes), with these differences:
 | `[gamepad] thor_style` | auto (the Thor's Controller style) |
 | `[menu] pause_unfocused` | true (written only when false): the game pauses while another window is in front |
 | `[gamepad] gc_adapter` | not used (WinUSB, the PC's GameCube adapter reader) |
+| `[screen2] mode` | auto (the default): the panels on a second display when there is one; off (phase E) |
+| `[screen2] tab`, `overlay` | the second screen's tab (status, the default; online; menu) and the overlay window (false), as on the PC |
 
 ### Phase C leftovers on the player's side (lane C2, 14.11.2026)
 
@@ -1246,8 +1256,9 @@ menus said "this PC" on Android: "Offline achievements stay on this
 device" and the texture pack's "this device uses its own" now
 (`kThisMachine`, app_paths.hpp; the online screens' wording is phase D's).
 
-**A lost OpenGL context.** `DW4_TEST_CONTEXT_LOSS=1` (Android, a test
-switch through `--env`, refused online) destroys the game's EGL context
+**A lost OpenGL context.** `DW4_TEST_CONTEXT_LOSS=background` (Android, a
+test switch through `--env`; lane C2 wrote it `=1` before phase E's frame
+list joined the same switch, below) destroys the game's EGL context
 while the game is in the background (`eglDestroyContext` when SDL sends
 `WILL_ENTER_FOREGROUND`, before it makes the context current again), so
 SDL finds it lost, makes a new one and sends `SDL_EVENT_RENDER_DEVICE_RESET`:
@@ -1339,6 +1350,291 @@ bar right of the picture (the reason is not known yet). `adb push` / `adb shell`
   no `GL_MULTISAMPLE` toggles), the Windows-only libraries behind `WIN32`, the
   paths, the one-window rule (RVZ progress and lobby as ImGui), the
   lifecycle.
+
+## Phase E: the second screen (lane E, 14.11.2026)
+
+Branch `feat-android-e` (from `feat-android-cux` de4ffe93; worktree
+`android-e`). It changes no simulation result: the panels read the game's
+state after a step, as the overhead name tags do, and write nothing back
+(the det pair is the old one, below). It goes to main with the player's
+side (`feat-android-cux`), before the determinism part. Status: done on the
+PC and the emulator (`dw4thor33` with its second display); on the owner's
+Thor only read-only queries ran (its lock screen is secure), so its
+checklist below is open.
+
+### What the player sees
+
+- **On the AYN Thor's lower screen** (any second display Android offers for
+  presentations): three tabs, at the display's scale (the Thor's 369 dpi:
+  231 %; the emulator's 330 dpi: 206 %):
+  - **Status**: the area ("Death Valley: Humid Cave"), the difficulty and
+    every joined player's name, form, level, HP and MP bars (the game's own
+    HP / MP; the decision's "HP/SP"), EXP to the next level and bits; in an
+    online instance also the members the name tags know in this stage. Read
+    only. Before Game Start or Call Digimon: "No game is running."
+  - **Online**: the lobby as this machine knows it, without sending
+    anything while it is only looked at: "Offline" with the reason (this
+    build's or device's refusal, "Not connected" with a Connect button, the
+    server gate's text), logged in: the account, the world's counts
+    ("Online now: N players, M instances"), the friends online, Play's
+    label; in the world: the instance (whose, its visibility, the own slot,
+    the mode, the input delay, the story line) and its members (name, area,
+    level, HP, host / lagging / away). Buttons lead to the F1 menu's Online
+    tab (log in, Play, the Instance page) on the lower screen. A direct LAN
+    session shows its line. On Android it says why online play is off
+    (today the CPU gate's text on the UX branch, "not available on Android
+    yet" with the determinism part).
+  - **Menu**: the F1 menu by touch on demand: "Open the menu" opens the
+    same F1 menu (every tab) on the lower screen, "Close the menu" (or
+    Back, F1, the touch button) closes it; leaving the tab closes it too. It
+    pauses the game like F1 ([menu] pause), the controller moves through it
+    there (its A / B and D-pad), and a text field takes the game window's
+    keyboard (the system keyboard opens on the top screen; the typing goes
+    into the lower field). Opened on the top screen (Back, F1, the touch
+    button) it stays there; the Menu tab then offers "Show it here".
+- **On the PC** (and on Android without a second screen): the same Status
+  and Online panels as an overlay window "Second screen" over the game, off
+  by default; F1 > Settings > Second screen > "Panels over the game"
+  (`[screen2] overlay`) or its close button switch it. The Menu tab is
+  missing there: F1 is the menu. A PC player sees nothing new unless he
+  turns it on (pictures below).
+- F1 > Settings > **Second screen**: on Android "Lower screen: Automatic /
+  Off" (`[screen2] mode`) with what the device reports ("Now on display 4
+  "Screen-2", 1240 x 1080 at 369 dpi" / "No second screen now ..."), on
+  both the overlay switch. The last tab is remembered (`[screen2] tab`).
+  Each key is written only once it is not its default, so a PC's
+  settings.ini stays as it was.
+
+### How it works on Android
+
+- **The display** (`LowerScreen.java`): a `DisplayListener` and
+  `DisplayManager.getDisplays(DISPLAY_CATEGORY_PRESENTATION)`: a display
+  with `FLAG_PRESENTATION`, not `FLAG_PRIVATE`, not the activity's own, state
+  not `OFF`; with several the lowest id (the built-in screen before a video
+  out plugged in later). The Thor's lower screen is display 4 ("Screen-2",
+  `SECURE | SUPPORTS_PROTECTED_BUFFERS | PRESENTATION | TRUSTED`, read on the
+  owner's Thor 14.11.2026), the AVD's display 2 (a new number each time the
+  emulator adds it again). Added, removed and changed displays (a screen
+  switched off) are followed at once.
+- **The Presentation**: an `android.app.Presentation` on that display whose
+  window has `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL` (no system bars,
+  the cutout used), hosting a `SurfaceView`. It is shown only after the
+  game's loop asked for it (`[screen2] mode`, JNI
+  `DW4Activity.setLowerScreenWanted`), so the lower screen never shows an
+  empty surface first, nor at all with mode=off.
+- **The frame** (`screen2_android.cpp`, on the game's thread, after the
+  window's `SDL_GL_SwapWindow` and the frame statistics): the surface's
+  `ANativeWindow` (`ANativeWindow_fromSurface`) gets an EGL window surface
+  with SDL's own EGL display, config and context
+  (`SDL_EGL_GetCurrentDisplay`, `SDL_EGL_GetCurrentConfig`,
+  `eglGetCurrentContext`; no shared context needed); a second ImGui context
+  shares the window's font atlas (ImGui 1.92's shared atlas: the window's
+  context owns and updates it) and the dark style scaled for the lower
+  display's density; its ImGui frame runs with SDL's surface still
+  current, and only when the draw data changed (a digest of the vertices,
+  indices and commands; a texture waiting for its upload; a screenshot; a
+  new surface) the lower surface is made current, cleared, drawn,
+  `eglSwapBuffers` at swap interval 0 (the lower 60 Hz never waits on the
+  top) and SDL's surface current again, the GL state the frame touched put
+  back. The panels' frame runs every other pass (30 a second beside the
+  game's 60) unless a touch waits (and for half a second after one) or the
+  F1 menu shows there (every pass).
+- **Touch**: the SurfaceView's touches (the first finger: down, move, up,
+  cancel; surface pixels) go through JNI into a queue and from there into
+  the second context as touch-screen mouse events; after a release the
+  pointer leaves (no hover stays). A drag on an empty part of a panel
+  scrolls it.
+- **The surface's end**: `surfaceDestroyed` waits (at most 2 s) for a frame
+  that is drawing into it (the frame holds the surface's lock), then the
+  EGL surface and the window reference go; a frame that takes longer lets
+  them go itself. The Presentation goes in
+  `DW4Activity.GameSurface.surfaceDestroyed`, before the game is asked for
+  SDL's pause (the activity leaving the screen: HOME, the app switcher,
+  another app), and comes again with the game's surface and `onStart`; the
+  lifecycle watch lets go of a lower EGL surface still alive at
+  `SDL_EVENT_WILL_ENTER_BACKGROUND`, before `SDL_androidevents.c` backs up
+  the context.
+- **A lost context** (`SDL_EVENT_RENDER_DEVICE_RESET`): the second context
+  and the lower EGL surface go first (`screen2_device_reset`, so the shared
+  font texture is the window's alone and its backend's restart makes it
+  again), then the window's ImGui backend and the renderer as before; both
+  come back at the next lower frame.
+- **Focus**: the Presentation never takes the input focus, so the
+  controller stays with the game on the top screen; a focus loss within 1 s
+  of a touch on the panels would not pause the game either (the cux lane's
+  focus pause ignores it; logged as `focus: lost N ms after a touch on the
+  second screen`). One case did move the focus away on the emulator: a
+  display added at run time gets Android's secondary home screen, which
+  took the focus under the panels (the game paused, the controller's input
+  went there). Within 3 s of the panels' coming, a focus loss makes the
+  activity take the focus back (its task to the front again): `second
+  screen: the display that came took the focus; the game takes it back`.
+  Every other focus loss (the notification shade, a dialog) is left to the
+  cux lane's pause.
+- **Without a second screen** (none, switched off, mode=off, the game
+  itself on the only presentation display such as with AYN's "Screen
+  Launch: Bottom"): no Presentation; the panels are the overlay window when
+  `[screen2] overlay` is on (checked on the emulator with mode=off: the
+  overlay at 250 % on the top screen), and an F1 menu shown on the lower
+  screen moves back into the window (`menu: back in the window (no second
+  screen)`).
+- **Not drawn during a Data Overflow run** (paused mode; its loop does not
+  call the lower frame): the lower screen keeps its last picture until the
+  story loop runs again.
+
+Test switches (presentation only, listed in `online_presentation_env`):
+`DW4_SCREEN2_OVERLAY=1`, `DW4_SCREEN2_TAB=status|online|menu`,
+`DW4_SCREEN2_MENU=1` (DW4_OPEN_MENU's menu on the lower screen),
+`DW4_MENU_SECTION=Screen2` (F1 scrolled to the section),
+`DW4_TEST_CONTEXT_LOSS=FRAME[,FRAME...]` (any platform, test runs: at those
+frames the game does what SDL does after a lost context, a new context made
+current, the old one destroyed, `SDL_EVENT_RENDER_DEVICE_RESET` pushed, so
+every GL object of both screens is made again; the list may also hold the
+word `background`, lane C2's Android test of the same name: the EGL context
+destroyed in the background, "A lost OpenGL context" above; one switch,
+listed once, with the presentation switches). A test run's
+`--screenshot` also writes `NAME_screen2.bmp` with the lower screen's
+picture. `DW4_FRAME_STATS` adds `frames: second screen N frames/s (M drawn
+and swapped), p50 ... ms`; `DW4_GL_CHECK=1` checks the lower frames too
+(`second screen: GL error check: N errors in M frames`).
+
+### Results (14.11.2026)
+
+**The PC** (`build/Clean` from scratch, MSVC, idle priority, 4 jobs; logs
+and pictures in `build/phe/` of the worktree):
+
+- `ctest` 78 of 78 (the controls test checks `[screen2]`'s defaults, read
+  back and not written without them); `det.sh` twice on an exe copy:
+  4004f056 / 396cb219 in all four runs; the save state suite (a private
+  copy) 17 of 17 identical after loading.
+- Hidden test runs of `newgame_dng101b1` (1280 x 960, `DW4_GL_CHECK=1`),
+  the UX branch's exe (de4ffe93) against this branch's: the frames 1500
+  (the title), 4300 and 5000 (the dungeon) byte for byte the same (md5
+  ac2ff218..., 08096d22..., fde83d2f...); with `DW4_OPEN_MENU=1` the F1
+  Settings tab differs only in its live frame time graph and "now N fps"
+  (and its scrollbar: the tab is longer). With `DW4_SCREEN2_OVERLAY=1` the
+  overlay at the top right (Status: "a", Dorumon Lv 1, HP 170 / 170, MP 60
+  / 60, EXP 0 (next level at 341), 0 bits, Death Valley: Humid Cave; Online:
+  "Offline, this run has no online screens"); F1 > Settings > Second
+  screen (`DW4_MENU_SECTION=Screen2`). 0 GL errors in every run.
+- `DW4_TEST_CONTEXT_LOSS=2000,4400` with the overlay: both losses rebuilt,
+  the frames 4300 and 5000 byte for byte those of the run without a loss,
+  0 GL errors.
+
+**The emulator** (`dw4thor33`, `-gpu host`, headless, idle priority; the
+debug APK built offline with both ABIs, `--max-workers=1`,
+`-Pdw4.nativeJobs=4`):
+
+- The start: `second screen: display 2 'Emulator 2D Display' 1240x1080 330
+  dpi, flags 0xc8`, `shown on display 2`, `drawing on display 2 ...`,
+  `menus at 206 %`. The emulator's own screenshot of its display 1
+  (`adb emu screenrecord screenshot DIR --display 1`; `screencap -d` cannot
+  capture the emulator's virtual display) shows the tabs and "No game is
+  running."
+- Touch on the second display (`adb shell input -d <id> tap X Y`): the
+  Online tab (the offline reason), the Menu tab, "Open the menu" (`menu:
+  open (the second screen)`: the F1 menu with every tab on the lower
+  screen, "(the game is paused)", the top screen shows the paused game and
+  the touch button), its Controls tab (the prompts' pictures drawn from the
+  window's textures), "Close the menu" (`menu: closed (the second
+  screen)`); the Debug tab's stage field typed into with `input text` and
+  `KEYCODE_DEL` (the field shows the text; `second screen: a text field
+  takes the keyboard`).
+- The controller after a touch on the panels: `dumpsys window` keeps
+  `mCurrentFocus` on `DW4Activity`; a virtual Xbox 360 pad (uinput, root on
+  the emulator) opens and closes F1 on the top screen with its View button
+  (`menu: open / closed (the controller's View / Back button)`); no `focus:`
+  line.
+- The display removed and added at run time (`adb emu multidisplay del 1` /
+  `add 1 1240 1080 330 0`): `second screen: none`, `surface released (11
+  ms)`, `gone (display 3 removed)`; then `shown on display 4 (display 4
+  added)` and drawing again. Before the focus fix the added display's home
+  screen took the focus and the game paused until the top screen was
+  touched; since then `the display that came took the focus; the game takes
+  it back` within 0.3 s.
+- HOME and back: `second screen: surface released`, `gone (the game's
+  surface goes)` before `nativePause` and `lifecycle: entering the
+  background`; back: `shown on display ... (the activity is visible)`, the
+  lifecycle lines, `drawing on display ...`, the panels as before; no EGL
+  error.
+- A lost context: `DW4_TEST_CONTEXT_LOSS=2000,4400` in a test run through
+  `dw4args` (`--smoke-test 5000`, newgame_dng101b1): `lifecycle: the
+  OpenGL context was recreated`, `second screen: made again after the lost
+  OpenGL context` twice, the screenshots of both screens at 1500, 4300 and
+  5000 (the lower Status panel with the party), `renderer: GL error check: 0
+  errors`, `second screen: GL error check: 0 errors in 2501 frames`. The
+  developer option "Don't keep activities" could not be switched on this
+  image without its developer options UI (`settings put global
+  always_finish_activities 1` is not taken by the activity manager there;
+  the value was put back): with it SDL 3 ends the game when the activity
+  goes (`nativeSendQuit`) and a new activity exits the process
+  (`SDL_ANDROID_ALLOW_RECREATE_ACTIVITY` unset), so it means a cold start,
+  not a lost context; the test switch provokes the real path.
+- `DW4_GL_CHECK=1` in every run: no `GL error` line in any log, no EGL
+  error.
+- Frame statistics of the top screen at the title (`DW4_FRAME_STATS=10`,
+  the debug APK, nothing else building): with the panels on the lower
+  screen 58.8-60.0 presents/s, interval p50 16.65-16.82 ms, p99 21.8-27.9
+  ms; with the display removed 57.4-60.0 presents/s, p50 16.63-16.72 ms,
+  p99 20.1-24.1 ms (the emulator's own jitter: the 0 / 2+ pairs vary from 0
+  to 51 per 10 s either way). The lower frame: p50 0.10-0.13 ms while its
+  picture stays the same (0 to 0.2 swaps a second at the title); a swapped
+  frame cost 4-5 ms on the emulator's GLES translator, which drew every
+  frame before the digest.
+- `[screen2] mode=off` and `overlay=true` in the emulator's settings.ini:
+  no Presentation, the overlay on the top screen; the keys removed again
+  afterwards.
+
+### The Thor: the owner's checklist
+
+The debug APK of this branch, installed over the earlier one (`adb install
+-r`, the disc copy and settings.ini stay); the game started normally from
+the top screen. AYN's own settings as read on 14.11.2026 (Settings.System,
+their meaning not documented): `screen_focus_lock=1`, `focus_change=599`,
+`dual_screen_display_mode=0`, `second_create=97`, `enable_system_key_focus_lock=0`;
+reading them again after switching Focus Mode tells which key is which
+(`adb shell settings get system screen_focus_lock`).
+
+1. **The panels**: within a second of the intro the lower screen shows
+   Status | Online | Menu at 231 % (logcat: `second screen: drawing on
+   display 4 "Screen-2" (1240x1080, 369 dpi)`, `menus at 231 %`). Tap the
+   tabs, open the menu there, change a setting by touch, close it.
+2. **Focus Mode Auto**: walk with the stick and tap the lower screen's tabs
+   meanwhile: the Digimon keeps walking, no `focus: another window is in
+   front` line, the Back button still opens F1 on the top screen; `adb
+   shell dumpsys window | grep mCurrentFocus` names DW4Activity.
+3. **Focus Mode Top**: the same.
+4. **Screen Launch: Bottom**: start the game with it. The game then runs on
+   the lower screen; the top screen is no presentation display, so there
+   are no panels (`second screen: none`) and F1 > Settings > Second screen
+   says so and offers the overlay. If the top screen is reported as a
+   presentation display, the panels go there instead: a picture of it is
+   welcome.
+5. **The lower screen off and on** (the Thor's switch): off: `second screen:
+   gone (display 4 changed)`, the game goes on without a pause and without
+   a black picture; on: the panels again (and no focus taken away: no
+   `the display that came took the focus` line expected, the display stays
+   the same).
+6. **HOME and back, the app switcher**: the panels go and come back.
+7. **Frame pacing**: with `files/dw4args.allow` (the owner's choice) and
+   `--env DW4_FRAME_STATS=10`: at the title and in the dungeon, the lines
+   with the panels on and with F1 > Settings > Second screen > Lower screen:
+   Off: the same presents/s, interval p50 and p99 at 60 Hz (Smooth Display
+   60) and at 120 Hz; `frames: second screen ...` p50 well below 1 ms.
+8. **Text**: F1 on the lower screen, Saves tab, the cloud backup's Account
+   field: the keyboard opens on the top screen, the typing lands in the
+   lower field.
+
+### Open after this lane
+
+- The Thor's checklist above (the device's lock screen is secure).
+- Text fields on both screens active at once share the one keyboard: the
+  typing goes to the lower screen's field while it is active.
+- The Online panel with a logged-in lobby and a running instance (members,
+  visibility) was not run against a server (no test server in this lane);
+  it reads the same lobby and `RoomLive` facts as F1 > Online. Online on
+  Android itself is phase D.
+- The Data Overflow loop (paused) does not draw the lower screen.
 
 ## The Thor
 

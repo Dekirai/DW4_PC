@@ -230,6 +230,26 @@ void menu_size() {
     s = parsed("[window]\nui_scale=40\n");
     check(s.ui_scale == 100, "a too small percent is 100");
 }
+// The second screen's panels (settings.ini [screen2]): auto, the Status tab
+// and no overlay by default, none of them written into a file without them.
+void second_screen() {
+    Settings s = parsed("");
+    check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status && !s.screen2_overlay, "[screen2] defaults");
+    s.store();
+    check(!s.ini().get("screen2", "mode") && !s.ini().get("screen2", "tab") && !s.ini().get("screen2", "overlay"),
+          "[screen2] defaults are not written into a file without them");
+    s = parsed("[screen2]\nmode=off\ntab=menu\noverlay=true\n");
+    check(s.screen2_mode == Screen2Mode::off && s.screen2_tab == Screen2Tab::menu && s.screen2_overlay, "[screen2] read back");
+    s.screen2_mode = Screen2Mode::automatic;
+    s.screen2_tab = Screen2Tab::online;
+    s.screen2_overlay = false;
+    s.store();
+    check(s.ini().get_or("screen2", "mode", "") == "auto" && s.ini().get_or("screen2", "tab", "") == "online" &&
+              s.ini().get_or("screen2", "overlay", "") == "false",
+          "[screen2] defaults again once they were set");
+    s = parsed("[screen2]\nmode=sideways\ntab=map\n");
+    check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status, "[screen2] unknown values stay the defaults");
+}
 } // namespace
 
 int main() {
@@ -238,6 +258,7 @@ int main() {
         controller_defaults();
         migration();
         menu_size();
+        second_screen();
     } catch (const std::exception& error) {
         std::cerr << "controls tests failed: " << error.what() << '\n';
         return 1;
