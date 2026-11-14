@@ -114,48 +114,70 @@ private:
 };
 
 // The step clock's time per pass on a display with VSync (the host's
-// fixed-step loop, kFieldSeconds per step): a pass measured within a quarter
-// of a refresh of 1 to 4 whole refreshes counts as exactly that many
-// refreshes of the display's measured period. When a pass starts after its
-// vsync jitters by a millisecond or two (Android's scheduling, a busy CPU),
-// so does the measured time; near a step boundary that jitter alone decided
+// fixed-step loop, kFieldSeconds per step): a pass counts as the whole
+// refreshes of the display between its start's refresh and the last
+// pass's, times the display's period. When a pass starts after its vsync
+// jitters by a millisecond or two (Android's scheduling, a busy CPU), so
+// does the measured time; near a step boundary that jitter alone decided
 // between 0 and 2 steps, pass after pass (judder: a repeated picture next
 // to a skipped one). Counted in whole refreshes, the step clock only drifts
 // by the difference between the display's period and a field (a 60 Hz
 // display under the game's 59.94 Hz: one repeated picture every ~16.7 s, a
-// 59.94 Hz one: none). The period is the running mean of the counted
-// passes' measured time (the reported rate until two seconds are counted;
-// again from the start when the reported rate changes or the mean leaves it
-// by more than 1 %), so the clock keeps real time on a display whose real
-// rate is not quite the reported one; what a pass differs from its count
-// is kept and given back once it reaches a field. Any other pass (VSync
-// off, a frame limit off the refresh, a hitch of more than 4 refreshes)
-// counts as measured, and so does every pass while the display is not
-// steady: whole refreshes only count once most passes have come in them
-// (a confidence that rises by 1 with such a pass and falls by 10 with any
-// other, counted from 30 of at most 60; an emulator whose display presents
-// at irregular times stays measured).
+// 59.94 Hz one: none).
+//
+// The count is phase locked: every pass's start is placed on the grid of
+// the reported rate's refreshes (its place after its refresh: the last
+// pass's place plus the measured time, less the whole refreshes nearest to
+// where passes usually start, a running mean of the place). Work that some
+// passes do after their swap (the AYN Thor's lower screen draws every other
+// pass) moves the next pass's start late and the one after it early again:
+// each of them measures a refresh and a few milliseconds more or less, on
+// the grid each starts in its own refresh, a count of 1 each. A pass is
+// steady when it counts 1 to 4 refreshes and starts within 0.35 of a
+// refresh of the usual place.
+//
+// The period is the reported one plus how far the usual place moved per
+// refresh since the clock first counted (from two seconds on; nothing when
+// the display runs at its reported rate, a 59.94 Hz display that says 60:
+// 16.683 ms), so the clock keeps real time on a display whose real rate is
+// not quite the reported one; what the counted passes differ from the
+// measured time is kept and given back once it reaches a field. Everything
+// starts again when the reported rate changes or the period leaves it by
+// more than 1 %. Whole refreshes only count once most passes have been
+// steady (a confidence that rises by 1 with a steady pass and falls by 10
+// with any other, counted from 30 of at most 60): before that, and on a
+// display that presents at irregular times (an emulator's), every pass
+// counts as measured. While the clock counts, a pass that is not steady
+// counts its refreshes on the grid too (a late start and an early one after
+// it: 1 and 1, not the measured 1.5 and 0.5; a hitch: its refreshes).
 class RefreshClock {
 public:
     // The seconds a pass adds to the step clock: `measured` (the time since
     // the last pass), `refresh_hz` the display's reported rate (0: unknown).
     double pass(double measured, double refresh_hz);
     // The period in use (seconds; 0 before a pass with a known rate).
-    double period() const { return refresh_hz_ > 0 ? (refreshes_ >= kMeanAfter ? measured_sum_ / refreshes_ : 1.0 / refresh_hz_) : 0.0; }
+    double period() const;
     void reset();
     // Whether the last pass was counted in refreshes.
     bool counting() const { return confidence_ >= kCountFrom; }
 
-    static constexpr double kMeanAfter = 120;                // refreshes counted before their mean is the period
-    static constexpr int kCountFrom = 30, kConfidenceMost = 60;
+    static constexpr double kMeanAfter = 120;                // refreshes after the first count before the place's move corrects the period
+    static constexpr int kCountFrom = 30, kConfidenceMost = 60, kMissCost = 10;
+    static constexpr double kSteady = 0.35;                  // of a refresh: how far a steady pass starts from the usual place
+    static constexpr double kUsualWeight = 1.0 / 8.0;        // the running mean's weight of a steady pass's place
     static constexpr double kStepSeconds = 1001.0 / 60000.0; // one step (engine::kFieldSeconds): what is owed at most
 
 private:
-    double refresh_hz_ = 0;    // the reported rate of the sums below
-    double measured_sum_ = 0;  // the counted passes' measured seconds ...
-    double refreshes_ = 0;     // ... and their refreshes
-    double owed_ = 0;          // measured minus counted, not yet given back
-    int confidence_ = 0;       // how steadily passes come in whole refreshes
+    double refresh_hz_ = 0;        // the reported rate of the grid
+    double refreshes_ = 0;         // the grid's refreshes so far
+    double place_ = 0;             // where the last pass started after its refresh on the grid (seconds)
+    double usual_ = 0;             // where passes usually start after their refresh (a running mean of place_; within half a refresh)
+    double moved_ = 0;             // the usual place's moves, summed (not kept within half a refresh)
+    bool anchored_ = false;        // the clock counted once: the moves are measured from ...
+    double anchor_moved_ = 0;      // ... moved_ then ...
+    double anchor_refreshes_ = 0;  // ... and refreshes_ then
+    double owed_ = 0;              // measured minus counted, not yet given back
+    int confidence_ = 0;           // how steadily passes come in whole refreshes
 };
 
 } // namespace dw4::game
