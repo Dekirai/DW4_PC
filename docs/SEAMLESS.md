@@ -2108,7 +2108,14 @@ A single BARRIER (a desync, or a forged one) therefore stops the sealing for
 every member of the instance until `Instances:BarrierReportSeconds` (5 s)
 ends the wait: their pictures freeze that long (measured in the round S1
 review: 5.17 s), then the reporters leave as a group of their own (NEW) and
-the others play on (LEAVE, LEAD_FROM). A BARRIER that names an instance the
+the others play on (LEAVE, LEAD_FROM). A BARRIER past every tick its sealed
+instance sealed (more than `StaleBarrierTicks`, 120, beyond the next one) is
+another timeline's: a member that resumed into a visit it never loaded,
+whose link went with the visit's BARRIER_OK (W7e, round I1b's integration);
+it never stops the sealing: the member leaves at once (LEAVE, the others'
+WORLD_NOTICE *apart*) and its barrier is decided alone. Every answer to a
+barrier decided alone names the instance and visit its BARRIER named (the
+parked client matches them; instance 0 went unheard). A BARRIER that names an instance the
 server does not have the member in (a straggler whose group was decided
 without it, a client whose own five-second timeout went on as NEW, a forged
 one) arrives alone and first takes the member out of the instance the server
@@ -12192,11 +12199,13 @@ means round I1a):
 | W4b | I1 | b takes the gate 6 s after a, a's instance still *starting*: b joins it without a prompt (counter-proof: with `World:StartingSeconds` 0 b gets the prompt) |
 | W4c | I1b | (decision 43) k's instance plays at stag0101; a and b, strangers, take the gate there at the same moment, both get the gate form (k's row, *Here (1)*) and both choose *New instance* (autochoice new): one new instance with both (a co-arrival, or a join of its starting instance), two in the history with k's |
 | W5 | I1 / I2 | a Private: b gets no prompt and a NEW; a moderator c sees a's row marked Private. a Friends: b not a friend, NEW; after the friendship (I2) listed |
+| W5s | I1b | (the integration's review) a Private; the moderator c chooses a's row himself in the gate form (the row only the staff bypass shows, never preselected): an audited staff join of a's instance (`instance_join role=staff how=join`, one `staff_join` in the audit) |
 | W6 | I1 | a's gate disc with b in another stage group: b sees the notice, takes the home departure 3 s later, is in its lobby on its own story within 5 s; `instance_history.end_reason` = host_left |
 | W7 | I1 | the proxy cuts a for 20 s: b sees the countdown, a's Digimon stands, a resumes, fingerprints equal. W7b: 70 s: the instance ends at 60 s, b goes home, a goes home after its reconnect |
 | W7c | I1 | a half-open cut: the proxy swallows a's packets for 20 s without closing (no FIN, no RST): the grace starts within 5 s, a is never taken out by `lagOut`, a resumes |
 | W7d | I1 | a reconnects after 45 s (beyond the member timeout of 35 s): still host, the instance never ended |
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
+| W7f | I1b | (the integration's fix stage) W7e's race on demand: a's link goes as the sealed NEW's BARRIER_OK comes (`DW4_ONLINE_TEST_CUT_AT_ANSWER`, development builds: the answer is lost with it); SNAPSHOT_ASK makes b the uploader; a resumes into the new visit and re-sends its old barrier, which lies past b's sealed ticks: decided apart at once (`barrier_apart`, no split, no stall for b), a JOIN under a's visit, READY, still host |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
 | W10 | I1b | a removes b: b goes home; b's prompt (its PLAN after the removal: no row, the cursor on *New instance*; the integration's check) and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
@@ -12949,9 +12958,11 @@ two seconds (above): accepted (decision 44; it may be shortened later);
 (3) the host's question's hint "A: Yes   B: No" on the loading screen
 (19.5.6): with the controller's button pictures since the integration
 ("{A} Yes   {B} No", the port UI's placeholders).
-Not built: a UI scenario of the *Go along* box (the half second, the
-cursor below the box, *B: Close*, *A: Cancel* by the controller); the
-scenarios drive the box's actions through the online script.
+A UI scenario of the *Go along* box came with the integration's fix stage
+(`tools/online_test/ui/goalong`: View or the menu once the notice is up,
+one A with the controller's family forced); the half second's cursor below
+the box, *B: Close* and *A: Cancel* by the controller still go through the
+online script.
 
 *Integrated (2026-11-12 / 13, branch `int-i1b` from main 463c7a5b; notes
 `docs/ROUND_INT_I1B_NOTES.md`): DW4Online 0.2.0, protocol 50, schema 14.*
@@ -12995,7 +13006,7 @@ scenarios drive the box's actions through the online script.
   right after its BARRIER_OK, resumes into the new visit "playing apart",
   sends its old barrier as one of it, and never answers the JOIN the relay
   then decides with READY (its own instance after 60 s). W7e passes when
-  the cut comes before the BARRIER.
+  the cut comes before the BARRIER. (Fixed in the fix stage below.)
 - **Scenarios:** W10 checks the prompt after the removal; W11r (new) takes
   the lobby's return mat through the gate form with real clients. On the
   merged build S22b (no `statehash_mismatch` any more), W1, W2b, W4c, W7e,
@@ -13003,6 +13014,57 @@ scenarios drive the box's actions through the online script.
   integration 150 (3 skipped), det.sh 4004f056 / 396cb219, r25c 10 of 10
   (1,748,011 frames), the save state suite 17 of 17. The rest of the
   round's and I1a's scenarios on the merged build are open (the notes).
+
+*Test matrix and fix stage (2026-11-14, `int-i1b`; notes
+`docs/ROUND_INT_I1B_NOTES.md`, "The test matrix" and "The fix stage").* The
+test matrix ran 91 scenarios, the UI set, `--fake`, the version gate and the
+upgrade from 0.1.9 on the merged build: W7e's race path the one real
+failure. The review of the integration (relay and story safety, client and
+UI, privacy and deployment) and the fix stage:
+
+- **W7e's race path:** the answers to a split barrier and to a straggler's
+  barrier named instance 0, which no parked client matches: a member that
+  resumed into the next visit after its link went with the visit's
+  BARRIER_OK, and re-sent its old barrier, dropped the JOIN's BARRIER_OK,
+  then the state, and never sent READY. They name the instance and visit
+  the BARRIER named now. A BARRIER past every tick a sealed stage group
+  sealed is another timeline's (a member of the group executes only sealed
+  ticks): it is decided apart at once (`barrier_apart`: the member leaves
+  by LEAVE, the others are told, its barrier decided alone), without the 5 s
+  stall of a barrier for the others and without a desync's split. W7f
+  makes the race (`DW4_ONLINE_TEST_CUT_AT_ANSWER`).
+- **Relay:** a GO's barrier waits while its floor lacks the slots (seatless
+  slot holders; it joined and threw under the hub's lock); one JOIN_REQ to
+  a solo leader at a time (a join's waits for a go's or a home's answer, a
+  home's for a go's; JOIN_AT names no kind); WORLD_NOTICE 15 *apart* for a
+  member that leaves the stage group but keeps its seat (19.5.6).
+- **Client and UI:** the first A on a focused Go along row (and on the
+  host's "View: change") acts (ImGui activates only with a visible cursor);
+  the notice gives way to the own request's line; the button that closed
+  the F1 menu never reaches the game or an open prompt (the pad waits for
+  released buttons); the prompt's hint follows the device in use; the boss
+  wait's line says "{MENU} cancel"; the toasts of 19.5.6.
+- **Reports and privacy (19.16):** the audit's `report_handled` has no
+  reporter (an admin read his reporter there); `retryAfterSeconds` is when
+  the oldest report of the 24 hours leaves them; `Reports:DoneDays` (180)
+  deletes handled reports; the privacy page has the reports and the
+  prompt's member names, levels and Digimon; DEPLOY.md's rollback sets the
+  protocol settings back.
+- **Runs:** ctest 66/66, server unit 560 and integration 152 (3 skipped),
+  det.sh 4004f056 / 396cb219, r25c 10 of 10 (1,748,011 frames), the save
+  state suite 17 of 17; W7f, W7e (the race and the straggler's path), W5s,
+  W5, `ui goalong`, the smoke set (W1, W4c, W10, W31, S22b, RGJ1, `ui home`),
+  W31b-W31i (W31h2 on its repeat: a bot's timing), W7-W7d, S11a, S11b,
+  W10b-W10d, W10s, the UI set, W2, W2b, W11, W11b, W11r, W30c (every one passed).
+- **Open for the user (decision 43 and an explicit Private):** a player who
+  chooses *New instance* with *Private* becomes the co-arrival of a
+  stranger's Public base when the stranger's barrier comes first (a guest
+  on the stranger's story); the other order gives two instances. Decision
+  43 says "the same visibility rules as every co-arrival", which only ask
+  whether the chooser may see the base. Either (1) a *New instance,
+  Private* chooser is never a co-arrival of another's base and a *Friends*
+  chooser only of a friend's, or (2) the order-dependent result is
+  recorded as intended (19.7.6, 19.32).
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept

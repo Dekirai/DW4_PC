@@ -1120,8 +1120,7 @@ The new relay options have code defaults and need no line: `World:ArrivalPrompt`
 (1000), `World:OfferReopenSeconds` (120), `World:AnswerNoticeSeconds` (20), `World:GoAlongWaitSeconds` (60),
 `World:RemovedBarMinutes` (10), `Reports:PerDay` (10), `Reports:RepeatHours` (24), `Reports:SharedInstanceHours` (24),
 `Reports:DoneDays` (180: a handled report is deleted that long after it was handled, by the hourly housekeeping; the privacy
-page names the period, so set it there only together with what the operator tells the players), `RateLimits:ReportsPerMinute`
-(10).
+page shows the configured period), `RateLimits:ReportsPerMinute` (10).
 Never set the test options (`World:TestHooks`, `World:TestGoHook*`, `World:TestGoBarrierHoldMs`, `World:TestJoinHoldMs`,
 `World:TestDropPlans`) on the live server.
 

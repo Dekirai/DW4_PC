@@ -17,7 +17,7 @@ snapshot work uncommitted; the second run (2026-11-13) checked that state, built
 
 | Order | Branch (head) | Merge commit | Decisions |
 | --- | --- | --- | --- |
-| 1 | `feat-i1b-mod` (aefa1edd) | c1cea16c, then 7c21efa6, 1ef2b04f | `RoomHub.Join`: fix-019's check first (a fresh arrival's member that lost its seat decides alone, `DecideAlone`), then the lane's `SendRemovedHome`; `WorldService.RemoveMemberAsync` keeps fix-019's `run`; run.py has fix-019's `{run}` and the lane's `expect_not`. **Migration**: the lane's `player_reports` / `v_player_reports` were written into the then unreleased 0013, which went live with 0.1.7: they became **0014_reports** (0013 keeps its checksum; `v_staff_audit` stays 0013's: replacing a view needs DROP, which DEPLOY.md's service user lacks). **Removal**: every held arrival of a removed member goes home from its barrier at once (the lane's `SendRemovedHome`, 19.6.6 as round I1b wrote it, scenario W10d), a fresh one waiting for its JOIN of that instance too; fix-019's refix had let such a fresh arrival decide again alone. The refix's invariants stay (a JOIN takes no seat, no fifth seat, one history row, one "joined"); `WorldFix019RefixTests`' two removal tests expect the way home. `ModerationTests`' guests are the host's friends (fix-019's decision 40 rule for the automatic join), the removed joiner's fallback is fix-019's `FallbackHome` (wid 0). |
+| 1 | `feat-i1b-mod` (aefa1edd) | c1cea16c, then 7c21efa6, 1ef2b04f | `RoomHub.Join`: the lane's `SendRemovedHome` first (a member removed from the target's instance goes home from its barrier; since 1ef2b04f, "Join checks SendRemovedHome first"), then fix-019's check for a seat lost any other way (a fresh arrival's member decides alone, `DecideAlone`); `WorldService.RemoveMemberAsync` keeps fix-019's `run`; run.py has fix-019's `{run}` and the lane's `expect_not`. **Migration**: the lane's `player_reports` / `v_player_reports` were written into the then unreleased 0013, which went live with 0.1.7: they became **0014_reports** (0013 keeps its checksum; `v_staff_audit` stays 0013's: replacing a view needs DROP, which DEPLOY.md's service user lacks). **Removal**: every held arrival of a removed member goes home from its barrier at once (the lane's `SendRemovedHome`, 19.6.6 as round I1b wrote it, scenario W10d), a fresh one waiting for its JOIN of that instance too; fix-019's refix had let such a fresh arrival decide again alone. The refix's invariants stay (a JOIN takes no seat, no fifth seat, one history row, one "joined"); `WorldFix019RefixTests`' two removal tests expect the way home. `ModerationTests`' guests are the host's friends (fix-019's decision 40 rule for the automatic join), the removed joiner's fallback is fix-019's `FallbackHome` (wid 0). |
 | 2 | `feat-i1b-prompt` (a79be17d) | 031c5128, then cb31f502 | `Matching`: the lane's `Rank` with fix-019's `AutoJoinRow = Preselected`; `WorldHub.Candidates`: the lane's order (context first, full instances as greyed rows) with fix-019's *Here* (only the members of stage groups that stay at the stage, and their joiners); REPORT beside PLAN / CHOICE in the dispatch and both wire registries; the SEAMLESS section names (the prompt lane's 19.32, fix-019's 19.33). The moderation hints (contract 15:20 / 15:25, prompt 16:20): `DecideChoice` refuses a row whose instance may not seat a member or co-arrival (`SeatsRefused`: "no longer open", refreshed prompt), `StartingNotOffered` skips such an instance, `FinishCoArrival`'s base that chose a row lets its co-arrivals decide through `RedecideGroups` (behind `RedecideCoArrivals`). |
 | 3 | `feat-i1b-go` (b2ae1ee8) | ce46800b, then 75738e92, f74ceec6 | `RoomHub.Decide`: the holder filter keeps decision 43 and the go lane's "a GO's barrier is never a base or co-arrival"; `announced = []` for a GO's barrier or a fresh row chooser (contract prompt 16:20 / go 15:55). CheckHolds' JOIN: `World:TestJoinHoldMs` and the GO's no-living-member wait. The housekeeping: the offers before fix-019's `HousekeepHome` and the strays. `HubModel`: `HoldKind.Prompt`, `TestGo`, `HubInstance.DetachedFrom` (fix-019) beside `NoLiving`, `EntryPoint`, `AskedGo`. The go lane's hub tests and the moderation lane's relay tests run with `World:ArrivalPrompt` off (contract go 17:05); the Python relay spike sends HEADING's asked byte. |
 
@@ -88,26 +88,88 @@ On the final code (833c10bd) unless named:
   - The c2 client lacks only 833c10bd's check for bytes left over after a snapshot (it refuses malformed bytes; valid
     ones decode alike).
 
+## The test matrix (2026-11-14)
+
+Product code 0cca6307, harness commits b3dde6d3 (W30 expects a's row preselected: a and b are friends since fix-019),
+a283f860 (W5's moderator takes the preselection), fb8713da (W7e's a stays until @330), 446595aa (UI scenario card's b
+answers the prompt): 90 of 91 scenarios passed, the 11 UI scenarios, 9 of 9 `--fake`, the version gate (a 49 client gets
+`client_outdated`) and the upgrade of a 0.1.9 database with real rows to schema 14; ctest 66/66, server unit 551/551,
+integration 150 / 3 skipped, det.sh, r25c 10/10, the save state suite 17/17 (old 43 states too). The one real failure:
+W7e's race path (below). The log folder is `build/ii1b/`.
+
+## The fix stage (2026-11-14)
+
+The review of the integration (relay and story safety, client and UI, privacy and deployment) and the test matrix's W7e.
+Logs in `build/fx/` (scripts copied from `build/ii1b/`, the private save state suite in `build/fx/st`).
+
+| Finding | Result | Test (fails without the change) | Commit |
+| --- | --- | --- | --- |
+| **W7e's race path** (real failure): the answers to a split barrier and to a straggler's barrier named instance 0, which no parked client matches; a member that resumed into the next visit after its link went with the visit's BARRIER_OK re-sent its old barrier, dropped the JOIN's BARRIER_OK and then the state, never sent READY, `join_ready_timeout`, an instance of its own | the lone groups answer under the instance and visit their BARRIERs named; a BARRIER past every tick a sealed stage group sealed (`StaleBarrierTicks` 120 beyond `NextSeal`) is another timeline's and is decided apart at once (`barrier_apart`: LEAVE, the others told, decided alone; no 5 s stall for the others, no desync's split); `DW4_ONLINE_TEST_CUT_AT_ANSWER` (development builds) makes the race, scenario W7f | `IntegrationReviewTests`: the split's answer, the straggler's answer, the resumed member's JOIN (split path), the old barrier decided apart at once (4 fail without); W7f; W7e's runs took all three paths (the split before `barrier_apart`, the straggler after a lag LEAVE, the cut before the decision) | 13b13d5e, 3b9b70ab |
+| A GO's barrier into a floor without enough free slots threw `IndexOutOfRangeException` in `Join` under the hub's lock (should fix) | the GO's barrier waits for the slots (`JoinTarget`, CheckHolds' JOIN); `Join` decides again instead of joining without slots (`join_without_slots`) | `A_go_barrier_waits_while_its_floor_lacks_the_slots_and_joins_once_they_are_free` (threw); `An_arrival_without_a_go_never_joins_a_floor_without_the_slots` guards the ordinary path | 13b13d5e |
+| Two JOIN_REQs to one solo leader at once (go + join, go + home); JOIN_AT names no kind (minor) | one at a time: `StampJoin` waits for `AskedGo` / `AskedHome`, `TrySoloHome` for `AskedGo` | `A_solo_leader_has_one_join_req_out_at_a_time_so_the_gos_answer_seals_the_go`, `A_removal_while_a_gos_join_req_is_out_asks_the_home_after_the_gos_answer` | 13b13d5e |
+| Decision 43 and an explicit *New instance, Private* (minor) | not changed: **for the user** (Left) | (the review's probe: the Private chooser lands on a stranger's Public story when the stranger's barrier comes first) | - |
+| This file's merge table named the wrong order in `RoomHub.Join` (minor) | corrected: `SendRemovedHome` first, then `DecideAlone` | - | docs commit |
+| W5 no longer checks a staff join with real clients (minor, optional) | new scenario **W5s**: the moderator's own choice of a Private row, `instance_join role=staff how=join`, one `staff_join` | W5s | 3b9b70ab |
+| The Go along box: the first A after View / F1 did nothing (ImGui activates only with a visible cursor; also *View: change*) (should fix) | `SetNavCursorVisible(true)` with the focus request (the half second's cursor below the box stays hidden) | UI scenario **goalong** (b: View, c: the menu, one A each, no direction first; `online: go along`) | 1729a5dd |
+| The notice stayed above the own request's line (should fix) | `go_notices` skips the own request's offer while it runs (Cancel brings it back) | `online_session_tests` "the notice gave way to the own request's line" | 1729a5dd |
+| The button that closed the F1 menu (A on a Go along row, B in the box, Play) reached the game or an open prompt (should fix) | `pad_latch` whenever the menu closes by its own request | none automatic: UI script keys reach ImGui only, not the game's pad | 1729a5dd |
+| The prompt's hint line chose keyboard / pad by "a pad is plugged in" (minor) | by player 1's prompt family (the keyboard while it is the device in use) | goalong's gate form screenshots with forced families | 1729a5dd |
+| The boss fight's go-along line lacked "{MENU} cancel" (minor) | boss counts as cancellable there | none automatic (an ImGui line) | 1729a5dd |
+| Toasts: two for the host's leave; went_to without the floor; "You joined the group" / "You joined <name>" by timing; "View: Online menu" in words; "Joining Your friends failed" (minor) | one toast for the host's leave; the floor; the JOIN's toast waits for INSTANCE_INFO (2 s at most); `{MENU}`; "the group" without names | `online_session_tests` (7 checks fail with the old session code) | 1729a5dd |
+| A lag LEAVE (and a split) left the figure gone without a word since the stage group's LEAVE toast went (minor) | WORLD_NOTICE 15 *apart*, "<name> plays apart for now." (relay and client) | `A_member_lagged_out_of_its_stage_group_is_told_to_the_others_as_playing_apart`, the session's apart check | 13b13d5e, 1729a5dd |
+| A reported admin could read his reporter in the staff audit (`report_handled`'s `reporterId`) (should fix) | no reporter in the audit detail (the report row keeps it for the other staff) | `A_reported_admin_never_learns_his_reporter_from_the_staff_audit`, the staff test's audit rows | 0e7b1916 |
+| DEPLOY.md's rollback left `Play:MinimumProtocol` / `CurrentProtocol` at 50 (0.1.9 would refuse every 49 client) (should fix) | section 8: set them back for a release that raised the protocol, withdraw a published client; 9.3: the client only after the checked server | - | 0e7b1916 |
+| The privacy page did not cover reports or the prompt's member names; reports were kept forever (should fix) | a Reports row (what, why, Art. 6(1)(f), who sees the reporter, the period, the relay log's note); the prompt's names, levels and Digimon; `Reports:DoneDays` (180) deletes handled reports hourly | `Done_reports_go_after_reports_done_days_and_open_ones_stay` (with the page's text) | 0e7b1916 |
+| The server README lacked `Reports` and `ReportsPerMinute` (minor) | added (and the website's reports, `report_limit`'s retryAfter) | - | 0e7b1916 |
+| The I1b wire's comments said protocol 49 (minor) | 50 in Wire.cs, PromptMessages.cs, the WinHTTP test client and SEAMLESS 19.16 / 19.30 / 19.32 | - | 13b13d5e, 1729a5dd |
+| `report_limit`'s `retryAfterSeconds` was always 3600 for a 24 h window (minor) | when the oldest report of the 24 hours leaves them (the limit cache ends then at the latest) | the daily limit test's three retryAfter checks | 0e7b1916 |
+
+Counter-checks: the relay's 8 new tests with the logic reverted: 7 fail (the eighth guards the ordinary path); the client's
+8 new session checks with the old session code: all 8 fail; the report tests with the old service: 4 of 5 fail; the old
+barrier decided apart: fails without `BarrierApart`.
+
+Checks on the fix stage's code (`build/fx/`): ctest 66/66 (`ctest_rel4.log`), server unit 560/560 (`unit_full2.log`),
+integration 152 passed / 3 skipped (`it_full1.log`, mysqld 3681), det.sh on two DEV=OFF copies twice each: 4004f056 /
+396cb219 (`det3.log`), the save state suite 17/17 (`st_all3.log`), r25c 10/10 with 1,748,011 frames (`r25c.log`; the
+engine's list of online environment variables got the new test variable).
+
+Scenarios on the fix stage's code (real hidden clients, `build/fx/marathon*.sh`, run.py `--parallel 1`; client DEV=ON
+9cbcb9d9 from 3b9b70ab's code without the engine's list entry of the new test variable; the Android workflow ran beside them): **W7f** (the race on demand: `barrier_apart`, b's
+SNAPSHOT_ASK, a's JOIN and READY under its own visit), **W7e** five runs (three took the cut before the decision, one the
+race with a lag LEAVE and the straggler's answer, one the race before `barrier_apart` existed: a joined b but run.py
+flagged the desync's `barrier_split`, which led to `barrier_apart`; every other run passed), **W5s**, W5, the UI scenario
+**goalong** (b with View, c with the menu, one A each went along; the gate form's pad line with DualSense and Switch Pro
+pictures, the own line without the notice, "went to Sand Labyrinth B1." with the floor), the smoke set W1, W4c, W10, W31,
+S22b, RGJ1 and `ui home`, the go set W31b, W31c, W31c2, W31d, W31d2, W31e, W31f, W31g, W31h, W31h2, W31i (W31h2 failed once:
+c healed from its disk on the mat as a's exit prompt opened and nobody left stag0201, a bot timing; passed on the repeat),
+W7, W7b, W7c, W7d, S11a, S11b, W10b, W10c, W10d, W10s, the UI set (accounts, areas, card, cheats, gate, leave, navigation,
+newchars, offline, unreachable), W2, W2b, W11, W11b, W11r and W30c (every one passed). Logs `build/fx/scen_*.log`, `marathon.log`;
+the relays' world logs show no desync, mismatch, resync or exception beyond S11a / S11b's injected ones and w7e3's split.
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
-- Scenarios not run on the integrated build: the rest of the round's set (W2, W10b, W10c, W11, W11b, W30b, W30c, W31b-W31i,
-  W31c2, W31d2, W31h2) and round I1a's set again with `DW4_ONLINE_AUTOCHOICE=first` (A1, S14p, S14z, W1x, W3-W9, W12, W18,
-  W19, W22, W24-W30, W30x, W32), the UI set, `--fake`, RGJ1, S22a, W10s. The lanes ran them on their branches (the prompt
-  lane the whole I1a set with the prompt); here the merged build ran S22b, W1, W2b, W4c, W7e, W10, W10d, W11r, W31.
+- **For the user (decision):** decision 43 and an explicit *New instance, Private* (the review's finding 3): a Private
+  chooser who leaves together with a stranger lands on the stranger's Public story when the stranger's barrier comes
+  first, and in an instance of his own in the other order. Either (1) a *New instance, Private* chooser is never the
+  co-arrival of another's base and a *Friends* chooser only of a friend's (`MaySeeBase` also asks `MayEnter` with the
+  chooser's own visibility), or (2) record the order-dependent result as intended (19.7.6, 19.32).
+- For the user (to confirm): `Reports:DoneDays` 180 (handled reports are deleted 180 days after they were handled; the
+  privacy page shows the configured period).
 - The release: the DW4Online 0.2.0 zip and the client release; the user's steps (DEPLOY.md 9.3: a backup, the settings
-  `Play:MinimumProtocol` / `CurrentProtocol` 50, the server, then the client). The game's version stays the CMake
-  project's 0.46.0 (the repo raises it with engine milestones, not with protocol rises; the server gates the protocol).
+  `Play:MinimumProtocol` / `CurrentProtocol` 50, the server, then the client only once the server runs and was checked;
+  the rollback sets both settings back to 49). The game's version stays the CMake project's 0.46.0.
 - From fix-019: the load gate on a quiet machine (no workflow beside it).
-- **W7e's race path, second part** (runs r3 / r4): the snapshot is there now (SNAPSHOT_ASK), but a member whose link was
-  cut right after its BARRIER_OK resumes into the new visit "playing apart", sends its old barrier as one of the new visit,
-  and never answers the JOIN the relay then decides with READY (`join_ready_timeout`, its own instance). Either the relay
-  answers such a resumed barrier (a visit the member never loaded) with a fresh decision of the member alone, or the
-  client sends READY for the JOIN's state while parked there. W7e passes when the cut comes before the BARRIER (r2).
-- From the go lane: a UI scenario of the *Go along* box (the scenarios drive it through the online script).
-- The prompt's ImGui hint lines with the button pictures have no automatic test (the session's loading-screen line has).
+- No automatic test: the pad latch when the F1 menu closes by its own request (UI script keys reach ImGui, not the game's
+  pad) and the boss fight's go-along line; the prompt's ImGui hint lines (the goalong screenshots show the gate form's).
+- Later: a client flag in BARRIER for a barrier of a visit the member never loaded would let the relay decide it apart
+  also when its tick lies inside what the new visit sealed (now the split after `Instances:BarrierReportSeconds`, the
+  others stalled 5 s; it needs the old visit to have run shorter than the new one has when the member comes back).
 
 ## How to run
+
+- The fix stage: `build/fx/` holds copies of `build/ii1b/`'s scripts (`utest.sh`, `itest.sh`, `scen.sh`, `marathon*.sh`,
+  the save state suite in `build/fx/st`); the builds stay in `build/ii1b/rel` and `build/ii1b/dev` (`build\ii1bld.cmd`).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the
