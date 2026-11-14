@@ -923,7 +923,8 @@ gles_check.
 
 ### The menu button for touch
 
-- Android only (`DW4_TOUCH_UI=1` draws it in a PC test run): three lines on
+- Android only (`DW4_TOUCH_UI=1` draws it in a test run, also on the PC;
+  other test runs leave it out of their screenshots): three lines on
   a dark rounded square, 44 px at 1x (102 px on the Thor), in the middle of
   the bar right of the 4:3 picture, so never over the HUD (which stays on
   the 4:3 picture, also in widescreen); in a window too narrow for that, in

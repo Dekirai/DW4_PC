@@ -1567,12 +1567,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.audio = audio;
         view.audio_dump_path = audio_dump_path;
         view.audio_mix = audio_mix;
-        // The menu button for touch (Android; DW4_TOUCH_UI=1 in a PC test
-        // run for its picture): shown for the first seconds too.
+        // The menu button for touch (Android; DW4_TOUCH_UI=1 in a test run,
+        // also on the PC for its picture; a test run's screenshots stay
+        // without it otherwise): shown for the first seconds too.
+        const bool touch_test = std::getenv("DW4_TOUCH_UI") && std::atoi(std::getenv("DW4_TOUCH_UI")) != 0;
 #ifdef SDL_PLATFORM_ANDROID
-        view.touch_ui = draw;
+        view.touch_ui = draw && (!options.smoke_frames || touch_test);
 #else
-        view.touch_ui = draw && std::getenv("DW4_TOUCH_UI") && std::atoi(std::getenv("DW4_TOUCH_UI")) != 0;
+        view.touch_ui = draw && touch_test;
 #endif
         view.last_touch = std::chrono::steady_clock::now();
         g_lifecycle_view = &view;
