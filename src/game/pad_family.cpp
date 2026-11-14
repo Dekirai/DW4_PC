@@ -314,6 +314,7 @@ const char* face_name(Face face) {
     case Face::gl: return "GL";
     case Face::gr: return "GR";
     case Face::misc: return "Extra";
+    case Face::back_key: return "Back";
     }
     return "";
 }
@@ -494,6 +495,14 @@ PromptFace prompt_face(PadFamily family, const Settings& settings, PromptControl
     case PromptControl::c_stick: result.face = family == PadFamily::gamecube ? Face::c_stick : Face::right_stick; return result;
     case PromptControl::dpad: result.face = Face::dpad; return result;
     case PromptControl::menu:
+#ifdef SDL_PLATFORM_ANDROID
+        // (Android: the Thor's Back key opens the F1 menu, its SELECT stays
+        // a game button; host_view.cpp back_toggles_menu.)
+        if (family == PadFamily::thor) {
+            result.face = Face::back_key;
+            return result;
+        }
+#endif
         result.face = face_of(family, settings.nintendo_layout, PadInput{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_BACK});
         if (result.face == Face::none) result.key = "F1";
         return result;

@@ -156,6 +156,10 @@ enum class Face : std::uint8_t {
     left_stick, right_stick, left_stick_click, right_stick_click, c_stick, dpad, dpad_up, dpad_down, dpad_left, dpad_right,
     paddle_r1, paddle_l1, paddle_r2, paddle_l2, gl, gr,
     misc,
+    // Android's Back key (the AYN Thor's key that opens the F1 menu on
+    // Android; docs/CONSOLE_MENU.md): a dark round key with a left-pointing
+    // triangle, a stand-in until the Thor's printing is confirmed.
+    back_key,
 };
 const char* face_name(Face face); // "A", "Cross", "LB", "ZR", "Menu", "Left stick", ...
 

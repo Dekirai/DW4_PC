@@ -68,6 +68,8 @@ public:
     bool fired(Button b) const { return (fired_ & bit(b)) != 0; }      // pressed or repeated this pass
     double held_for(Button b, double now) const;                         // seconds since its press (0 when up)
     void latch() { latched_ = down_; fresh_ = fired_ = 0; }
+    // Keys of this pass (the keyboard: each key event is a press of its own).
+    void inject(std::uint32_t bits) { fresh_ |= bits; fired_ |= bits; }
     std::uint32_t down() const { return down_; }
     std::uint32_t any_fresh() const { return fresh_; }
 

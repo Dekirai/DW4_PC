@@ -1,6 +1,8 @@
 #include "host_view.hpp"
 
 #include "button_prompts.hpp"
+#include "console_glyphs.hpp"
+#include "console_menu.hpp"
 #include "screen2.hpp"
 #include "controls.hpp"
 #include "gc_adapter.hpp"
@@ -118,16 +120,33 @@ void toggle_menu(HostView& view) {
     if (!view.show_menu && view.settings_changed && view.settings.save()) view.settings_changed = false;
 }
 
-namespace {
 // The F1 menu opened or closed by an input, with the input in the log (which
 // control reached the game: a controller's View / Back button, Android's Back
 // key, a touch, F1).
-void toggle_menu_by(HostView& view, const char* input) {
+void toggle_menu_logged(HostView& view, const char* input) {
+    // (A console menu closed by the window's own inputs: the button that
+    // closed it must not reach the game either.)
+    const bool console = view.console_menu && view.show_menu;
     toggle_menu(view);
-    std::printf("menu: %s (%s)\n", view.show_menu ? "open" : "closed", input);
-    std::fflush(stdout);
+    // (The same line as always; the menu script's "expect log" sees it too.)
+    menu_log(std::string("menu: ") + (view.show_menu ? "open" : "closed") + " (" + input + ")");
+    if (console && !view.show_menu) view.pad_latch = true;
 }
+
+namespace {
+void toggle_menu_by(HostView& view, const char* input) { toggle_menu_logged(view, input); }
 } // namespace
+
+void menu_back_key(HostView& view) {
+    if (view.console_menu && view.show_menu && view.capture) {
+        // (The console menu's capture: Back cancels it, F1 stays open; B,
+        // Start and Select are bindable.)
+        view.capture.reset();
+        menu_log("menu: capture cancelled (the Back key)");
+        return;
+    }
+    toggle_menu_by(view, "the Back key");
+}
 
 bool host_event(HostView& view, const SDL_Event& event) {
     auto& settings = view.settings;
@@ -143,6 +162,7 @@ bool host_event(HostView& view, const SDL_Event& event) {
         ImGui_ImplOpenGL3_Init(gl_is_es() ? "#version 300 es" : "#version 330");
         if (view.renderer) view.renderer->reset_context();
         if (view.prompts) view.prompts->reset_context();
+        console_glyphs().reset(); // (the console menu's pictures)
         view.picture.items_current = false;
         return false;
     }
@@ -156,7 +176,7 @@ bool host_event(HostView& view, const SDL_Event& event) {
     // (Typing for a text field of the second screen's panels: screen2.hpp.)
     if (screen2_take_event(event)) return true;
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat) {
-        toggle_menu_by(view, "the Back key");
+        menu_back_key(view);
         return false;
     }
     // (A touch on the second screen's panels takes no focus: its window is
@@ -268,6 +288,19 @@ bool host_event(HostView& view, const SDL_Event& event) {
         view.settings_changed = true;
         return true;
     }
+#ifndef SDL_PLATFORM_ANDROID
+    // (A PC test run with Android's menu rules: the menu script's Back key.)
+    if (view.test_run && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat &&
+        menu_platform(view) == MenuPlatform::android) {
+        menu_back_key(view);
+        return false;
+    }
+#endif
+    // The console menu's keys (arrows, Enter, Escape, ...; not while a text
+    // field takes the typing).
+    if (view.console_menu && view.show_menu && event.type == SDL_EVENT_KEY_DOWN && view.console_keys.size() < 64 &&
+        !(ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput))
+        view.console_keys.push_back(event.key.key);
     if (view.draw) ImGui_ImplSDL3_ProcessEvent(&event);
     if (event.type == SDL_EVENT_QUIT) view.quit_requested = true;
     if (event.type == SDL_EVENT_WINDOW_RESIZED && !view.test_run && !(SDL_GetWindowFlags(view.window) & SDL_WINDOW_FULLSCREEN)) {
@@ -275,7 +308,10 @@ bool host_event(HostView& view, const SDL_Event& event) {
         settings.height = event.window.data2;
         view.settings_changed = true;
     }
-    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free(settings))
+    // (Android with the AYN Thor: its Back key opens F1, its SELECT stays a
+    // game button; console_menu.hpp back_toggles_menu.)
+    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free(settings) &&
+        back_toggles_menu(menu_platform(view), view.family_of(pad_by_id(view.gamepads, event.gbutton.which))))
         toggle_menu_by(view, "the controller's View / Back button");
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) toggle_menu_by(view, "F1");
 #ifndef SDL_PLATFORM_ANDROID
@@ -741,10 +777,9 @@ namespace {
 // layout reads it, a GameCube pad's A and B), whatever the game's bindings;
 // with menu_buttons=bindings the game's A and B do.
 void menu_pad(HostView& view) {
-    if (view.gamepads.empty()) return; // (no pad: a UI test run's keys stay its own)
-    SDL_Gamepad* pad = view.gamepads.front();
-    const PadFamily family = view.family_of(pad);
-    const MenuKeys keys = menu_keys(view.settings, family, read_pad(pad, family), family != PadFamily::gamecube || trigger_clicks(pad));
+    const auto read = player1_menu_keys(view);
+    if (!read) return; // (no pad: a UI test run's keys stay its own)
+    const MenuKeys keys = *read;
     auto& io = ImGui::GetIO();
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.AddKeyEvent(ImGuiKey_GamepadFaceDown, keys.face_down);
@@ -778,11 +813,17 @@ void menu_pad(HostView& view) {
 
 void feed_menu_pad(HostView& view) { menu_pad(view); }
 
-bool menu_pad_held(HostView& view) {
-    if (view.gamepads.empty()) return false;
-    SDL_Gamepad* pad = view.gamepads.front();
+std::optional<MenuKeys> player1_menu_keys(HostView& view) {
+    SDL_Gamepad* pad = view.menu_pad_override ? view.menu_pad_override : view.gamepads.empty() ? nullptr : view.gamepads.front();
+    if (!pad) return std::nullopt;
     const PadFamily family = view.family_of(pad);
-    const MenuKeys k = menu_keys(view.settings, family, read_pad(pad, family), family != PadFamily::gamecube || trigger_clicks(pad));
+    return menu_keys(view.settings, family, read_pad(pad, family), family != PadFamily::gamecube || trigger_clicks(pad));
+}
+
+bool menu_pad_held(HostView& view) {
+    const auto read = player1_menu_keys(view);
+    if (!read) return false;
+    const MenuKeys k = *read;
     const auto off = [](float v) { return std::abs(v) > 0.25f; };
     return k.face_down || k.face_right || k.face_left || k.face_up || k.start || k.back || k.up || k.down || k.left || k.right || k.l1 ||
            k.r1 || k.l2 > 0.1f || k.r2 > 0.1f || off(k.left_x) || off(k.left_y) || off(k.right_x) || off(k.right_y);
@@ -1488,6 +1529,8 @@ void set_ui_fonts(ImFont* pixel, ImFont* scalable) {
 
 float ui_scale() { return g_ui_scale; }
 
+ImFont* ui_scalable_font() { return g_scalable_font; }
+
 void apply_ui_style(float scale) {
     if (!ImGui::GetCurrentContext()) return;
     auto& style = ImGui::GetStyle();
@@ -1588,6 +1631,7 @@ namespace {
 using ImeDataFn = void (*)(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData*);
 ImeDataFn g_backend_ime = nullptr;
 bool g_secret_input = false;
+bool g_numeric_input = false;
 // The system keyboard on the screen (SDL's SHOWN / HIDDEN events, from the
 // window's insets; SDL_ScreenKeyboardShown stays true while the input
 // connection lives, also after the player put the keyboard away).
@@ -1601,10 +1645,11 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
     const ImGuiContext& g = *context;
     const bool wants = data->WantVisible || data->WantTextInput;
     const bool secret = wants && password_field_active(g);
+    const bool numeric = wants && numeric_field_active(g);
     if (std::getenv("DW4_TRACE_IME"))
         std::printf("text input: ime visible %d text %d, field %08x active %08x flags %x focus %p\n", int(data->WantVisible), int(data->WantTextInput),
                     unsigned(g.InputTextState.ID), unsigned(g.ActiveId), unsigned(g.InputTextState.Flags), static_cast<void*>(SDL_GetKeyboardFocus()));
-    if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && secret != g_secret_input) {
+    if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && (secret != g_secret_input || numeric != g_numeric_input)) {
         const bool was_active = SDL_TextInputActive(window);
         // The new field's place first, as the backend sets it only after this
         // hook: Android takes SDL's text input area only when the keyboard
@@ -1612,12 +1657,13 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
         // so with the last field's area the keyboard covered the new field.
         const SDL_Rect area{int(data->InputPos.x), int(data->InputPos.y), 1, int(data->InputLineHeight)};
         SDL_SetTextInputArea(window, &area, 0);
-        start_text_input(window, secret);
-        std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : "a text", was_active ? " restarted" : "");
+        start_text_input(window, secret, numeric);
+        std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : numeric ? "a number" : "a text", was_active ? " restarted" : "");
         std::fflush(stdout);
         g_secret_input = secret;
+        g_numeric_input = numeric;
     }
-    if (!wants) g_secret_input = false;
+    if (!wants) g_secret_input = g_numeric_input = false;
     if (g_backend_ime) g_backend_ime(context, viewport, data);
 }
 #endif
@@ -1627,13 +1673,19 @@ bool password_field_active(const ImGuiContext& g) {
     return g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId && (g.InputTextState.Flags & ImGuiInputTextFlags_Password) != 0;
 }
 
-void start_text_input(SDL_Window* window, bool secret) {
+bool numeric_field_active(const ImGuiContext& g) {
+    return g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId && (g.InputTextState.Flags & ImGuiInputTextFlags_CharsDecimal) != 0;
+}
+
+void start_text_input(SDL_Window* window, bool secret, bool numeric) {
     if (!window) return;
 #ifdef SDL_PLATFORM_ANDROID
     const SDL_PropertiesID props = SDL_CreateProperties();
     if (secret) {
         SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
         SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+    } else if (numeric) {
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_NUMBER);
     }
     if (SDL_TextInputActive(window) && SDL_ScreenKeyboardShown(window)) {
         // The keyboard is up: it takes the new field's kind and place where
@@ -1649,7 +1701,8 @@ void start_text_input(SDL_Window* window, bool secret) {
         SDL_Rect area{};
         int cursor = 0;
         SDL_GetTextInputArea(window, &area, &cursor);
-        android_show_text_input(secret ? 0x20081 : 0x3c001, area.x, area.y, area.w, area.h);
+        // (A number field: TYPE_CLASS_NUMBER.)
+        android_show_text_input(secret ? 0x20081 : numeric ? 0x2 : 0x3c001, area.x, area.y, area.w, area.h);
     } else {
         if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
         SDL_StartTextInputWithProperties(window, props);
@@ -1658,7 +1711,7 @@ void start_text_input(SDL_Window* window, bool secret) {
     }
     SDL_DestroyProperties(props);
 #else
-    (void)secret;
+    (void)secret, (void)numeric;
     SDL_StartTextInput(window);
 #endif
 }
@@ -1693,7 +1746,7 @@ void reopen_text_input(SDL_Window* window, float x, float y) {
     const float line = std::max(ime.InputLineHeight, 1.0f);
     if (y < ime.InputPos.y - line * 0.75f || y > ime.InputPos.y + line * 1.75f) return;
     (void)x;
-    start_text_input(window, g_secret_input);
+    start_text_input(window, g_secret_input, g_numeric_input);
     std::printf("text input: the system keyboard again (a tap on the field after the keyboard was put away)\n");
     std::fflush(stdout);
 #else

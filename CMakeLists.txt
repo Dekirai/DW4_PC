@@ -388,6 +388,10 @@ if(DW4_BUILD_APP)
   target_sources(dw4_game PRIVATE src/game/screen2.cpp)
   # The F1 menu's one apply layer and option tables (docs/CONSOLE_MENU.md).
   target_sources(dw4_game PRIVATE src/game/menu_choices.cpp src/game/menu_ops.cpp)
+  # Android's console F1 menu (docs/CONSOLE_MENU.md; on the PC only in test runs).
+  target_sources(dw4_game PRIVATE src/game/console_nav.cpp src/game/console_menu.cpp src/game/console_pages.cpp src/game/console_glyphs.cpp)
+  # The menu script and its virtual pad (test runs: PC, emulator, AYN Thor).
+  target_sources(dw4_game PRIVATE src/game/menu_script.cpp src/game/menu_script_parse.cpp)
   if(WIN32)
     # (setupapi, winusb: the GameCube adapter in Wii U mode, gc_adapter.cpp;
     # with hid, cfgmgr32 also the Switch 2 Pro Controller, switch2_pro.cpp)
@@ -423,6 +427,16 @@ if(DW4_BUILD_APP)
     # The console F1 menu's navigation model (focus, pages, buttons, touch).
     add_executable(dw4_console_nav_tests tests/console_nav_tests.cpp src/game/console_nav.cpp)
     add_test(NAME console_nav COMMAND dw4_console_nav_tests)
+    # The console menu's button pictures (every family, both menu_buttons
+    # modes, both platforms), the Back / Select rule, the menu script's parser.
+    add_executable(dw4_console_glyph_tests tests/console_glyph_tests.cpp src/game/console_glyphs.cpp src/game/menu_script_parse.cpp
+      src/game/pad_family.cpp src/game/button_art.cpp src/game/prompt_layout.cpp src/game/controls.cpp src/game/settings.cpp
+      src/game/graphics_options.cpp src/game/gc_adapter.cpp)
+    target_link_libraries(dw4_console_glyph_tests PRIVATE dw4_engine dw4_core imgui SDL3::SDL3 OpenGL::GL)
+    if(WIN32)
+      target_link_libraries(dw4_console_glyph_tests PRIVATE setupapi winusb)
+    endif()
+    add_test(NAME console_glyphs COMMAND dw4_console_glyph_tests)
     # Controller families: classification, binding spaces, prompt pictures,
     # the prompts in the game's text lines (laid out by the engine's
     # layout_text), settings migration (no device), and detection through

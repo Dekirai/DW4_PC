@@ -18,6 +18,7 @@
 #include "movie_decoder.hpp"
 #include "overhead_labels.hpp"
 #include "pad_family.hpp"
+#include "pad_host.hpp"
 #include "pad_usb.hpp"
 #include "settings.hpp"
 
@@ -182,6 +183,17 @@ struct HostView {
     std::string menu_tab; // a tab to select when it first shows (DW4_MENU_TAB)
     std::string menu_section; // a Settings section scrolled to when it first shows (DW4_MENU_SECTION: Graphics)
     std::optional<KeyCapture> capture;
+    // The console F1 menu (console_menu.hpp) shows F1: set while F1 is
+    // closed for its next opening (Android; a PC test run with
+    // DW4_MENU_STYLE=console), off for an opening where Developer > Classic
+    // menu was chosen. host_event latches the pad when it closes such a menu.
+    bool console_menu = false;
+    // Keys pressed while the console menu shows (host_event; the menu takes
+    // them every pass).
+    std::vector<SDL_Keycode> console_keys;
+    // The menu script's virtual pad (menu_script.hpp): player 1's menu keys
+    // come from it instead of the first pad.
+    SDL_Gamepad* menu_pad_override = nullptr;
     bool settings_changed = false;
     bool quit_requested = false; // the window was closed
     // Android: another window has the focus (the notification shade, the
@@ -240,6 +252,14 @@ struct HostView {
 bool host_event(HostView& view, const SDL_Event& event);
 // The F1 menu opens or closes (F1, the controller's View / Back button).
 void toggle_menu(HostView& view);
+// ... with the input in the log ("menu: open (the Back key)").
+void toggle_menu_logged(HostView& view, const char* input);
+// Android's Back key (the AYN Thor's): F1 opens and closes; while the
+// console menu captures a binding it only cancels the capture.
+void menu_back_key(HostView& view);
+// Player 1's menu keys (pad_host.hpp menu_keys) from the menu script's
+// virtual pad or the first pad; none without a pad.
+std::optional<MenuKeys> player1_menu_keys(HostView& view);
 // This machine's devices as the game's pads take them: player 1 is the
 // keyboard and the first gamepad, players 2-4 the further gamepads, each on
 // its own controller slot (the main stick, the D-pad and the C-stick stay
@@ -394,6 +414,9 @@ void settings_controllers_section(HostView& view);
 // PC's look) and its scalable one (any other scale). Set once the window's
 // ImGui has them (open_game_window).
 void set_ui_fonts(ImFont* pixel, ImFont* scalable);
+// ImGui's scalable font (the console menu draws with it at every scale; it is
+// in the atlas on the PC too); null before set_ui_fonts.
+ImFont* ui_scalable_font();
 // The menus' scale for the window (settings.ini ui_scale; auto: the
 // display's scale on Android, 1 on the PC; test runs: DW4_UI_SCALE=percent)
 // into ImGui's style: every size of the dark style scaled, the font size,
@@ -432,12 +455,15 @@ bool screen_keyboard_visible();
 // Whether the context's active item is a password field (an InputText with
 // ImGuiInputTextFlags_Password).
 bool password_field_active(const ImGuiContext& context);
+// ... a number field (ImGuiInputTextFlags_CharsDecimal: the console menu's).
+bool numeric_field_active(const ImGuiContext& context);
 // SDL's text input on `window` (stopped first when it runs) for a field of
 // that kind: on Android a password field's (SDL's TEXT_PASSWORD_HIDDEN, no
 // autocorrection, so the keyboard offers no suggestions and learns nothing)
 // or a text field's, with the keyboard's input restarted so it takes the
 // kind. The top screen's fields and the second screen's share it.
-void start_text_input(SDL_Window* window, bool secret);
+// `numeric` (Android): a number field's keyboard (SDL's TEXTINPUT_TYPE_NUMBER).
+void start_text_input(SDL_Window* window, bool secret, bool numeric = false);
 
 // ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
 // The menu button's rectangle in window pixels: a small square in the top

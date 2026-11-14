@@ -693,10 +693,10 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
     case Face::paddle_l1: shoulder(c, b, "P3", false, st.shoulder, st.shoulder_label); return;
     case Face::paddle_l2: shoulder(c, b, "P4", false, st.shoulder, st.shoulder_label); return;
     case Face::menu: case Face::view: case Face::start_360: case Face::back_360: case Face::plus: case Face::minus:
-    case Face::home: case Face::misc: case Face::c_button: case Face::start_arrow: case Face::select_square: {
+    case Face::home: case Face::misc: case Face::c_button: case Face::start_arrow: case Face::select_square: case Face::back_key: {
         // As large as a face button (smaller ones read as a dot beside A / B).
         const float rm = r;
-        round_button(c, cx, cy, rm, st.middle, st.face_rim);
+        round_button(c, cx, cy, rm, pf.face == Face::back_key ? hex(0x23262e) : st.middle, st.face_rim);
         const Color sym = st.middle_symbol;
         const float half = rm * 0.1f;
         switch (pf.face) {
@@ -713,6 +713,8 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
         // right-pointing arrow, SELECT a square.
         case Face::start_arrow: triangle_fill(c, cx + rm * 0.06f, cy, rm * 0.5f, true, sym); break;
         case Face::select_square: box(c, cx, cy, rm * 0.36f, rm * 0.36f, rm * 0.05f, sym); break;
+        // Android's Back key: a left-pointing triangle (white on a dark key).
+        case Face::back_key: triangle_fill(c, cx - rm * 0.08f, cy, rm * 0.52f, false, hex(0xf2f3f7)); break;
         case Face::back_360: triangle_fill(c, cx - rm * 0.06f, cy, rm * 0.5f, false, sym); break;
         case Face::plus:
             line(c, {cx - rm * 0.5f, cy}, {cx + rm * 0.5f, cy}, half * 1.2f, sym);

@@ -33,6 +33,8 @@
 #include "cloud_backup_panel.hpp"
 #include "online_ui.hpp"
 #include "online_ui_script.hpp"
+#include "console_menu.hpp"
+#include "menu_script.hpp"
 #include "f1_actions.hpp"
 #include "menu_choices.hpp"
 #include "menu_ops.hpp"
@@ -107,6 +109,7 @@ struct Options {
     std::string input_script;
     std::filesystem::path online_script; // --online-script FILE: the scripted pad of an online room test run (online_script.hpp)
     std::filesystem::path online_card;   // --online-card FOLDER (DW4_ONLINE_DEV builds): the online card starts with these saves
+    std::filesystem::path menu_script;   // --menu-script FILE (test runs): the F1 menus driven by a script (menu_script.hpp)
     std::filesystem::path online_ui;     // --online-ui FILE (test runs): the account and room screens driven by a script (online_ui_script.hpp)
     std::filesystem::path online_folder; // --online-folder DIR (test runs): the remembered login there instead of saves/online beside the program
     std::filesystem::path load_state; // --load-state FILE: start from a save state file
@@ -3132,6 +3135,45 @@ int run(const Options& options, dw4::game::Settings& settings) {
         f1.toast = [&](const std::string& title, const std::string& text) {
             toasts.push_back({title, text, std::chrono::steady_clock::now() + std::chrono::seconds(4)});
         };
+        // ---- Android's console F1 menu (console_menu.hpp, docs/CONSOLE_MENU.md):
+        // the same actions and ops in console style. Its test switches count
+        // in test runs, and on Android through --env (debuggable builds).
+        const auto menu_env = [&](const char* name) -> const char* {
+#ifdef SDL_PLATFORM_ANDROID
+            return std::getenv(name);
+#else
+            return options.smoke_frames ? std::getenv(name) : nullptr;
+#endif
+        };
+        dw4::game::ConsoleMenu console{f1};
+        const bool console_default = [&] {
+            const char* style = menu_env("DW4_MENU_STYLE");
+#ifdef SDL_PLATFORM_ANDROID
+            return !(style && std::string(style) == "classic");
+#else
+            return style && std::string(style) == "console";
+#endif
+        }();
+        view.console_menu = console_default;
+        bool console_open = false; // F1 showed in console style in the last pass
+        // DW4_MENU_TRACE: the game's pad in the 3 passes after the console menu closed (the latch).
+        const bool console_trace = menu_env("DW4_MENU_TRACE") != nullptr;
+        int console_after_close = 0;
+        // DW4_MENU_LOWER=1 (PC test runs): the window stands for the lower
+        // screen, the console menu in its Menu panel (with DW4_WINDOW=1240x1080).
+        const bool menu_lower_test = menu_env("DW4_MENU_LOWER") != nullptr;
+        if (const char* input = menu_env("DW4_MENU_INPUT")) console.set_input_mode(std::string(input) == "touch");
+        // The menu script and its virtual pad (menu_script.hpp): --menu-script
+        // FILE or DW4_MENU_SCRIPT=FILE, the pad's family DW4_MENU_PAD (thor).
+        dw4::game::MenuScript menu_script;
+        {
+            std::string script_file = options.menu_script.string();
+            if (const char* file = menu_env("DW4_MENU_SCRIPT"); file && script_file.empty()) script_file = file;
+            std::string error;
+            if (!script_file.empty() && !menu_script.load(std::filesystem::u8path(script_file), error)) throw std::runtime_error("menu script: " + error);
+            const char* pad = menu_env("DW4_MENU_PAD");
+            if ((pad || !script_file.empty()) && !menu_script.attach_pad(pad ? pad : "thor", error)) throw std::runtime_error("menu script: " + error);
+        }
         auto print_load_timing = [&] {
             const std::string control = load_timing.control ? std::to_string(load_timing.control - load_timing.begin) : std::string("-");
             std::printf("loadtime %s%s: started after %lld fields, control after %s fields, loop %.1f ms (longest pass %.1f ms)\n",
@@ -3151,7 +3193,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 run_host.discord = discord ? &*discord : nullptr;
                 run_host.screenshot = options.screenshot;
                 run_host.test_frames = options.smoke_frames;
+                // (A run's F1 is its own, classic: overflow_host.cpp.)
+                view.console_menu = false;
                 const auto outcome = dw4::game::overflow::run_from_story(view, engine, request, run_host);
+                view.console_menu = console_default;
                 std::printf("overflow: run %s after %llu steps (%s Lv %d), run hash %016llx%s%s\n", dw4::game::overflow::run_end_name(outcome.end),
                             (unsigned long long)outcome.steps, dw4::game::overflow::form_display_name(outcome.form).c_str(), outcome.level,
                             (unsigned long long)outcome.run_hash, outcome.error.empty() ? "" : ": ", outcome.error.c_str());
@@ -3204,6 +3249,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::cout << "test: the OpenGL context lost and made again at frame " << frame << '\n';
                 } else {
                     std::cout << "test: no second OpenGL context at frame " << frame << ": " << SDL_GetError() << '\n';
+                }
+            }
+            // The menu script's inputs of this pass (before the events are read).
+            if (menu_script.active()) {
+                dw4::game::MenuScript::Host script_host{view, console};
+                menu_script.update(script_host);
+                if (!script_host.shot.empty() && !options.screenshot.empty()) ui_shot = script_host.shot;
+                if (script_host.finished) {
+                    if (menu_script.failures()) exit_code = 3;
+                    running = false;
                 }
             }
             SDL_Event event;
@@ -3267,6 +3322,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
             } else if (!show_menu && !title_online.active) {
                 // The keyboard and the controllers (host_view.hpp).
                 live = dw4::game::read_live_input(view);
+                if (console_after_close > 0) {
+                    --console_after_close;
+                    char text[64];
+                    std::snprintf(text, sizeof text, "menu: game pad after close: %08x", unsigned(live[0].buttons));
+                    dw4::game::menu_log(text);
+                }
             }
             // (Data Overflow: the story steps with neutral live pads while it
             // fades out, as with the F1 menu open; its sound fades along.)
@@ -4568,7 +4629,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // the game reads the pad.
                 // (Over the title the cursor always shows, as in the game's
                 // own menus: A presses the highlighted button at once.)
-                dw4::game::set_menu_navigation((show_menu && !view.menu_on_screen2) || title_online.active, title_online.active && !show_menu);
+                // (Not while the console menu shows F1: it reads the pad itself.)
+                const bool console_shows = show_menu && view.console_menu;
+                dw4::game::set_menu_navigation(!console_shows && ((show_menu && !view.menu_on_screen2) || title_online.active),
+                                               title_online.active && !show_menu);
                 // (A UI test run's keys: last frame's go up, this frame's go down.)
                 for (const int key : ui_keys_down) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), false);
                 ui_keys_down.clear();
@@ -4619,6 +4683,32 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     online_ui.focus_visibility = instance_line_shown;
                 }
                 menu_shown_before = show_menu;
+                // The console menu: opened (the one-shots), closed (its modals
+                // lost), and once per pass player 1's buttons and the keys.
+                if (show_menu && view.console_menu && !console_open) {
+                    console.opened(view, menu_tab, view.menu_section, steady_seconds());
+                    menu_tab.clear();
+                    view.menu_section.clear();
+                    console_open = true;
+                } else if (!show_menu && console_open) {
+                    console.closed(view);
+                    console_open = false;
+                    if (console_trace) console_after_close = 3;
+                }
+                if (!show_menu) view.console_menu = console_default; // (the next opening's style)
+                if (show_menu && view.console_menu) {
+                    dw4::game::ConsoleInput console_input{dw4::game::player1_menu_keys(view), view.console_keys, steady_seconds()};
+                    view.console_keys.clear();
+                    console.update(view, console_input);
+                    if (console.classic_requested()) {
+                        // (Developer > Classic menu: the PC's F1 menu until it closes.)
+                        console.closed(view);
+                        console_open = false;
+                        view.console_menu = false;
+                    }
+                } else {
+                    view.console_keys.clear();
+                }
                 // Overhead name tags over the picture, under the menus.
                 dw4::game::draw_tags(view, scene);
                 // The second screen's panels (screen2.hpp): this frame's facts
@@ -4646,6 +4736,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // The F1 menu: in the window, or on the second screen's Menu
                 // tab when it was opened there (the same tabs either way).
                 const auto draw_f1_menu = [&](bool on_screen2) {
+                    if (view.console_menu) {
+                        console.draw(view, on_screen2 ? dw4::game::ConsolePlace::lower : dw4::game::ConsolePlace::top);
+                        return;
+                    }
                     if (!on_screen2) {
                     if (const float s = dw4::game::ui_scale(); s == 1.0f) {
                         ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
@@ -5261,7 +5355,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     if (!on_screen2) ImGui::End();
                 };
-                if (show_menu && !view.menu_on_screen2) draw_f1_menu(false);
+                if (show_menu && !view.menu_on_screen2) {
+                    if (menu_lower_test && view.console_menu) {
+                        // (DW4_MENU_LOWER: the lower screen's Menu panel in the window, over black.)
+                        ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, 255));
+                        dw4::game::Screen2Menu lower_menu;
+                        lower_menu.open = lower_menu.here = lower_menu.own_chrome = true;
+                        lower_menu.draw = [&] { console.draw(view, dw4::game::ConsolePlace::lower); };
+                        dw4::game::draw_screen2_screen(settings, settings_changed, screen2_facts, screen2_net, lower_menu);
+                        if (lower_menu.ask == dw4::game::Screen2Menu::Ask::close) dw4::game::toggle_menu_logged(view, "the second screen");
+                    } else {
+                        draw_f1_menu(false);
+                    }
+                }
                 online_tab_shown = show_menu && online_tab_now;
                 // The online screens over the title (its menu's third entry
                 // opens them; a room started from them shows there until Play).
@@ -5524,6 +5630,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     screen2_menu.open = show_menu;
                     screen2_menu.here = view.menu_on_screen2;
                     screen2_menu.pauses = settings.pause_in_menu && !options.smoke_frames && !net.active() && !online;
+                    screen2_menu.own_chrome = view.console_menu;
                     screen2_menu.draw = [&] { draw_f1_menu(true); };
                     const bool menu_here = show_menu && view.menu_on_screen2;
                     // The F1 menu there draws every pass while the controller
@@ -5534,13 +5641,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     static auto lower_menu_input = std::chrono::steady_clock::time_point{};
                     const auto lower_now = std::chrono::steady_clock::now();
                     if (menu_here && dw4::game::menu_pad_held(view)) lower_menu_input = lower_now;
-                    const bool lower_menu_busy = menu_here && lower_now - lower_menu_input < std::chrono::milliseconds(500);
+                    const bool lower_menu_busy =
+                        menu_here && (lower_now - lower_menu_input < std::chrono::milliseconds(500) || (view.console_menu && console.animating()));
                     bool lower_online = false;
                     const bool drawn = dw4::game::screen2_frame(
                         [&] {
                             // (The controller moves through the F1 menu where it shows.)
-                            dw4::game::set_menu_navigation(menu_here, false);
-                            if (menu_here) dw4::game::feed_menu_pad(view);
+                            // (The console menu reads the pad itself: no navigation there.)
+                            dw4::game::set_menu_navigation(menu_here && !view.console_menu, false);
+                            if (menu_here && !view.console_menu) dw4::game::feed_menu_pad(view);
                         },
                         [&] { lower_online = dw4::game::draw_screen2_screen(settings, settings_changed, screen2_facts, screen2_net, screen2_menu); },
                         settings.ui_scale, lower_menu_busy);
@@ -5564,7 +5673,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         break;
                     case dw4::game::Screen2Menu::Ask::none: break;
                     }
-                    if (!screen2_menu.tab.empty()) menu_tab = screen2_menu.tab;
+                    if (!screen2_menu.tab.empty()) {
+                        menu_tab = screen2_menu.tab;
+                        if (view.console_menu && show_menu && console_open && screen2_menu.tab == "Online") console.request_focus("online", "", false);
+                    }
                 } else {
                     // (No lower screen now: a field of it lets go of the keyboard.)
                     dw4::game::screen2_release_input();
@@ -5574,6 +5686,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         std::cout << "menu: back in the window (no second screen)\n";
                     }
                 }
+                // The console menu's close (the menu's B, Start, Close, a loaded state).
+                if (const auto close_input = console.take_close_request(); !close_input.empty() && show_menu)
+                    dw4::game::toggle_menu_logged(view, close_input.c_str());
                 present_max = std::max(present_max, view.last_present_seconds * 1000.0);
 #ifdef DW4_GHOST_PROBE
                 if (probe_report && ghosts.drawn() > 0) {
@@ -6035,6 +6150,7 @@ int main(int argc, char** argv) {
             else if (arg == "--online-card") options.online_card = next();
             else if (arg == "--online-ui") options.online_ui = next();
             else if (arg == "--online-folder") options.online_folder = next();
+            else if (arg == "--menu-script") options.menu_script = next();
             else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--import-disc") options.import_disc = next();
             else if (arg == "--mute") options.mute = true;
