@@ -6,7 +6,9 @@ namespace DW4Online.Relay.World
 {
     /// <summary>
     /// A member's gate-form plan (SEAMLESS.md 19.7.4): the PLAN the relay answered with OPTIONS, the member's CHOICE for it, and PLAN's
-    /// throttle (one a second). The BARRIER that names the plan id takes the choice; a disconnect, a new PLAN or that BARRIER ends it.
+    /// throttle (one a second). The BARRIER that names the plan id takes the choice; a new PLAN or the member's next BARRIER from home
+    /// ends it, a disconnect one without a CHOICE (an answered plan outlasts a reconnect, so its BARRIER still takes the answer:
+    /// decision 48's review).
     /// </summary>
     public sealed class PromptPlan
     {

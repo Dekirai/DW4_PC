@@ -145,7 +145,12 @@ public sealed partial class RoomHub
         if (m.Peer != peer) return;
         m.Peer = null;
         m.DisconnectedAt = now;
-        m.Prompt.Clear(); // (round I1b: an open plan answers nobody now; the held prompt goes with the arrival below)
+        // (Round I1b: an open plan answers nobody now; the held prompt goes with the arrival below. An answered plan waits for the
+        // BARRIER that names it, so a link that drops between the CHOICE and that BARRIER and comes back keeps the player's answer;
+        // a new PLAN or the next BARRIER from home ends it as before. Decision 48's review: the reconnected *New instance, Private*
+        // chooser's BARRIER was decided as one without an answer and joined a stranger's starting instance.)
+        if (graceful || m.Prompt.Choice is null) m.Prompt.Clear();
+        else m.Prompt.Offered = false;
         Note("disconnect", m.Instance, ("member", m.Id), ("account", m.AccountId), ("graceful", graceful), ("wid", m.World?.Wid ?? 0));
         if (graceful)
         {
@@ -1295,18 +1300,22 @@ public sealed partial class RoomHub
                                      h.World == w && (w is not null || (g.PromptChoice is not { Choice: ChoiceKind.Join } && MaySeeBase(h, g))) &&
                                      h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity;
         var holder = g.Go is not null ? null : _holds.FirstOrDefault(h => Fits(h) && (w is not null || ChoiceAdmits(g, h.Members[0].Member)));
-        if (holder is null && w is null && g.Go is null && _holds.Where(Fits).ToList() is { Count: > 0 } refused)
+        if (w is null && g.Go is null && _holds.Where(h => Fits(h) && !ChoiceAdmits(g, h.Members[0].Member)).ToList() is { Count: > 0 } refused)
         {
-            // (Decision 48: a base would take this group, but the group's own *New instance* choice does not let its host in. The
-            // bases stop waiting for its members, who decide on their own now; CheckHolds ends a hold left waiting for nobody.)
+            // (Decision 48: a base would take this group, but the group's own *New instance* choice does not let its host in, whether
+            // another base takes the group or none does.)
             Count("co_arrival_refused_choice");
             foreach (var r in refused)
-            {
-                r.Awaited.RemoveAll(x => g.Members.Any(a => a.Member == x));
                 Note("co_arrival_refused", r.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("host", r.Members[0].Member.Id),
                     ("visibility", Visibilities.Text(ChosenNew(g) ?? Visibility.Public)));
-            }
         }
+        // The members of this barrier are awaited by no other base from now on: they are the holder's co-arrivals or decide on their own
+        // (a member is announced to one base at most). CheckHolds ends a hold left waiting for nobody at its next pass. Decision 48's
+        // review: a base the group refused kept waiting Instances:CoArrivalHoldMs for it when another base took the group; so did a
+        // base whose awaited member chose a row after its hold began.
+        foreach (var o in _holds)
+            if (o != holder && o.Hold == HoldKind.CoArrival && o.Awaited.RemoveAll(x => g.Members.Any(a => a.Member == x)) > 0)
+                Count("co_arrival_awaited_decided");
         if (holder is not null)
         {
             holder.CoArrivals.Add(g);
@@ -1363,12 +1372,13 @@ public sealed partial class RoomHub
     }
 
     /// <summary>A fresh member <paramref name="x"/> may see the instance <paramref name="host"/> would make with this base group: no
-    /// block with any of them, and the host's default visibility lets it see it (19.7.6; no staff bypass for a co-arrival, fix-019).</summary>
+    /// block with any of them, and the visibility that instance will get (<see cref="BaseVisibility"/>: the base's *New instance*
+    /// choice, else the host's default) lets it see it (19.7.6; no staff bypass for a co-arrival, fix-019).</summary>
     private static bool MaySeeHost(HubMember host, ArrivalGroup g, HubMember x)
     {
         if (g.Members.Any(a => Matching.Blocked(a.Member, x))) return false;
         if (host.DataHash != x.DataHash) return false;
-        return Matching.MayEnter(host.DefaultVisibility, host.AccountId, x);
+        return Matching.MayEnter(BaseVisibility(g), host.AccountId, x);
     }
 
     private static bool SameStage(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -1697,6 +1707,15 @@ public sealed partial class RoomHub
             RedecideGroups(others, now);
             return;
         }
+        var dropped = holder.Fresh ? DropUnfitCoArrivals(holder) : [];
+        if (dropped.Count > 0 && holder.CoArrivals.Count == 0)
+        {
+            // (Every co-arrival was dropped: the base decides as a hold nobody joined does, CheckHolds; then the dropped ones.)
+            holder.Awaited.Clear();
+            FreshJoinOrNew(holder, now);
+            RedecideGroups(dropped, now);
+            return;
+        }
         if (holder.Fresh && holder.PromptChoice is { Choice: ChoiceKind.New } chosen)
         {
             // (Decision 43: a *New instance* chooser's base makes the new instance with the chosen visibility; the others leaving with
@@ -1707,6 +1726,38 @@ public sealed partial class RoomHub
                 ("coarrivals", holder.CoArrivals.Sum(x => x.Members.Count)));
         }
         New(holder, now, BarrierNotice.None, []);
+        RedecideGroups(dropped, now);
+    }
+
+    /// <summary>
+    /// A fresh base's co-arrivals checked again when its hold ends (decision 48's review): a block either way or an unfriending that came
+    /// while the base waited (a live re-check, 19.14), the visibility the base's instance gets (<see cref="MaySeeBase"/>), and each one's
+    /// own *New instance* choice (<see cref="ChoiceAdmits(ArrivalGroup, HubMember)"/>). The ones that no longer fit leave the base (world
+    /// log <c>co_arrival_dropped</c>) and decide on their own after it (<see cref="RedecideGroups"/>); before, they landed in the base's
+    /// instance all the same: <see cref="Readmitted"/> removes a blocked guest only from an instance that exists, and a base has none
+    /// while it holds. Returns the dropped ones.
+    /// </summary>
+    private List<ArrivalGroup> DropUnfitCoArrivals(ArrivalGroup holder)
+    {
+        var host = holder.Members[0].Member;
+        var kept = new List<ArrivalGroup>();
+        var dropped = new List<ArrivalGroup>();
+        foreach (var c in holder.CoArrivals)
+        {
+            if (c.Members.Count > 0 && (!MaySeeBase(holder, c, kept) || !ChoiceAdmits(c, host))) dropped.Add(c);
+            else kept.Add(c);
+        }
+        if (dropped.Count == 0) return dropped;
+        holder.CoArrivals.Clear();
+        holder.CoArrivals.AddRange(kept);
+        foreach (var c in dropped)
+        {
+            foreach (var a in c.Members) a.Member.Arrival = c; // (parked under its own name again)
+            Count("co_arrival_dropped");
+            Note("co_arrival_dropped", holder.From, ("members", c.Members.Select(a => a.Member.Id).ToArray()), ("host", host.Id),
+                ("visibility", Visibilities.Text(BaseVisibility(holder))));
+        }
+        return dropped;
     }
 
     /// <summary>

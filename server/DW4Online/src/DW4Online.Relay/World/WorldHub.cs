@@ -1285,21 +1285,32 @@ public sealed partial class RoomHub
         return false;
     }
 
-    /// <summary>A co-arrival base of a fresh group may take this fresh group: no block between any of them, and the base's host's
-    /// default visibility lets every member of the group see the instance it will make (19.7.6: "visible to them"; a co-arrival is
-    /// automatic, so staff get no visibility bypass here, fix-019).</summary>
-    private static bool MaySeeBase(ArrivalGroup holder, ArrivalGroup g)
+    /// <summary>A co-arrival base of a fresh group may take this fresh group: no block between any of them, and the visibility the base's
+    /// instance will get (<see cref="BaseVisibility"/>) lets every member of the group see it (19.7.6: "visible to them"; a co-arrival is
+    /// automatic, so staff get no visibility bypass here, fix-019). <paramref name="coArrivals"/>: the base's co-arrivals that count
+    /// (default: all of them; <see cref="DropUnfitCoArrivals"/> checks each one against those it keeps).</summary>
+    private static bool MaySeeBase(ArrivalGroup holder, ArrivalGroup g, IEnumerable<ArrivalGroup>? coArrivals = null)
     {
         var host = holder.Members[0].Member;
-        var inBase = holder.Members.Select(a => a.Member).Concat(holder.CoArrivals.SelectMany(c => c.Members).Select(a => a.Member)).ToList();
+        var visibility = BaseVisibility(holder);
+        var inBase = holder.Members.Select(a => a.Member).Concat((coArrivals ?? holder.CoArrivals).SelectMany(c => c.Members).Select(a => a.Member)).ToList();
         foreach (var a in g.Members)
         {
             var x = a.Member;
             if (inBase.Any(y => Matching.Blocked(x, y))) return false;
-            if (!Matching.MayEnter(host.DefaultVisibility, host.AccountId, x)) return false;
+            if (!Matching.MayEnter(visibility, host.AccountId, x)) return false;
         }
         return host.DataHash == g.Members[0].Member.DataHash;
     }
+
+    /// <summary>
+    /// The visibility the instance of a fresh co-arrival base will get: its *New instance* choice (<see cref="ChosenNew"/>; FinishCoArrival
+    /// gives the prompt's choice to the new instance), else its host's default (CreateWorld). Decision 48's review: MaySeeHost / MaySeeBase
+    /// asked the host's default alone, which a live re-check (19.14, <see cref="Readmitted"/>) sets back to the stored value when it read the
+    /// account before the remembered choice was written (off the lock, Q9): a *New instance, Private* chooser's base then held for a
+    /// stranger, who landed as a guest in the Private instance.
+    /// </summary>
+    private static Visibility BaseVisibility(ArrivalGroup holder) => ChosenNew(holder) ?? holder.Members[0].Member.DefaultVisibility;
 
     /// <summary>Decision 48: the visibility a fresh group chose with *New instance*: the gate form's or the held prompt's CHOICE, or plan
     /// 0xFFFF (the client's *New instance* without a plan) with the member's remembered default, the visibility its instance gets; null:

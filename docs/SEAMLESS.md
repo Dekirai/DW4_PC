@@ -10079,7 +10079,16 @@ later groups spawned in the base's load step). In the world:
   member's remembered default. An arrival without a choice (no answer:
   the loading-screen form, decision 47) keeps the automatic co-arrival;
   the members of one stage group leaving through the same barrier are one
-  arrival and stay together whatever the visibility.
+  arrival and stay together whatever the visibility. The base's side asks
+  the base's own *New instance* choice (the visibility its instance gets),
+  not the host's remembered default, which a live re-check (19.14) may set
+  back to the stored value; a member whose barrier came is awaited by no
+  other base (also when another base took him); and when a base's hold
+  ends its co-arrivals are checked again: one that a block or an
+  unfriending during the hold no longer lets in, or whose own choice no
+  longer lets the host in, decides on its own (`co_arrival_dropped`). A
+  gate-form answer outlasts a reconnect before its BARRIER (decision 48's
+  review, 19.32).
 - **The window is ten seconds, not one.** `Decide` (`RoomHub.cs`) holds a
   base only for groups whose HEADING was already there at its barrier, and
   HEADING is sent at the fade's start (`Engine::note_departure`), so the
@@ -14509,7 +14518,9 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
 
 - **The CHOICE goes before the held press**, not with HEADING: the relay
   keeps the member's plan and its answer until the BARRIER that names the
-  plan id (a new PLAN, the member's disconnect or that BARRIER ends it).
+  plan id (a new PLAN or the member's next BARRIER from home ends it; a
+  disconnect ends a plan without an answer, while an answered one outlasts
+  a reconnect, decision 48's review below).
   So at HEADING the relay knows the choice: a member that chose a row is no
   automatic co-arrival base for others and joins no foreign base; one that
   chose *New instance* groups with the others leaving with it (decision 43,
@@ -14645,10 +14656,11 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   `Instances:CoArrivalHoldMs`). World log `co_arrival_refused {members,
   host, visibility}` and `starting_refused {members, wid, visibility}`;
   counters `co_arrival_refused_choice`, `new_choice_starting_refused`. The
-  base's side needed no change: a *New instance* sets the member's default
-  visibility at the CHOICE, so `MaySeeHost` / `MaySeeBase` already asked the
-  base's chosen visibility (shown by a test that passes without the
-  change). Unit tests `PromptPrivateTests` (the full matrix Public /
+  base's side seemed to need no change: a *New instance* sets the member's
+  default visibility at the CHOICE, so `MaySeeHost` / `MaySeeBase` asked
+  the base's chosen visibility (shown by a test that passes without the
+  change) as long as nothing set that default back (it can: the review
+  below, finding 1). Unit tests `PromptPrivateTests` (the full matrix Public /
   Friends / Private x Public / Friends / Private x friends or not, both
   orders, the co-arrival hold and the starting instance: 18 cases; the
   review's case; a base that held for a member who then chose Private; plan
@@ -14662,6 +14674,57 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   without the change as well: 12 of 29). Scenarios W4d and
   W4e (both orders with real clients; the second chooser's
   `DW4_ONLINE_AUTOCHOICE_DELAY_MS` 1500 makes the order).
+- **Decision 48's review** (fix-d43, 2026-11-14; relay only, protocol 50,
+  no migration). Four findings, all fixed:
+  1. *The base's side did need a change.* `MaySeeHost` / `MaySeeBase` asked
+     the host's `DefaultVisibility`, which `Readmitted` (the live re-check
+     after FriendsChanged / BlocksChanged / PrefsChanged / AccountChanged,
+     run off the lock) sets to the stored value; the remembered choice is
+     written through the history queue, so a re-check that read the account
+     first put the old default back: a *New instance, Private* chooser's
+     base held for a stranger, and `FinishCoArrival` then made a Private
+     instance with the stranger as a guest. Both ask
+     `BaseVisibility` now (`ChosenNew(base) ?? host.DefaultVisibility`:
+     the visibility the base's instance gets).
+  2. *A reconnect dropped the answer.* `Disconnect` cleared the gate plan
+     with its CHOICE, so the BARRIER of a reconnected *New instance,
+     Private* chooser (the client keeps the plan id it answered) was
+     decided as one without an answer and joined a stranger's starting
+     instance; a chosen row got the loading-screen form again. An answered
+     plan stays now (only its overlay state goes); a plan without an answer
+     still ends at a disconnect, a new PLAN or any BARRIER from home ends
+     either.
+  3. *A refused base kept waiting.* The bases a group's choice refused
+     stopped waiting only when no base took the group; with another base
+     taking it, the refused one waited `Instances:CoArrivalHoldMs` (up to
+     3 s more on the loading screen), as did a base whose awaited member
+     chose a row after its hold began. A member whose barrier came is now
+     awaited by no other base (`Decide`; counter
+     `co_arrival_awaited_decided`; CheckHolds ends a hold left waiting for
+     nobody at its next pass).
+  4. *A block or an unfriending during a base's hold* (older than decision
+     48) was not checked again: `Readmitted` removes a blocked guest only
+     from an instance that exists, and a base has none while it holds.
+     `FinishCoArrival` checks each co-arrival again
+     (`DropUnfitCoArrivals`: the blocks with the base and the co-arrivals
+     it keeps, the base's visibility, the co-arrival's own choice); one
+     that no longer fits decides on its own after the base (world log
+     `co_arrival_dropped {members, host, visibility}`, counter
+     `co_arrival_dropped`; with none left the base decides as a hold
+     nobody joined).
+  Unit tests `PromptPrivateRefixTests` (8: the re-check with a Private and
+  with a Friends choice, an answered *New instance, Private* and an
+  answered row through a reconnect, a refused base when another base takes
+  the chooser, a base whose awaited member chose a row, a block and an
+  unfriending during a base's hold). Each fix taken back alone fails its
+  own tests (without the first, the block and unfriending tests fail as
+  well: their re-checks put the stored default back); without all four,
+  8 of 8 fail. Left: a CHOICE lost with the link itself (sent in the
+  moment the connection broke) is unknown to the relay, so that BARRIER is
+  still decided as one without an answer; and a re-check that read the
+  account before the remembered visibility was written still puts the old
+  default back in memory (the gate form's preselected visibility and plan
+  0xFFFF use it until the next admission).
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 
