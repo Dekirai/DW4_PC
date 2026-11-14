@@ -84,6 +84,7 @@ struct PictureState {
     std::unique_ptr<MovieDecoder> movie_decoder;
     std::uint32_t movie_serial = 0;
     std::string movie_stage;    // stage the decoder's movie played in
+    std::uint64_t movie_drawn = 0; // the decoder's last picture drawn (MovieDecoder::picture_id; DW4_FRAME_STATS counts each once)
     int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
     // A picture's list and shadow with the story's ghost figures in
     // (present_scene's copies; kept here, as the renderer keeps the shadow's
@@ -368,6 +369,10 @@ void frame_stats_step(double ms);
 // DW4_FRAME_STATS: one frame of the second screen after the window's swap
 // (screen2.hpp): its time and whether it drew and swapped its surface.
 void frame_stats_screen2(double ms, bool swapped);
+// DW4_FRAME_STATS: a movie picture the window drew for the first time: its
+// decoding and RGBA conversion (MovieDecoder's worker), how long the pass
+// waited for it, and its upload and draw in the pass.
+void frame_stats_movie(double decode_ms, double convert_ms, double waited_ms, double upload_ms);
 
 // ---- The F1 menu's one apply layer (menu_ops.hpp) with this view's side
 // effects: the swap interval, the display's rate, the renderer's graphics,

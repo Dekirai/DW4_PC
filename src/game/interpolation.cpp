@@ -263,10 +263,22 @@ void MotionInterpolator::blend(std::vector<engine::DrawItem>& items, engine::Fra
 }
 
 
+double RefreshClock::period() const {
+    if (refresh_hz_ <= 0) return 0.0;
+    const double reported = 1.0 / refresh_hz_;
+    if (!anchored_ || refreshes_ - anchor_refreshes_ < kMeanAfter) return reported;
+    return reported + (moved_ - anchor_moved_) / (refreshes_ - anchor_refreshes_);
+}
+
 void RefreshClock::reset() {
     refresh_hz_ = 0;
-    measured_sum_ = 0;
     refreshes_ = 0;
+    place_ = 0;
+    usual_ = 0;
+    moved_ = 0;
+    anchored_ = false;
+    anchor_moved_ = 0;
+    anchor_refreshes_ = 0;
     owed_ = 0;
     confidence_ = 0;
 }
@@ -280,34 +292,52 @@ double RefreshClock::pass(double measured, double refresh_hz) {
         reset();
         refresh_hz_ = refresh_hz;
     }
-    double period_now = period();
-    // (A mean that left the reported rate by more than 1 %: not this display's.)
-    if (std::abs(period_now * refresh_hz - 1.0) > 0.01) {
+    // (A period that left the reported rate by more than 1 %: not this display's.)
+    if (std::abs(period() * refresh_hz - 1.0) > 0.01) {
         reset();
         refresh_hz_ = refresh_hz;
-        period_now = period();
     }
-    const double count = std::round(measured / period_now);
-    if (count < 1.0 || count > 4.0 || std::abs(measured - count * period_now) > 0.25 * period_now) {
-        confidence_ = std::max(confidence_ - 10, 0);
-        if (confidence_ < kCountFrom && owed_ != 0) {
-            // (No longer counting: what was owed goes with this pass.)
-            measured += owed_;
-            owed_ = 0;
-        }
+    const double grid = 1.0 / refresh_hz;
+    // This pass's start on the grid: from the last pass's place, the whole
+    // refreshes nearest to where passes usually start.
+    const double since = place_ + measured;
+    const double count = std::max(std::round((since - usual_) / grid), 0.0);
+    place_ = since - count * grid;
+    refreshes_ += count;
+    if (count >= 1.0 && count <= 4.0 && std::abs(place_ - usual_) <= kSteady * grid) {
+        const double move = (place_ - usual_) * kUsualWeight;
+        usual_ += move;
+        moved_ += move;
+        confidence_ = std::min(confidence_ + 1, kConfidenceMost);
+    } else {
+        confidence_ = std::max(confidence_ - kMissCost, 0);
+    }
+    // (The place and its mean move together when the display's period is
+    // not the reported one: kept within half a refresh of the grid point,
+    // the counts unchanged; moved_ keeps the whole move.)
+    if (std::abs(usual_) > 0.5 * grid) {
+        const double shift = usual_ > 0 ? grid : -grid;
+        usual_ -= shift;
+        place_ -= shift;
+    }
+    if (!anchored_ && counting()) {
+        anchored_ = true;
+        anchor_moved_ = moved_;
+        anchor_refreshes_ = refreshes_;
+    }
+    if (!counting()) {
+        // (Not counting: as measured, and what was owed goes with this pass.)
+        measured += owed_;
+        owed_ = 0;
         return std::max(measured, 0.0);
     }
-    measured_sum_ += measured;
-    refreshes_ += count;
-    confidence_ = std::min(confidence_ + 1, kConfidenceMost);
-    if (confidence_ < kCountFrom) return measured;
-    double counted = count * period_now;
+    double counted = count * period();
     owed_ += measured - counted;
     if (std::abs(owed_) >= kStepSeconds) {
         counted += owed_;
         owed_ = 0;
     }
-    return counted;
+    return std::max(counted, 0.0);
 }
 
 } // namespace dw4::game

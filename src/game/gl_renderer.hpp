@@ -166,8 +166,10 @@ public:
     void render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& camera,
                 const engine::Vec4f& clear_color, const Viewport& screen, const Viewport& wide, int window_width,
                 int window_height);
-    // A movie picture (RGBA rows, top first) over the whole 4:3 screen.
-    void draw_movie(const std::uint8_t* rgba, int width, int height, const Viewport& screen, int window_width,
+    // A movie picture (RGBA rows, top first) over the whole 4:3 screen;
+    // `picture` its number (MovieDecoder::picture_id: uploaded once; 0:
+    // uploaded every time).
+    void draw_movie(const std::uint8_t* rgba, int width, int height, std::uint64_t picture, const Viewport& screen, int window_width,
                     int window_height);
     // The picture drawn so far this frame, kept for frames that present
     // nothing new (a stage switch), and that picture drawn again (false when
@@ -371,7 +373,10 @@ private:
     int sharpen_width_{}, sharpen_height_{};
     unsigned white_texture_{};
     const engine::ShadowFrame* shadow_{};
-    unsigned movie_program_{}, movie_texture_{}, movie_vao_{};
+    unsigned movie_program_{}, movie_vao_{};
+    std::array<unsigned, 3> movie_textures_{};       // a ring: the pictures' uploads (draw_movie)
+    std::array<std::uint64_t, 3> movie_pictures_{};  // the picture each one holds
+    std::size_t movie_slot_{};                       // the last one uploaded
     int movie_width_{}, movie_height_{};
     unsigned kept_program_{}, kept_texture_{};
     int kept_width_{}, kept_height_{};

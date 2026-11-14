@@ -733,7 +733,10 @@ void GlRenderer::reset_context() {
     program_ = white_texture_ = 0;
     sharpen_program_ = sharpen_texture_ = 0;
     sharpen_width_ = sharpen_height_ = 0;
-    movie_program_ = movie_texture_ = movie_vao_ = 0;
+    movie_program_ = movie_vao_ = 0;
+    movie_textures_ = {};
+    movie_pictures_ = {};
+    movie_slot_ = 0;
     movie_width_ = movie_height_ = 0;
     kept_program_ = kept_texture_ = 0;
     kept_width_ = kept_height_ = 0;
@@ -855,7 +858,8 @@ GlRenderer::~GlRenderer() {
     if (shadow_fbo_) gl_->DeleteFramebuffers(1, &shadow_fbo_);
     if (shadow_texture_) glDeleteTextures(1, &shadow_texture_);
     if (white_texture_) glDeleteTextures(1, &white_texture_);
-    if (movie_texture_) glDeleteTextures(1, &movie_texture_);
+    for (auto& texture : movie_textures_)
+        if (texture) glDeleteTextures(1, &texture);
     if (kept_texture_) glDeleteTextures(1, &kept_texture_);
     if (kept_program_) gl_->DeleteProgram(kept_program_);
     if (movie_vao_) gl_->DeleteVertexArrays(1, &movie_vao_);
@@ -875,8 +879,8 @@ GlRenderer::~GlRenderer() {
     if (program_) gl_->DeleteProgram(program_);
 }
 
-void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, const Viewport& screen, int window_width,
-                            int window_height) {
+void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, std::uint64_t picture, const Viewport& screen,
+                            int window_width, int window_height) {
     auto& gl = *gl_;
     if (!movie_program_) {
         const unsigned vs = compile(gl, GL_VERTEX_SHADER, kMovieVertex);
@@ -891,28 +895,49 @@ void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, con
         gl.GetProgramiv(movie_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("movie shader link failed");
         if (!movie_vao_) strip_vao(gl, movie_vao_);
-        glGenTextures(1, &movie_texture_);
     }
-    glBindTexture(GL_TEXTURE_2D, movie_texture_);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     if (width != movie_width_ || height != movie_height_) {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // (Another size: the ring's textures are made again.)
+        for (auto& texture : movie_textures_)
+            if (texture) glDeleteTextures(1, &texture);
+        movie_textures_ = {};
+        movie_pictures_ = {};
         movie_width_ = width;
         movie_height_ = height;
-    } else {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    }
+    // A picture is uploaded once, into the ring's next texture (its last draw
+    // was two pictures ago, so the upload never waits for the GPU to finish
+    // with it); a picture shown again draws the texture that holds it.
+    // (Picture 0: no number, uploaded every time.)
+    std::size_t slot = movie_textures_.size();
+    if (picture)
+        for (std::size_t i = 0; i < movie_textures_.size(); ++i)
+            if (movie_textures_[i] && movie_pictures_[i] == picture) slot = i;
+    gl.ActiveTexture(GL_TEXTURE0);
+    if (slot == movie_textures_.size()) {
+        slot = (movie_slot_ + 1) % movie_textures_.size();
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (!movie_textures_[slot]) {
+            glGenTextures(1, &movie_textures_[slot]);
+            glBindTexture(GL_TEXTURE_2D, movie_textures_[slot]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, movie_textures_[slot]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        }
+        movie_pictures_[slot] = picture;
+        movie_slot_ = slot;
     }
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
     glViewport(screen.x, screen.y, screen.width, screen.height);
     gl.UseProgram(movie_program_);
-    gl.ActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, movie_texture_);
+    glBindTexture(GL_TEXTURE_2D, movie_textures_[slot]);
     gl.Uniform1i(gl.GetUniformLocation(movie_program_, "u_tex"), 0);
     gl.BindVertexArray(movie_vao_);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

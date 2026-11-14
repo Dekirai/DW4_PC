@@ -305,7 +305,8 @@ struct PacingRun {
     int zeros = 0, doubles = 0, pairs = 0;
     double counted = 0, real = 0;
 };
-PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, double jitter = 0.003, bool irregular = false) {
+PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, double jitter = 0.003, bool irregular = false,
+               double alternate = 0.0, int hitch_every = 0, double hitch = 0.005) {
     constexpr double kField = 1001.0 / 60000.0;
     dw4::game::RefreshClock clock;
     PacingRun run;
@@ -319,7 +320,11 @@ PacingRun pace(double display_hz, double reported_hz, int passes, bool snapped, 
     for (int k = 1; k <= passes; ++k) {
         // (irregular: a display that presents at uneven times, the emulator's:
         // a pass now and then 10 ms late, the next one early.)
-        const double stamp = double(k) / display_hz + noise() + (irregular && k % 7 == 3 ? 0.010 : 0.0);
+        // (alternate: work after every other pass's swap, the AYN Thor's lower
+        // screen: that pass ends, and the next one starts, this much later.
+        // hitch_every: a pass now and then starts `hitch` late, the next on time.)
+        const double stamp = double(k) / display_hz + noise() + (irregular && k % 7 == 3 ? 0.010 : 0.0) + (k % 2 ? alternate : 0.0) +
+                             (hitch_every && k % hitch_every == 5 ? hitch : 0.0);
         const double measured = stamp - previous;
         previous = stamp;
         const double dt = snapped ? clock.pass(measured, reported_hz) : measured;
@@ -364,6 +369,28 @@ void test_refresh_clock() {
     check(uneven.zeros == uneven_raw.zeros && uneven.doubles == uneven_raw.doubles && uneven.pairs == uneven_raw.pairs,
           "an uneven display: counted as measured");
     check(std::abs(uneven.counted - uneven.real) < 1e-9, "an uneven display: real time");
+    // Work after every other pass's swap (the lower screen's F1 menu, 3 and
+    // 5 ms; the debug build's 6 ms at 0.5 ms more jitter): each pass measures
+    // a refresh and that much more or less, on the grid each is one refresh.
+    for (const double extra : {0.003, 0.005}) {
+        const auto alternating_raw = pace(60.0, 60.0, 6000, false, 0.003, false, extra);
+        const auto alternating = pace(60.0, 60.0, 6000, true, 0.003, false, extra);
+        check(alternating_raw.pairs > 20, "work every other pass: the measured clock judders (the test sees it)");
+        check(alternating.pairs == 0 && alternating.doubles == 0 && alternating.zeros >= 4 && alternating.zeros <= 6,
+              "work every other pass: counted on the grid, only the lone repeats");
+        check(std::abs(alternating.counted - alternating.real) < 1001.0 / 60000.0, "work every other pass: real time kept");
+    }
+    const auto debug_build = pace(60.0, 60.0, 6000, true, 0.0035, false, 0.006);
+    check(debug_build.pairs == 0 && debug_build.doubles == 0, "6 ms every other pass: counted on the grid");
+    // A late start now and then (5 ms, the next pass on time): 1 and 1. At
+    // 7 ms and the jitter the start is now and then nearer the next refresh
+    // (2 and 0), still far less often than measured.
+    const auto hitches = pace(60.0, 60.0, 6000, true, 0.003, false, 0.0, 50);
+    check(hitches.pairs == 0 && hitches.doubles == 0, "a late start now and then: no judder");
+    check(std::abs(hitches.counted - hitches.real) < 1001.0 / 60000.0, "a late start now and then: real time kept");
+    const auto late_raw = pace(60.0, 60.0, 6000, false, 0.003, false, 0.0, 50, 0.007);
+    const auto late = pace(60.0, 60.0, 6000, true, 0.003, false, 0.0, 50, 0.007);
+    check(late.pairs * 10 < late_raw.pairs, "a later start now and then: a tenth of the measured clock's judder at most");
     // A display that is not what it reports (a variable refresh at the game's
     // own pace under a 144 Hz mode): every pass as measured.
     dw4::game::RefreshClock clock;

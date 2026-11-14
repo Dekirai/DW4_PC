@@ -44,6 +44,7 @@ void PictureState::reset() {
     movie_decoder.reset();
     movie_serial = 0;
     movie_stage.clear();
+    movie_drawn = 0;
     last_picture_slot = -1;
     ghost_items.clear();
     ghost_shadow = {};
@@ -546,17 +547,28 @@ bool note_stage(HostView& view, engine::Engine& engine, GhostFigures* ghosts) {
 
 PictureMade make_picture(HostView& view, engine::Engine& engine, int steps, bool smooth_blending) {
     auto& picture = view.picture;
-    // A field the running update covers (Engine::held: the movie's 30 Hz
-    // frames) shows the last update's picture again, without a traversal
-    // (only a catch-up that left no draw list draws it).
-    if (engine.held() && steps > 0 && (picture.items_current || !view.draw)) return PictureMade::kept;
     // The module reload's held fields (a stage change's teardown, Engine::
     // step): the outgoing stage's managers are reset and its scene graph is
     // half gone until the next stage's load starts, and the screen keeps its
     // last picture (present_scene's kept picture). Nothing is traversed then,
     // also in a pass without a step (a display faster than the game, a pass
-    // the step clock left without one) or after a catch-up.
-    if (engine.held() && !engine.presenting()) return PictureMade::kept;
+    // the step clock left without one) or after a catch-up. The draw list
+    // goes too: its items point into what the resets freed (the texture
+    // control's bindings; the managers' nodes, attributes and geometry), so
+    // a pass whose kept picture cannot be drawn (Android's context loss, a
+    // window that changed its size) draws an empty picture, never that list.
+    // (Also in an update's held fields between the stage change and the
+    // reload, where the list is still whole: the kept picture covers them.)
+    if (engine.held() && !engine.presenting()) {
+        picture.items.clear();
+        picture.shadow = {};
+        picture.items_current = false;
+        return PictureMade::kept;
+    }
+    // A field the running update covers (Engine::held: the movie's 30 Hz
+    // frames) shows the last update's picture again, without a traversal
+    // (only a catch-up that left no draw list draws it).
+    if (engine.held() && steps > 0 && (picture.items_current || !view.draw)) return PictureMade::kept;
     if (!view.draw) {
         engine.traverse_scene();
         return PictureMade::traversed;
@@ -736,15 +748,26 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
             }
             // The picture the player's last frame took, from that frame's
             // second field on (none before the first).
-            if (movie->visible >= 0 && movie_decoder->seek(std::size_t(movie->visible)))
-                renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen, width, height);
+            if (movie->visible >= 0 && movie_decoder->seek(std::size_t(movie->visible))) {
+                const bool fresh = movie_decoder->picture_id() != picture.movie_drawn;
+                const auto upload_start = std::chrono::steady_clock::now();
+                renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), movie_decoder->picture_id(),
+                                     screen, width, height);
+                if (fresh) {
+                    picture.movie_drawn = movie_decoder->picture_id();
+                    const auto& costs = movie_decoder->costs();
+                    frame_stats_movie(costs.decode_ms, costs.convert_ms, costs.waited_ms,
+                                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_start).count());
+                }
+            }
         } else if (movie_decoder && picture.movie_stage == engine.stage_name()) {
             // A movie that stopped (a skip, the teardown) leaves the picture
             // its codec took last on the layer.
             if (sound && sound->movie_still().serial == picture.movie_serial && sound->movie_still().picture >= 0)
                 movie_decoder->seek(std::size_t(sound->movie_still().picture));
             if (!movie_decoder->rgba().empty())
-                renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen, width, height);
+                renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), movie_decoder->picture_id(),
+                                     screen, width, height);
             else
                 movie_decoder.reset();
         } else {
@@ -895,6 +918,7 @@ struct FrameStats {
     std::vector<float> interval, work, swap, step;
     std::vector<float> screen2; // the second screen's frames (screen2.hpp)
     std::size_t screen2_swaps = 0;
+    std::vector<float> movie_decode, movie_convert, movie_waited, movie_upload; // a movie's new pictures (frame_stats_movie)
     std::size_t steps_at_present = 0;           // s.step.size() at the last present
     std::array<std::size_t, 3> by_steps{};      // presents after 0, 1, 2+ steps
     std::size_t flips = 0;                      // a 0 next to a 2+
@@ -959,9 +983,20 @@ void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_sw
         std::printf("frames: second screen %.1f frames/s (%.1f drawn and swapped), p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n",
                     double(s.screen2.size()) / elapsed, double(s.screen2_swaps) / elapsed, double(percentile(s.screen2, 0.5)),
                     double(percentile(s.screen2, 0.9)), double(percentile(s.screen2, 0.99)), double(percentile(s.screen2, 1.0)));
+    if (!s.movie_upload.empty())
+        std::printf("frames: movie %.1f pictures/s; decoding p50 %.2f p99 %.2f max %.2f ms, RGBA p50 %.2f p99 %.2f ms (the worker); "
+                    "waited p50 %.2f p99 %.2f max %.2f ms, upload and draw p50 %.2f p99 %.2f max %.2f ms (the pass)\n",
+                    double(s.movie_upload.size()) / elapsed, double(percentile(s.movie_decode, 0.5)), double(percentile(s.movie_decode, 0.99)),
+                    double(percentile(s.movie_decode, 1.0)), double(percentile(s.movie_convert, 0.5)), double(percentile(s.movie_convert, 0.99)),
+                    double(percentile(s.movie_waited, 0.5)), double(percentile(s.movie_waited, 0.99)), double(percentile(s.movie_waited, 1.0)),
+                    double(percentile(s.movie_upload, 0.5)), double(percentile(s.movie_upload, 0.99)), double(percentile(s.movie_upload, 1.0)));
     std::fflush(stdout);
     s.screen2.clear();
     s.screen2_swaps = 0;
+    s.movie_decode.clear();
+    s.movie_convert.clear();
+    s.movie_waited.clear();
+    s.movie_upload.clear();
     s.interval.clear();
     s.work.clear();
     s.swap.clear();
@@ -979,6 +1014,15 @@ void frame_stats_screen2(double ms, bool swapped) {
     if (auto& s = frame_stats_state(); s.period > 0) {
         s.screen2.push_back(float(ms));
         s.screen2_swaps += swapped ? 1 : 0;
+    }
+}
+
+void frame_stats_movie(double decode_ms, double convert_ms, double waited_ms, double upload_ms) {
+    if (auto& s = frame_stats_state(); s.period > 0) {
+        s.movie_decode.push_back(float(decode_ms));
+        s.movie_convert.push_back(float(convert_ms));
+        s.movie_waited.push_back(float(waited_ms));
+        s.movie_upload.push_back(float(upload_ms));
     }
 }
 
