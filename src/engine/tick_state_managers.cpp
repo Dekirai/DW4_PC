@@ -573,7 +573,9 @@ void TextCtlManager::tick_state(TickArchive& a) {
         // The shown text (raw form only): laid out again on the reader, for
         // the joiner's picture.
         a.shown(l.text);
-        if (a.reading() && l.text) set_text(a.engine(), l, *l.text);
+        // (The display's pack index stays what it was: a translation checks
+        // it against the text before it uses it, docs/L10N.md.)
+        if (a.reading() && l.text) set_text(a.engine(), l, *l.text, l.pack_index);
     }
 }
 void TextCtlManager::owned_nodes(std::vector<Node*>&) const {}

@@ -1,10 +1,13 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/randomizer.hpp"
+#include "dw4/i18n/game_text.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 
 namespace dw4::engine {
 namespace {
@@ -105,9 +108,18 @@ void TextCtlManager::load_fonts(Engine& engine) {
         engine.note(std::string("font bectext.igb: ") + error.what());
         return;
     }
-    const auto* doc = font_document_.get();
+    fonts_ = read_font_images(*font_document_);
+    // The fonts translations are laid out with (presentation only, docs/L10N.md
+    // 2): the original fonts stay exactly as the game has them.
+    for (const auto& [name, font] : fonts_) display_fonts_[name] = make_display_font(*font);
+}
+
+std::map<std::string, std::unique_ptr<FontImage>> read_font_images(const IgbDocument& document) {
+    std::map<std::string, std::unique_ptr<FontImage>> fonts;
+    const auto* doc = &document;
     for (const auto& object : doc->objects) {
-        if (doc->metadata.object_types[object.type_index].name != "beFontImage") continue;
+        if (object.type_index >= doc->metadata.object_types.size() || doc->metadata.object_types[object.type_index].name != "beFontImage")
+            continue;
         ObjectView image(doc, object.reference_index);
         auto font = std::make_unique<FontImage>();
         font->name = std::string(image.str(2));
@@ -147,8 +159,9 @@ void TextCtlManager::load_fonts(Engine& engine) {
                 font->glyphs[code] = g;
             }
         }
-        fonts_[font->name] = std::move(font);
+        fonts[font->name] = std::move(font);
     }
+    return fonts;
 }
 
 void TextCtlManager::add_info(Engine& engine, const ObjectView& info) {
@@ -240,32 +253,146 @@ void TextCtlManager::refresh_categories(Engine& engine) {
     }
 }
 
-void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string& value) {
+namespace {
+std::string ascii_trace(const std::u16string& value) {
+    std::string ascii;
+    char hex[8];
+    for (char16_t c : value) {
+        if (c >= 32 && c < 127) ascii.push_back(char(c));
+        else { std::snprintf(hex, sizeof hex, "<%04x>", unsigned(c)); ascii += hex; }
+    }
+    return ascii;
+}
+} // namespace
+
+void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string& value, int pack_index) {
     // DW4_TRACE_TEXT logs every text assignment (non-ASCII as <hex>) for smoke tests.
     static const bool trace = std::getenv("DW4_TRACE_TEXT") != nullptr;
-    if (trace) {
-        std::string ascii;
-        char hex[8];
-        for (char16_t c : value) {
-            if (c >= 32 && c < 127) ascii.push_back(char(c));
-            else { std::snprintf(hex, sizeof hex, "<%04x>", unsigned(c)); ascii += hex; }
-        }
-        engine.log("text " + target.layer + "/" + target.name + ": " + ascii);
-    }
+    if (trace) engine.log("text " + target.layer + "/" + target.name + ": " + ascii_trace(value));
     target.text = value;
+    target.pack_index = pack_index;
+    layout_line(engine, target, false);
+}
+
+void TextCtlManager::layout_line(Engine& engine, Line& target, bool keep) {
+    if (!target.text) return;
     Node* geometry_node = find_geometry(target.node);
     if (!geometry_node) return;
     auto font_it = fonts_.find(target.style.empty() ? "NORMAL" : target.style);
     if (font_it == fonts_.end()) font_it = fonts_.find("NORMAL");
     if (font_it == fonts_.end()) return;
     const FontImage& font = *font_it->second;
-    auto geometry = std::make_shared<GeometryData>(layout_text(font, value, target.align, target.max_width));
+    const std::u16string& value = *target.text;
+    // A relayout keeps the alignment the text was laid out with.
+    if (!keep) target.laid_align = target.align;
+    std::shared_ptr<GeometryData> geometry;
+    const auto display_font = display_fonts_.find(font_it->first);
+    if (!engine.display_text() || display_font == display_fonts_.end()) {
+        // The original path (no translation): bit for bit as it always was.
+        geometry = std::make_shared<GeometryData>(layout_text(font, value, target.laid_align, target.max_width));
+    } else {
+        const FontImage& shown_font = *display_font->second;
+        float squeeze = 1.0f;
+        const std::u16string shown = display_text(engine, target, value, shown_font, squeeze);
+        static const bool trace = std::getenv("DW4_TRACE_TEXT") != nullptr;
+        if (trace && shown != value) engine.log("text shown " + target.layer + "/" + target.name + ": " + ascii_trace(shown));
+        geometry = std::make_shared<GeometryData>(layout_text(shown_font, shown, target.laid_align, target.max_width, squeeze));
+    }
+    const GeometryData* previous = geometry_node->runtime_geometry.get();
     geometry_node->runtime_geometry = geometry;
     geometry_node->runtime_texture = font.binding.get();
+    target.laid_out = geometry.get();
+    if (keep) {
+        // A relayout replaces the line's geometry rather than adding one
+        // (geometry_ only grows with set_text until clear_stage).
+        for (auto& kept : geometry_)
+            if (kept.get() == previous) {
+                kept = std::move(geometry);
+                return;
+            }
+    }
     geometry_.push_back(std::move(geometry));
 }
 
-GeometryData layout_text(const FontImage& font, std::u16string_view text, int align, float max_width) {
+std::u16string TextCtlManager::pack_string(const Line& line, std::size_t index) const {
+    std::u16string text;
+    if (line.strings && index < line.strings->size() && (*line.strings)[index]) {
+        const auto bytes = (*line.strings)[index].memory(3);
+        for (std::size_t i = 0; i + 1 < bytes.size(); i += 2) {
+            const char16_t c = char16_t(bytes[i] | (bytes[i + 1] << 8));
+            if (!c) break;
+            text.push_back(c);
+        }
+    }
+    return text;
+}
+
+std::u16string TextCtlManager::display_text(Engine& engine, const Line& line, const std::u16string& english, const FontImage& font,
+                                            float& squeeze) {
+    squeeze = 1.0f;
+    const auto* catalog = engine.display_text();
+    if (!catalog || english.empty()) return english;
+    // The id override of a pack string: "<stage>/<mswkName>" while the line
+    // still shows exactly that string (a tick state read or a joiner has no
+    // index: the content entry applies).
+    std::string id;
+    if (line.pack_index >= 0 && line.strings && std::size_t(line.pack_index) < line.strings->size() &&
+        (*line.strings)[std::size_t(line.pack_index)] && pack_string(line, std::size_t(line.pack_index)) == english) {
+        std::string stage;
+        for (const auto& file : engine.loaded_files())
+            if (file.document.get() == line.document) {
+                stage = file.logical_path.substr(0, file.logical_path.find('/'));
+                break;
+            }
+        if (!stage.empty()) {
+            std::transform(stage.begin(), stage.end(), stage.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            id = stage + "/" + std::string((*line.strings)[std::size_t(line.pack_index)].str(2));
+        }
+    }
+    auto resolved = catalog->resolve(english, id);
+    // DW4_L10N_MISSES=<file>: every English text without a translation (or
+    // one the font cannot draw), once per run: new C++ compositions and gaps
+    // in a catalog show up there.
+    auto miss = [&](const char* reason) {
+        static FILE* log = [] {
+            const char* path = std::getenv("DW4_L10N_MISSES");
+            return path && *path ? std::fopen(path, "ab") : nullptr;
+        }();
+        if (!log) return;
+        static std::set<std::u16string> seen;
+        if (!std::any_of(english.begin(), english.end(), [](char16_t c) { return (c >= u'A' && c <= u'Z') || (c >= u'a' && c <= u'z'); }))
+            return; // numbers, markers, names of digits: nothing to translate
+        if (!seen.insert(english).second) return;
+        const std::string line_text = (id.empty() ? std::string("-") : id) + "\t" + line.layer + "/" + line.name + "\t" + reason + "\t" +
+                                      i18n::encode_tokens(english) + "\n";
+        std::fwrite(line_text.data(), 1, line_text.size(), log);
+        std::fflush(log);
+    };
+    if (!resolved) {
+        miss("missing");
+        return english;
+    }
+    for (const char16_t c : resolved->text)
+        if (c != u'\r' && c != u'\n' && !font.glyphs.contains(std::uint32_t(c))) {
+            miss("glyph");
+            return english;
+        }
+    squeeze = resolved->squeeze;
+    return std::move(resolved->text);
+}
+
+void TextCtlManager::relayout_all(Engine& engine) {
+    for (auto& line : lines_) {
+        if (!line.text) continue;
+        const Node* node = find_geometry(line.node);
+        // (A line INITIALIZE emptied since keeps its empty geometry.)
+        if (!node || !node->runtime_geometry || node->runtime_geometry.get() != line.laid_out) continue;
+        layout_line(engine, line, true);
+    }
+}
+
+GeometryData layout_text(const FontImage& font, std::u16string_view text, int align, float max_width, float x_scale,
+                         std::vector<float>* line_widths) {
     const float line_height = font.line_height > 0 ? font.line_height : 0.28f;
     GeometryData geometry;
     // 80116960 fills the quads on one pen that runs through the whole string
@@ -330,6 +457,23 @@ GeometryData layout_text(const FontImage& font, std::u16string_view text, int al
     // 0x802FC29C-0x802FC2A8: the last line's width is the moved v5.x of its
     // last quad, the right edge of the glyph and not the pen after it.
     lines.emplace_back(geometry.positions.size(), last_right);
+    // Port (translations): a line squeezed horizontally, around its own start
+    // (each line starts at x 0), before the alignment measures it.
+    if (x_scale != 1.0f) {
+        for (auto& position : geometry.positions) position.x *= x_scale;
+        for (auto& [end, width] : lines) width *= x_scale;
+    }
+    if (line_widths) {
+        // The ink each line covers: its quads' right edge (0 for an empty line).
+        line_widths->clear();
+        std::size_t begin = 0;
+        for (const auto& [end, width] : lines) {
+            float right = 0;
+            for (auto v = begin; v < end; ++v) right = std::max(right, geometry.positions[v].x);
+            line_widths->push_back(right);
+            begin = end;
+        }
+    }
     // 802FBC7C / 802FC2D0: beFontInfoData [9] (enum 804D2048: LEFT 0, RIGHT 1,
     // CENTER 2) moves each line by (max width - line width) * 0.5 when centred
     // or the whole rest when right-aligned, unrounded and whatever the max width.
@@ -422,16 +566,10 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
             if (!matches(line)) continue;
             if (!value && !packet.ints.empty()) {
                 const auto index = std::size_t(packet.ints[0]);
-                std::u16string text;
-                if (line.strings && index < line.strings->size() && (*line.strings)[index]) {
-                    const auto bytes = (*line.strings)[index].memory(3);
-                    for (std::size_t i = 0; i + 1 < bytes.size(); i += 2) {
-                        const char16_t c = char16_t(bytes[i] | (bytes[i + 1] << 8));
-                        if (!c) break;
-                        text.push_back(c);
-                    }
-                }
-                set_text(engine, line, text);
+                // (The index only names the pack string for a translation's
+                // id override: presentation only.)
+                const int pack_index = packet.ints[0] >= 0 && packet.ints[0] < 0x10000 ? int(packet.ints[0]) : -1;
+                set_text(engine, line, pack_string(line, index), pack_index);
             } else if (value) {
                 set_text(engine, line, *value);
             }

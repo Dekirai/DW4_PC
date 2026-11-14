@@ -47,6 +47,15 @@ These counts demonstrate substantial Japanese content; they do not measure
 translation completeness. The equalities above concern named Unicode objects,
 not whole IGB files, embedded images, voices or every possible text path.
 
+Beyond the named text, the ENG, FRA, GER, ITA and SPN packs carry the Japanese
+database (item, weapon, Digimon and technique names identical to JPN's) and a
+few translated HUD pictures: ger_pack's `stmojipnl01.png` (Stärke / Verteidg /
+Weish. / Geist / Geschw) and `bit.png` ("BIT") differ from USA's; by image hash
+fra and spn differ in 622 images, ita in 266. The packs also differ in size and
+disc position, so loading one in place of `usa_pack.igb` changes the stage load
+timing. The port's fan translations ([L10N.md](L10N.md)) therefore keep the USA
+pack and only change the presentation.
+
 ## Original selector
 
 The USA DOL's `SYSgetCountry` implementation at `0x802EBC90` returns literal
@@ -131,6 +140,10 @@ button prompts and remaining English text. Resolve the `U+3007` case and
 classify the `stag0000` strings rather than silently discarding them from
 coverage. Apply changes at a verified reload/restart boundary so an already
 loaded resource graph cannot retain a mixture of languages.
+
+The port's own German option is a fan translation laid over the USA text
+([L10N.md](L10N.md)), named "Deutsch (Fan-Übersetzung)" in the selector; it does
+not claim an original German version of this revision.
 
 Keep language choice separate from game region and from developer-documentation
 language. Future translation mods should declare compatible revision and

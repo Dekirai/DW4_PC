@@ -22,6 +22,7 @@
 #include "randomizer_save.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
+#include "language.hpp"
 #include "achievements.hpp"
 #include "discord_presence.hpp"
 #include "overhead_labels.hpp"
@@ -1233,6 +1234,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
 #endif
         dw4::game::GlRenderer* const renderer = gl_renderer ? &*gl_renderer : nullptr;
+        // The Graphics options (settings.ini [graphics]); test runs read no
+        // settings.ini: the defaults with DW4_TEXTURE_QUALITY,
+        // DW4_TEXTURE_FILTER, DW4_LOD_BIAS, DW4_SHARPEN, DW4_SHADOW_QUALITY
+        // and DW4_TEXTURE_MEMORY (graphics_options.hpp).
+        if (renderer)
+            renderer->set_graphics(options.smoke_frames
+                                       ? dw4::game::graphics_from_env({}, [](const char* name) -> const char* { return std::getenv(name); })
+                                       : settings.graphics);
         // The window, the renderer, the sound output, the controllers, the
         // F1 menu and the pictures as the host's shared parts see them
         // (host_view.hpp: the story and a Data Overflow run use the same).
@@ -1318,20 +1327,75 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (!base.empty() && std::filesystem::is_directory(base / "mods", error)) return base / "mods" / sub;
             return std::filesystem::path("mods") / sub;
         };
+        // At start the folder is read here; the F1 menu's reloads read it on
+        // a thread of their own (PackLoader: a large folder does not stop
+        // the game) and hand it over with use_pack once it is read. A pack
+        // change keeps the stage's records (GlRenderer::set_texture_pack
+        // keys them again); a dump folder switched on decodes the stage's
+        // textures again so they are written out.
+        dw4::game::PackLoader pack_loader;
+        auto pack_folders = [&] {
+            return std::make_pair(settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack,
+                                  settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
+        };
+        auto use_pack = [&](dw4::game::TexturePack read) {
+            const bool dumped = texture_pack.dumping();
+            texture_pack = std::move(read);
+            if (texture_pack.dumping() && !dumped) renderer->clear_cache();
+            renderer->set_texture_pack(&texture_pack);
+            if (!texture_pack.index().error.empty()) std::cerr << "texture pack: " << texture_pack.index().error << '\n';
+        };
         auto configure_pack = [&] {
-            const auto pack = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
-            texture_pack.configure(pack, settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
-            renderer->clear_cache();
+            const auto [pack, dump] = pack_folders();
+            dw4::game::TexturePack read;
+            read.configure(pack, dump);
+            use_pack(std::move(read));
+        };
+        auto reload_pack = [&] {
+            auto [pack, dump] = pack_folders();
+            pack_loader.start(std::move(pack), std::move(dump));
         };
         if (!options.smoke_frames) {
             configure_pack();
-            renderer->set_texture_pack(&texture_pack);
         } else if (std::getenv("DW4_TEXTURE_PACK") || std::getenv("DW4_DUMP_TEXTURES")) {
             // Test runs: DW4_TEXTURE_PACK=dir and / or DW4_DUMP_TEXTURES=dir.
             const char* pack = std::getenv("DW4_TEXTURE_PACK");
             const char* dump = std::getenv("DW4_DUMP_TEXTURES");
             texture_pack.configure(pack ? pack : "", dump ? dump : "");
             renderer->set_texture_pack(&texture_pack);
+            if (!texture_pack.index().error.empty()) std::cerr << "texture pack: " << texture_pack.index().error << '\n';
+            std::cout << "texture pack: " << texture_pack.replacement_count() << " textures (format " << texture_pack.index().format << ")\n";
+        }
+        // The game text's display language (docs/L10N.md): the language packs
+        // in lang/ next to the program, settings.ini [preferences] language.
+        // Presentation only (the engine takes it between two steps). Test
+        // runs show English unless DW4_LANGUAGE names a language; they may
+        // read the packs from DW4_LANG_DIR, switch at frames (DW4_L10N_SWITCH
+        // "F:code,..." or DW4_L10N_SWITCH_EVERY=N between English and
+        // DW4_LANGUAGE) and write the language pictures (DW4_L10N_DUMP=dir).
+        dw4::game::Languages languages;
+        auto log_language_notes = [&] {
+            for (const auto& note : languages.take_notes()) std::cout << "language: " << note << '\n';
+        };
+        {
+            std::filesystem::path lang_root = (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "lang";
+            if (const char* folder = std::getenv("DW4_LANG_DIR"); folder && *folder && options.smoke_frames) lang_root = std::filesystem::u8path(folder);
+            languages.discover(lang_root);
+            std::string wanted = options.smoke_frames ? std::string("en") : settings.language;
+            if (const char* forced = std::getenv("DW4_LANGUAGE"); forced && *forced) wanted = forced;
+            if (options.smoke_frames) {
+                if (const char* dump = std::getenv("DW4_L10N_DUMP"); dump && *dump) languages.set_dump(std::filesystem::u8path(dump));
+                if (const char* list = std::getenv("DW4_L10N_SWITCH"); list && *list) {
+                    std::string error;
+                    if (!languages.parse_schedule(list, &error)) throw std::runtime_error("DW4_L10N_SWITCH: " + error);
+                }
+                if (const char* every = std::getenv("DW4_L10N_SWITCH_EVERY"); every && std::atoi(every) > 0)
+                    languages.switch_every(std::atoi(every), wanted == "en" ? std::string("de") : wanted);
+            }
+            std::string message;
+            if (wanted != "en" && !languages.select(wanted, &message)) std::cout << "language: " << message << " (the game text stays English)\n";
+            if (languages.has_packs() || wanted != "en") std::cout << "language: " << languages.selected() << '\n';
+            log_language_notes();
         }
         auto& gamepads = view.gamepads;
         ScriptedInput scripted;
@@ -2248,7 +2312,38 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::uint64_t serial{}, begin{}, started{}, control{};
             double total_ms{}, longest_ms{};
             bool fast{};
+            // The stage start window: every pass from the change to 600
+            // steps after the stage started (its first pictures, the
+            // textures' first draws), its longest pass and where it was.
+            double window_longest_ms{}, window_longest_texture_ms{}, window_texture_max_ms{};
+            std::uint64_t window_longest_frame{}, window_passes{};
+            bool window_done{};
+            // The window's passes after the stage started (its first
+            // pictures, when its textures are first drawn), for their
+            // distribution: a single longest pass mostly shows the load's
+            // own heaviest step and the machine's load, not the textures.
+            std::vector<double> started_ms;
+            double started_longest_ms{}, started_longest_texture_ms{};
         } load_timing;
+        auto print_load_window = [&] {
+            auto sorted = load_timing.started_ms;
+            std::sort(sorted.begin(), sorted.end());
+            // (Nearest rank.)
+            auto rank = [&](double p) {
+                if (sorted.empty()) return 0.0;
+                const auto n = std::max<std::size_t>(1, std::size_t(std::ceil(p * double(sorted.size()))));
+                return sorted[std::min(sorted.size(), n) - 1];
+            };
+            const auto over = [&](double ms) { return std::count_if(sorted.begin(), sorted.end(), [&](double v) { return v > ms; }); };
+            std::printf("loadtime window %s: longest pass %.1f ms (texture work %.1f ms) at step %lld of %llu passes (stage change to 600 "
+                        "steps after its start); most texture work in a pass %.2f ms; after the start %zu passes: median %.2f ms, p95 %.2f "
+                        "ms, p99 %.2f ms, longest %.2f ms (texture work %.2f ms), %lld over 8.3 ms, %lld over 16.7 ms\n",
+                        load_timing.stage.c_str(), load_timing.window_longest_ms, load_timing.window_longest_texture_ms,
+                        (long long)load_timing.window_longest_frame - (long long)load_timing.begin, (unsigned long long)load_timing.window_passes,
+                        load_timing.window_texture_max_ms, sorted.size(), rank(0.5), rank(0.95), rank(0.99), load_timing.started_longest_ms,
+                        load_timing.started_longest_texture_ms, (long long)over(8.3), (long long)over(16.7));
+            load_timing.window_done = true;
+        };
         auto print_load_timing = [&] {
             const std::string control = load_timing.control ? std::to_string(load_timing.control - load_timing.begin) : std::string("-");
             std::printf("loadtime %s%s: started after %lld fields, control after %s fields, loop %.1f ms (longest pass %.1f ms)\n",
@@ -2322,6 +2417,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
             if (view.quit_requested) running = false;
+            // The display language between two steps (docs/L10N.md): a change
+            // lays every text line out again; nothing in the game state moves.
+            languages.at_frame(frame);
+            languages.sync(engine, renderer);
+            log_language_notes();
             // Input: player 1 is the keyboard and the first gamepad, players 2-4
             // the further gamepads, each on its own controller slot. The main
             // stick, the D-pad and the C-stick stay separate inputs like on a
@@ -3544,6 +3644,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // (Every stage load, also of the same stage: the texture cache is
             // keyed by document addresses, which a new load may reuse.)
             // (The story's ghost figures start over too: no figure fades across the load.)
+            if (renderer) {
+                // A pack the F1 menu's reload has read meanwhile (PackLoader).
+                if (auto read = pack_loader.take()) use_pack(std::move(*read));
+                // DW4_TEXTURE_QUALITY_AT=FRAME:QUALITY[,FRAME:QUALITY...]
+                // (test runs): the texture quality changes at those frames as
+                // the F1 menu changes it, on the running stage.
+                static const auto quality_switches = [] {
+                    std::vector<std::pair<int, dw4::game::TextureQuality>> list;
+                    if (const char* spec = std::getenv("DW4_TEXTURE_QUALITY_AT"))
+                        for (std::istringstream items(spec); items.good();) {
+                            std::string item;
+                            std::getline(items, item, ',');
+                            const auto colon = item.find(':');
+                            if (colon == std::string::npos) continue;
+                            const auto quality = dw4::game::parse_texture_quality(item.substr(colon + 1));
+                            if (quality) list.emplace_back(std::atoi(item.substr(0, colon).c_str()), *quality);
+                        }
+                    return list;
+                }();
+                static std::size_t next_switch = 0;
+                while (options.smoke_frames && next_switch < quality_switches.size() && frame >= quality_switches[next_switch].first) {
+                    auto g = renderer->graphics();
+                    g.texture_quality = quality_switches[next_switch++].second;
+                    renderer->set_graphics(g);
+                    std::printf("[%d] texture quality %s (stage %s)\n", frame, dw4::game::texture_quality_name(g.texture_quality),
+                                engine.stage_name().c_str());
+                }
+            }
             if (dw4::game::note_stage(view, engine, &ghosts)) save_profile();
             // Smooth motion: the picture is drawn between the previous step
             // and this one (MotionInterpolator::blend below).
@@ -3750,6 +3878,41 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
                         {
+                            // The game text's language (docs/L10N.md): English and
+                            // the language packs in lang/, each named in its own
+                            // language; it changes at once (between two steps).
+                            const auto& entries = languages.entries();
+                            std::size_t current = 0;
+                            for (std::size_t i = 0; i < entries.size(); ++i)
+                                if (entries[i].code == languages.selected()) current = i;
+                            auto entry_label = [&](std::size_t i) {
+                                return entries[i].texts ? entries[i].name : entries[i].name + " (pictures only, no game.tsv)";
+                            };
+                            ImGui::BeginDisabled(!languages.has_packs());
+                            if (ImGui::BeginCombo("Language", entry_label(current).c_str())) {
+                                for (std::size_t i = 0; i < entries.size(); ++i) {
+                                    ImGui::PushID(int(i));
+                                    if (ImGui::Selectable(entry_label(i).c_str(), i == current) && i != current) {
+                                        std::string message;
+                                        if (languages.select(entries[i].code, &message)) {
+                                            settings.language = entries[i].code;
+                                            settings_changed = true;
+                                        } else {
+                                            state_message = "Language: " + message;
+                                            message_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                                        }
+                                    }
+                                    ImGui::PopID();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::EndDisabled();
+                            if (!languages.has_packs())
+                                ImGui::TextDisabled("Other languages come as language packs in lang/<code>/ next to the program.");
+                            else if (languages.selected() != "en")
+                                ImGui::TextDisabled("The game's own text in this language; the port's menus stay English.");
+                        }
+                        {
                             // Presets: Original (the GameCube presentation, load
                             // times and balance) or Modernized (widescreen, smooth
                             // motion, anti-aliasing, straight to the title, fast
@@ -3758,12 +3921,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             // either: a loaded save's bond keeps its randomizer whatever
                             // the settings say.
                             const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
+                            const bool original_graphics = dw4::game::is_original_graphics(settings.graphics);
+                            const bool modern_graphics = dw4::game::is_modernized_graphics(settings.graphics);
                             const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
                                                   !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
                                                   settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0 &&
-                                                  !playing.active();
+                                                  !playing.active() && original_graphics;
                             const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
-                                                    settings.fast_loading;
+                                                    settings.fast_loading && modern_graphics;
                             int preset = original ? 0 : modernized ? 1 : 2;
                             static const char* presets[] = {"Original", "Modernized", "Custom"};
                             if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
@@ -3773,6 +3938,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 settings.msaa = modern ? 4 : 0;
                                 settings.skip_intro = modern;
                                 settings.fast_loading = modern;
+                                // Graphics: Original is the GameCube's look (no
+                                // pack, bilinear, the game's shadow map);
+                                // Modernized a pack's 4x textures, 16x
+                                // anisotropic filtering and a 4x shadow map
+                                // (sharpening is left as it is: a matter of
+                                // taste). graphics_options.hpp preset_graphics.
+                                settings.graphics = dw4::game::preset_graphics(modern, settings.graphics);
+                                if (renderer) renderer->set_graphics(settings.graphics);
                                 loading_override.reset();
                                 if (!modern) {
                                     settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
@@ -3783,8 +3956,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 settings_changed = true;
                             }
                             ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro, GameCube load times and the "
-                                                "original balance.");
+                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the game's own textures and shadows, the "
+                                                "intro, GameCube load times and the original balance.");
                             if (playing.active()) {
                                 if (net.active())
                                     ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1), "This session plays the host's randomizer (%s).",
@@ -3827,6 +4000,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         // (host_view.hpp: a Data Overflow run's F1 shows them too;
                         // the controls have their own tab).
                         dw4::game::settings_display_section(view);
+                        {
+                            dw4::game::TexturePackPanel panel;
+                            panel.pack = &texture_pack;
+                            panel.folder = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
+                            panel.reload = reload_pack;
+                            panel.loading = pack_loader.busy();
+                            dw4::game::settings_graphics_section(view, panel);
+                        }
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -3864,16 +4045,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 }
                                 if (!mod.description.empty()) ImGui::TextDisabled("    %s", mod.description.c_str());
                             }
-                        }
-                        if (ImGui::CollapsingHeader("Texture packs")) {
-                            ImGui::Text("%zu replacement textures loaded.", texture_pack.replacement_count());
-                            ImGui::TextDisabled("PNG files named ..._<16 hex digit hash>.png below %s",
-                                                (settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack).string().c_str());
-                            if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
-                                settings_changed = true;
-                                configure_pack();
-                            }
-                            if (ImGui::Button("Reload texture pack")) configure_pack();
                         }
                         if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
                         if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
@@ -4700,8 +4871,27 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count();
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != load_timing.serial) {
                     if (load_timing.serial && !load_timing.control) print_load_timing();
+                    if (load_timing.serial && !load_timing.window_done) print_load_window();
                     load_timing = {snapshot->stage, snapshot->serial, snapshot->frame};
                     load_timing.fast = engine.fast_loading();
+                }
+                const double texture_ms = renderer ? renderer->take_pass_texture_ms() : 0.0;
+                if (load_timing.serial && !load_timing.window_done) {
+                    ++load_timing.window_passes;
+                    load_timing.window_texture_max_ms = std::max(load_timing.window_texture_max_ms, texture_ms);
+                    if (ms > load_timing.window_longest_ms) {
+                        load_timing.window_longest_ms = ms;
+                        load_timing.window_longest_texture_ms = texture_ms;
+                        load_timing.window_longest_frame = engine.frame();
+                    }
+                    if (load_timing.started) {
+                        load_timing.started_ms.push_back(ms);
+                        if (ms > load_timing.started_longest_ms) {
+                            load_timing.started_longest_ms = ms;
+                            load_timing.started_longest_texture_ms = texture_ms;
+                        }
+                    }
+                    if (load_timing.started && engine.frame() >= load_timing.started + 600) print_load_window();
                 }
                 if (load_timing.serial && !load_timing.started) {
                     if (trace_loadtime > 1)
@@ -4801,6 +4991,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         // (The last load of the run, without player control so far.)
         if (trace_loadtime && load_timing.serial && !load_timing.control) print_load_timing();
+        if (trace_loadtime && load_timing.serial && !load_timing.window_done) print_load_window();
+        dw4::game::trace_textures(view, engine.stage_name());
         // (No state saved or loaded, e.g. can_save refused the title's stage:
         // nothing was compared, so the test fails instead of passing empty.)
         if (state_test && state_pass == 1) {

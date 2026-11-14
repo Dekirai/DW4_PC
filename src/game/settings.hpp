@@ -3,6 +3,8 @@
 // PC settings of the runtime (settings.ini): window and presentation, audio
 // level, keyboard bindings and the extracted game data folder. The F1 menu
 // edits them while playing and writes them back.
+#include "graphics_options.hpp"
+
 #include "dw4/ini.hpp"
 #include "dw4/pad.hpp"
 
@@ -82,12 +84,19 @@ struct Settings {
     int fps_limit = 0;       // presented frames per second, 0 = no limit
     bool smooth_motion = true; // blend between the 60 Hz steps when presenting faster
     int msaa = 4;            // samples, applied at start-up
+    // [graphics]: texture quality, filtering, LOD bias, sharpening, shadow
+    // quality and the texture memory budget (graphics_options.hpp).
+    GraphicsOptions graphics;
     // [audio]
     int volume = 100;        // master volume in percent
     // [menu]
     bool pause_in_menu = true;
     // [preferences]
     bool skip_intro = false;
+    // [preferences] language: the game text's display language (docs/L10N.md):
+    // "en" (the game's own English text) or a language pack's code (lang/<code>
+    // next to the program). Presentation only, never part of the game state.
+    std::string language = "en";
     // [gameplay]: optional rebalancing and randomizer (100 / 0 = original)
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100;
     // [randomizer]: the seed new games bind to their save (0 off; the old
@@ -120,7 +129,7 @@ struct Settings {
     MenuButtons menu_buttons = MenuButtons::layout;
     bool gc_adapter = true;
     // [mods]
-    std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
+    std::filesystem::path texture_pack; // the texture pack folder (default mods/textures)
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
     std::set<std::string> disabled_mods; // content mods (mods/<id>) switched off
     // [hud] overhead name tags (overhead_labels.hpp): auto (only with two

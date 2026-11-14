@@ -30,6 +30,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace dw4::i18n {
+class GameTextCatalog;
+}
+
 namespace dw4::engine {
 
 class Engine;
@@ -961,6 +965,12 @@ public:
     DemoManager& demo() { return demo_; }
     SceneCache& scenes() { return scenes_; }
     const MountedResources& resources() const { return resources_; }
+    // Translations (docs/L10N.md): the catalog text lines are shown in
+    // (null: the game's own English text). Host presentation state only:
+    // never in a fingerprint, the tick state, a save state or a snapshot.
+    // Setting it lays every text line out again (call it between steps).
+    void set_display_text(std::shared_ptr<const i18n::GameTextCatalog> catalog);
+    const i18n::GameTextCatalog* display_text() const { return display_text_.get(); }
     // Mods (folders replacing logical paths, first wins); before the first stage.
     void set_resource_overrides(std::vector<std::filesystem::path> roots) { resources_.set_overrides(std::move(roots)); }
     // Where the memory cards keep their files: GCI folders (Dolphin's layout:
@@ -1235,6 +1245,7 @@ private:
     Node global_root_;
     std::vector<Node*> attached_roots_;
 
+    std::shared_ptr<const i18n::GameTextCatalog> display_text_; // presentation only (set_display_text)
     std::string stage_name_;
     std::string stage_folder_;
     std::string pending_stage_;

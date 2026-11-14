@@ -20,7 +20,8 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/card_store.cpp src/save_import.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp src/msl_math.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/card_store.cpp src/save_import.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp src/msl_math.cpp
+  src/i18n/game_text.cpp src/i18n/language_pack.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.
@@ -37,7 +38,7 @@ endif()
 # stage flow on top of dw4_core. No SDL/ImGui dependency.
 add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
   src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp
-  src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/title.cpp src/engine/load_intf.cpp
+  src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/text_l10n.cpp src/engine/title.cpp src/engine/load_intf.cpp
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/randomizer.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
@@ -158,6 +159,12 @@ endif()
 # the game over). A development tool, never part of the game.
 add_executable(dw4_world_probe tools/world_probe.cpp)
 target_link_libraries(dw4_world_probe PRIVATE dw4_engine dw4_online)
+# Translation tools (docs/L10N.md 4): the English corpus for translators and
+# the lint of a translated game.tsv with the engine's font layout.
+add_library(dw4_l10n_tools STATIC tools/l10n/l10n.cpp)
+target_link_libraries(dw4_l10n_tools PUBLIC dw4_engine)
+add_executable(dw4_l10n tools/l10n/dw4_l10n.cpp)
+target_link_libraries(dw4_l10n PRIVATE dw4_l10n_tools)
 
 if(BUILD_TESTING)
   foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data save_import card_store sfp sfd ini disc)
@@ -169,12 +176,17 @@ if(BUILD_TESTING)
   target_link_libraries(dw4_scene_tests PRIVATE dw4_engine)
   add_test(NAME scene COMMAND dw4_scene_tests)
   # (pad: the PADINPUT redirect of Engine::pads too; online_cameras: the
-  # seamless co-op cameras and exits, docs/SEAMLESS.md 4 and 5.2)
-  foreach(suite gekko_math messenger pad online_cameras)
+  # seamless co-op cameras and exits, docs/SEAMLESS.md 4 and 5.2; i18n: the
+  # translation catalog, language packs and font additions, docs/L10N.md)
+  foreach(suite gekko_math messenger pad online_cameras i18n)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_engine)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
   endforeach()
+  # The translation lint on synthetic fonts and texts (tools/l10n).
+  add_executable(dw4_l10n_lint_tests tests/l10n_lint_tests.cpp)
+  target_link_libraries(dw4_l10n_lint_tests PRIVATE dw4_l10n_tools)
+  add_test(NAME l10n_lint COMMAND dw4_l10n_lint_tests)
   # Randomizer: seeds, pools, the loading zone table, the save bond (sidecar) and spoiler.
   add_executable(dw4_randomizer_tests tests/randomizer_tests.cpp src/game/randomizer_save.cpp)
   target_link_libraries(dw4_randomizer_tests PRIVATE dw4_engine)
@@ -360,7 +372,7 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/pad_usb.cpp src/game/switch2_pro.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/prompt_layout.cpp src/game/button_art.cpp src/game/button_prompts.cpp src/game/gc_adapter.cpp src/game/pad_usb.cpp src/game/switch2_pro.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/graphics_options.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/texture_codec.cpp src/game/texture_stream.cpp src/game/language.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
@@ -370,6 +382,11 @@ if(DW4_BUILD_APP)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
+  # The language packs next to the program (docs/L10N.md): data/lang and a
+  # translator's local/lang game.tsv (never installed: game-derived text).
+  add_custom_command(TARGET dw4_game POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -DTARGET=$<TARGET_FILE_DIR:dw4_game> -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_lang.cmake
+    VERBATIM)
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
@@ -379,6 +396,13 @@ if(DW4_BUILD_APP)
     # with hid, cfgmgr32 also the Switch 2 Pro Controller, switch2_pro.cpp)
     target_link_libraries(dw4_game PRIVATE ws2_32 setupapi winusb hid cfgmgr32)
   endif()
+  # Texture pack authoring (docs/TEXTURES.md): dw4_texpack export writes every
+  # texture of the game data once under the renderer's pack hash, which it
+  # takes from the renderer's own code (src/game/texture_pack.cpp). A
+  # development tool, not part of the release.
+  add_executable(dw4_texpack tools/dw4_texpack/main.cpp tools/dw4_texpack/texpack_export.cpp src/game/texture_pack.cpp src/game/texture_codec.cpp)
+  target_include_directories(dw4_texpack PRIVATE ${stb_src_SOURCE_DIR})
+  target_link_libraries(dw4_texpack PRIVATE dw4_engine)
   # Round I1a's ghost figure measurement (docs/SEAMLESS.md 19.13): a test
   # build's DW4_PROBE_GHOSTS* switches (ghost_figures.hpp, game_main.cpp).
   # Never in a player build.
@@ -388,7 +412,7 @@ if(DW4_BUILD_APP)
   endif()
   if(BUILD_TESTING)
     # Keyboard / controller bindings -> GameCube pad input, settings.ini migration (SDL, no device or window).
-    add_executable(dw4_controls_tests tests/controls_tests.cpp src/game/controls.cpp src/game/settings.cpp)
+    add_executable(dw4_controls_tests tests/controls_tests.cpp src/game/controls.cpp src/game/settings.cpp src/game/graphics_options.cpp)
     target_link_libraries(dw4_controls_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME controls COMMAND dw4_controls_tests)
     # Controller families: classification, binding spaces, prompt pictures,
@@ -397,14 +421,14 @@ if(DW4_BUILD_APP)
     # SDL's virtual joysticks with every real backend off, through the
     # host's own pad code (docs/ROUND_PADS_NOTES.md).
     add_executable(dw4_pad_family_tests tests/pad_family_tests.cpp src/game/pad_family.cpp src/game/button_art.cpp src/game/prompt_layout.cpp
-      src/game/controls.cpp src/game/settings.cpp src/game/gc_adapter.cpp)
+      src/game/controls.cpp src/game/settings.cpp src/game/graphics_options.cpp src/game/gc_adapter.cpp)
     target_link_libraries(dw4_pad_family_tests PRIVATE dw4_engine dw4_core SDL3::SDL3)
     if(WIN32)
       target_link_libraries(dw4_pad_family_tests PRIVATE setupapi winusb)
     endif()
     add_test(NAME pad_family COMMAND dw4_pad_family_tests)
     add_executable(dw4_pad_detect_tests tests/pad_detect_tests.cpp src/game/pad_family.cpp src/game/pad_host.cpp src/game/controls.cpp
-      src/game/settings.cpp src/game/gc_adapter.cpp)
+      src/game/settings.cpp src/game/graphics_options.cpp src/game/gc_adapter.cpp)
     target_link_libraries(dw4_pad_detect_tests PRIVATE dw4_core SDL3::SDL3)
     if(WIN32)
       target_link_libraries(dw4_pad_detect_tests PRIVATE setupapi winusb)
@@ -415,7 +439,7 @@ if(DW4_BUILD_APP)
     # are the port's own readers'), the Switch 2 Pro Controller's notices and
     # the controller log's lines (docs/ROUND_SW2WIN_NOTES.md).
     add_executable(dw4_pad_usb_tests tests/pad_usb_tests.cpp src/game/pad_usb.cpp src/game/pad_family.cpp src/game/pad_host.cpp
-      src/game/controls.cpp src/game/settings.cpp src/game/gc_adapter.cpp src/game/switch2_pro.cpp)
+      src/game/controls.cpp src/game/settings.cpp src/game/graphics_options.cpp src/game/gc_adapter.cpp src/game/switch2_pro.cpp)
     target_link_libraries(dw4_pad_usb_tests PRIVATE dw4_core SDL3::SDL3)
     if(WIN32)
       target_link_libraries(dw4_pad_usb_tests PRIVATE setupapi winusb hid cfgmgr32)
@@ -427,14 +451,36 @@ if(DW4_BUILD_APP)
     # read, unplug, replug, the window in the background), and its SDL
     # virtual pad through the host's own pad code (no device, no window).
     add_executable(dw4_switch2_tests tests/switch2_tests.cpp src/game/switch2_pro.cpp src/game/gc_adapter.cpp src/game/pad_family.cpp src/game/pad_host.cpp
-      src/game/controls.cpp src/game/settings.cpp)
+      src/game/controls.cpp src/game/settings.cpp src/game/graphics_options.cpp)
     target_link_libraries(dw4_switch2_tests PRIVATE dw4_core SDL3::SDL3)
     if(WIN32)
       target_link_libraries(dw4_switch2_tests PRIVATE setupapi winusb hid cfgmgr32)
     endif()
     add_test(NAME switch2 COMMAND dw4_switch2_tests)
+    # The texture export's pack hashes are the renderer's: synthetic C8 and
+    # CMPR images, the exported names read back as replacements; with
+    # DW4_TEST_DATA the original documents through the engine's bindings and
+    # the hashes the renderer dumped on the dng101b1 route.
+    add_executable(dw4_texpack_tests tests/texpack_tests.cpp tools/dw4_texpack/texpack_export.cpp src/game/texture_pack.cpp src/game/texture_codec.cpp)
+    target_include_directories(dw4_texpack_tests PRIVATE ${stb_src_SOURCE_DIR})
+    target_link_libraries(dw4_texpack_tests PRIVATE dw4_engine)
+    add_test(NAME texpack COMMAND dw4_texpack_tests "${DW4_TEST_DATA}")
+    # Texture pack format 2 and the Graphics options (docs/TEXTURES.md): the
+    # manifest (valid, malformed, newer, unsafe paths), DDS headers, the BC7
+    # decoder against DirectXTex's decode of every mode and partition, BC1 /
+    # BC3, mip chains, the file choice per quality, the loader, the
+    # streaming thread (scan, read-ahead, requests, reconfiguration), the
+    # memory budget's evictions and the options' settings.ini round trip.
+    add_executable(dw4_graphics_tests tests/graphics_tests.cpp src/game/texture_stream.cpp src/game/texture_pack.cpp src/game/texture_codec.cpp
+      src/game/settings.cpp src/game/graphics_options.cpp src/game/controls.cpp)
+    target_include_directories(dw4_graphics_tests PRIVATE ${stb_src_SOURCE_DIR})
+    target_link_libraries(dw4_graphics_tests PRIVATE dw4_engine dw4_core SDL3::SDL3)
+    foreach(part manifest dds codec mips choice loader budget options)
+      add_test(NAME graphics_${part} COMMAND dw4_graphics_tests ${part})
+    endforeach()
+    add_test(NAME graphics_stream COMMAND dw4_graphics_tests stream "${DW4_TEST_DATA}")
     # The run's save store: store choice, migration, imports, online session card.
-    add_executable(dw4_save_store_tests tests/save_store_tests.cpp src/game/save_store.cpp src/game/settings.cpp src/game/controls.cpp)
+    add_executable(dw4_save_store_tests tests/save_store_tests.cpp src/game/save_store.cpp src/game/settings.cpp src/game/graphics_options.cpp src/game/controls.cpp)
     target_link_libraries(dw4_save_store_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME save_store COMMAND dw4_save_store_tests)
   endif()
