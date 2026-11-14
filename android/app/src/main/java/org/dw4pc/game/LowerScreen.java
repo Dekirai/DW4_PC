@@ -11,6 +11,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.SparseIntArray;
 import android.view.Display;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -46,7 +47,10 @@ final class LowerScreen implements DisplayManager.DisplayListener {
     private Panels mPanels;
     private boolean mStarted;
     private String mReported = "";
-    private long mShownAt; // uptime of the last show
+    /** Uptime when a display came (added, or switched on from off); 0: none yet. */
+    private long mDisplayCameAt;
+    /** The displays' last known states (Display.STATE_*), to tell a screen switched on. */
+    private final SparseIntArray mStates = new SparseIntArray();
 
     /**
      * [screen2] mode as the game asks for it (any thread): nothing until the
@@ -66,6 +70,9 @@ final class LowerScreen implements DisplayManager.DisplayListener {
         mActivity = activity;
         mDisplays = (DisplayManager) activity.getSystemService(Context.DISPLAY_SERVICE);
         if (mDisplays != null) {
+            for (Display d : mDisplays.getDisplays()) {
+                mStates.put(d.getDisplayId(), d.getState());
+            }
             mDisplays.registerDisplayListener(this, mHandler);
         }
         sCurrent = this;
@@ -185,22 +192,23 @@ final class LowerScreen implements DisplayManager.DisplayListener {
             return;
         }
         mPanels = panels;
-        mShownAt = SystemClock.uptimeMillis();
         Log.i(TAG, "second screen: shown on display " + display.getDisplayId() + " (" + why + ")");
     }
 
     /**
      * The activity lost the input focus. A display that has just come (a
-     * second screen added, a video out plugged in) gets its own home screen
-     * from Android, which moves the focus there, under the panels where
-     * nobody can use it, and the controller's input with it (seen on the
-     * emulator's display added at run time). Within 3 s of the panels'
-     * coming the game takes the focus back (its task to the front again);
-     * every other focus loss (the notification shade, a dialog, another app)
-     * is left alone.
+     * second screen added, a video out plugged in, a screen switched on)
+     * gets its own home screen from Android, which moves the focus there,
+     * under the panels where nobody can use it, and the controller's input
+     * with it (seen on the emulator's display added at run time). Within 3 s
+     * of such a display event, while the panels show, the game takes the
+     * focus back (its task to the front again). Only then: the panels also
+     * come back with every return from HOME or the app switcher, and a focus
+     * the player moves on purpose in those seconds (the notification shade,
+     * the app switcher, another app) stays where he puts it.
      */
     void focusLost() {
-        if (mPanels == null || SystemClock.uptimeMillis() - mShownAt > 3000) {
+        if (mPanels == null || mDisplayCameAt == 0 || SystemClock.uptimeMillis() - mDisplayCameAt > 3000) {
             return;
         }
         mHandler.postDelayed(() -> {
@@ -228,21 +236,35 @@ final class LowerScreen implements DisplayManager.DisplayListener {
 
     @Override
     public void onDisplayAdded(int displayId) {
+        Display d = mDisplays != null ? mDisplays.getDisplay(displayId) : null;
+        mStates.put(displayId, d != null ? d.getState() : Display.STATE_UNKNOWN);
+        mDisplayCameAt = SystemClock.uptimeMillis();
         update("display " + displayId + " added");
     }
 
     @Override
     public void onDisplayRemoved(int displayId) {
+        mStates.delete(displayId);
         update("display " + displayId + " removed");
     }
 
     @Override
     public void onDisplayChanged(int displayId) {
+        Display d = mDisplays != null ? mDisplays.getDisplay(displayId) : null;
+        int state = d != null ? d.getState() : Display.STATE_UNKNOWN;
+        int before = mStates.get(displayId, Display.STATE_UNKNOWN);
+        mStates.put(displayId, state);
+        if (before == Display.STATE_OFF && state != Display.STATE_OFF) {
+            mDisplayCameAt = SystemClock.uptimeMillis(); // (a screen switched on)
+        }
         update("display " + displayId + " changed");
     }
 
     /** The Presentation: a SurfaceView filling the display, not focusable, its touches to the game. */
     static final class Panels extends Presentation implements SurfaceHolder.Callback {
+        /** The finger the panels follow (its pointer id; -1: none). */
+        private int mPointer = -1;
+
         Panels(Context outerContext, Display display) {
             super(outerContext, display);
         }
@@ -271,17 +293,59 @@ final class LowerScreen implements DisplayManager.DisplayListener {
             }
         }
 
-        private static void touch(MotionEvent event) {
+        /**
+         * The first finger only (a mouse for ImGui): its down, its moves (by
+         * its pointer id, so a second finger never moves it), its up. A
+         * cancelled touch (Android took the gesture over, the palm
+         * rejection, the panels going while it lasted) and the first
+         * finger's lift while another one stays are a cancel (3), which the
+         * game turns into no click.
+         */
+        private void touch(MotionEvent event) {
             int action;
+            int index;
             switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN: action = 0; break;
-                case MotionEvent.ACTION_MOVE: action = 1; break;
-                case MotionEvent.ACTION_UP: action = 2; break;
-                case MotionEvent.ACTION_CANCEL: action = 3; break;
-                default: return; // (a second finger: the panels take the first one only)
+                case MotionEvent.ACTION_DOWN:
+                    mPointer = event.getPointerId(0);
+                    action = 0;
+                    index = 0;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    index = mPointer >= 0 ? event.findPointerIndex(mPointer) : -1;
+                    if (index < 0) {
+                        return;
+                    }
+                    action = 1;
+                    break;
+                case MotionEvent.ACTION_UP:
+                    index = mPointer >= 0 ? event.findPointerIndex(mPointer) : -1;
+                    mPointer = -1;
+                    if (index < 0) {
+                        return; // (the first finger was cancelled before)
+                    }
+                    action = 2;
+                    break;
+                case MotionEvent.ACTION_POINTER_UP:
+                    if (mPointer < 0 || event.getPointerId(event.getActionIndex()) != mPointer) {
+                        return; // (another finger: the panels follow the first one only)
+                    }
+                    index = event.getActionIndex();
+                    mPointer = -1;
+                    action = 3;
+                    break;
+                case MotionEvent.ACTION_CANCEL:
+                    if (mPointer < 0) {
+                        return;
+                    }
+                    index = Math.max(0, event.findPointerIndex(mPointer));
+                    mPointer = -1;
+                    action = 3;
+                    break;
+                default:
+                    return; // (a second finger's down: the panels take the first one only)
             }
             try {
-                nativeTouch(action, event.getX(0), event.getY(0));
+                nativeTouch(action, event.getX(index), event.getY(index));
             } catch (UnsatisfiedLinkError e) {
                 // (no game library)
             }

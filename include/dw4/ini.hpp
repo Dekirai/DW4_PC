@@ -29,6 +29,10 @@ public:
     void set_bool(std::string_view section, std::string_view key, bool value);
     // Drops every line of the key in the section; true when one was there.
     bool remove(std::string_view section, std::string_view key);
+    // Drops the section's header (and its blank lines) when no key and no
+    // comment is left in it, and the blank line set() put before it when it
+    // was the document's last; true when it went.
+    bool remove_section_if_empty(std::string_view section);
 
 private:
     struct Line {

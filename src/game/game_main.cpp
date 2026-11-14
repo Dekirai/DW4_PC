@@ -5111,6 +5111,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     screen2_menu.pauses = settings.pause_in_menu && !options.smoke_frames && !net.active() && !online;
                     screen2_menu.draw = [&] { draw_f1_menu(true); };
                     const bool menu_here = show_menu && view.menu_on_screen2;
+                    // The F1 menu there draws every pass while the controller
+                    // moves through it (and half a second after), else every
+                    // other pass as the panels do (a touch draws at once):
+                    // its live frame time graph alone would swap the lower
+                    // screen every pass, on the game's thread.
+                    static auto lower_menu_input = std::chrono::steady_clock::time_point{};
+                    const auto lower_now = std::chrono::steady_clock::now();
+                    if (menu_here && dw4::game::menu_pad_held(view)) lower_menu_input = lower_now;
+                    const bool lower_menu_busy = menu_here && lower_now - lower_menu_input < std::chrono::milliseconds(500);
                     bool lower_online = false;
                     const bool drawn = dw4::game::screen2_frame(
                         [&] {
@@ -5119,7 +5128,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (menu_here) dw4::game::feed_menu_pad(view);
                         },
                         [&] { lower_online = dw4::game::draw_screen2_screen(settings, settings_changed, screen2_facts, screen2_net, screen2_menu); },
-                        settings.ui_scale, menu_here);
+                        settings.ui_scale, lower_menu_busy);
                     if (drawn) {
                         screen2_online_shown = screen2_online_shown || lower_online;
                         if (menu_here) online_tab_shown = show_menu && online_tab_now;
@@ -5141,10 +5150,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     case dw4::game::Screen2Menu::Ask::none: break;
                     }
                     if (!screen2_menu.tab.empty()) menu_tab = screen2_menu.tab;
-                } else if (view.menu_on_screen2) {
-                    // (The second screen went: the F1 menu shows in the window.)
-                    view.menu_on_screen2 = false;
-                    std::cout << "menu: back in the window (no second screen)\n";
+                } else {
+                    // (No lower screen now: a field of it lets go of the keyboard.)
+                    dw4::game::screen2_release_input();
+                    if (view.menu_on_screen2) {
+                        // (The second screen went: the F1 menu shows in the window.)
+                        view.menu_on_screen2 = false;
+                        std::cout << "menu: back in the window (no second screen)\n";
+                    }
                 }
                 present_max = std::max(present_max, view.last_present_seconds * 1000.0);
 #ifdef DW4_GHOST_PROBE

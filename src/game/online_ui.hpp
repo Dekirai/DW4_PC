@@ -105,6 +105,18 @@ bool set_ui_field(OnlineUiState& state, const std::string& field, const std::str
 // ("Title screen" for the title's hub instance, which has no stage).
 std::string area_line(const std::string& stage, bool hub = false);
 
+// Whether the lobby's refusal (online/cpu_gate.hpp) comes before the
+// server's state wherever the online state is told (F1 > Online, the second
+// screen's Online panel): on Android, where the device itself cannot play
+// online yet; on the PC the CPU gate's refusal shows after it, once logged in.
+inline constexpr bool online_refusal_first() {
+#ifdef __ANDROID__
+    return true;
+#else
+    return false;
+#endif
+}
+
 // The names of the title options as the room settings use them.
 const char* camera_mode_name(int mode);
 const char* light_mode_name(int mode);

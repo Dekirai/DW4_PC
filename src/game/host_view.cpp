@@ -15,9 +15,7 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
-#ifdef SDL_PLATFORM_ANDROID
 #include <imgui_internal.h>
-#endif
 
 #include "app_paths.hpp"
 
@@ -727,6 +725,16 @@ void menu_pad(HostView& view) {
 } // namespace
 
 void feed_menu_pad(HostView& view) { menu_pad(view); }
+
+bool menu_pad_held(HostView& view) {
+    if (view.gamepads.empty()) return false;
+    SDL_Gamepad* pad = view.gamepads.front();
+    const PadFamily family = view.family_of(pad);
+    const MenuKeys k = menu_keys(view.settings, family, read_pad(pad, family), family != PadFamily::gamecube || trigger_clicks(pad));
+    const auto off = [](float v) { return std::abs(v) > 0.25f; };
+    return k.face_down || k.face_right || k.face_left || k.face_up || k.start || k.back || k.up || k.down || k.left || k.right || k.l1 ||
+           k.r1 || k.l2 > 0.1f || k.r2 > 0.1f || off(k.left_x) || off(k.left_y) || off(k.right_x) || off(k.right_y);
+}
 
 void new_ui_frame(bool test_gamepad) {
     if (g_ui_view && g_ui_view->window) update_ui_scale(g_ui_view->window, g_ui_view->settings, g_ui_view->test_run);
@@ -1513,25 +1521,13 @@ bool g_keyboard_visible = false;
 void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeData* data) {
     const ImGuiContext& g = *context;
     const bool wants = data->WantVisible || data->WantTextInput;
-    const bool secret = wants && g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId &&
-                        (g.InputTextState.Flags & ImGuiInputTextFlags_Password) != 0;
+    const bool secret = wants && password_field_active(g);
     if (std::getenv("DW4_TRACE_IME"))
         std::printf("text input: ime visible %d text %d, field %08x active %08x flags %x focus %p\n", int(data->WantVisible), int(data->WantTextInput),
                     unsigned(g.InputTextState.ID), unsigned(g.ActiveId), unsigned(g.InputTextState.Flags), static_cast<void*>(SDL_GetKeyboardFocus()));
     if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && secret != g_secret_input) {
         const bool was_active = SDL_TextInputActive(window);
-        if (was_active) SDL_StopTextInput(window);
-        if (secret) {
-            const SDL_PropertiesID props = SDL_CreateProperties();
-            SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
-            SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
-            SDL_StartTextInputWithProperties(window, props);
-            SDL_DestroyProperties(props);
-        } else {
-            SDL_StartTextInput(window);
-        }
-        // (The keyboard keeps the last field's kind until its input restarts.)
-        android_restart_text_input();
+        start_text_input(window, secret);
         std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : "a text", was_active ? " restarted" : "");
         std::fflush(stdout);
         g_secret_input = secret;
@@ -1541,6 +1537,39 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
 }
 #endif
 } // namespace
+
+bool password_field_active(const ImGuiContext& g) {
+    return g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId && (g.InputTextState.Flags & ImGuiInputTextFlags_Password) != 0;
+}
+
+void start_text_input(SDL_Window* window, bool secret) {
+    if (!window) return;
+    if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
+#ifdef SDL_PLATFORM_ANDROID
+    if (secret) {
+        const SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
+        SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+        SDL_StartTextInputWithProperties(window, props);
+        SDL_DestroyProperties(props);
+    } else {
+        SDL_StartTextInput(window);
+    }
+    // (The keyboard keeps the last field's kind until its input restarts.)
+    android_restart_text_input();
+#else
+    (void)secret;
+    SDL_StartTextInput(window);
+#endif
+}
+
+bool screen_keyboard_visible() {
+#ifdef SDL_PLATFORM_ANDROID
+    return g_keyboard_visible;
+#else
+    return false;
+#endif
+}
 
 void note_screen_keyboard(bool shown) {
 #ifdef SDL_PLATFORM_ANDROID
@@ -1564,17 +1593,7 @@ void reopen_text_input(SDL_Window* window, float x, float y) {
     const float line = std::max(ime.InputLineHeight, 1.0f);
     if (y < ime.InputPos.y - line * 0.75f || y > ime.InputPos.y + line * 1.75f) return;
     (void)x;
-    if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
-    if (g_secret_input) {
-        const SDL_PropertiesID props = SDL_CreateProperties();
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
-        SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
-        SDL_StartTextInputWithProperties(window, props);
-        SDL_DestroyProperties(props);
-    } else {
-        SDL_StartTextInput(window);
-    }
-    android_restart_text_input();
+    start_text_input(window, g_secret_input);
     std::printf("text input: the system keyboard again (a tap on the field after the keyboard was put away)\n");
     std::fflush(stdout);
 #else
