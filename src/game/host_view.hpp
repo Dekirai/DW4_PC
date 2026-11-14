@@ -348,6 +348,19 @@ void frame_stats_step(double ms);
 // (screen2.hpp): its time and whether it drew and swapped its surface.
 void frame_stats_screen2(double ms, bool swapped);
 
+// ---- The F1 menu's picture hooks (test runs only, docs/CONSOLE_MENU.md:
+// the proof that the PC's F1 menu stays as it was): DW4_MENU_EXPAND=1 every
+// collapsing header and tree node of F1 open, DW4_MENU_STILL=1 the live
+// values fixed (the frame time graph at 16.67 ms, "now 60 fps", the
+// texture counts, the play time and the Debug tab's frame 0). Set once by
+// game_main in a test run; off otherwise (the calls are then the same as
+// before).
+void set_menu_picture_hooks(bool expand, bool still);
+bool menu_still();
+// An F1 collapsing header / tree node's flags (ImGuiTreeNodeFlags): with
+// DW4_MENU_EXPAND also DefaultOpen.
+int f1_tree_flags(int flags = 0);
+
 // ---- The F1 menu's settings sections (inside the Settings tab)
 void settings_display_section(HostView& view);
 // Graphics: texture quality, filtering, LOD bias, sharpening, shadow

@@ -1857,6 +1857,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto& menu_tab = view.menu_tab;
         menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
         view.menu_section = std::getenv("DW4_MENU_SECTION") ? std::getenv("DW4_MENU_SECTION") : "";
+        // The PC F1 menu's picture proofs (test runs, docs/CONSOLE_MENU.md K0):
+        // DW4_MENU_EXPAND=1 every header open, DW4_MENU_STILL=1 the live
+        // values fixed, DW4_MENU_SCROLL=page:<n> or <px> the window scrolled
+        // there in every frame (stable from the second), logged as
+        // "menu-scroll: page n of m" (m: the last page).
+        int menu_scroll_page = -1;
+        float menu_scroll_px = -1.0f;
+        if (options.smoke_frames) {
+            dw4::game::set_menu_picture_hooks(std::getenv("DW4_MENU_EXPAND") != nullptr, std::getenv("DW4_MENU_STILL") != nullptr);
+            if (const char* scroll = std::getenv("DW4_MENU_SCROLL")) {
+                const std::string_view text(scroll);
+                if (text.rfind("page:", 0) == 0) menu_scroll_page = std::max(0, std::atoi(scroll + 5));
+                else menu_scroll_px = std::max(0.0f, float(std::atof(scroll)));
+            }
+        }
+        float menu_scroll_page_height = 0.0f; // the window's visible content height in the last frame
+        std::string menu_scroll_logged;
         // The second screen's panels in a test run (screen2.hpp; test runs
         // read no settings.ini): DW4_SCREEN2_OVERLAY=1 shows the overlay
         // window (the PC's form), DW4_SCREEN2_TAB=status|online|menu chooses
@@ -4328,7 +4345,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::SetNextWindowSize(ImVec2(std::min(room.x, dw4::game::ui_px(620.0f)), std::min(room.y, dw4::game::ui_px(560.0f))), cond);
                         ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), cond, ImVec2(0.5f, 0.5f));
                     }
+                    if (menu_scroll_page >= 0 || menu_scroll_px >= 0.0f)
+                        ImGui::SetNextWindowScroll(ImVec2(0.0f, menu_scroll_px >= 0.0f ? menu_scroll_px : float(menu_scroll_page) * menu_scroll_page_height));
                     ImGui::Begin("DW4 PC (F1)");
+                    if (menu_scroll_page >= 0) {
+                        // (The page height and the last page from this frame's window.)
+                        menu_scroll_page_height = ImGui::GetContentRegionAvail().y;
+                        const float max_y = ImGui::GetScrollMaxY();
+                        const int last = menu_scroll_page_height > 0 ? int(std::ceil(max_y / menu_scroll_page_height - 1e-3f)) : 0;
+                        const std::string line = "menu-scroll: page " + std::to_string(menu_scroll_page) + " of " + std::to_string(last);
+                        if (line != menu_scroll_logged) {
+                            menu_scroll_logged = line;
+                            std::cout << line << std::endl;
+                        }
+                    }
                     }
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
@@ -4466,7 +4496,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
                         dw4::game::settings_screen2_section(settings, settings_changed, view.menu_section);
-                        if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::CollapsingHeader("Save states", dw4::game::f1_tree_flags(ImGuiTreeNodeFlags_DefaultOpen))) {
                             ImGui::PushTextWrapPos(0.0f);
 #ifdef SDL_PLATFORM_ANDROID
                             ImGui::TextDisabled("Files: %s", state_dir.string().c_str());
@@ -4488,7 +4518,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::PopID();
                             }
                         }
-                        if (ImGui::CollapsingHeader("Mods")) {
+                        if (ImGui::CollapsingHeader("Mods", dw4::game::f1_tree_flags())) {
                             ImGui::TextDisabled("Folders in %s with a mod.ini; changes apply at the next start.", mods_root.string().c_str());
                             if (mods.empty()) ImGui::TextDisabled("No mods found.");
                             for (auto& mod : mods) {
@@ -4888,7 +4918,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("(randomizer runs: %zu)", profile.unlocked_randomizer.size());
                         }
-                        const std::int64_t minutes = profile.stat("play_minutes");
+                        const std::int64_t minutes = dw4::game::menu_still() ? 0 : profile.stat("play_minutes");
                         ImGui::TextDisabled("In-game time %lld h %02lld min (without loading).", (long long)(minutes / 60), (long long)(minutes % 60));
                         if (!achievements_on()) ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "Achievements are switched off (Settings).");
                         else if (last_gate != dw4::game::AchievementGate::open)
@@ -4915,7 +4945,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 }
                             const std::string header = std::string(dw4::game::achievement_category_name(cat)) + " (" + std::to_string(done) + "/" +
                                                        std::to_string(total) + ")###cat" + std::to_string(category);
-                            if (!ImGui::CollapsingHeader(header.c_str())) continue;
+                            if (!ImGui::CollapsingHeader(header.c_str(), dw4::game::f1_tree_flags())) continue;
                             if (!ImGui::BeginTable(("ach" + std::to_string(category)).c_str(), 3, ImGuiTableFlags_SizingStretchProp)) continue;
                             for (const auto& def : list) {
                                 if (def.category != cat) continue;
@@ -4944,8 +4974,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     if (ImGui::BeginTabItem("Debug", nullptr, tab_flags("Debug"))) {
                     ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
-                    ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
-                                renderer->mesh_count(), renderer->texture_count());
+                    ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)(dw4::game::menu_still() ? 0 : engine.frame()),
+                                items.size(), renderer->mesh_count(), dw4::game::menu_still() ? std::size_t(0) : renderer->texture_count());
                     static char stage[64] = "stagis10";
                     ImGui::InputText("##stage", stage, sizeof stage);
                     ImGui::SameLine();
@@ -4958,13 +4988,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                         p->on_ground ? 1 : 0);
                         }
                     }
-                    if (ImGui::CollapsingHeader("Unimplemented original behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (ImGui::CollapsingHeader("Unimplemented original behavior", dw4::game::f1_tree_flags(ImGuiTreeNodeFlags_DefaultOpen))) {
                         for (const auto& note : engine.notes()) ImGui::BulletText("%s (x%zu)", note.text.c_str(), note.count);
                     }
-                    if (ImGui::CollapsingHeader("Demo scripts")) {
+                    if (ImGui::CollapsingHeader("Demo scripts", dw4::game::f1_tree_flags())) {
                         for (const auto& line : engine.demo().describe()) ImGui::TextUnformatted(line.c_str());
                     }
-                    if (ImGui::CollapsingHeader("Log")) {
+                    if (ImGui::CollapsingHeader("Log", dw4::game::f1_tree_flags())) {
                         for (const auto& line : engine.log_lines()) ImGui::TextUnformatted(line.c_str());
                     }
                     ImGui::EndTabItem();

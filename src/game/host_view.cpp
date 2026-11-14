@@ -957,6 +957,19 @@ void pace_presents(HostView& view) {
     }
 }
 
+namespace {
+bool g_menu_expand = false, g_menu_still = false;
+} // namespace
+
+void set_menu_picture_hooks(bool expand, bool still) {
+    g_menu_expand = expand;
+    g_menu_still = still;
+}
+
+bool menu_still() { return g_menu_still; }
+
+int f1_tree_flags(int flags) { return g_menu_expand ? flags | ImGuiTreeNodeFlags_DefaultOpen : flags; }
+
 void settings_display_section(HostView& view) {
     auto& settings = view.settings;
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1002,17 +1015,21 @@ void settings_display_section(HostView& view) {
         }
         if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) view.settings_changed = true;
         ImGui::SameLine();
-        ImGui::TextDisabled("(now %.0f fps)", view.present_interval > 0 ? 1.0 / view.present_interval : 0.0);
+        ImGui::TextDisabled("(now %.0f fps)", g_menu_still ? 60.0 : view.present_interval > 0 ? 1.0 / view.present_interval : 0.0);
         ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
         {
+            // (DW4_MENU_STILL: a fixed graph, test runs' pictures.)
+            static std::array<float, 240> still{};
+            if (g_menu_still) still.fill(1000.0f / 60.0f);
+            const auto& frame_times = g_menu_still ? still : view.frame_times;
             float worst = 0, total = 0;
-            for (const float t : view.frame_times) {
+            for (const float t : frame_times) {
                 worst = std::max(worst, t);
                 total += t;
             }
             char overlay[96];
-            std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(view.frame_times.size()), worst);
-            ImGui::PlotLines("Frame time", view.frame_times.data(), int(view.frame_times.size()), int(view.frame_time_at % view.frame_times.size()),
+            std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(frame_times.size()), worst);
+            ImGui::PlotLines("Frame time", frame_times.data(), int(frame_times.size()), g_menu_still ? 0 : int(view.frame_time_at % frame_times.size()),
                              overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, ui_px(48)));
         }
         static const int sample_choices[] = {0, 2, 4, 8};
@@ -1109,7 +1126,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
                 for (const auto& name : index.other_encodings) names += (names.empty() ? "" : ", ") + name;
                 ImGui::TextDisabled("The pack also holds files for other devices (%s); %s uses its own.", names.c_str(), kThisMachine);
             }
-            if (!index.warnings.empty() && ImGui::TreeNode("pack_warnings", "%zu manifest warnings", index.warnings.size())) {
+            if (!index.warnings.empty() && ImGui::TreeNodeEx("pack_warnings", f1_tree_flags(), "%zu manifest warnings", index.warnings.size())) {
                 for (const auto& w : index.warnings) ImGui::BulletText("%s", w.c_str());
                 ImGui::TreePop();
             }
@@ -1170,7 +1187,7 @@ void settings_graphics_section(HostView& view, const TexturePackPanel& panel) {
             changed = true;
         }
         if (view.renderer) {
-            const auto s = view.renderer->texture_stats();
+            const auto s = g_menu_still ? GlRenderer::TextureStats{} : view.renderer->texture_stats();
             constexpr double mib = 1024.0 * 1024.0;
             ImGui::TextDisabled("In use: %zu game textures (%.0f MiB), %zu pack textures (%.0f MiB)%s. The least recently drawn "
                                 "textures make room when this fills up.",

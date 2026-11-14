@@ -179,6 +179,14 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_UI_SCALE", "DW4_TOUCH_UI", "DW4_FRAME_STATS",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
+        // the F1 menu's picture proofs and the console menu's test switches (docs/CONSOLE_MENU.md: the PC menu's
+        // headers open, its live values fixed, its scroll; the console menu's style, platform rules, start page,
+        // dialog, input mode, virtual pad, the lower screen's form on the PC, the Developer category, its trace
+        // and layout lines, and the menu script, whose virtual pad is a controller like a real one; presentation
+        // and the menus' input only, the cheats stay off online as always)
+        "DW4_MENU_EXPAND", "DW4_MENU_STILL", "DW4_MENU_SCROLL", "DW4_MENU_STYLE", "DW4_MENU_PLATFORM", "DW4_MENU_PAGE",
+        "DW4_MENU_DIALOG", "DW4_MENU_INPUT", "DW4_MENU_PAD", "DW4_MENU_LOWER", "DW4_MENU_DEVELOPER", "DW4_MENU_TRACE",
+        "DW4_MENU_LAYOUT_LOG", "DW4_MENU_SCRIPT",
         // the second screen's panels in a test run (screen2.hpp: the overlay window, its tab, the F1 menu there;
         // presentation only) and a provoked loss of the OpenGL context (game_main.cpp, context_loss_test: at given
         // frames, or Android's EGL context destroyed in the background; every GL object made again, presentation

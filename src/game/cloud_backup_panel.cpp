@@ -5,6 +5,7 @@
 #include "online/token_store.hpp"
 
 #include "app_paths.hpp"
+#include "host_view.hpp"
 
 #include "dw4/save_import.hpp"
 
@@ -201,7 +202,7 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
             confirm_revision_ = 0;
         }
         ImGui::EndDisabled();
-        if (!overview->history.empty() && ImGui::TreeNode("Earlier revisions##cloud")) {
+        if (!overview->history.empty() && ImGui::TreeNodeEx("Earlier revisions##cloud", f1_tree_flags())) {
             for (const auto& h : overview->history) {
                 ImGui::PushID(h.revision);
                 ImGui::Text("Revision %d, %s from %s", h.revision, when(h.uploaded_at).c_str(), h.device.empty() ? "an unnamed PC" : h.device.c_str());
