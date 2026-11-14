@@ -205,6 +205,49 @@ visit 3 from checkpoint 1179 with READY, still the host, one instance, 0 of 168 
 differs, the one the fix stage's W7e runs took once too. In the repeat the barrier came first (13 ms,
 `barrier_apart`). Not a matter of the merge: the relay and the client's resume are I1b's, main changed neither.
 
+*Corrected by the fix stage after the merge (below):* the `lag_leave` after `host_back` was no race. It came in every
+run of a host back after more than `Relay:LagLeaveSeconds` away (W7, W7c and W7d too, about 240 ms after `host_back`),
+since the slot's fill streak counted from the grace's start; only whether W7f's re-sent barrier came before it was
+chance. Fixed there (the relay restarts the streak's clock at `host_back`).
+
+## The fix stage after the merge (2026-11-14)
+
+The merge's review (four findings, each checked first: all four hold) and W7f's failed first run. Logs in `build/mg/`
+with `fx` in their names (scripts `fx_checks.sh`: det.sh and the save state suite; `marathon_fx.sh`: the scenarios).
+
+| Finding | Result | Test (fails without the change) | Commit |
+| --- | --- | --- | --- |
+| **W7f's first run, and a host back from his grace taken out by the lag rule** (should fix; I1a's, since 56898b29, also in main and the live server 0.1.9): `HostBack` cleared only `NeutralFill`; the host slot's fill streak counted from the grace's start, so with the grace over the next housekeeping (250 ms at most) took a host away longer than `LagLeaveSeconds` (10 s) out of his own sealed stage group (`lag_leave`, LEAVE, the guest led on alone), before a pad of his resumed client could come: every W7, W7c and W7d run of the earlier fix stage, and W7f whenever the housekeeping came before the re-sent barrier. Against 19.6.7's "back in time: play on". The merge's "race" fell short. | `HostBack` restarts the streak's clock (`SlotStream.RestartFillStreakClock`): the returned host has `LagLeaveSeconds` from his return to catch up; the streak's length stays (he counts as lagging until a pad of his is sealed in time); `lag_leave` and `reconnect_timeout` are counted now (the grace test's "no `lag_leave`" assertion read a counter nobody set); SEAMLESS 19.6.7 | `A_host_back_after_more_than_the_lag_limit_away_plays_on_and_the_lag_rule_counts_from_his_return` (15 s away, back, late pads: out at once without the change; caught up after 5 s he plays on; still late 10 s after his return he is taken out as any member); W7, W7c, W7d and W7f below | 2b009cee |
+| W7c's `!relay: (lag_out\|lagout\|member_lagout)` could never match: the relay logs that LEAVE as `lag_leave` (minor) | W7c, W7 and W7d expect `relay: host_back` and `!relay: lag_leave`, W7f `!relay: lag_leave` | the old relay logs `lag_leave` in every W7, W7c and W7d run (the earlier fix stage's world logs) | b33d2645 |
+| Main's test tool: `Languages::at_frame` runs every pass, its frame counts steps; in passes without a step (online, waiting for sealed ticks) `DW4_L10N_SWITCH` / `DW4_L10N_SWITCH_EVERY` switched again at the same frame (an even number undid the change, each switch read the pack again) (minor) | the schedule in the header-only `LanguageSwitches` (`src/game/language_switches.hpp`), whose `due()` answers each frame once; L10N.md | i18n's `test_language_switches` (fails without the once-per-frame rule); S22b with a in German and `DW4_L10N_SWITCH_EVERY=331` (a temporary copy, not committed): 64 switches at 64 frames (every multiple of 331 up to 21,184), each once, alternating (the review's run of the old code: 130 switches at the same 64 frames, two or three at each, so most changed nothing) | 176d1e50 |
+| Stale versions (minor, before the merge): the server README's `/world/enter` (`protocol (49)`, "below 49") and DW4R2 handshake (`49`), DEPLOY.md 5's `schema 10` | protocol 50, schema 14; also DEPLOY.md 9's migrate example and `RelayHub`'s comment | - | 5a7fd4d8 |
+
+Counter-checks: the relay test with `HostBack` without the restart fails (`unit_fx_host1_nofix.log`), the i18n test
+without the once-per-frame rule fails (`i18n_nofix.log`, "A pass without a step at the same frame switches nothing
+more").
+
+Checks (code of 5a7fd4d8; the first scenario batch ran on ebbe48bf with these changes uncommitted, the same files):
+
+- **Builds**: Release DEV=OFF with tests (`build/mg/rel`, `bld_rel_fx1.log`, `bld_rel_fx2.log` after the counter-check)
+  and DEV=ON with tests (`build/mg/dev`, `bld_dev_fx1.log`); no new warning.
+- **ctest**: 78/78 on both (`ctest_rel_fx1.log`, `ctest_dev_fx1.log`; i18n 140 checks).
+- **Server**: unit 561/561 (`unit_fx1.log`), integration 152 passed / 3 skipped (`it_fx1.log`, an own mysqld on 3691, shut
+  down by SQL).
+- **det.sh**: two DEV=OFF copies (`build/mg/off/dw4_fx_off.exe`, `dw4_fx_off_b.exe`, md5 26deec97), det.sh twice each
+  (8 runs): every run 4004f056 / audio 396cb219 (`det_fx1.log`, `work/dref/checks/det/det_fx1_*`).
+- **Save state suite**: 17/17 in English (`st_fx_en1.log`) and 17/17 with the German game text (`st_fx_de1.log`, every
+  case "game.tsv 4515 texts, 0 rejected").
+- **Scenarios** (real hidden clients, `marathon_fx.sh`, run.py `--parallel 1`, mysqld 3691, ports 59400-59599; client
+  DEV=ON md5 7ea1ce65, `build/mg/scen/dw4_mg_dev.exe`, the merge's client kept as `dw4_mg_dev_71496d63.exe`; the Android
+  workflow beside them; `marathon_fx.log`): W1, W7f, S22b (`scen_fx_smoke.log`), `ui home` (`scen_fx_uihome.log`), W7,
+  W7c, W7d (`scen_fx_w7.log`), W7f twice more (`scen_fx_w7f_a.log`, `scen_fx_w7f_b.log`) and the temporary S22bmix
+  (`scen_fx_mix.log`): all passed. W7f took `barrier_apart` all three times (22-30 ms after `host_back`, no
+  `lag_leave`); W7, W7c and W7d: `host_back`, the host stayed in his stage group (his delay rose to 5-6 while his client
+  caught up on 20 s and 46 s of ticks) until the scripts' end. The world logs show no desync, mismatch, resync, split,
+  `lag_leave` or exception.
+- Not run again: r25c (the change is host-side, in a test-only path; det.sh and the save state suite cover the engine)
+  and the l10n lint (neither the export nor game.tsv changed).
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
@@ -221,10 +264,11 @@ differs, the one the fix stage's W7e runs took once too. In the repeat the barri
 - From fix-019: the load gate on a quiet machine (no workflow beside it).
 - No automatic test: the pad latch when the F1 menu closes by its own request (UI script keys reach ImGui, not the game's
   pad) and the boss fight's go-along line; the prompt's ImGui hint lines (the goalong screenshots show the gate form's).
-- W7f's path depends on a race (the merge's first W7f run): a host who comes back after his grace in a sealed instance
-  can be taken out by the lag rule before his re-sent barrier arrives (the same JOIN in the end, by `lag_leave` and
-  `barrier_alone` instead of `barrier_apart`). Either the relay starts the slot's fill streak anew at `host_back` (the
-  resumed host gets `LagLeaveSeconds` before the lag rule) or W7f accepts both paths; not changed here.
+- The lag rule after `host_back` is fixed on this branch only (2b009cee); main and the live server 0.1.9 keep taking a
+  host back after more than 10 s out of his stage group until the 0.2.0 release.
+- To watch: each return restarts the host slot's lag clock, and 4 s of silence start a new grace; a host whose link
+  keeps dropping for a few seconds and coming back would stay in his stage group without a pad in time (the guests play
+  on, his Digimon stands). One absence is bounded by the grace, the sequence is not; no test makes it.
 - Later: a client flag in BARRIER for a barrier of a visit the member never loaded would let the relay decide it apart
   also when its tick lies inside what the new visit sealed (now the split after `Instances:BarrierReportSeconds`, the
   others stalled 5 s; it needs the old visit to have run shorter than the new one has when the member comes back).
@@ -238,6 +282,9 @@ differs, the one the fix stage's W7e runs took once too. In the repeat the barri
   59400-59599, `MG_LANG=de` for the German game text; `marathon.sh` batches, a batch ending in `_de` runs in German; the
   save state suite in `build/mg/st` with `ST_ENV` / `ST_RUNS`). German runs need `local/lang/de/game.tsv` (git-ignored,
   copied from the main repo) and `build/mg/scen/lang/de` (data/lang/de plus that game.tsv).
+- The fix stage after the merge: the same `build/mg/` scripts and builds; `fx_checks.sh` (det.sh on
+  `off/dw4_fx_off*.exe`, the save state suite on `off/dw4_fx_st.exe` in English and German), `marathon_fx.sh BATCH...`
+  (batches `fx_smoke`, `fx_uihome`, `fx_w7`, `fx_w7f_a`, `fx_w7f_b`; `fx_mix` needs the temporary `scenarios/S22bmix`).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the
