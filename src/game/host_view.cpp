@@ -135,6 +135,8 @@ bool host_event(HostView& view, const SDL_Event& event) {
     // tap in the window's top right corner does too, unless it lands on an
     // open menu's window (then ImGui gets it; the menus are the only things
     // touch works on, docs/ANDROID.md).
+    // (Typing for a text field of the second screen's panels: screen2.hpp.)
+    if (screen2_take_event(event)) return true;
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_AC_BACK && !event.key.repeat) {
         toggle_menu_by(view, "the Back key");
         return false;

@@ -71,6 +71,7 @@ bool g_drew_last = false;
 Clock::time_point g_last_frame;
 int g_wanted_sent = -1;
 int g_gl_errors = 0, g_frames = 0, g_swaps = 0;
+SDL_Window* g_text_window = nullptr;        // a lower text field has SDL's text input (the game window's)
 std::uint64_t g_digest = 0;                 // the last swapped picture's draw data (0: none)
 bool g_logged_failure = false;
 
@@ -93,6 +94,10 @@ void release_window_locked() {
 // The second ImGui context's end (its GL objects; the shared font atlas
 // stays the window's).
 void drop_imgui() {
+    if (g_text_window) {
+        SDL_StopTextInput(g_text_window);
+        g_text_window = nullptr;
+    }
     if (!g_imgui) return;
     ImGuiContext* top = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_imgui);
@@ -293,6 +298,20 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
     ImGui::NewFrame();
     if (draw) draw();
     ImGui::Render();
+    // A text field of the panels takes the game window's keyboard
+    // (screen2_take_event).
+    if (const bool wants = io.WantTextInput; wants != (g_text_window != nullptr)) {
+        if (wants) {
+            if (SDL_Window* window = SDL_GL_GetCurrentWindow()) {
+                SDL_StartTextInput(window);
+                g_text_window = window;
+                log_line("second screen: a text field takes the keyboard");
+            }
+        } else {
+            SDL_StopTextInput(g_text_window);
+            g_text_window = nullptr;
+        }
+    }
     const std::uint64_t digest = draw_digest(ImGui::GetDrawData(), width, height);
     bool swapped = false, failed = false;
     if (digest != g_digest || !shot.empty()) {
@@ -353,6 +372,40 @@ void screen2_device_reset() {
     destroy_surface_locked();
     g_digest = 0;
     if (g_window) log_line("second screen: made again after the lost OpenGL context");
+}
+
+bool screen2_take_event(const SDL_Event& event) {
+    if (!g_text_window || !g_imgui) return false;
+    if (!screen2_display().surface) {
+        // (The lower screen went while its field was active.)
+        SDL_StopTextInput(g_text_window);
+        g_text_window = nullptr;
+        return false;
+    }
+    ImGuiKey key = ImGuiKey_None;
+    if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+        switch (event.key.key) {
+        case SDLK_BACKSPACE: key = ImGuiKey_Backspace; break;
+        case SDLK_DELETE: key = ImGuiKey_Delete; break;
+        case SDLK_RETURN: key = ImGuiKey_Enter; break;
+        case SDLK_KP_ENTER: key = ImGuiKey_KeypadEnter; break;
+        case SDLK_ESCAPE: key = ImGuiKey_Escape; break;
+        case SDLK_TAB: key = ImGuiKey_Tab; break;
+        case SDLK_LEFT: key = ImGuiKey_LeftArrow; break;
+        case SDLK_RIGHT: key = ImGuiKey_RightArrow; break;
+        case SDLK_HOME: key = ImGuiKey_Home; break;
+        case SDLK_END: key = ImGuiKey_End; break;
+        default: return false; // (other keys: the game's, Back the menu's)
+        }
+    } else if (event.type != SDL_EVENT_TEXT_INPUT) {
+        return false;
+    }
+    ImGuiContext* top = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(g_imgui);
+    if (event.type == SDL_EVENT_TEXT_INPUT) ImGui::GetIO().AddInputCharactersUTF8(event.text.text);
+    else ImGui::GetIO().AddKeyEvent(key, event.type == SDL_EVENT_KEY_DOWN);
+    ImGui::SetCurrentContext(top);
+    return true;
 }
 
 void screen2_enter_background() {

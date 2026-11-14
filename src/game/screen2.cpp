@@ -406,6 +406,7 @@ void screen2_request(bool) {}
 bool screen2_frame(const std::function<void()>&, const std::function<void()>&, int, bool) { return false; }
 void screen2_device_reset() {}
 void screen2_enter_background() {}
+bool screen2_take_event(const SDL_Event&) { return false; }
 void screen2_shutdown() {}
 double screen2_seconds_since_touch() { return 1e9; }
 void screen2_request_shot(const std::string&) {}

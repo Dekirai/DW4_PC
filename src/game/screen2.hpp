@@ -22,6 +22,8 @@
 #include "online_ui.hpp"
 #include "settings.hpp"
 
+#include <SDL3/SDL_events.h>
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -131,6 +133,11 @@ void screen2_enter_background();
 // The game ends: the second ImGui context and the surface go (before the
 // window's ImGui context).
 void screen2_shutdown();
+// Typing for a text field of the lower screen (its window is not
+// focusable, so the system keyboard is the game window's): while one is
+// active the lower screen starts SDL's text input, and the window's text
+// and editing keys go to it here (true: taken; host_event, before ImGui).
+bool screen2_take_event(const SDL_Event& event);
 // Seconds since the last touch on the lower screen (1e9 without one).
 double screen2_seconds_since_touch();
 // The lower screen's picture as a BMP file at its next frame (test runs'
