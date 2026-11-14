@@ -133,8 +133,15 @@ std::string lower(std::string text) {
 }
 
 // The banner over every screen: the gate, a newer version, this PC's refusal.
+// (online_refusal_first: Android's refusal before anything else, as the
+// second screen's Online panel says it.)
 void banner(online::OnlineLobby& lobby) {
     using online::Gate;
+    if (online_refusal_first() && !lobby.refusal().empty()) {
+        wrapped_colored(kWarn, lobby.refusal());
+        ImGui::Spacing();
+        return;
+    }
     const auto gate = lobby.gate();
     if (gate != Gate::open && gate != Gate::unknown) {
         wrapped_colored(gate == Gate::checking ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled) : kWarn, lobby.gate_text());

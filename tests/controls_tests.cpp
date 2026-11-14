@@ -231,7 +231,8 @@ void menu_size() {
     check(s.ui_scale == 100, "a too small percent is 100");
 }
 // The second screen's panels (settings.ini [screen2]): auto, the Status tab
-// and no overlay by default, none of them written into a file without them.
+// and no overlay by default, none of them written into a file without them,
+// and gone again (with the section) once they are their defaults again.
 void second_screen() {
     Settings s = parsed("");
     check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status && !s.screen2_overlay, "[screen2] defaults");
@@ -244,9 +245,21 @@ void second_screen() {
     s.screen2_tab = Screen2Tab::online;
     s.screen2_overlay = false;
     s.store();
-    check(s.ini().get_or("screen2", "mode", "") == "auto" && s.ini().get_or("screen2", "tab", "") == "online" &&
-              s.ini().get_or("screen2", "overlay", "") == "false",
-          "[screen2] defaults again once they were set");
+    check(!s.ini().get("screen2", "mode") && s.ini().get_or("screen2", "tab", "") == "online" && !s.ini().get("screen2", "overlay"),
+          "[screen2] a key back at its default goes, the others stay");
+    s.screen2_tab = Screen2Tab::status;
+    s.store();
+    check(s.ini().text().find("[screen2]") == std::string::npos, "[screen2] the section goes with its last key");
+    {
+        Settings fresh = parsed("[window]\nwidth=1280\n");
+        const std::string before = (fresh.store(), fresh.ini().text());
+        fresh.screen2_mode = Screen2Mode::off;
+        fresh.store();
+        check(fresh.ini().get_or("screen2", "mode", "") == "off", "[screen2] off is written");
+        fresh.screen2_mode = Screen2Mode::automatic;
+        fresh.store();
+        check(fresh.ini().text() == before, "[screen2] off and on again: the file as before");
+    }
     s = parsed("[screen2]\nmode=sideways\ntab=map\n");
     check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status, "[screen2] unknown values stay the defaults");
 }

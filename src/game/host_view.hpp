@@ -38,6 +38,7 @@
 #include <vector>
 
 struct ImFont;
+struct ImGuiContext;
 
 namespace dw4::game {
 
@@ -318,6 +319,10 @@ void new_ui_frame(bool test_gamepad);
 // context (new_ui_frame does it for the window's; the second screen's context
 // takes them while the F1 menu shows there).
 void feed_menu_pad(HostView& view);
+// Whether player 1's controller holds any of the menus' keys now (a button,
+// the D-pad, a trigger or a stick off its centre): the second screen's F1
+// menu draws at once then, else every other pass.
+bool menu_pad_held(HostView& view);
 // A pad's input through the bindings in its family's binding space (a
 // GameCube pad on its original layout: 1:1).
 HostPadInput pad_input(const HostView& view, SDL_Gamepad* pad);
@@ -397,6 +402,18 @@ void reopen_text_input(SDL_Window* window, float x, float y);
 // (SDL's SCREEN_KEYBOARD_SHOWN / HIDDEN events: whether the keyboard is on
 // the screen now.)
 void note_screen_keyboard(bool shown);
+// Whether the system keyboard is on the screen (the last SHOWN / HIDDEN;
+// false on the PC).
+bool screen_keyboard_visible();
+// Whether the context's active item is a password field (an InputText with
+// ImGuiInputTextFlags_Password).
+bool password_field_active(const ImGuiContext& context);
+// SDL's text input on `window` (stopped first when it runs) for a field of
+// that kind: on Android a password field's (SDL's TEXT_PASSWORD_HIDDEN, no
+// autocorrection, so the keyboard offers no suggestions and learns nothing)
+// or a text field's, with the keyboard's input restarted so it takes the
+// kind. The top screen's fields and the second screen's share it.
+void start_text_input(SDL_Window* window, bool secret);
 
 // ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
 // The menu button's rectangle in window pixels: a small square in the top

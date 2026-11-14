@@ -138,6 +138,10 @@ void screen2_shutdown();
 // active the lower screen starts SDL's text input, and the window's text
 // and editing keys go to it here (true: taken; host_event, before ImGui).
 bool screen2_take_event(const SDL_Event& event);
+// The lower screen stopped drawing (its surface or display went, [screen2]
+// mode off) while one of its fields had the keyboard: the keyboard goes and
+// the field is left (the host calls it every frame without a lower screen).
+void screen2_release_input();
 // Seconds since the last touch on the lower screen (1e9 without one).
 double screen2_seconds_since_touch();
 // The lower screen's picture as a BMP file at its next frame (test runs'

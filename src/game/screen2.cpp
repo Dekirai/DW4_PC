@@ -160,7 +160,9 @@ void online_panel(const Screen2Online& online, Screen2Place place, Screen2Menu* 
         return;
     }
     ImGui::SeparatorText("Lobby");
-    if (!lobby->refusal().empty()) {
+    // (The reasons in F1 > Online's order: Android's refusal first, then the
+    // server's state; the PC's CPU refusal once logged in.)
+    if (online_refusal_first() && !lobby->refusal().empty()) {
         offline(lobby->refusal().c_str());
     } else if (!lobby->opened()) {
         offline("Not connected: nothing is sent to the server until you connect.");
@@ -173,6 +175,8 @@ void online_panel(const Screen2Online& online, Screen2Place place, Screen2Menu* 
         online_page("Log in...");
     } else {
         ImGui::Text("Logged in as %s", lobby->account().c_str());
+        if (!lobby->refusal().empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "This PC cannot play online: %s", lobby->refusal().c_str());
         if (const auto& counts = lobby->world_counts())
             ImGui::TextDisabled("Online now: %d players, %d instances", counts->players, counts->instances);
         if (const auto& friends = lobby->friends_online())
@@ -251,7 +255,7 @@ void menu_panel(Screen2Menu& menu) {
         if (ImGui::Button("Open the menu", ImVec2(width, ImGui::GetFrameHeight() * 2.0f))) menu.ask = Screen2Menu::Ask::open;
         ImGui::TextDisabled(menu.pauses ? "The game pauses while the menu is open (F1 > Settings), as on the top screen."
                                         : "The game goes on while the menu is open (F1 > Settings).");
-        ImGui::TextDisabled("Back, the touch button on the top screen or F1 open it up there.");
+        ImGui::TextDisabled("Back or the touch button open it on the top screen.");
     }
     ImGui::PopTextWrapPos();
 }
@@ -407,6 +411,7 @@ bool screen2_frame(const std::function<void()>&, const std::function<void()>&, i
 void screen2_device_reset() {}
 void screen2_enter_background() {}
 bool screen2_take_event(const SDL_Event&) { return false; }
+void screen2_release_input() {}
 void screen2_shutdown() {}
 double screen2_seconds_since_touch() { return 1e9; }
 void screen2_request_shot(const std::string&) {}

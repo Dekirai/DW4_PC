@@ -19,6 +19,7 @@
 #include <android/native_window_jni.h>
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
+#include <imgui_internal.h>
 #include <jni.h>
 
 #include <SDL3/SDL.h>
@@ -72,6 +73,8 @@ Clock::time_point g_last_frame;
 int g_wanted_sent = -1;
 int g_gl_errors = 0, g_frames = 0, g_swaps = 0;
 SDL_Window* g_text_window = nullptr;        // a lower text field has SDL's text input (the game window's)
+bool g_text_secret = false;                 // ... a password field's kind
+ImGuiID g_text_field = 0;                   // ... for that field (the lower context's ActiveId)
 std::uint64_t g_digest = 0;                 // the last swapped picture's draw data (0: none)
 bool g_logged_failure = false;
 
@@ -98,6 +101,8 @@ void drop_imgui() {
         SDL_StopTextInput(g_text_window);
         g_text_window = nullptr;
     }
+    g_text_secret = false;
+    g_text_field = 0;
     if (!g_imgui) return;
     ImGuiContext* top = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_imgui);
@@ -213,7 +218,8 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
         dpi = g_display.dpi > 0 ? g_display.dpi : 160;
     }
     // Every other frame (30 a second beside a 60 Hz game) unless something
-    // waits: a touch (and half a second after it), the F1 menu shown here.
+    // waits: a touch (and half a second after it), `now` (the F1 menu here
+    // while the controller moves through it).
     if (!now && !pending && screen2_seconds_since_touch() > 0.5 && g_drew_last) {
         g_drew_last = false;
         return false;
@@ -278,13 +284,26 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
     io.DeltaTime = std::max(float(std::chrono::duration<double>(start - g_last_frame).count()), 1e-4f);
     g_last_frame = start;
     std::string shot;
+    bool tapped = false; // a finger came down this frame
     {
         std::lock_guard info(g_info_lock);
         for (const Touch& touch : g_touches) {
             io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+            if (touch.action == 3) {
+                // A cancelled touch (Android took the gesture over, the
+                // palm rejection, the panels went while it lasted) is no
+                // click: the pointer leaves first, so the release lands on
+                // nothing.
+                io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                continue;
+            }
             io.AddMousePosEvent(touch.x, touch.y);
-            if (touch.action == 0) io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-            if (touch.action >= 2) {
+            if (touch.action == 0) {
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                tapped = true;
+            }
+            if (touch.action == 2) {
                 io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
                 // (No hover stays behind a finger.)
                 io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
@@ -299,18 +318,30 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
     if (draw) draw();
     ImGui::Render();
     // A text field of the panels takes the game window's keyboard
-    // (screen2_take_event).
-    if (const bool wants = io.WantTextInput; wants != (g_text_window != nullptr)) {
-        if (wants) {
-            if (SDL_Window* window = SDL_GL_GetCurrentWindow()) {
-                SDL_StartTextInput(window);
-                g_text_window = window;
-                log_line("second screen: a text field takes the keyboard");
-            }
-        } else {
-            SDL_StopTextInput(g_text_window);
-            g_text_window = nullptr;
+    // (screen2_take_event), with the field's kind as on the top screen (a
+    // password field's: no suggestions, nothing learned); again when the
+    // kind changes, and when a tap on a field follows a keyboard the player
+    // put away (Back stops SDL's text input; ImGui's field stays active).
+    if (io.WantTextInput) {
+        SDL_Window* window = g_text_window ? g_text_window : SDL_GL_GetCurrentWindow();
+        const bool secret = password_field_active(*g_imgui);
+        const ImGuiID field = g_imgui->ActiveId;
+        const bool away = !window || !SDL_TextInputActive(window) || !screen_keyboard_visible();
+        const bool start = !g_text_window || secret != g_text_secret || (away && (tapped || field != g_text_field));
+        if (window && start) {
+            const bool again = g_text_window != nullptr;
+            start_text_input(window, secret);
+            std::printf("second screen: a %s field takes the keyboard%s\n", secret ? "password" : "text", again ? " (again)" : "");
+            std::fflush(stdout);
         }
+        g_text_window = window;
+        g_text_secret = secret;
+        g_text_field = field;
+    } else if (g_text_window) {
+        SDL_StopTextInput(g_text_window);
+        g_text_window = nullptr;
+        g_text_secret = false;
+        g_text_field = 0;
     }
     const std::uint64_t digest = draw_digest(ImGui::GetDrawData(), width, height);
     bool swapped = false, failed = false;
@@ -374,12 +405,30 @@ void screen2_device_reset() {
     if (g_window) log_line("second screen: made again after the lost OpenGL context");
 }
 
+void screen2_release_input() {
+    if (!g_text_window) return;
+    // The lower screen went (its surface, [screen2] mode off, no display)
+    // while one of its fields had the keyboard: the keyboard goes and the
+    // field is left, so neither the keyboard stays open over the top screen
+    // nor the field takes it again when the lower screen comes back.
+    SDL_StopTextInput(g_text_window);
+    g_text_window = nullptr;
+    g_text_secret = false;
+    g_text_field = 0;
+    if (g_imgui) {
+        ImGuiContext* top = ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(g_imgui);
+        ImGui::ClearActiveID();
+        ImGui::SetCurrentContext(top);
+    }
+    log_line("second screen: its text field let go of the keyboard (the lower screen went)");
+}
+
 bool screen2_take_event(const SDL_Event& event) {
     if (!g_text_window || !g_imgui) return false;
     if (!screen2_display().surface) {
         // (The lower screen went while its field was active.)
-        SDL_StopTextInput(g_text_window);
-        g_text_window = nullptr;
+        screen2_release_input();
         return false;
     }
     ImGuiKey key = ImGuiKey_None;

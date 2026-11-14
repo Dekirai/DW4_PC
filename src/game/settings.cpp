@@ -457,10 +457,19 @@ void Settings::store() {
     ini_.set("gamepad", "wii_driver", wii_driver == WiiDriver::on ? "on" : wii_driver == WiiDriver::off ? "off" : "auto");
     ini_.set("gamepad", "menu_buttons", menu_buttons == MenuButtons::bindings ? "bindings" : "layout");
     ini_.set_bool("gamepad", "gc_adapter", gc_adapter);
-    if (screen2_mode != Screen2Mode::automatic || ini_.get("screen2", "mode"))
-        ini_.set("screen2", "mode", screen2_mode == Screen2Mode::off ? "off" : "auto");
-    if (screen2_tab != Screen2Tab::status || ini_.get("screen2", "tab")) ini_.set("screen2", "tab", screen2_tab_id(screen2_tab));
-    if (screen2_overlay || ini_.get("screen2", "overlay")) ini_.set_bool("screen2", "overlay", screen2_overlay);
+    // [screen2]: a key only while it is not its default, the section only
+    // with a key in it (a PC's or a device's settings.ini without them stays
+    // as it was, also after a setting went back to its default).
+    {
+        const auto keep = [this](const char* key, bool changed, std::string_view value) {
+            if (changed) ini_.set("screen2", key, value);
+            else ini_.remove("screen2", key);
+        };
+        keep("mode", screen2_mode != Screen2Mode::automatic, screen2_mode == Screen2Mode::off ? "off" : "auto");
+        keep("tab", screen2_tab != Screen2Tab::status, screen2_tab_id(screen2_tab));
+        keep("overlay", screen2_overlay, "true");
+        ini_.remove_section_if_empty("screen2");
+    }
     if (thor_style != ThorStyle::automatic || ini_.get("gamepad", "thor_style"))
         ini_.set("gamepad", "thor_style", thor_style == ThorStyle::standard ? "standard" : thor_style == ThorStyle::xbox ? "xbox" : "auto");
     {
