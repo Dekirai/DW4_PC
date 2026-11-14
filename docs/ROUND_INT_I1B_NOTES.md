@@ -169,7 +169,7 @@ the relays' world logs show no desync, mismatch, resync or exception beyond S11a
 ## How to run
 
 - The fix stage: `build/fx/` holds copies of `build/ii1b/`'s scripts (`utest.sh`, `itest.sh`, `scen.sh`, `marathon*.sh`,
-  the save state suite in `build/fx/st`); the builds stay in `build/ii1b/rel` and `build/ii1b/dev` (`build\ii1bld.cmd`).
+  the save state suite in `build/fx/st`); the builds stay in `build/ii1b/rel` and `build/ii1b/dev` (`build\ii1b\bld.cmd`).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the
