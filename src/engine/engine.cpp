@@ -726,10 +726,12 @@ Node* Engine::find_named_node(Node* from, std::string_view name) {
 // after the reload's start); the directories go with beSystem's next update
 // (begin_stage_load).
 void Engine::reset_modules() {
-    for (auto& m : managers_) m->clear_stage(*this);
     // Seamless co-op: the members' own window copies go with the stage
     // (online_scenes.cpp; the parents they hang under are still loaded).
+    // First: a window copy hangs under its layer group, which the layer
+    // control's reset lets go (LayerManager::clear_stage).
     clear_scene_copies();
+    for (auto& m : managers_) m->clear_stage(*this);
     schedule_.clear();
     messenger_.clear();
     demo_.clear();

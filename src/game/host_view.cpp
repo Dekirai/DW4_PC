@@ -345,6 +345,13 @@ PictureMade make_picture(HostView& view, engine::Engine& engine, int steps, bool
     // frames) shows the last update's picture again, without a traversal
     // (only a catch-up that left no draw list draws it).
     if (engine.held() && steps > 0 && (picture.items_current || !view.draw)) return PictureMade::kept;
+    // The module reload's held fields (a stage change's teardown, Engine::
+    // step): the outgoing stage's managers are reset and its scene graph is
+    // half gone until the next stage's load starts, and the screen keeps its
+    // last picture (present_scene's kept picture). Nothing is traversed then,
+    // also in a pass without a step (a display faster than the game, a pass
+    // the step clock left without one) or after a catch-up.
+    if (engine.held() && !engine.presenting()) return PictureMade::kept;
     if (!view.draw) {
         engine.traverse_scene();
         return PictureMade::traversed;

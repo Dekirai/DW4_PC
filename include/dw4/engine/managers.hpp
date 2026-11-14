@@ -113,6 +113,7 @@ private:
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<std::string> groups_;
     std::unique_ptr<Node> layer_switch_;
+    Node* layer_parent_ = nullptr; // the node layer_switch_ hangs under (a stage scene's LAYERPARENT)
     std::vector<std::unique_ptr<Node>> group_nodes_;
     bool ordered_{};
 };
