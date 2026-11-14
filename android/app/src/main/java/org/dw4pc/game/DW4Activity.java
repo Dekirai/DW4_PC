@@ -213,6 +213,18 @@ public class DW4Activity extends SDLActivity {
         }
     }
 
+    /**
+     * Called by the game (JNI, start_text_input) when another field takes the
+     * keyboard that is up: SDL's own show task again (its text edit at the
+     * field's area, with the field's input type, focused, the keyboard
+     * shown), then the input's restart (restartTextInput), without the hide
+     * of a stop that would leave the keyboard away.
+     */
+    public static void showTextInputAgain(int inputType, int x, int y, int w, int h) {
+        SDLActivity.showTextInput(inputType, x, y, w, h);
+        restartTextInput();
+    }
+
     /** The keyboard up and the text field's place above it (see restartTextInput). */
     private static void keepTextFieldInSight(Context context) {
         final View edit = mTextEdit;

@@ -1623,19 +1623,34 @@ bool password_field_active(const ImGuiContext& g) {
 
 void start_text_input(SDL_Window* window, bool secret) {
     if (!window) return;
-    if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
 #ifdef SDL_PLATFORM_ANDROID
+    const SDL_PropertiesID props = SDL_CreateProperties();
     if (secret) {
-        const SDL_PropertiesID props = SDL_CreateProperties();
         SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN);
         SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
-        SDL_StartTextInputWithProperties(window, props);
-        SDL_DestroyProperties(props);
-    } else {
-        SDL_StartTextInput(window);
     }
-    // (The keyboard keeps the last field's kind until its input restarts.)
-    android_restart_text_input();
+    if (SDL_TextInputActive(window) && SDL_ScreenKeyboardShown(window)) {
+        // The keyboard is up: it takes the new field's kind and place where
+        // it is. A stop and a start would hide it for good: SDL's hide runs
+        // later on Android's main thread while its "shown" flag still says
+        // shown, so the start shows nothing (seen on the emulator: Tab from a
+        // text field to a password field, and back). SDL keeps the new
+        // properties; SDL's own show task, called again, puts its text edit at
+        // the field's area with the field's input type (as SDL 3.4's
+        // Android_ShowScreenKeyboard makes it for these properties: a text
+        // field 0x3c001, a password field 0x20081), and the input restarts.
+        SDL_StartTextInputWithProperties(window, props);
+        SDL_Rect area{};
+        int cursor = 0;
+        SDL_GetTextInputArea(window, &area, &cursor);
+        android_show_text_input(secret ? 0x20081 : 0x3c001, area.x, area.y, area.w, area.h);
+    } else {
+        if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
+        SDL_StartTextInputWithProperties(window, props);
+        // (The keyboard keeps the last field's kind until its input restarts.)
+        android_restart_text_input();
+    }
+    SDL_DestroyProperties(props);
 #else
     (void)secret;
     SDL_StartTextInput(window);

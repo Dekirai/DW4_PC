@@ -128,6 +128,18 @@ void android_set_frame_rate(float hz) {
     env->DeleteLocalRef(activity);
 }
 
+void android_show_text_input(int input_type, int x, int y, int w, int h) {
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return;
+    jclass type = env->GetObjectClass(activity);
+    if (jmethodID method = type ? env->GetStaticMethodID(type, "showTextInputAgain", "(IIIII)V") : nullptr)
+        env->CallStaticVoidMethod(type, method, jint(input_type), jint(x), jint(y), jint(w), jint(h));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (type) env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+}
+
 void android_restart_text_input() {
     auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
     auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
