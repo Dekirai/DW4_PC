@@ -50,6 +50,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dw4::game::online {
@@ -429,6 +430,13 @@ public:
     // Development builds' scenario hook (DW4_ONLINE_TEST_CUT_AT_PARK, W7e): the
     // link is lost here and now, as a cut cable would lose it.
     void test_cut(double now) { lose_connection(now); }
+    // DW4_ONLINE_TEST_CUT_AT_ANSWER (development builds, W7f; round I1b's
+    // integration): armed, the link is lost when the next BARRIER_OK comes
+    // while parked, and that answer with it (W7e's race on demand: the relay
+    // decided the barrier with this member, which never learns it). The
+    // caller takes the fired cut to time its reconnect.
+    void test_arm_answer_cut() { test_answer_cut_armed_ = true; }
+    bool test_take_answer_cut() { return std::exchange(test_answer_cut_fired_, false); }
     // Development builds' scenario hooks of round I1b (the online script's
     // testhook, goalong closed): INTENT kind test asks a relay with
     // World:TestHooks for a TEST event in the own sealed stage group (false
@@ -706,6 +714,7 @@ private:
     double host_away_until_ = -1;
     std::uint32_t ended_by_ = 0;      // WORLD_NOTICE ended's member: its "left." right after says nothing new
     double join_toast_due_ = -1;      // the JOIN's toast waits for INSTANCE_INFO until then (-1: none)
+    bool test_answer_cut_armed_ = false, test_answer_cut_fired_ = false; // (test_arm_answer_cut, development builds)
     std::uint8_t own_box_ = 1;
     // Round I1b: go along (session_go.cpp).
     std::vector<GoOffer> go_offers_;

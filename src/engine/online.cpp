@@ -165,6 +165,10 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round I1a's integration: W7e's link cut at the barrier (DW4_ONLINE_DEV builds only, online_run.cpp: the
         // relay decides the barrier without the lost member, the simulation is the same)
         "DW4_ONLINE_TEST_CUT_AT_PARK",
+        // round I1b's integration: W7f's link cut as the barrier's answer comes, the answer lost with it (DW4_ONLINE_DEV builds
+        // only, online_run.cpp, session.cpp: the relay decides the barrier with the member, which never hears it; the
+        // simulation is the same)
+        "DW4_ONLINE_TEST_CUT_AT_ANSWER",
         // round I1b's W10c: a removed member's client that never answers JOIN_REQ home (DW4_ONLINE_DEV builds only,
         // session.cpp: the relay detaches its stage group; the point of the test)
         "DW4_ONLINE_TEST_IGNORE_HOME",

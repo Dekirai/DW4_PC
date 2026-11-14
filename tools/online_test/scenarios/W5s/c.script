@@ -1,0 +1,10 @@
+# W5s, c (a moderator, k5): takes the gate while a's Private instance runs in stag0101; its gate form lists a's row (the staff
+# bypass), the cursor on New instance; autochoice first chooses a's row: an audited staff join.
+campaign until stage=stagml11,control
+idle until epoch>=@150
+explore mate00 yes until stage=stag0101,control
+log c in stag0101
+idle until present=2,sealed>=300 fail frames>=6000
+log c joined a as staff
+idle until frames>=900
+disk 8 until stage=stagml11,control

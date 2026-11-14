@@ -190,7 +190,8 @@ public partial class HubLogicTests
     /// resumes into the new visit, its engine still at the old barrier, and sends that barrier again under the new visit; b never
     /// reports it, so it is split off and decided alone: a JOIN of b's stage group. Its BARRIER_OK names the instance and visit a's
     /// client is in; with instance 0 the client dropped it, then the state, never sent READY and ended in an instance of its own after
-    /// join_ready_timeout.
+    /// join_ready_timeout. (Here the old barrier's tick lies inside what the new visit sealed: the split after
+    /// Instances:BarrierReportSeconds; past it, the next test, the barrier is decided apart at once.)
     /// </summary>
     [Fact]
     public void A_member_that_resumed_into_the_next_visit_and_re_sent_its_old_barrier_gets_the_join_under_its_visit()
@@ -234,6 +235,47 @@ public partial class HubLogicTests
         Assert.Equal((BarrierDecision.Join, next.Id, next.Visit), (ok.Decision, ok.NewInst, ok.NewVisit));
         Assert.Equal((next.Id, next.Visit), (ok.Inst, ok.Visit)); // (the client's own visit: it takes the answer, then the state)
         Assert.Same(next, h.Mem("a").Joining!.Target);
+    }
+
+    /// <summary>
+    /// W7e's race as the real runs had it: the old visit ran far longer than the new one has when a comes back, so a's re-sent barrier
+    /// lies past every tick b's stage group sealed: another timeline's barrier, decided apart at once (a LEAVE, b told "a plays apart",
+    /// a JOIN of b's group under a's visit), without the barrier's stall for b and without a desync's split.
+    /// </summary>
+    [Fact]
+    public void A_resumed_members_old_barrier_past_the_sealed_ticks_is_decided_apart_at_once_without_stalling_the_others()
+    {
+        var h = SealedPair(out _, stage: "stag0201");
+        h.Joinable("a");
+        h.Seal(6000);
+        var first = h.I("a");
+        var tick = first.NextSeal - 1;
+        h.Barrier("a", "stag0202", tick: tick);
+        h.Barrier("b", "stag0202", tick: tick);
+        var next = h.I("b");
+        Assert.Same(next, h.Mem("a").Instance);
+        h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
+        h.Advance(2100);
+        h.Housekeep();
+        h.Snapshot("b");
+        h.Joinable("b");
+        h.Seal(1000);
+        Assert.True(next.Sealing);
+        Assert.True(tick > next.NextSeal + RoomHub.StaleBarrierTicks);
+        var pa = h.Connect("a", 0);
+        Assert.Equal((next.Id, next.Visit), (pa.Last(Msg.Welcome, WelcomeMsg.Parse).Inst, pa.Last(Msg.Welcome, WelcomeMsg.Parse).Visit));
+        h.Barrier("a", "stag0202", tick: tick + 1);
+        // At once: no barrier collected, b's group seals on; a leaves it, b is told; a's JOIN of b's group under a's visit.
+        Assert.Null(next.Barrier);
+        Assert.True(next.Sealing);
+        Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("barrier_apart"));
+        Assert.False(h.Hub.Counters.ContainsKey("barrier_split"));
+        var ok = h.Decision("a");
+        Assert.Equal((BarrierDecision.Join, next.Id, next.Visit), (ok.Decision, ok.NewInst, ok.NewVisit));
+        Assert.Equal((next.Id, next.Visit), (ok.Inst, ok.Visit));
+        Assert.Contains(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart && n.Member == h.Mem("a").Id);
+        h.Seal(300);
+        Assert.Contains(h.P("b").Ticks(), t => t.Rec.Events.Any(e => e.Type == Ev.Leave && e.Slot == 0));
     }
 
     /// <summary>A member taken out of its stage group while it stays in the instance (lag, 6.9) leaves no figure without a word: the

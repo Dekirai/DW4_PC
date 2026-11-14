@@ -1,0 +1,18 @@
+# W7f (W7e with the cut at the barrier's answer), host a (k10): with b on stag0101's matz02 (both parked at the barrier) its link
+# is cut for 20 s as the barrier's answer comes (the client's DW4_ONLINE_TEST_CUT_AT_ANSWER: the answer is lost with it). a waits at the entrance until b joined: the route starts there. After the join
+# a stays (round r2b: a's script ended at 600 sealed ticks and its quit ended the instance before b's 900).
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+idle until present=2,sealed>=600
+log b joined
+route {route:stag0101_west}
+mat matz02 yes 2 until stage=stag0102,control or epoch>=@330
+log a arrived in stag0102
+wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11
+log a joined b there, still host
+# (The int-i1b test matrix: b.script waits until @300 since 0cca6307, so a stays until @330 too; with frames>=1500
+# alone a quit 35 s after its join, at about @255, the instance ended and b, still in its @300 wait, went home.)
+wander 330 140 15 until frames>=1500,epoch>=@330
+log a stayed for b

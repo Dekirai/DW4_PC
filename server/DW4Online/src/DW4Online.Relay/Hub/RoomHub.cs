@@ -1073,6 +1073,15 @@ public sealed partial class RoomHub
             Decide(g, now);
             return;
         }
+        // A BARRIER past every tick the sealed stage group sealed is of another timeline than this visit's: the member resumed into a
+        // visit it never loaded (its link went with the visit's BARRIER_OK) and sends the barrier its engine still stands at (W7e's
+        // race). It is none of the group's: decided alone at once, no stall for the others (before: a desync's split after
+        // Instances:BarrierReportSeconds, the others frozen meanwhile).
+        if (i.Barrier is null && i.Mode == InstanceMode.Sealed && msg.Tick > i.NextSeal + StaleBarrierTicks)
+        {
+            BarrierApart(i, m, msg, now);
+            return;
+        }
         if (i.Barrier is null)
         {
             i.Barrier = new BarrierCollect(msg.Tick, msg.Stage, msg.Point, msg.AliveMask, msg.PresentMask, msg.ContextHash, now);
@@ -1091,6 +1100,35 @@ public sealed partial class RoomHub
         }
         i.Barrier.Add(m.Slot, m, msg);
         if (i.Seats.Where(x => x.Member.Connected).All(x => i.Barrier.Reports.ContainsKey(x.Slot))) Park(i, now);
+    }
+
+    /// <summary>How far past the stage group's next sealed tick a member's BARRIER must lie to be another timeline's (a member of a
+    /// sealed group executes only sealed ticks, so its barrier lies before <see cref="HubInstance.NextSeal"/>; two seconds of
+    /// margin).</summary>
+    public const uint StaleBarrierTicks = 120;
+
+    /// <summary>
+    /// <paramref name="m"/>'s BARRIER lies past every tick its sealed stage group sealed (round I1b's integration, W7e): its engine
+    /// plays another timeline (it resumed into a visit it never loaded and parks at the old visit's barrier). It leaves the stage
+    /// group by LEAVE (the others are told it plays apart) and its barrier is decided alone, answered under the instance and visit
+    /// the BARRIER named (a JOIN of the group when the stage is the group's).
+    /// </summary>
+    private void BarrierApart(HubInstance i, HubMember m, BarrierMsg msg, long now)
+    {
+        var slot = m.Slot;
+        Count("barrier_apart");
+        Note("barrier_apart", i, ("member", m.Index), ("slot", slot), ("tick", msg.Tick), ("sealed_to", i.NextSeal), ("to", msg.Stage));
+        var lone = new HubInstance(msg.Inst) { Stage = i.Stage, Visit = i.Visit, ContextHash = msg.ContextHash, Ended = true };
+        var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now,
+            Alive = msg.AliveMask, PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance,
+            PlanId = msg.PlanId == BarrierMsg.PlanNewInstance ? (ushort)0 : msg.PlanId };
+        g.Members.Add(new Arrival(m, slot, msg.Carry));
+        StampLeave(i, slot, now);
+        m.Arrival = g;
+        m.PreviousInstanceId = i.Id;
+        TellApart(i, m);
+        _sealer?.Invoke();
+        Decide(g, now);
     }
 
     /// <summary>Every connected member of the instance reported its barrier (or the wait ran out): the group parks.</summary>

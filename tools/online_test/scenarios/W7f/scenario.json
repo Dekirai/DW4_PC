@@ -1,0 +1,35 @@
+{
+  "desc": "W7e's race on demand (round I1b's integration): a and b park together, the relay decides the sealed NEW of both, and a's link goes as its BARRIER_OK comes (DW4_ONLINE_TEST_CUT_AT_ANSWER: the answer is lost with it). b loads (SNAPSHOT_ASK makes it the uploader) and plays on; a resumes into the new visit with its engine still at the old barrier, sends that barrier again, it lies past b's sealed ticks and is decided apart at once: a JOIN of b's stage group, which a takes (its BARRIER_OK names a's visit) and joins, still host",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "allow_close": true,
+  "db_checks": [
+    {
+      "name": "one instance, not lost",
+      "sql": "SELECT COUNT(*), SUM(COALESCE(end_reason, '') = 'host_lost') FROM instance_history",
+      "expect": "^1\t0$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0,
+      "env": {
+        "DW4_ONLINE_TEST_CUT_AT_ANSWER": "20"
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

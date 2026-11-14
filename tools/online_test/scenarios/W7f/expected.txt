@@ -1,0 +1,19 @@
+# W7f (round I1b's integration, W7e's race path on demand): a's client loses its link with the barrier's answer
+# (DW4_ONLINE_TEST_CUT_AT_ANSWER), so the sealed NEW of a and b is decided and a never hears it. The relay asks b for the load
+# snapshot, a resumes into the new visit and re-sends its old barrier, which lies past every tick b's stage group sealed: it is
+# decided apart at once (no stall for b, no desync's split) as a JOIN of b's stage group; a takes it (BARRIER_OK names a's own
+# instance and visit, not 0), sends READY and joins (before: no READY, join_ready_timeout, an instance of its own).
+a: online: test: the link is cut at the barrier's answer
+relay: new .*mode=Sealed
+relay: snapshot_ask
+relay: connect .*resumed=True
+relay: barrier_apart
+relay: join_decided
+relay: ready
+b: online-script: step .* log: b in stag0102
+a: online-script: step .* log: a joined b there, still host
+!relay: join_ready_timeout
+!relay: barrier_split
+!relay: fallback_new
+!a: online-script: FAIL
+!b: online-script: FAIL

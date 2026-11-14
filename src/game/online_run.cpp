@@ -182,6 +182,13 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
         config.auto_choice_delay = std::atoi(delay) / 1000.0;
     if (const char* gate = std::getenv("DW4_ONLINE_TEST_GATE_FORM"); gate && std::string(gate) == "0") config.gate_form = false;
     if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_PARK"); cut && std::atof(cut) > 0) test_cut_park_ = std::atof(cut);
+    // DW4_ONLINE_TEST_CUT_AT_ANSWER=SECONDS (round I1b's integration, W7f): as
+    // CUT_AT_PARK, but the link goes when the barrier's answer comes, and the
+    // answer with it (the relay decided the barrier with this member).
+    if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_ANSWER"); cut && std::atof(cut) > 0) {
+        test_cut_park_ = std::atof(cut);
+        test_cut_at_answer_ = true;
+    }
     // DW4_ONLINE_TEST_IGNORE_HOME=1 (round I1b's W10c): a removed member's client
     // that never answers its JOIN_REQ home.
     if (const char* ignore = std::getenv("DW4_ONLINE_TEST_IGNORE_HOME"); ignore && std::string(ignore) == "1") config.test_ignore_home = true;
@@ -251,9 +258,19 @@ void OnlineRun::test_cut_at_park(double now) {
     // may bring BARRIER_OK on loopback within the same frame.
     if (test_cut_park_ > 0 && !test_cut_done_ && session_->mode() == online::Mode::parked && std::popcount(unsigned(session_->present())) >= 2) {
         test_cut_done_ = true;
+        if (test_cut_at_answer_) {
+            session_->test_arm_answer_cut();
+            log_.line("test: the link will be cut when the barrier's answer comes (DW4_ONLINE_TEST_CUT_AT_ANSWER)");
+            return;
+        }
         std::cout << "online: test: the link is cut at the barrier for " << test_cut_park_ << " s" << std::endl;
         log_.line("test: the link is cut at the barrier for %.0f s (DW4_ONLINE_TEST_CUT_AT_PARK)", test_cut_park_);
         session_->test_cut(now);
+        next_reconnect_ = now + test_cut_park_;
+    }
+    if (session_->test_take_answer_cut()) {
+        std::cout << "online: test: the link is cut at the barrier's answer for " << test_cut_park_ << " s" << std::endl;
+        log_.line("test: the link is cut at the barrier's answer for %.0f s (DW4_ONLINE_TEST_CUT_AT_ANSWER)", test_cut_park_);
         next_reconnect_ = now + test_cut_park_;
     }
 #else
@@ -264,6 +281,7 @@ void OnlineRun::test_cut_at_park(double now) {
 void OnlineRun::pass(double now) {
     test_cut_at_park(now);
     session_->poll(now);
+    test_cut_at_park(now); // (a cut at the barrier's answer came with this poll: its reconnect waits)
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
     if (character_) {
         // Round I1a's review: the own story moves on at home and as a host; its

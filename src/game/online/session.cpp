@@ -576,7 +576,19 @@ void Session::handle(const w::Frame& frame, double now) {
         send(w::Type::join_at, w::encode(w::JoinAt{inst_, visit_, j}));
         break;
     }
-    case w::Type::barrier_ok: on_barrier_ok(w::decode_barrier_ok(p), now); break;
+    case w::Type::barrier_ok:
+#ifdef DW4_ONLINE_DEV
+        if (test_answer_cut_armed_ && mode_ == Mode::parked) {
+            // (DW4_ONLINE_TEST_CUT_AT_ANSWER: the answer is lost with the link.)
+            test_answer_cut_armed_ = false;
+            test_answer_cut_fired_ = true;
+            log("test: the link is cut as the barrier's answer comes; the answer is lost with it");
+            lose_connection(now);
+            break;
+        }
+#endif
+        on_barrier_ok(w::decode_barrier_ok(p), now);
+        break;
     case w::Type::options: {
         // (Round I1b, 19.18: an OPTIONS that does not decode means nothing to choose.)
         std::optional<w::Options> m;

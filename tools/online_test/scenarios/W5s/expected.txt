@@ -1,0 +1,10 @@
+# W5s (19.7.2, the integration's review of round I1b): the moderator's own choice of a Private row is an audited staff join;
+# the row is never preselected (W5 checks the preselection with autochoice cursor).
+a: online-script: step .* log: the moderator joined
+c: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=new preselected=new
+c: online-trace: prompt answer choice=join
+c: online-script: step .* log: c joined a as staff
+relay: instance_start .*visibility=private
+relay: instance_join .*role=staff how=join
+!c: online-script: FAIL
+!a: online-script: FAIL

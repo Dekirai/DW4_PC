@@ -1,0 +1,40 @@
+{
+  "desc": "a Private; a moderator c chooses a's row himself in the gate form (the row only the staff bypass shows, never preselected; autochoice first takes it as the player's own choice): an audited staff join of a's instance (19.7.2 \"m is staff and chooses the row himself\"; the integration's review: W5 checks the preselection, this the choice)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 300,
+  "db_checks": [
+    {
+      "name": "one instance, a's",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^1$"
+    },
+    {
+      "name": "one staff join, audited",
+      "sql": "SELECT COUNT(*) FROM audit_log WHERE event = 'staff_join'",
+      "expect": "^1$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0,
+      "prefs": {
+        "defaultVisibility": "private"
+      }
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k5",
+      "start": 6,
+      "role": "moderator",
+      "seed_story": true
+    }
+  ]
+}

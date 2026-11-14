@@ -223,6 +223,7 @@ private:
     bool left_ = false;
     double test_cut_park_ = 0;    // DW4_ONLINE_TEST_CUT_AT_PARK (development builds, W7e): seconds the link stays cut
     bool test_cut_done_ = false;
+    bool test_cut_at_answer_ = false; // DW4_ONLINE_TEST_CUT_AT_ANSWER: the cut waits for the barrier's answer and loses it (W7f)
 };
 
 } // namespace dw4::game
