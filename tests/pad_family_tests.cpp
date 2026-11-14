@@ -398,6 +398,82 @@ float dark_share(const ArtImage& image, const PromptAtlas::Cell& cell) {
     return float(dark) / float(all);
 }
 
+// The AYN Thor's built-in controller (docs/ANDROID.md, The Thor's
+// controller): face buttons printed in the Nintendo layout; its "Controller
+// style" decides their key codes (Standard: the printed letters, so SDL's
+// SOUTH is the printed A; Xbox: positions, SOUTH is the printed B). Read by
+// label (the default) the printed A is the game's A in both styles.
+void thor() {
+    // The ids and name the Thor's controller reports (dumpsys input, getevent
+    // -lp on the owner's Thor, 14.11.2026); SDL's Android backend gives no type.
+    check(classify(id(SDL_GAMEPAD_TYPE_STANDARD, 0x2020, 0x0111, "Odin Controller")) == PadFamily::thor, "the Thor's controller");
+    check(classify(id(SDL_GAMEPAD_TYPE_UNKNOWN, 0, 0, "Odin Controller")) == PadFamily::thor, "the Thor's controller by name");
+    check(family_from_id("thor") == PadFamily::thor && std::string(family_id(PadFamily::thor)) == "thor", "thor id");
+    check(nintendo_family(PadFamily::thor), "the Thor reads like a Nintendo pad");
+    check(thor_style_from_property("0") == ThorStyle::standard && thor_style_from_property("1\n") == ThorStyle::xbox &&
+              !thor_style_from_property("") && !thor_style_from_property("2"),
+          "persist.sys.gamepad.type");
+    const Settings defaults;
+    const auto game = [&](NintendoLayout layout, const GamepadState& state) {
+        return gamepad_input(defaults, binding_state(state, PadFamily::thor, layout)).buttons;
+    };
+    // Standard (the owner's setting): SDL already reads the letters.
+    set_thor_codes(ThorStyle::standard);
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_SOUTH})) == pad_button::a, "Standard by label: A sends A");
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_EAST})) == pad_button::b, "Standard by label: B");
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_WEST})) == pad_button::x, "Standard by label: X");
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_NORTH})) == pad_button::y, "Standard by label: Y");
+    // By position the bottom button (printed B, SDL's EAST here) is A.
+    check(game(NintendoLayout::by_position, pressed({SDL_GAMEPAD_BUTTON_EAST})) == pad_button::a, "Standard by position: the bottom button is A");
+    check(binding_button(SDL_GAMEPAD_BUTTON_SOUTH, PadFamily::thor, NintendoLayout::by_label) == SDL_GAMEPAD_BUTTON_SOUTH, "Standard capture");
+    // Xbox: positions, as SDL reads a Switch Pro.
+    set_thor_codes(ThorStyle::xbox);
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_EAST})) == pad_button::a, "Xbox by label: the printed A (EAST) is A");
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_SOUTH})) == pad_button::b, "Xbox by label: B");
+    check(game(NintendoLayout::by_position, pressed({SDL_GAMEPAD_BUTTON_SOUTH})) == pad_button::a, "Xbox by position");
+    check(binding_button(SDL_GAMEPAD_BUTTON_EAST, PadFamily::thor, NintendoLayout::by_label) == SDL_GAMEPAD_BUTTON_SOUTH, "Xbox capture");
+    set_thor_codes(ThorStyle::automatic);
+    check(thor_codes() == ThorStyle::standard, "automatic counts as Standard");
+    // Other families never see the Thor's style.
+    set_thor_codes(ThorStyle::xbox);
+    check(game(NintendoLayout::by_label, pressed({SDL_GAMEPAD_BUTTON_SOUTH})) == pad_button::b, "Thor Xbox");
+    check(gamepad_input(defaults, binding_state(pressed({SDL_GAMEPAD_BUTTON_EAST}), PadFamily::switch_pro, NintendoLayout::by_label)).buttons ==
+              pad_button::a,
+          "the Switch Pro keeps its swap");
+    set_thor_codes(ThorStyle::standard);
+    // The pictures: Nintendo letters, L1 / R1, L2 / R2, Start / Select.
+    Settings s;
+    check(face(PadFamily::thor, PromptControl::a, s) == Face::letter_a && face(PadFamily::thor, PromptControl::b, s) == Face::letter_b,
+          "Thor A / B pictures");
+    check(face(PadFamily::thor, PromptControl::confirm, s) == Face::letter_a && face(PadFamily::thor, PromptControl::back, s) == Face::letter_b,
+          "Thor menus: A confirms, B goes back (by label)");
+    check(face(PadFamily::thor, PromptControl::start, s) == Face::start_word, "Thor START");
+    check(face(PadFamily::thor, PromptControl::menu, s) == Face::select_word, "Thor SELECT opens the menu");
+    check(face(PadFamily::thor, PromptControl::l, s) == Face::l2 && face(PadFamily::thor, PromptControl::r, s) == Face::r2, "Thor L2 / R2");
+    check(face(PadFamily::thor, PromptControl::z, s) == Face::r1, "Thor Z on R1");
+    check(pad_input_label(PadFamily::thor, s, {PadInput::Kind::button, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER}) == "L1", "F1: L1");
+    s.nintendo_layout = NintendoLayout::by_position;
+    check(face(PadFamily::thor, PromptControl::confirm, s) == Face::letter_b, "Thor by position confirms with its bottom button (B)");
+    // L2 / R2: the analog GAS / BRAKE axes and the keys of the Digital or
+    // Both modes fold into one trigger, so a pull counts once.
+    GamepadState both;
+    both.axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = 32767;
+    const auto folded = with_digital_triggers(both, true, false);
+    check(folded.axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] == 32767 && folded.axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] == 0, "Both: one pull");
+    check(gamepad_input(defaults, binding_state(folded, PadFamily::thor, NintendoLayout::by_label)).buttons ==
+              gamepad_input(defaults, binding_state(both, PadFamily::thor, NintendoLayout::by_label)).buttons,
+          "Both: the key adds nothing to the axis");
+    const auto digital = with_digital_triggers(GamepadState{}, false, true);
+    check(digital.axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] == 32767, "Digital: the key pulls the trigger");
+    check((gamepad_input(defaults, binding_state(digital, PadFamily::thor, NintendoLayout::by_label)).buttons & pad_button::r) != 0,
+          "Digital: the R2 key is the game's R");
+    // Its atlas draws (every control has a picture).
+    const PromptAtlas atlas = build_prompt_atlas(PadFamily::thor, Settings{});
+    std::size_t ink = 0;
+    for (std::size_t i = 3; i < atlas.image.rgba.size(); i += 4) ink += atlas.image.rgba[i] > 8;
+    check(ink > 1000, "the Thor's atlas has pictures");
+}
+
 void pictures() {
     const char* dir = std::getenv("DW4_PADS_ART_DIR");
     const Settings settings;
@@ -443,7 +519,8 @@ void pictures() {
         const auto word = ink_box(atlas.image, atlas.start_word);
         const int a_height = a[3] - a[1];
         check(start[3] - start[1] >= a_height * 0.62f, std::string(family_id(family)) + ": START's picture as tall as A's");
-        if (family != PadFamily::ps4 && family != PadFamily::ps5 && family != PadFamily::gamecube)
+        // (The GameCube's and the AYN Thor's START are a pill with the word.)
+        if (family != PadFamily::ps4 && family != PadFamily::ps5 && family != PadFamily::gamecube && family != PadFamily::thor)
             check(std::abs((start[3] - start[1]) - a_height) <= 4 && std::abs((word[3] - word[1]) - a_height) <= 4,
                   std::string(family_id(family)) + ": a round START as large as A (" + std::to_string(start[3] - start[1]) + " / " +
                       std::to_string(word[3] - word[1]) + " vs " + std::to_string(a_height) + ")");
@@ -699,6 +776,7 @@ int main() {
         pictures();
         text_lines();
         device_ids();
+        thor();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

@@ -221,6 +221,11 @@ Settings Settings::parse(IniFile document) {
     settings.fps_limit = std::clamp(ini.get_int("window", "fps_limit", settings.fps_limit), 0, 1000);
     settings.smooth_motion = ini.get_bool("window", "smooth_motion", settings.smooth_motion);
     settings.msaa = std::clamp(ini.get_int("window", "msaa", settings.msaa), 0, 16);
+    if (const auto scale = ini.get("window", "ui_scale"); scale && *scale != "auto") {
+        // (A percent; a value this build cannot read stays auto.)
+        const int percent = ini.get_int("window", "ui_scale", 0);
+        settings.ui_scale = percent > 0 ? std::clamp(percent, 100, 400) : 0;
+    }
     settings.volume = std::clamp(ini.get_int("audio", "volume", settings.volume), 0, 100);
     settings.pause_in_menu = ini.get_bool("menu", "pause", settings.pause_in_menu);
     settings.skip_intro = ini.get_bool("preferences", "skip_intro", settings.skip_intro);
@@ -315,6 +320,10 @@ Settings Settings::parse(IniFile document) {
         ini.get_or("gamepad", "menu_buttons", "layout") == "bindings" ? MenuButtons::bindings : MenuButtons::layout;
     settings.gc_adapter = ini.get_bool("gamepad", "gc_adapter", settings.gc_adapter);
     {
+        const std::string style = ini.get_or("gamepad", "thor_style", "auto");
+        settings.thor_style = style == "standard" ? ThorStyle::standard : style == "xbox" ? ThorStyle::xbox : ThorStyle::automatic;
+    }
+    {
         // (A value this build does not read keeps the default.)
         auto& g = settings.graphics;
         if (const auto v = ini.get("graphics", "texture_quality"))
@@ -393,6 +402,8 @@ void Settings::store() {
     ini_.set_int("window", "fps_limit", fps_limit);
     ini_.set_bool("window", "smooth_motion", smooth_motion);
     ini_.set_int("window", "msaa", msaa);
+    if (ui_scale > 0) ini_.set_int("window", "ui_scale", ui_scale);
+    else if (ini_.get("window", "ui_scale")) ini_.set("window", "ui_scale", "auto");
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
     ini_.set_bool("preferences", "skip_intro", skip_intro);
@@ -437,6 +448,8 @@ void Settings::store() {
     ini_.set("gamepad", "wii_driver", wii_driver == WiiDriver::on ? "on" : wii_driver == WiiDriver::off ? "off" : "auto");
     ini_.set("gamepad", "menu_buttons", menu_buttons == MenuButtons::bindings ? "bindings" : "layout");
     ini_.set_bool("gamepad", "gc_adapter", gc_adapter);
+    if (thor_style != ThorStyle::automatic || ini_.get("gamepad", "thor_style"))
+        ini_.set("gamepad", "thor_style", thor_style == ThorStyle::standard ? "standard" : thor_style == ThorStyle::xbox ? "xbox" : "auto");
     {
         const auto g = graphics.clamped();
         ini_.set("graphics", "texture_quality", texture_quality_name(g.texture_quality));
@@ -474,6 +487,12 @@ void Settings::store() {
 bool Settings::save() {
     store();
     return ini_.save(file);
+}
+
+float ui_scale_factor(int setting_percent, float display_scale, bool follow_display) {
+    if (setting_percent > 0) return std::clamp(float(setting_percent) / 100.0f, 1.0f, 4.0f);
+    if (!follow_display || !(display_scale > 0.0f)) return 1.0f;
+    return std::clamp(display_scale, 1.0f, 4.0f);
 }
 
 } // namespace dw4::game

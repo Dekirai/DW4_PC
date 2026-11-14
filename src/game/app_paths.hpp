@@ -64,6 +64,13 @@ void route_output_to_logcat();
 // program), each file written only when it differs. Other files there (a
 // game.tsv the player copied in) are left alone (platform_android.cpp).
 void install_bundled_language_packs(const std::filesystem::path& lang_root);
+// A system property (getprop), empty when it is unset or the app may not
+// read it: the AYN Thor's controller style, persist.sys.gamepad.type.
+std::string android_property(const char* name);
+// The rate the game presents at, asked of the display for the game's
+// surface (DW4Activity.setFrameRate: Surface.setFrameRate, fixed source):
+// the Thor's top screen runs 60 or 120 Hz.
+void android_set_frame_rate(float hz);
 #endif
 
 } // namespace dw4::game

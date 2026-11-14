@@ -983,30 +983,41 @@ void GlRenderer::stream_textures(const std::vector<std::shared_ptr<const IgbDocu
     std::size_t total = owned_bytes_;
     for (const auto& [_, t] : originals_) total += t.bytes;
     for (const auto& [_, t] : replacements_) total += t.bytes;
-    if (total > budget) {
-        std::vector<BudgetEntry> entries;
-        std::unordered_map<std::uint64_t, std::pair<bool, std::uint64_t>> by_slot; // slot -> (replacement, hash)
-        for (const auto& [hash, t] : originals_) {
-            entries.push_back({t.slot, t.bytes, t.last_frame});
-            by_slot[t.slot] = {false, hash};
-        }
-        for (const auto& [hash, t] : replacements_) {
-            entries.push_back({t.slot, t.bytes, t.last_frame});
-            by_slot[t.slot] = {true, hash};
-        }
-        const std::size_t shared_budget = budget > owned_bytes_ ? budget - owned_bytes_ : 0;
-        for (const auto slot : choose_evictions(std::move(entries), shared_budget, frame_ >= 2 ? frame_ - 2 : 0)) {
-            const auto [replacement, hash] = by_slot[slot];
-            auto& map = replacement ? replacements_ : originals_;
-            if (auto found = map.find(hash); found != map.end()) {
-                delete_texture(found->second);
-                map.erase(found);
-                if (replacement) streamer_->forget(hash);
-                ++stats_.evictions;
-            }
+    if (total > budget) evict_hashed(budget > owned_bytes_ ? budget - owned_bytes_ : 0);
+    note_bytes();
+}
+
+GlRenderer::Trimmed GlRenderer::evict_hashed(std::size_t shared_budget) {
+    std::vector<BudgetEntry> entries;
+    std::unordered_map<std::uint64_t, std::pair<bool, std::uint64_t>> by_slot; // slot -> (replacement, hash)
+    for (const auto& [hash, t] : originals_) {
+        entries.push_back({t.slot, t.bytes, t.last_frame});
+        by_slot[t.slot] = {false, hash};
+    }
+    for (const auto& [hash, t] : replacements_) {
+        entries.push_back({t.slot, t.bytes, t.last_frame});
+        by_slot[t.slot] = {true, hash};
+    }
+    Trimmed trimmed;
+    for (const auto slot : choose_evictions(std::move(entries), shared_budget, frame_ >= 2 ? frame_ - 2 : 0)) {
+        const auto [replacement, hash] = by_slot[slot];
+        auto& map = replacement ? replacements_ : originals_;
+        if (auto found = map.find(hash); found != map.end()) {
+            ++trimmed.textures;
+            trimmed.bytes += found->second.bytes;
+            delete_texture(found->second);
+            map.erase(found);
+            if (replacement) streamer_->forget(hash);
+            ++stats_.evictions;
         }
     }
+    return trimmed;
+}
+
+GlRenderer::Trimmed GlRenderer::trim_textures() {
+    const Trimmed trimmed = evict_hashed(0);
     note_bytes();
+    return trimmed;
 }
 
 void GlRenderer::begin_upload(TexturePayload payload) {

@@ -40,6 +40,7 @@ enum class PadFamily : std::uint8_t {
     switch2_pro, // Switch 2 Pro Controller
     wiiu_pro,    // Wii U Pro Controller
     gamecube,    // an original GameCube controller on an adapter
+    thor,        // the AYN Thor's built-in controller ("Odin Controller", USB 2020:0111)
     generic,
     count
 };
@@ -48,7 +49,39 @@ inline constexpr std::size_t kPadFamilyCount = std::size_t(PadFamily::count);
 const char* family_name(PadFamily family); // "DualSense", "Xbox One / Series", ...
 const char* family_id(PadFamily family);   // settings.ini: "dualsense", "xbox_one", ...
 std::optional<PadFamily> family_from_id(std::string_view id);
-bool nintendo_family(PadFamily family); // Switch Pro, Switch 2 Pro, Wii U Pro
+// The pads whose face buttons are printed in the Nintendo layout (A right,
+// B bottom, X top, Y left): Switch Pro, Switch 2 Pro, Wii U Pro and the AYN
+// Thor; nintendo_layout reads them by label or by position.
+bool nintendo_family(PadFamily family);
+
+// ---- The AYN Thor
+// Its built-in controller is a USB HID device "Odin Controller" 2020:0111
+// (also the AYN Odin's; key layout Vendor_2020_Product_0111.kl): face
+// buttons printed in the Nintendo layout, shoulders L1 / R1 and triggers
+// L2 / R2, Start and Select above the lower screen (docs/ANDROID.md, The
+// Thor's controller). Which key codes the face buttons send is the
+// device's "Controller style" (settings.hpp ThorStyle): Standard sends the
+// printed letters (SDL's SOUTH is the printed A, on the right), Xbox sends
+// positions as SDL reads a Switch Pro Controller (SOUTH is the bottom
+// button, printed B). The binding space reads the Thor like any Nintendo
+// pad either way (by label unless nintendo_layout=position).
+inline constexpr std::uint16_t kVendorAyn = 0x2020, kProductOdinController = 0x0111;
+// The style the Thor's pads are read with now (standard or xbox; automatic
+// counts as standard): the host sets it from settings.ini thor_style or
+// the device's setting (thor_style_from_property). Standard until set.
+void set_thor_codes(ThorStyle style);
+ThorStyle thor_codes();
+// The device's setting: Android's persist.sys.gamepad.type, "0" Standard
+// (the Thor's quick settings tile said "Standard" with 0, 14.11.2026), "1"
+// Xbox; anything else nullopt.
+std::optional<ThorStyle> thor_style_from_property(std::string_view value);
+// The Thor's L2 / R2 keys (its "L2/R2 mode" Digital or Both sends them,
+// Analog or Both the GAS / BRAKE axes): SDL's Android backend keeps the keys
+// as joystick buttons outside its gamepad mapping (kThorL2Button,
+// kThorR2Button), so a key alone would do nothing; folded into the trigger
+// axes, a pull counts once in every mode.
+inline constexpr int kThorL2Button = 15, kThorR2Button = 16; // SDL_sysjoystick.c keycode_to_SDL: BUTTON_L2 -> MISC1 (15), BUTTON_R2 -> 16
+GamepadState with_digital_triggers(GamepadState state, bool l2_key, bool r2_key);
 
 // What SDL tells about a pad (a snapshot, so classification is testable
 // without a device).
@@ -118,6 +151,7 @@ enum class Face : std::uint8_t {
     lb, rb, lt, rt, l1, r1, l2, r2, l, r, zl, zr, z,
     // middle buttons
     start_360, back_360, menu, view, options, share, create, plus, minus, start_gc, home, capture, touchpad, mic, c_button,
+    start_word, select_word, // a pill with the word START / SELECT (the AYN Thor)
     // sticks, their clicks, the D-pad (whole or one direction)
     left_stick, right_stick, left_stick_click, right_stick_click, c_stick, dpad, dpad_up, dpad_down, dpad_left, dpad_right,
     paddle_r1, paddle_l1, paddle_r2, paddle_l2, gl, gr,

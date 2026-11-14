@@ -12,6 +12,7 @@
 #include <SDL3/SDL_scancode.h>
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -207,6 +208,28 @@ void migration() {
     check(s.pad[std::size_t(PadKey::dpad_up)][0] == PadInput{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_NORTH}, "Old gamepad up lost");
     check(s.pad[std::size_t(PadKey::y)][0] == PadInput{}, "A default controller input stayed on two controls");
 }
+// The menus' size (settings.ini [window] ui_scale): auto follows the display
+// only where asked (Android), a percent counts everywhere, written only once
+// it is not auto; the AYN Thor's controller style likewise.
+void menu_size() {
+    check(ui_scale_factor(0, 2.30625f, false) == 1.0f, "Auto on the PC is 1x whatever the display");
+    check(std::fabs(ui_scale_factor(0, 2.30625f, true) - 2.30625f) < 1e-6f, "Auto on Android is the display's scale (369 dpi: 2.31)");
+    check(ui_scale_factor(0, 0.75f, true) == 1.0f && ui_scale_factor(0, 9.0f, true) == 4.0f, "Auto between 1x and 4x");
+    check(ui_scale_factor(150, 2.3f, true) == 1.5f && ui_scale_factor(200, 1.0f, false) == 2.0f, "A set percent counts everywhere");
+    Settings s = parsed("");
+    check(s.ui_scale == 0 && s.thor_style == ThorStyle::automatic, "defaults: auto");
+    s.store();
+    check(!s.ini().get("window", "ui_scale") && !s.ini().get("gamepad", "thor_style"), "auto is not written into a file without it");
+    s = parsed("[window]\nui_scale=175\n[gamepad]\nthor_style=xbox\n");
+    check(s.ui_scale == 175 && s.thor_style == ThorStyle::xbox, "read back");
+    s.ui_scale = 0;
+    s.store();
+    check(s.ini().get_or("window", "ui_scale", "") == "auto", "auto again once it was set");
+    s = parsed("[window]\nui_scale=auto\n");
+    check(s.ui_scale == 0, "auto read");
+    s = parsed("[window]\nui_scale=40\n");
+    check(s.ui_scale == 100, "a too small percent is 100");
+}
 } // namespace
 
 int main() {
@@ -214,6 +237,7 @@ int main() {
         keyboard_defaults();
         controller_defaults();
         migration();
+        menu_size();
     } catch (const std::exception& error) {
         std::cerr << "controls tests failed: " << error.what() << '\n';
         return 1;

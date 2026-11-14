@@ -189,6 +189,14 @@ public:
     // their pixel hash (the pack's and the game's own, when a pack streams)
     // stay until the memory budget evicts them.
     void clear_cache();
+    // Android's low memory (SDL_EVENT_LOW_MEMORY): the textures known by
+    // hash (a texture pack's, and the game's own while a pack streams) that
+    // no picture drew in the last two frames go at once, as the memory
+    // budget lets them go when it is full; they come again when drawn.
+    struct Trimmed {
+        std::size_t textures{}, bytes{};
+    };
+    Trimmed trim_textures();
     // The context was lost and a new one is current (Android's
     // SDL_EVENT_RENDER_DEVICE_RESET): every object is made again, the old
     // names are forgotten without deleting them.
@@ -297,6 +305,9 @@ private:
     void configure_streamer();
     bool streaming() const;
     void delete_texture(GpuTexture& texture);
+    // The textures known by hash, least recently drawn first, until they fit
+    // `shared_budget` (never one drawn in the last two frames).
+    Trimmed evict_hashed(std::size_t shared_budget);
     void note_bytes();
     void sharpen(const Viewport& area);
     // A text line's quads split for the prompts (prompt_layout.hpp): the

@@ -174,6 +174,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         // the renderer's check of the depth clamp emulation (gl_renderer.cpp, docs/ANDROID.md: a CPU count of
         // crossing orthographic triangles, logged; presentation only) and of the GL errors (logged and counted)
         "DW4_CHECK_DEPTH_CLAMP", "DW4_GL_CHECK",
+        // the menus' size in a test run, the touch menu button shown on the PC, and the frame statistics' lines
+        // (host_view.hpp: ImGui's sizes, a picture over the game, a log line; presentation only)
+        "DW4_UI_SCALE", "DW4_TOUCH_UI", "DW4_FRAME_STATS",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
         // a test run's controller log and the Switch 2 Pro reader in a test run (pad_usb.hpp: a file about the

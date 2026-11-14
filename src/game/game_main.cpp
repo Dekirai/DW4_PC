@@ -300,11 +300,19 @@ std::string check_game_data(const std::filesystem::path& path) {
     return {};
 }
 
-// The app's lifecycle (Android; SDL hands these only to event watches, from
-// its Java thread, docs/ANDROID.md): logged. In the background the game
-// loop stands still in SDL_PollEvent and SDL pauses the sound output; a
-// lost OpenGL context comes back as SDL_EVENT_RENDER_DEVICE_RESET
-// (host_event).
+// The view whose settings the lifecycle watch saves (run() sets it while the
+// game runs).
+dw4::game::HostView* g_lifecycle_view = nullptr;
+
+// The app's lifecycle (Android; SDL hands these only to event watches, on
+// the thread that runs the game, from SDL_PollEvent, docs/ANDROID.md):
+// logged. Going to the background saves changed settings (Android may end
+// the app there without another word); in the background the game loop
+// stands still in SDL_PollEvent (the game pauses) and SDL pauses the sound
+// output. Coming back, the loop starts its clock again (no catch-up of the
+// time it stood); a lost OpenGL context comes back as
+// SDL_EVENT_RENDER_DEVICE_RESET (host_event). Low memory: the renderer lets
+// its unused textures go at the next pass.
 bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
     const char* what = nullptr;
     switch (event->type) {
@@ -320,6 +328,15 @@ bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
         std::printf("lifecycle: %s\n", what);
         std::fflush(stdout);
     }
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND)
+        if (auto* view = g_lifecycle_view; view && view->settings_changed && !view->test_run) {
+            const bool saved = view->settings.save();
+            if (saved) view->settings_changed = false;
+            std::printf("lifecycle: settings %s\n", saved ? "saved" : "could not be saved");
+            std::fflush(stdout);
+        }
+    if (event->type == SDL_EVENT_DID_ENTER_FOREGROUND) dw4::game::note_lifecycle(dw4::game::LifecycleNote::foreground);
+    if (event->type == SDL_EVENT_LOW_MEMORY) dw4::game::note_lifecycle(dw4::game::LifecycleNote::low_memory);
     return true;
 }
 
@@ -373,6 +390,11 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
     if (test_run) flags |= SDL_WINDOW_HIDDEN;
+#ifdef SDL_PLATFORM_ANDROID
+    // The whole screen without the status and navigation bars (SDL's
+    // immersive window style; DW4Activity keeps it so).
+    flags |= SDL_WINDOW_FULLSCREEN;
+#endif
     // Multisampling is chosen with the window (settings.ini msaa, read at
     // start-up); without support the window opens without it.
     // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings);
@@ -430,7 +452,9 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
     // there is one (Segoe UI Bold, Arial Bold: readable over any
     // background at their small size), else ImGui's scalable one.
     auto& fonts = *ImGui::GetIO().Fonts;
-    fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
+    ImFont* pixel_font = fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
+    // (The menus above 1x: ImGui's scalable font, update_ui_scale.)
+    dw4::game::set_ui_fonts(pixel_font, fonts.AddFontDefaultVector());
     if (const char* windows = std::getenv("WINDIR"))
         for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
             const auto file = std::filesystem::path(windows) / "Fonts" / face;
@@ -447,6 +471,8 @@ GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings
             if (!w.body_font && std::filesystem::is_regular_file(file, error)) w.body_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
         }
     if (!w.body_font) w.body_font = fonts.AddFontDefaultVector();
+    dw4::game::update_ui_scale(w.window, settings, test_run);
+    dw4::game::request_frame_rate(settings);
     return w;
 }
 
@@ -475,7 +501,7 @@ bool status_frame(GameWindow& w, const char* title, const std::vector<std::strin
     ImGui::NewFrame();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(display.x - 32.0f, 560.0f), 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(std::min(display.x - dw4::game::ui_px(32.0f), dw4::game::ui_px(560.0f)), 0.0f), ImGuiCond_Always);
     ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
     for (const auto& line : lines) ImGui::TextWrapped("%s", line.c_str());
     if (progress >= 0.0) ImGui::ProgressBar(float(std::clamp(progress, 0.0, 1.0)), ImVec2(-1.0f, 0.0f));
@@ -1540,6 +1566,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.audio = audio;
         view.audio_dump_path = audio_dump_path;
         view.audio_mix = audio_mix;
+        // The menu button for touch (Android; DW4_TOUCH_UI=1 in a PC test
+        // run for its picture): shown for the first seconds too.
+#ifdef SDL_PLATFORM_ANDROID
+        view.touch_ui = draw;
+#else
+        view.touch_ui = draw && std::getenv("DW4_TOUCH_UI") && std::atoi(std::getenv("DW4_TOUCH_UI")) != 0;
+#endif
+        view.last_touch = std::chrono::steady_clock::now();
+        g_lifecycle_view = &view;
         // The controller prompts (button_prompts.hpp): the game's button
         // glyphs follow each player's device (the character select's lines
         // are the players' own, every other line player 1's), the port's
@@ -2686,6 +2721,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 continue;
             }
             const auto pass_start = std::chrono::steady_clock::now();
+            view.pass_started = pass_start;
             bool pass_presented = false; // (online.log's pictures per second)
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -2706,6 +2742,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
             if (view.quit_requested) running = false;
+            // Back from the background (Android; the loop stood in
+            // SDL_PollEvent): the game goes on where it stopped, without
+            // catching up the time it stood.
+            if (dw4::game::take_lifecycle(dw4::game::LifecycleNote::foreground)) {
+                last = std::chrono::steady_clock::now();
+                accumulator = 0;
+                view.next_present = view.last_present = last;
+                std::cout << "lifecycle: the game goes on\n";
+            }
+            // Android said memory is short: the textures no picture used in
+            // the last frames go (they come again when drawn).
+            if (dw4::game::take_lifecycle(dw4::game::LifecycleNote::low_memory) && renderer) {
+                const auto trimmed = renderer->trim_textures();
+                std::cout << "lifecycle: low memory: " << trimmed.textures << " textures (" << (trimmed.bytes >> 10) << " KiB) let go\n";
+            }
             // The display language between two steps (docs/L10N.md): a change
             // lays every text line out again; nothing in the game state moves.
             languages.at_frame(frame);
@@ -4045,7 +4096,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // Overhead name tags over the picture, under the menus.
                 dw4::game::draw_tags(view, scene);
                 if (show_menu) {
-                    ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
+                    if (const float s = dw4::game::ui_scale(); s == 1.0f) {
+                        ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
+                    } else {
+                        // (A larger menu size: the window as large as the
+                        // display allows, centred, at every opening and when
+                        // the size changes; it scrolls inside.)
+                        static float sized_for = 0;
+                        const ImGuiCond cond = sized_for != s ? ImGuiCond_Always : ImGuiCond_Appearing;
+                        sized_for = s;
+                        const ImVec2 display = ImGui::GetIO().DisplaySize;
+                        const float margin = dw4::game::ui_px(8.0f);
+                        const ImVec2 room(std::max(display.x - 2 * margin, 200.0f), std::max(display.y - 2 * margin, 200.0f));
+                        ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(room.x, dw4::game::ui_px(300.0f)), std::min(room.y, dw4::game::ui_px(200.0f))), room);
+                        ImGui::SetNextWindowSize(ImVec2(std::min(room.x, dw4::game::ui_px(620.0f)), std::min(room.y, dw4::game::ui_px(560.0f))), cond);
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), cond, ImVec2(0.5f, 0.5f));
+                    }
                     ImGui::Begin("DW4 PC (F1)");
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
@@ -4721,7 +4787,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     title_online.active = false;
                 }
                 if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
-                    ImGui::SetNextWindowPos(ImVec2(12, 12));
+                    ImGui::SetNextWindowPos(ImVec2(dw4::game::ui_px(12), dw4::game::ui_px(12)));
                     ImGui::SetNextWindowBgAlpha(0.6f);
                     ImGui::Begin("##state", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4743,7 +4809,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const std::string line = session.is_host() ? std::string("Instance: ") + kVisibility[vis] + "   {MENU} change"
                                                                    : "Instance: " + session.member_name(session.host()) + "'s (" + kVisibility[vis] + ")";
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
-                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 64), ImGuiCond_Always, ImVec2(0.5f, 1));
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(64)), ImGuiCond_Always, ImVec2(0.5f, 1));
                         ImGui::SetNextWindowBgAlpha(0.6f);
                         ImGui::Begin("##instance_line", nullptr,
                                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4793,7 +4859,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (const auto* panels = engine.get<dw4::engine::PanelManager>()) home_line = panels->disk_under_cursor(own) == 8;
                     if (home_line) {
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
-                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 96), ImGuiCond_Always, ImVec2(0.5f, 1));
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(96)), ImGuiCond_Always, ImVec2(0.5f, 1));
                         ImGui::SetNextWindowBgAlpha(0.6f);
                         ImGui::Begin("##host_exit", nullptr,
                                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4806,7 +4872,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // the defeated member's hint, the exit prompt's names.
                 if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 24), ImGuiCond_Always, ImVec2(0.5f, 1));
+                    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(24)), ImGuiCond_Always, ImVec2(0.5f, 1));
                     ImGui::SetNextWindowBgAlpha(0.6f);
                     ImGui::Begin("##online", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4828,7 +4894,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                           : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
                                                                                             : ImVec4(1.0f, 0.4f, 0.4f, 1);
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(12, display.y - 12), ImGuiCond_Always, ImVec2(0, 1));
+                    ImGui::SetNextWindowPos(ImVec2(dw4::game::ui_px(12), display.y - dw4::game::ui_px(12)), ImGuiCond_Always, ImVec2(0, 1));
                     ImGui::SetNextWindowBgAlpha(0.45f);
                     ImGui::Begin("##net", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4856,14 +4922,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
                 if (!toasts.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(display.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+                    ImGui::SetNextWindowPos(ImVec2(display.x - dw4::game::ui_px(12), dw4::game::ui_px(12)), ImGuiCond_Always, ImVec2(1, 0));
                     ImGui::SetNextWindowBgAlpha(0.75f);
                     ImGui::Begin("##achievements", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                     // Long notices (a save path) wrap instead of running off
                     // the window's left edge.
-                    ImGui::PushTextWrapPos(std::min(display.x - 40.0f, std::max(360.0f, display.x * 0.4f)));
+                    ImGui::PushTextWrapPos(std::min(display.x - dw4::game::ui_px(40.0f), std::max(dw4::game::ui_px(360.0f), display.x * 0.4f)));
                     for (const auto& toast : toasts) {
                         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", toast.title.c_str());
                         // ("Press {START} ...": the controller's picture.)
@@ -4875,6 +4941,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // Data Overflow's fade (nothing while no run is near).
                 dw4::game::overflow::draw_fade(overflow_switch.black());
+                // The menu button for touch (Android), over the fade too.
+                dw4::game::draw_touch_menu_button(view);
                 dw4::game::render_ui();
 
                 const bool shoot = (!options.screenshot.empty() &&
@@ -5232,6 +5300,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.switch2_reader = nullptr;
         switch2_reader.reset();
         dw4::game::set_ui_view(nullptr);
+        g_lifecycle_view = nullptr;
         if (button_prompts) dw4::game::ButtonPrompts::set_active(nullptr);
     }
     if (draw) {

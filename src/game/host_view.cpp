@@ -18,7 +18,11 @@
 #include <imgui_internal.h>
 #endif
 
+#include "app_paths.hpp"
+
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -129,7 +133,14 @@ bool host_event(HostView& view, const SDL_Event& event) {
         toggle_menu_by(view, "the Back key");
         return false;
     }
-    if (event.type == SDL_EVENT_FINGER_DOWN && event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) {
+    if (event.type == SDL_EVENT_FINGER_DOWN) view.last_touch = std::chrono::steady_clock::now();
+    bool on_button = false;
+    if (event.type == SDL_EVENT_FINGER_DOWN && view.window) {
+        int width = 0, height = 0;
+        SDL_GetWindowSizeInPixels(view.window, &width, &height);
+        on_button = touch_menu_rect(float(width), float(height)).contains(event.tfinger.x * float(width), event.tfinger.y * float(height));
+    }
+    if (event.type == SDL_EVENT_FINGER_DOWN && ((event.tfinger.x >= 0.9f && event.tfinger.y <= 0.12f) || on_button)) {
         bool on_menu = false;
         if (view.show_menu && ImGui::GetCurrentContext()) {
             const ImVec2 size = ImGui::GetIO().DisplaySize;
@@ -179,6 +190,21 @@ bool host_event(HostView& view, const SDL_Event& event) {
         view.settings_changed = true;
         return true;
     }
+    if (capture && capture->gamepad && event.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN &&
+        (event.jbutton.button == kThorL2Button || event.jbutton.button == kThorR2Button))
+        if (SDL_Gamepad* source = pad_by_id(view.gamepads, event.jbutton.which); source && view.family_of(source) == PadFamily::thor) {
+            // (The AYN Thor's L2 / R2 keys in its Digital trigger mode: its
+            // trigger, as an analog pull binds.)
+            const PadInput input{PadInput::Kind::axis,
+                                 event.jbutton.button == kThorL2Button ? int(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) : int(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)};
+            settings.pad[capture->button][capture->slot] = input;
+            for (std::size_t b = 0; b < settings.pad.size(); ++b)
+                for (std::size_t k = 0; k < settings.pad[b].size(); ++k)
+                    if ((b != capture->button || k != capture->slot) && settings.pad[b][k] == input) settings.pad[b][k] = {};
+            capture.reset();
+            view.settings_changed = true;
+            return true;
+        }
     if (capture && !capture->gamepad && event.type == SDL_EVENT_KEY_DOWN && event.key.scancode != SDL_SCANCODE_F1) {
         settings.keys[capture->button][capture->slot] = event.key.scancode;
         // A key stands for one button only.
@@ -200,16 +226,51 @@ bool host_event(HostView& view, const SDL_Event& event) {
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free(settings))
         toggle_menu_by(view, "the controller's View / Back button");
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) toggle_menu_by(view, "F1");
+#ifndef SDL_PLATFORM_ANDROID
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
         settings.fullscreen = !settings.fullscreen;
         SDL_SetWindowFullscreen(view.window, settings.fullscreen);
         view.settings_changed = true;
     }
+#endif
     return false;
 }
 
+namespace {
+// The AYN Thor's controller style the Thor's pads are read with: settings.ini
+// thor_style, or automatic: the device's setting (Android's
+// persist.sys.gamepad.type, read again every second, so a switch in the
+// quick settings takes effect while the game runs), Standard when unknown.
+void update_thor_style(HostView& view) {
+    const auto now = std::chrono::steady_clock::now();
+#ifdef SDL_PLATFORM_ANDROID
+    if (now >= view.thor_checked) {
+        view.thor_checked = now + std::chrono::seconds(1);
+        view.thor_device = thor_style_from_property(android_property("persist.sys.gamepad.type"));
+    }
+#else
+    (void)now;
+#endif
+    ThorStyle style = view.settings.thor_style;
+    if (style == ThorStyle::automatic) style = view.thor_device.value_or(ThorStyle::standard);
+    if (style == view.thor_used && thor_codes() == style) return;
+    view.thor_used = style;
+    set_thor_codes(style);
+    bool thor_pad = false;
+    for (const auto& pad : view.pads.pads()) thor_pad = thor_pad || pad.family == PadFamily::thor;
+    if (thor_pad || view.settings.thor_style != ThorStyle::automatic) {
+        const std::string line = std::string("thor: controller style ") + (style == ThorStyle::xbox ? "Xbox" : "Standard") +
+                                 (view.settings.thor_style != ThorStyle::automatic ? " (settings.ini)" : view.thor_device ? " (the device's setting)" : " (assumed)");
+        std::printf("%s\n", line.c_str());
+        std::fflush(stdout);
+        if (view.controller_log) view.controller_log->write(line);
+    }
+}
+} // namespace
+
 void update_controllers(HostView& view) {
     if (!view.draw) return;
+    update_thor_style(view);
     if (!view.test_run) update_sdl_and_adapter(view);
     // The Switch 2 Pro Controller (switch2_pro.hpp; also in a test run with
     // DW4_TEST_SWITCH2=1): its pads, the reader's log lines, each pad's
@@ -599,7 +660,7 @@ void menu_pad(HostView& view) {
     if (view.gamepads.empty()) return; // (no pad: a UI test run's keys stay its own)
     SDL_Gamepad* pad = view.gamepads.front();
     const PadFamily family = view.family_of(pad);
-    const MenuKeys keys = menu_keys(view.settings, family, read_gamepad(pad), family != PadFamily::gamecube || trigger_clicks(pad));
+    const MenuKeys keys = menu_keys(view.settings, family, read_pad(pad, family), family != PadFamily::gamecube || trigger_clicks(pad));
     auto& io = ImGui::GetIO();
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.AddKeyEvent(ImGuiKey_GamepadFaceDown, keys.face_down);
@@ -632,6 +693,7 @@ void menu_pad(HostView& view) {
 } // namespace
 
 void new_ui_frame(bool test_gamepad) {
+    if (g_ui_view && g_ui_view->window) update_ui_scale(g_ui_view->window, g_ui_view->settings, g_ui_view->test_run);
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     // (The adapter's ports and the Wii driver also while the menus take the input.)
@@ -680,6 +742,64 @@ void write_screenshot(const std::string& path, int width, int height) {
     write_bmp(path, width, height, pixels);
 }
 
+namespace {
+// DW4_FRAME_STATS=SECONDS (any platform; on Android --env in dw4args): every
+// SECONDS a line with the presents per second and the percentiles of the
+// present interval, of the pass's own work up to the swap (input, the
+// steps, drawing the scene and the menus) and of the swap's wait (vsync, the
+// GPU), and the frame rate the display runs at: frame pacing on a device.
+struct FrameStats {
+    double period = 0;
+    std::chrono::steady_clock::time_point started, last_swap;
+    std::vector<float> interval, work, swap;
+};
+FrameStats& frame_stats_state() {
+    static FrameStats stats = [] {
+        FrameStats s;
+        if (const char* text = std::getenv("DW4_FRAME_STATS")) s.period = std::atof(text);
+        return s;
+    }();
+    return stats;
+}
+float percentile(std::vector<float>& values, double p) {
+    if (values.empty()) return 0;
+    const auto at = std::size_t(std::clamp(p, 0.0, 1.0) * double(values.size() - 1) + 0.5);
+    std::nth_element(values.begin(), values.begin() + std::ptrdiff_t(at), values.end());
+    return values[at];
+}
+void frame_stats(HostView& view, std::chrono::steady_clock::time_point before_swap) {
+    auto& s = frame_stats_state();
+    if (s.period <= 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (s.started == std::chrono::steady_clock::time_point{}) {
+        s.started = s.last_swap = now;
+        return;
+    }
+    const auto ms = [](auto a, auto b) { return float(std::chrono::duration<double, std::milli>(b - a).count()); };
+    s.interval.push_back(ms(s.last_swap, now));
+    if (view.pass_started != std::chrono::steady_clock::time_point{} && view.pass_started <= before_swap) s.work.push_back(ms(view.pass_started, before_swap));
+    s.swap.push_back(ms(before_swap, now));
+    s.last_swap = now;
+    const double elapsed = std::chrono::duration<double>(now - s.started).count();
+    if (elapsed < s.period) return;
+    const std::size_t presents = s.interval.size();
+    float display_hz = 0;
+    if (view.window)
+        if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(view.window))) display_hz = mode->refresh_rate;
+    std::printf("frames: %.1f presents/s over %.1f s (display %.0f Hz); interval p50 %.2f p90 %.2f p99 %.2f max %.2f ms; "
+                "work p50 %.2f p90 %.2f p99 %.2f max %.2f ms; swap p50 %.2f p99 %.2f ms\n",
+                double(presents) / elapsed, elapsed, double(display_hz), double(percentile(s.interval, 0.5)), double(percentile(s.interval, 0.9)),
+                double(percentile(s.interval, 0.99)), double(percentile(s.interval, 1.0)), double(percentile(s.work, 0.5)),
+                double(percentile(s.work, 0.9)), double(percentile(s.work, 0.99)), double(percentile(s.work, 1.0)),
+                double(percentile(s.swap, 0.5)), double(percentile(s.swap, 0.99)));
+    std::fflush(stdout);
+    s.interval.clear();
+    s.work.clear();
+    s.swap.clear();
+    s.started = now;
+}
+} // namespace
+
 void finish_present(HostView& view, engine::Engine& engine, const std::function<void()>& swapped) {
     // Keep about three frames of audio queued across frame hitches.
     if (view.audio) {
@@ -688,8 +808,10 @@ void finish_present(HostView& view, engine::Engine& engine, const std::function<
     }
     // (The frame's GL errors, the scene's and the menus': DW4_GL_CHECK.)
     if (view.renderer && view.renderer->checking_gl()) view.renderer->check_gl_errors("in the frame");
+    const auto before_swap = std::chrono::steady_clock::now();
     SDL_GL_SwapWindow(view.window);
     if (swapped) swapped();
+    frame_stats(view, before_swap);
     // A minimized window's swap does not wait for the display: the loop
     // would spin and take the CPU from a second game on this PC (two games
     // for one online room, round 62). Its passes are spaced 4 ms apart (the
@@ -721,16 +843,46 @@ void pace_presents(HostView& view) {
 void settings_display_section(HostView& view) {
     auto& settings = view.settings;
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+#ifndef SDL_PLATFORM_ANDROID
+        // (Android: always the whole screen.)
         if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
             SDL_SetWindowFullscreen(view.window, settings.fullscreen);
             view.settings_changed = true;
+        }
+#endif
+        {
+            // The menus' size (settings.ini ui_scale).
+            int choice = 0;
+            for (int i = 0; i < int(std::size(kUiScaleChoices)); ++i)
+                if (settings.ui_scale == kUiScaleChoices[i]) choice = i;
+            const float display_scale = view.window ? SDL_GetWindowDisplayScale(view.window) : 1.0f;
+#ifdef SDL_PLATFORM_ANDROID
+            const bool follow = true;
+#else
+            const bool follow = false;
+#endif
+            const std::string automatic =
+                "Automatic (" + std::to_string(int(std::lround(ui_scale_factor(0, display_scale, follow) * 100.0f))) + " %)";
+            if (ImGui::BeginCombo("Menu size", choice == 0 ? automatic.c_str() : (std::to_string(settings.ui_scale) + " %").c_str())) {
+                for (int i = 0; i < int(std::size(kUiScaleChoices)); ++i) {
+                    const std::string name = i == 0 ? automatic : std::to_string(kUiScaleChoices[i]) + " %";
+                    if (ImGui::Selectable(name.c_str(), i == choice) && i != choice) {
+                        settings.ui_scale = kUiScaleChoices[i];
+                        view.settings_changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
         }
         if (ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &settings.widescreen)) view.settings_changed = true;
         if (ImGui::Checkbox("VSync", &settings.vsync)) {
             SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
             view.settings_changed = true;
         }
-        if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off")) view.settings_changed = true;
+        if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off")) {
+            view.settings_changed = true;
+            request_frame_rate(settings);
+        }
         if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) view.settings_changed = true;
         ImGui::SameLine();
         ImGui::TextDisabled("(now %.0f fps)", view.present_interval > 0 ? 1.0 / view.present_interval : 0.0);
@@ -744,7 +896,7 @@ void settings_display_section(HostView& view) {
             char overlay[96];
             std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(view.frame_times.size()), worst);
             ImGui::PlotLines("Frame time", view.frame_times.data(), int(view.frame_times.size()), int(view.frame_time_at % view.frame_times.size()),
-                             overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, 48));
+                             overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, ui_px(48)));
         }
         static const int sample_choices[] = {0, 2, 4, 8};
         static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
@@ -756,6 +908,7 @@ void settings_display_section(HostView& view) {
             view.settings_changed = true;
         }
         ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", view.samples > 1 ? view.samples : 0);
+#ifndef SDL_PLATFORM_ANDROID
         static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
         if (!settings.fullscreen) {
             // The buttons wrap onto the next line instead of running past
@@ -774,6 +927,7 @@ void settings_display_section(HostView& view) {
                 }
             }
         }
+#endif
     }
 }
 
@@ -1036,10 +1190,11 @@ void settings_controllers_section(HostView& view) {
         if (view.controller_log) ImGui::TextDisabled("Controller log: %s", view.controller_log->path().string().c_str());
         // Button prompts: automatic (player 1's last device) or one family.
         {
-            static constexpr PadFamily kChoices[] = {PadFamily::ps5, PadFamily::ps4, PadFamily::xbox360, PadFamily::xbox_one, PadFamily::switch_pro,
-                                                     PadFamily::switch2_pro, PadFamily::wiiu_pro, PadFamily::gamecube, PadFamily::keyboard};
+            static constexpr PadFamily kChoices[] = {PadFamily::ps5,         PadFamily::ps4,      PadFamily::xbox360,  PadFamily::xbox_one,
+                                                     PadFamily::switch_pro,  PadFamily::switch2_pro, PadFamily::wiiu_pro, PadFamily::gamecube,
+                                                     PadFamily::thor,        PadFamily::keyboard};
             static constexpr const char* kNames[] = {"Automatic", "DualSense", "DualShock 4", "Xbox 360", "Xbox One/Series", "Switch Pro",
-                                                     "Switch 2 Pro", "Wii U Pro", "GameCube", "Keyboard"};
+                                                     "Switch 2 Pro", "Wii U Pro", "GameCube", "AYN Thor", "Keyboard"};
             int choice = 0;
             for (int i = 0; i < int(std::size(kChoices)); ++i)
                 if (settings.prompts == family_id(kChoices[i])) choice = i + 1;
@@ -1062,7 +1217,22 @@ void settings_controllers_section(HostView& view) {
                 settings.nintendo_layout = layout ? NintendoLayout::by_position : NintendoLayout::by_label;
                 view.settings_changed = true;
             }
-            ImGui::TextDisabled("Switch Pro, Switch 2 Pro and Wii U Pro controllers.");
+            ImGui::TextDisabled("Switch Pro, Switch 2 Pro, Wii U Pro controllers and the AYN Thor.");
+            bool thor_pad = false;
+            for (const auto& pad : known) thor_pad = thor_pad || pad.family == PadFamily::thor;
+            if (thor_pad || settings.thor_style != ThorStyle::automatic) {
+                // The Thor's own "Controller style" decides its face buttons'
+                // codes; automatic follows it.
+                int style = settings.thor_style == ThorStyle::standard ? 1 : settings.thor_style == ThorStyle::xbox ? 2 : 0;
+                const std::string automatic = std::string("As the Thor's setting (") +
+                                              (view.thor_device ? (*view.thor_device == ThorStyle::xbox ? "Xbox" : "Standard") : "unknown") + ")";
+                const char* kStyles[] = {automatic.c_str(), "Standard", "Xbox"};
+                if (ImGui::Combo("AYN Thor controller style", &style, kStyles, 3)) {
+                    settings.thor_style = style == 1 ? ThorStyle::standard : style == 2 ? ThorStyle::xbox : ThorStyle::automatic;
+                    view.settings_changed = true;
+                }
+                ImGui::TextDisabled("Thor Settings > Controller style (Standard: the A button sends A; Xbox: the bottom button sends A).");
+            }
             int gc = settings.gamecube_layout == GameCubeLayout::bindings ? 1 : 0;
             static const char* kGameCube[] = {"Original (every button is its own)", "Use the bindings below"};
             if (ImGui::Combo("GameCube controller", &gc, kGameCube, 2)) {
@@ -1084,8 +1254,10 @@ void settings_controllers_section(HostView& view) {
             }
             ImGui::TextDisabled("(SDL's Wii driver, now %s. Wii remotes, also on a DolphinBar, never take a player's place.)",
                                 view.wii_hint ? "on" : "off");
+#ifndef SDL_PLATFORM_ANDROID
             if (ImGui::Checkbox("GameCube adapter in Wii U mode (WinUSB)", &settings.gc_adapter)) view.settings_changed = true;
             ImGui::TextDisabled("(released while the game is in the background, so Dolphin can use it then)");
+#endif
         }
         ImGui::Spacing();
         ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
@@ -1130,5 +1302,121 @@ void settings_controllers_section(HostView& view) {
         ImGui::PopTextWrapPos();
     }
 }
+
+// ---------------------------------------------------------------- the menus' size
+
+namespace {
+float g_ui_scale = 1.0f;
+bool g_ui_style_kept = false;
+ImGuiStyle g_ui_base_style; // the dark style at 1x (sizes are scaled from it, never from a scaled one)
+ImFont* g_pixel_font = nullptr;
+ImFont* g_scalable_font = nullptr;
+} // namespace
+
+void set_ui_fonts(ImFont* pixel, ImFont* scalable) {
+    g_pixel_font = pixel;
+    g_scalable_font = scalable;
+}
+
+float ui_scale() { return g_ui_scale; }
+
+float update_ui_scale(SDL_Window* window, const Settings& settings, bool test_run) {
+    if (!ImGui::GetCurrentContext()) return g_ui_scale;
+#ifdef SDL_PLATFORM_ANDROID
+    const bool follow = true;
+#else
+    const bool follow = false;
+#endif
+    int percent = settings.ui_scale;
+    // (Test runs read no settings.ini: DW4_UI_SCALE=percent shows a scale,
+    // e.g. the Thor's 231 on the PC.)
+    if (test_run)
+        if (const char* text = std::getenv("DW4_UI_SCALE")) percent = std::atoi(text);
+    const float display_scale = window ? SDL_GetWindowDisplayScale(window) : 1.0f;
+    const float scale = ui_scale_factor(percent, display_scale, follow);
+    if (g_ui_style_kept && scale == g_ui_scale) return g_ui_scale;
+    auto& style = ImGui::GetStyle();
+    if (!g_ui_style_kept) {
+        g_ui_base_style = style;
+        g_ui_style_kept = true;
+    }
+    style = g_ui_base_style;
+    if (scale != 1.0f) style.ScaleAllSizes(scale);
+    style.FontScaleDpi = scale;
+    // ImGui's pixel font is made for 13 px; scaled, its scalable one reads
+    // better.
+    ImGui::GetIO().FontDefault = scale != 1.0f && g_scalable_font ? g_scalable_font : g_pixel_font;
+    g_ui_scale = scale;
+    int width = 0, height = 0;
+    if (window) SDL_GetWindowSizeInPixels(window, &width, &height);
+    std::printf("ui: menus at %d %% (display scale %.2f, ui_scale %s), window %dx%d\n", int(std::lround(scale * 100.0f)), double(display_scale),
+                percent > 0 ? std::to_string(percent).c_str() : "auto", width, height);
+    std::fflush(stdout);
+    return g_ui_scale;
+}
+
+// ---------------------------------------------------------------- touch
+
+TouchRect touch_menu_rect(float width, float height) {
+    const float side = ui_px(44.0f), margin = ui_px(10.0f);
+    TouchRect r;
+    r.x1 = width - margin;
+    r.x0 = r.x1 - side;
+    r.y0 = margin;
+    r.y1 = r.y0 + side;
+    // The bar right of the 4:3 picture: the button stands in its middle when
+    // it fits there.
+    const float bar = (width - height * 4.0f / 3.0f) * 0.5f;
+    if (bar >= side + margin * 2.0f) {
+        r.x0 = width - bar * 0.5f - side * 0.5f;
+        r.x1 = r.x0 + side;
+    }
+    (void)height;
+    return r;
+}
+
+void draw_touch_menu_button(HostView& view) {
+    if (!view.touch_ui || !view.window) return;
+    const auto now = std::chrono::steady_clock::now();
+    const double since = std::chrono::duration<double>(now - view.last_touch).count();
+    float alpha = 1.0f;
+    if (!view.show_menu) {
+        if (since >= kTouchButtonSeconds + 0.5) return;
+        if (since > kTouchButtonSeconds) alpha = float(1.0 - (since - kTouchButtonSeconds) / 0.5);
+    }
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    const TouchRect r = touch_menu_rect(size.x, size.y);
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const auto a = [&](float value) { return int(std::lround(std::clamp(value * alpha, 0.0f, 1.0f) * 255.0f)); };
+    const float side = r.x1 - r.x0;
+    draw->AddRectFilled(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(20, 22, 30, a(0.62f)), side * 0.18f);
+    draw->AddRect(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(220, 224, 236, a(0.75f)), side * 0.18f, 0, std::max(1.0f, side * 0.04f));
+    // Three lines (the menu).
+    const float cx = (r.x0 + r.x1) * 0.5f, cy = (r.y0 + r.y1) * 0.5f, w = side * 0.5f, gap = side * 0.17f, thick = std::max(2.0f, side * 0.07f);
+    for (int i = -1; i <= 1; ++i)
+        draw->AddLine(ImVec2(cx - w * 0.5f, cy + gap * float(i)), ImVec2(cx + w * 0.5f, cy + gap * float(i)), IM_COL32(240, 242, 248, a(0.95f)), thick);
+}
+
+// ---------------------------------------------------------------- display rate, lifecycle
+
+void request_frame_rate(const Settings& settings) {
+#ifdef SDL_PLATFORM_ANDROID
+    const float hz = settings.fps_limit > 60 ? float(std::min(settings.fps_limit, 120)) : 60.0f;
+    static float asked = 0;
+    if (hz == asked) return;
+    asked = hz;
+    android_set_frame_rate(hz);
+#else
+    (void)settings;
+#endif
+}
+
+namespace {
+std::atomic<unsigned> g_lifecycle_notes{0};
+}
+
+void note_lifecycle(LifecycleNote note) { g_lifecycle_notes.fetch_or(unsigned(note)); }
+
+bool take_lifecycle(LifecycleNote note) { return (g_lifecycle_notes.fetch_and(~unsigned(note)) & unsigned(note)) != 0; }
 
 } // namespace dw4::game

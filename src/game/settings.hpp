@@ -72,6 +72,15 @@ enum class WiiDriver : std::uint8_t { automatic, on, off };
 // GameCube pad's A and B); bindings: the game's A binding confirms and its
 // B binding goes back.
 enum class MenuButtons : std::uint8_t { layout, bindings };
+// [gamepad] thor_style: the AYN Thor's own controller setting "Controller
+// style" (Thor Settings, or its quick settings tile), which decides the key
+// codes of its face buttons, printed in the Nintendo layout (A right, B
+// bottom, X top, Y left): standard sends the printed letters' codes (SDL's
+// SOUTH is the printed A), xbox sends positions like an Xbox pad (SOUTH is
+// the bottom button, printed B). auto (the default): the device's setting as
+// Android reports it (persist.sys.gamepad.type), read again while the game
+// runs (pad_family.hpp).
+enum class ThorStyle : std::uint8_t { automatic, standard, xbox };
 
 struct Settings {
     // [window]
@@ -84,6 +93,11 @@ struct Settings {
     int fps_limit = 0;       // presented frames per second, 0 = no limit
     bool smooth_motion = true; // blend between the 60 Hz steps when presenting faster
     int msaa = 4;            // samples, applied at start-up
+    // [window] ui_scale: the size of the port's menus (the F1 menu, the
+    // first start's screens, the controller pages, the notices) in percent;
+    // 0 = auto: the display's scale on Android (ui_scale_factor), 100 on the
+    // PC. Written only once it is not auto (a PC's file stays as it was).
+    int ui_scale = 0;
     // [graphics]: texture quality, filtering, LOD bias, sharpening, shadow
     // quality and the texture memory budget (graphics_options.hpp).
     GraphicsOptions graphics;
@@ -127,6 +141,7 @@ struct Settings {
     std::string prompts = "auto";
     WiiDriver wii_driver = WiiDriver::automatic;
     MenuButtons menu_buttons = MenuButtons::layout;
+    ThorStyle thor_style = ThorStyle::automatic; // (written only once it is not auto)
     bool gc_adapter = true;
     // [mods]
     std::filesystem::path texture_pack; // the texture pack folder (default mods/textures)
@@ -188,5 +203,14 @@ struct Settings {
 private:
     IniFile ini_;
 };
+
+// The menus' scale (ImGui) for a ui_scale setting (percent, 0 = auto) and
+// the display's scale (SDL_GetWindowDisplayScale: Android's density, the
+// Thor's 369 dpi panel 2.31). Auto follows the display where the port asks
+// for it (Android: follow_display) and is 1 elsewhere, so the PC looks as
+// before; a set percent counts everywhere. Between 1 and 4.
+float ui_scale_factor(int setting_percent, float display_scale, bool follow_display);
+// The menu sizes the F1 menu offers (percent; 0 = auto).
+inline constexpr int kUiScaleChoices[] = {0, 100, 125, 150, 175, 200, 225, 250, 300};
 
 } // namespace dw4::game

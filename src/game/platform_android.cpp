@@ -3,6 +3,8 @@
 #include "app_paths.hpp"
 
 #include <android/log.h>
+#include <jni.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -81,6 +83,29 @@ bool same_contents(const std::filesystem::path& path, const void* data, std::siz
     return have.size() == size && std::equal(have.begin(), have.end(), static_cast<const char*>(data));
 }
 } // namespace
+
+std::string android_property(const char* name) {
+    char value[PROP_VALUE_MAX] = {};
+    if (__system_property_get(name, value) <= 0) return {};
+    return value;
+}
+
+void android_set_frame_rate(float hz) {
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return;
+    // (The activity's own class: FindClass on this thread would look in the
+    // system class loader.)
+    jclass type = env->GetObjectClass(activity);
+    if (jmethodID method = type ? env->GetStaticMethodID(type, "setFrameRate", "(F)V") : nullptr)
+        env->CallStaticVoidMethod(type, method, jfloat(hz));
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        std::fprintf(stderr, "display: DW4Activity.setFrameRate(%.0f) failed\n", double(hz));
+    }
+    if (type) env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+}
 
 void install_bundled_language_packs(const std::filesystem::path& lang_root) {
     if (lang_root.empty()) return;

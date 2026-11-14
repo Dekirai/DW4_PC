@@ -186,12 +186,27 @@ struct HostView {
     int trace_labels = 0;            // DW4_TRACE_LABELS
     std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
 
+    // The menu button for touch (Android, or DW4_TOUCH_UI=1): shown for a
+    // few seconds after a touch and while the F1 menu is open
+    // (draw_touch_menu_button); the last touch anywhere on the window.
+    bool touch_ui = false;
+    std::chrono::steady_clock::time_point last_touch;
+    // The AYN Thor's controller style as the device reports it (Android's
+    // persist.sys.gamepad.type, read again every second; nullopt: unknown)
+    // and the one the Thor's pads are read with now (update_controllers).
+    std::optional<ThorStyle> thor_device;
+    ThorStyle thor_used = ThorStyle::standard;
+    std::chrono::steady_clock::time_point thor_checked;
+
     // Presents.
     double present_interval = 1.0 / 60.0;
     double last_present_seconds = 0; // the last present's own interval (DW4_TRACE_GHOSTS' longest present)
     std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
     std::size_t frame_time_at = 0;
     std::chrono::steady_clock::time_point last_present, next_present;
+    // The pass's start (the loop sets it): DW4_FRAME_STATS measures the
+    // pass's own work up to the swap and the swap's wait.
+    std::chrono::steady_clock::time_point pass_started;
 
     // The name tags' mode (settings.ini [hud]; test runs: DW4_LABELS, all
     // with DW4_TRACE_LABELS, else off).
@@ -326,6 +341,49 @@ void settings_audio_section(HostView& view);
 void settings_presence_section(HostView& view, const char* discord_status);
 void settings_keyboard_section(HostView& view);
 void settings_controllers_section(HostView& view);
+// ---- The menus' size (settings.hpp ui_scale_factor)
+// The ImGui fonts the menus take: ImGui's pixel font at 13 px (scale 1, the
+// PC's look) and its scalable one (any other scale). Set once the window's
+// ImGui has them (open_game_window).
+void set_ui_fonts(ImFont* pixel, ImFont* scalable);
+// The menus' scale for the window (settings.ini ui_scale; auto: the
+// display's scale on Android, 1 on the PC; test runs: DW4_UI_SCALE=percent)
+// into ImGui's style: every size of the dark style scaled, the font size,
+// the scalable font above 1. Called before every ImGui frame; only a change
+// does anything (logged as "ui: menus at N %"). Returns the scale.
+float update_ui_scale(SDL_Window* window, const Settings& settings, bool test_run);
+// The scale in use (1 until update_ui_scale set another).
+float ui_scale();
+// A length of the menus' layout at the scale in use (12 px at 1x).
+inline float ui_px(float pixels) { return pixels * ui_scale(); }
+
+// ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
+// The menu button's rectangle in window pixels: a small square in the top
+// right corner, inside the bar the 4:3 picture leaves on a wider window (the
+// HUD stays on the 4:3 picture, also in widescreen), never over it there.
+struct TouchRect {
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool contains(float x, float y) const { return x >= x0 && x <= x1 && y >= y0 && y <= y1; }
+};
+TouchRect touch_menu_rect(float width, float height);
+// The button over the picture (ImGui's foreground): three lines on a dark
+// square, shown after a touch for kTouchButtonSeconds and while the F1 menu
+// is open, then fading out; its tap (host_event) opens and closes the menu.
+inline constexpr double kTouchButtonSeconds = 4.0;
+void draw_touch_menu_button(HostView& view);
+
+// ---- Android's display and the app's lifecycle
+// The rate the game presents at asked of the display (Android: 60, or a
+// frame limit above 60 up to 120; nothing on the PC).
+void request_frame_rate(const Settings& settings);
+// What the lifecycle watch (game_main) left for the loop: the app came back
+// to the foreground (the loop starts its clock again: no catch-up of the
+// time it stood), and Android said memory is short (the renderer lets its
+// unused textures go). Each is taken once.
+enum class LifecycleNote : std::uint8_t { foreground = 1, low_memory = 2 };
+void note_lifecycle(LifecycleNote note);
+bool take_lifecycle(LifecycleNote note);
+
 // The SDL hints for the controller families, before SDL_Init: SDL's Wii
 // driver only with wii_driver=on (automatic turns it on later, while a Wii
 // U Pro Controller's ids are connected: update_controllers); no libusb, and

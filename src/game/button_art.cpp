@@ -308,6 +308,7 @@ struct Style {
     Color letter;      // letters on face buttons (when not coloured per button)
     bool letters_coloured; // Xbox One: the letter in the button's colour
     bool fill_coloured;    // Xbox 360: the whole button in its colour
+    bool snes_colours;     // the AYN Thor: the letters in the Super Famicom colours (A red, B yellow, X blue, Y green)
     Color shoulder, shoulder_label;
     Color middle, middle_symbol;
     Color stick, stick_cap, stick_label;
@@ -368,6 +369,16 @@ Style style_of(PadFamily family) {
         s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
         s.dpad = dpad; s.dpad_mark = dpad_mark;
         break;
+    case PadFamily::thor:
+        // Dark round buttons with coloured letters (A red, B yellow, X blue,
+        // Y green), dark shoulders labelled L1 / R1 / L2 / R2, Start and
+        // Select as small pills.
+        s.face = hex(0x2c2c34); s.face_rim = hex(0xb4b4c0, 0.6f); s.letter = hex(0xf2f2f4); s.snes_colours = true;
+        s.shoulder = hex(0x2a2a31); s.shoulder_label = hex(0xf0f0f2);
+        s.middle = hex(0x2a2a31); s.middle_symbol = hex(0xf0f0f2);
+        s.stick = stick_base; s.stick_cap = stick_cap; s.stick_label = stick_label;
+        s.dpad = dpad; s.dpad_mark = dpad_mark;
+        break;
     case PadFamily::gamecube:
         s.face = hex(0xbcbcc4); s.letter = hex(0x34343c);
         s.shoulder = hex(0xc4c4cc); s.shoulder_label = hex(0x34343c);
@@ -394,6 +405,16 @@ Color xbox_colour(Face face) {
     case Face::letter_b: return hex(0xe33b3b);
     case Face::letter_x: return hex(0x2f8be2);
     case Face::letter_y: return hex(0xf0c010);
+    default: return hex(0xf0f0f2);
+    }
+}
+// The Super Famicom's letter colours, as on the AYN Thor's face buttons.
+Color snes_colour(Face face) {
+    switch (face) {
+    case Face::letter_a: return hex(0xe0383c);
+    case Face::letter_b: return hex(0xf2c418);
+    case Face::letter_x: return hex(0x3a78dc);
+    case Face::letter_y: return hex(0x3cae4c);
     default: return hex(0xf0f0f2);
     }
 }
@@ -643,6 +664,7 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
         Color fill = st.face, letter = st.letter;
         if (st.fill_coloured) fill = xbox_colour(pf.face);
         if (st.letters_coloured) letter = xbox_colour(pf.face);
+        if (st.snes_colours) letter = snes_colour(pf.face);
         round_button(c, cx, cy, r, fill, st.face_rim);
         draw_text(c, text, cx, cy, r * 1.02f, r * 1.4f, letter);
         return;
@@ -705,12 +727,13 @@ void draw_face(Canvas& c, Box b, PadFamily family, const PromptFace& pf, bool wi
         }
         return;
     }
-    case Face::options: case Face::share: case Face::create: case Face::start_gc: case Face::touchpad: case Face::mic: case Face::capture: {
+    case Face::options: case Face::share: case Face::create: case Face::start_gc: case Face::touchpad: case Face::mic: case Face::capture:
+    case Face::start_word: case Face::select_word: {
         const Color sym = st.middle_symbol;
-        if (pf.face == Face::start_gc) {
+        if (pf.face == Face::start_gc || pf.face == Face::start_word || pf.face == Face::select_word) {
             const float hw = wide ? std::min(b.w() * 0.46f, s * 1.3f) : s * 0.47f, hh = wide ? s * 0.36f : s * 0.27f;
-            pill(c, cx, cy, hw, hh, st.middle);
-            draw_text(c, "START", cx, cy, hh * 0.9f, hw * 1.7f, sym);
+            pill(c, cx, cy, hw, hh, st.middle, pf.face == Face::start_gc ? hex(0, 0) : st.face_rim);
+            draw_text(c, pf.face == Face::select_word ? "SELECT" : "START", cx, cy, hh * 0.9f, hw * 1.7f, sym);
             return;
         }
         if (pf.face == Face::touchpad) {
