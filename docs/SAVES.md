@@ -178,7 +178,7 @@ save stays the original GCI bytes):
 
 ### Online character and cloud backup (server)
 
-The coming online play (README "Online server") keeps its save on the server
+The online play ([DEVELOPMENT.md](DEVELOPMENT.md#online-server-dw4online)) keeps its save on the server
 and apart from the local one: an account's **online character** is one
 3316-byte character record (the layout below), stored with a revision and
 decoded by the server's own port of the record codec (`server/DW4Online`,
@@ -336,7 +336,7 @@ rank, chips only record/flag/kind. This is `ItemDevice::pack`.
 
 ## Randomizer bond (PC option)
 
-The randomizer's seed and modes (README "Randomizer") belong to a save, not
+The randomizer's seed and modes ([PLAYER_GUIDE.md](PLAYER_GUIDE.md#randomizer-rebalancing-and-cheats)) belong to a save, not
 only to settings.ini. The save itself stays the original GCI bytes; the bond
 is a sidecar next to it (`src/game/randomizer_save.cpp`): `randomizer.ini` in
 the folder that holds the save (the folder of the single save file - `saves/`

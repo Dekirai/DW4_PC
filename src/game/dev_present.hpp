@@ -3,8 +3,8 @@
 // Dev-only presentation tools for test runs (--smoke-test). Everything here is
 // off unless its environment variable is set; interactive play never reads
 // them. They exist to look at what a player sees at a high refresh rate
-// (smooth motion, game_main.cpp) frame by frame, see README ("Test-run
-// environment variables") and tools/flicker.py.
+// (smooth motion, game_main.cpp) frame by frame, see docs/DEVELOPMENT.md ("Dev
+// presentation tools") and tools/flicker.py.
 //
 //   DW4_DEV_PRESENT=HZ      present at a fixed virtual refresh of HZ per second:
 //                           every pass of the main loop adds 1/HZ s to the step
