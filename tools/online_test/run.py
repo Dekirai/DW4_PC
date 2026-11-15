@@ -13,7 +13,8 @@ World keys of scenario.json (round I1a): "autochoice" (first | new | cursor | ba
 per prompt, round I1b: DW4_ONLINE_AUTOCHOICE of every client, the development build's answer to the arrival prompt; default
 first; a client's own "autochoice" wins), a client's "box" (--online-play
 BOX), a client's "cut" ({"at": S, "seconds": N, "mode": "close" | "half"}: its own proxy cuts its link at the scenario's
-start + S for N seconds; close drops the connection and refuses reconnects, half holds every byte back without a FIN),
+start + S for N seconds; close drops the connection and refuses reconnects, half holds every byte back without a FIN; a list
+of such cuts, or "every": E with "count": K in one of them for K cuts E seconds apart from S: a link that keeps dropping, W7g),
 "server_restart" ({"at": S, "kill": false, "down": N}: the scenario's server stops at start + S, gracefully (Ctrl+Break:
 the service's ordered stop) or killed, and starts again on the same ports N seconds later), "db_checks" ([{"sql": ...,
 "expect": REGEX, "after": true}]: a query of the scenario's database after the run whose tab-separated rows must match),
@@ -1076,6 +1077,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
         return folder
 
+    def link_cuts(cut):
+        """A client's "cut": one cut, a list of them, or one with "every" / "count" (that many, that far apart): (start, cut) pairs."""
+        for x in cut if isinstance(cut, list) else [cut]:
+            for k in range(int(x.get("count", 1))):
+                yield float(x["at"]) + k * float(x.get("every", 0)), x
+
     def start(c, play_args):
         card = os.path.join(out, "card_" + c["name"])
         for sub_dir in ("Card A", "Card B"):
@@ -1094,7 +1101,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         if link or cut:
             link = link or {"up": "0,0,0"}
             port = free_port(stack)
-            extra = ["--cut", "%.3f,%s,%s" % (t0 + float(cut["at"]), cut["seconds"], cut.get("mode", "close"))] if cut else []
+            extra = ["--cut", ";".join("%.3f,%s,%s" % (t0 + at, x["seconds"], x.get("mode", "close")) for at, x in link_cuts(cut))] if cut else []
             stack.spawn(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "proxy", "--listen", str(port), "--target",
                          str(relay_port), "--up", link.get("up", "0,0,0"), "--down", link.get("down", link.get("up", "0,0,0"))] + extra,
                         os.path.join(out, c["name"] + ".proxy.out"))

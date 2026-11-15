@@ -1,0 +1,12 @@
+# W7g, host a (k5): hosts in stag0101 with b; from @200 its link keeps dropping (eight half-open cuts of 7 s, 0.2 s apart), then closes
+# at @257.6 for 30 s: its absence debt leaves that grace about 20 s, the instance ends inside the cut (host_lost, about @278), a goes
+# home after its reconnect (@288).
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until present=2,sealed>=600
+log b joined
+idle until epoch>=@195
+idle until stage=stagml11,control fail epoch>=@360
+log a home after the episode
