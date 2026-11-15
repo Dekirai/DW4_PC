@@ -15096,6 +15096,60 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   (the relay's path as above, a's JOIN decided at once, but its catch-up
   ran at 44 ticks a second and b's script ended before a's 600 sealed
   ticks with it).
+- **fix-d43's review** (2026-11-15, relay only, protocol 50, no
+  migration). Finding 1 (pre-existing, before fix-d43): a guest taken out
+  of its stage group (lag, a resync, a missing hash, a timed-out link, a
+  split, a barrier apart) plays on alone on the host's story with its
+  seat; removed meanwhile, its next barrier did not go home as 19.6.6
+  says. The relay's stand-in for that barrier (`barrier_alone`,
+  `BarrierApart`, `SplitBarrier`) named no instance, so `Decide` took it
+  for a fresh arrival from that field, also with `World:ArrivalPrompt`
+  on: its own new instance with *merge*, the former host's story in the
+  own (the error type fix-019 closed for stage groups), or the automatic
+  join of a stranger's running instance at the arrival stage without
+  OPTIONS (decision 49's `AdmittedAutoJoin` refused it for a remembered
+  Private, which then made its own instance with the merge); after a
+  reconnect without its slot, the prompt from the empty hub stage. Now
+  the stand-in names the instance its engine played on
+  (`HubInstance.ApartFrom`; `HubMember.LoneWorld` / `LoneDetached`, set
+  where a member goes on alone: `StampLeave`, `MarkLone`, the field filed
+  after a reconnect; cleared by `Place` with `LoneStage` and by a new
+  session), and `Decide`'s seatless rule reads it: with a seat there the
+  barrier is decided inside the instance as before, without one a
+  DISSOLVE home with the replace and the redirect (19.6.6), a stand-in of
+  a detached stage group too. World log `barrier_alone ... wid= seat=`.
+  Finding 2: 19.32's "with the prompt on, no flow reaches this path"
+  (decision 49 in the automatic join, above) and W4i's rationale were
+  wrong, this flow reached it; corrected (no other flow is known since
+  this fix). Unit tests `RemovedAloneTests` (7): taken out for lag and
+  removed, its barrier to stag0202 alone, with a stranger's Public
+  instance running there, and with that and a remembered Private (all
+  three home on the own story, no OPTIONS, no instance of its own); its
+  link timed out, back without its slot, its field filed, removed; removed
+  while its stage group gathers, the barrier split off after
+  `Instances:BarrierReportSeconds`; removed, its barrier past every sealed
+  tick decided apart; the control (taken out for lag, not removed: a new
+  stage group of its instance as before). Without the relay change 6
+  fail (the control passes; `build/d43/r4/unit_counter_f1_before.log`:
+  New with *merge*, or a JOIN of the stranger's instance). Runs
+  (`build/d43/r4/`, commit dd2d1491): unit 690/690 (`unit_full.log`),
+  integration 154 (3 skipped, own mysqld on 3701, SQL SHUTDOWN;
+  `it_f1.log`); real clients (md5 71496d63, `--parallel 1`): W4, W4b,
+  W4c, W4d-W4i, W7, W7c, W7d, W7e, W7f pass (`run_20261115_123949`,
+  `scen_main.log`); W7f passes 8 of 9 runs (`123949`, `133309`,
+  `133847`, `134424`, `135540`, `140118`, `140656`, `141947`, every one
+  `barrier_apart` with the JOIN at once, no `HoldExpired`); `135002`
+  failed on the client: a's STATEHASH after its checkpoint rebuild
+  (1178) differed from b's at 1800, 2400 and 3000 (`statehash_mismatch`,
+  `checkpoint_suspect` why=statehash_rebuilt) and was equal again from
+  3600, every NETFP equal, the relay's path the same as in the passing
+  runs (left for the client: a rebuild gap as lane jready's review
+  found). The removal scenarios W10, W10b, W10c, W10d and W10s pass
+  (`run_20261115_142544`, `scen_w10_2.log`; their first run,
+  `scen_w10.log`, stopped in the harness: `upload_card` imports the
+  sibling `character_test`, which `python -I` does not find, so the
+  second ran `run.py` through `build/d43/r4/run_wrap.py`, still `-I`, with
+  `tools/online_test` on `sys.path`; W10s passed in both).
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 
