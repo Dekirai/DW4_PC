@@ -366,6 +366,18 @@ insensitive, several allowed, the first match applies; a quoted prefix ending in
 prefixes end in `/`); `/pathmap:` needs `/experimental:deterministic` and was not taken. The NDK's Clang 21 takes the
 longest `-fmacro-prefix-map` in either order.
 
+**Checks** (logs in `build/r020/`). Both builds fresh from 3be2df8a and "no work to do" again at 2d38dbb6 (only these
+notes changed): `rel` = the release game (Release, DEV=OFF, BUILD_TESTING OFF, the options of the main checkout's
+`build/Game`; `bld_rel1.log`, `bld_rel2.log`), all seven exes 0 path strings (also `[A-Za-z]:\...` / `.pdb`: only
+`C:/Windows/USB Vibration` of the GameCube adapter's code and two URLs); `dev` = DEV=ON with tests (`bld_dev1.log`,
+`bld_dev2.log`), ctest 78/78 (`ctest_dev1.log`). Server unit 703/703 (`unit_final.log`), integration 154 passed,
+4 skipped (`it_final.log`): fix-d43's three (the pinned self-signed https and the C++ registration client without the
+WinHTTP client, the certificate-store test) plus `Spike_python_relay_test`, which skips without `DW4ONLINE_PYTHON`
+(fix-d43's run had it set) and passes with it (`it_spike.log`, 1/1). Both sides' test methods are all in the merge
+(fix-d43's 450, fix-flap's 422, 0ef550e9's 409; HEAD 464); the two of main's `WorldFix019RefixTests` not in it were
+renamed by int-i1b before (1ef2b04f). The relay sources are git's own merges (no hand resolution in them); W4d-W4i
+equal fix-d43's, W7g fix-flap's, W7f the resolution of step a.
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
@@ -412,6 +424,10 @@ longest `-fmacro-prefix-map` in either order.
   client a read-only copy of `build/mg/scen/dw4_mg_dev.exe`, md5 7ea1ce65, as `build/flap/scen/dw4_flap_dev.exe`). The
   fix stage's counter runs: `counter.sh REV LOG` (the flap unit tests of `flap_filter.txt` on another commit's four relay
   sources, the worktree's own put back after).
+- The 0.2.0 release state: `build/r020/` (`bld.cmd DIR TESTING [dev|nodev]`: `rel OFF nodev` = the release game,
+  `dev ON dev`; `ctest.cmd dev`; `utest.sh LOG [filter]`; `itest.sh LOG [filter]` with an own mysqld on 3740, data
+  `build/r020/it-mysql`, test ports 60400-60599). The path check: `grep -a -o -i -E '[[:print:]]*Users[/\\][[:print:]]*'`
+  on each exe of `build/r020/rel` (0 lines; UTF-16 checked by a scan of its own).
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the
