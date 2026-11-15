@@ -1286,7 +1286,8 @@ public sealed partial class RoomHub
     /// visibility lets its host in (decision 49, <see cref="AdmittedStarting"/>); else round I1a's automatic join of the
     /// row I1b's prompt would preselect (19.7.3, decision 40; the I1a interim rule of fix-019: the party's or a friend's row, or
     /// one with players of its instance at the stage), a JOIN where the instance has a stage group at the stage or a guest's NEW
-    /// (19.30.4); else a new instance of its own.
+    /// (19.30.4), among the instances whose host the remembered default lets in (decision 49, <see cref="AdmittedAutoJoin"/>); else a
+    /// new instance of its own.
     /// </summary>
     private void FreshJoinOrNew(ArrivalGroup g, long now)
     {
@@ -1320,7 +1321,8 @@ public sealed partial class RoomHub
             HoldPrompt(g, rows, 0, "", now);
             return;
         }
-        var row = starting ?? Matching.AutoJoinRow(rows);
+        // Decision 49 on round I1a's automatic join too (fix-d43): only an instance whose host the remembered default lets in.
+        var row = starting ?? AdmittedAutoJoin(g, rows);
         Note("candidates", null, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("stage", g.Stage),
             ("rows", rows.Select(r => $"{r.World.Wid}:{r.State}:{r.Here}{(r.Why.Length > 0 ? ":" + r.Why : "")}").ToArray()),
             ("chosen", row?.World.Wid ?? 0));
@@ -1483,6 +1485,31 @@ public sealed partial class RoomHub
             }
         }
         return rows.FirstOrDefault(IsStarting);
+    }
+
+    /// <summary>
+    /// Decision 49 on round I1a's automatic join (fix-d43; the user's answer of 2026-11-14: "whoever remembered Private never lands with
+    /// someone else, Friends only with friends"): an arrival without a prompt (with World:ArrivalPrompt on a fresh arrival whose
+    /// departure stage is a field, a straggler that lost its instance; with it off every fresh arrival) and without an answer joins
+    /// automatically, as a JOIN at the stage or a guest's NEW (19.30.4), only an instance whose host its remembered default lets in
+    /// (<see cref="ChoiceAdmits(ArrivalGroup, HubMember)"/>: Public any, Friends a friend's, Private nobody's; the instance's own
+    /// visibility and the blocks already chose the candidates, <see cref="Matching.Visible"/>). A refused instance is as if it did not
+    /// exist for this arrival: the preselection of decision 40 (<see cref="Matching.AutoJoinRow"/>) is made among the others, else a new
+    /// instance with the remembered visibility. Before, a remembered Private late-comer from a field became a guest in a stranger's
+    /// running instance with players at the arrival point. World log <c>auto_join_refused</c> (the row the automatic join would have
+    /// taken), counter <c>auto_join_refused_remembered</c>.
+    /// </summary>
+    private CandidateRow? AdmittedAutoJoin(ArrivalGroup g, List<CandidateRow> rows)
+    {
+        var admitted = rows.Where(r => ChoiceAdmits(g, r.World.Host)).ToList();
+        var row = Matching.AutoJoinRow(admitted);
+        if (admitted.Count < rows.Count && Matching.AutoJoinRow(rows) is { } refused && !admitted.Contains(refused))
+        {
+            Count("auto_join_refused_remembered");
+            Note("auto_join_refused", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", refused.World.Wid),
+                ("visibility", Visibilities.Text(LandingVisibility(g) ?? Visibility.Public)), ("by", "remembered"), ("chosen", row?.World.Wid ?? 0));
+        }
+        return row;
     }
 
     /// <summary>The world part of BARRIER_OK for a member arriving in an instance (19.18): the story owner is the instance's host (his

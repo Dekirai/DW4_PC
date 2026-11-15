@@ -1,0 +1,21 @@
+# W4i (19.24, 19.7.1, decision 49 in round I1a's automatic join, fix-d43): World:ArrivalPrompt off, so every arrival from home
+# takes the automatic join of the row the prompt would preselect (with the prompt on, the path of a late-comer from a field). a's
+# Public instance runs in stag0101 with a there (Here 1: the automatic join would take it); b remembers Private and arrives
+# without an answer: its BARRIER refuses a's instance (auto_join_refused by=remembered) and makes b's own Private instance; before
+# fix-d43 it joined a's running instance as a guest ("You joined a's instance").
+a: online-script: step .* log: a hosts in stag0101
+a: online-script: step .* log: a alone
+b: online-trace: barrier to=stag0101 point=0
+b: online-script: step .* log: b in stag0101
+b: online-script: step .* log: b alone
+relay: instance_start .*visibility=public
+relay: auto_join_refused .*visibility=private .*by=remembered
+relay: instance_start .*visibility=private
+!b: online-trace: prompt open
+!b: online: You joined
+!b: online: You arrived together
+!relay: instance_join .*role=guest
+!relay: starting_refused
+!relay: prompt_hold
+!a: online-script: FAIL
+!b: online-script: FAIL

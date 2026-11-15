@@ -8971,7 +8971,7 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 | 46 (2026-11-12) | *Arriving now*: a stage group of an instance at a barrier heading to the arrival stage (or its members parked on the way there) shows as a row *Arriving now* with its host's name; selectable (the arrival waits for their stage group at the stage, then joins it), never preselected (decision 40 unchanged), never the automatic join; built in round I1b's integration | 19.7.2, 19.7.3, 19.32 |
 | 47 (2026-11-12) | The prompt review's finding 8 (a fresh arrival without an answer becomes a co-arrival base before its own loading-screen prompt) is accepted as built: no extra handling | 19.7.6, 19.32 |
 | 48 (2026-11-14) | Private stays private: a player whose choice was *New instance* with Private is never the co-arrival of another player's base nor joins another's starting instance; with Friends only one whose host is his friend (no block either way); with Public as decision 43 says. A base whose chooser picked Private or Friends takes no co-arrival its visibility does not let in (as before). Both barrier orders give the same result; the members leaving through the same barrier (one stage group) stay together | 19.7.6, 19.7.7, 19.32 |
-| 49 (2026-11-14) | Decision 48 applies to an explicit *New instance* choice; without any choice the remembered default visibility (the one the player last chose) decides the same way: a player at the gate while a stranger's instance is starting lands in it automatically (no form, OPTIONS *starting*) only where his remembered visibility lets its host in (Public as before; Friends only a friend's, no block either way; Private nobody else's, not even a friend's, as decision 48), else that instance is as if it did not exist for him (the form for the other rows, else a new instance with his remembered visibility); an arrival with no answer at all (a plan never answered, a CHOICE the relay never got, a plan id unknown after a reconnect) is the co-arrival of a base or joins a starting instance only where its remembered visibility lets that host in, else a new instance with it. Unchanged: the members of one stage group passing the same barrier together, travel inside an instance, rows chosen explicitly, GO barriers | 19.7.1, 19.7.6, 19.7.7, 19.32 |
+| 49 (2026-11-14) | Decision 48 applies to an explicit *New instance* choice; without any choice the remembered default visibility (the one the player last chose) decides the same way: a player at the gate while a stranger's instance is starting lands in it automatically (no form, OPTIONS *starting*) only where his remembered visibility lets its host in (Public as before; Friends only a friend's, no block either way; Private nobody else's, not even a friend's, as decision 48), else that instance is as if it did not exist for him (the form for the other rows, else a new instance with his remembered visibility); an arrival with no answer at all (a plan never answered, a CHOICE the relay never got, a plan id unknown after a reconnect) is the co-arrival of a base or joins a starting instance only where its remembered visibility lets that host in, else a new instance with it. Unchanged: the members of one stage group passing the same barrier together, travel inside an instance, rows chosen explicitly, GO barriers. The same holds for round I1a's automatic join of a running instance without a prompt (a late-comer from a field, `World:ArrivalPrompt` off; built in fix-d43) | 19.7.1, 19.7.6, 19.7.7, 19.32 |
 
 **Standing decisions that stay:** at most four players per stage group (the
 engine's slots 0-3; staff bypass the visibility always, the blocks and the
@@ -9808,6 +9808,22 @@ W29's fake guests befriend the host). Round I1b's prompt replaces the
 automatic join; staff pass the visibility only by their own choice of a
 row (19.7.2), never in the automatic join.
 
+**Decision 49 in the automatic join** (fix-d43, 2026-11-14): where the
+automatic join still runs (`World:ArrivalPrompt` off, I1a's configuration
+and the load gate's `--no-prompt`; with the prompt on, a fresh arrival
+whose departure stage is a field, 19.32), it takes only an instance whose
+host the arrival's remembered visibility lets in, as decision 48's *New
+instance* choice would (`ChoiceAdmits`, `Matching.MayEnter`): *Public* any,
+*Friends* only a friend's (the host's friendship counts, not a friend
+inside; no block either way), *Private* nobody else's, not even a
+friend's. A refused instance is as if it did not exist for the arrival:
+the preselection is made among the others, else a new instance with the
+remembered visibility (`RoomHub.AdmittedAutoJoin`; world log
+`auto_join_refused ... by=remembered`, counter
+`auto_join_refused_remembered`). Before, a late-comer who remembered
+*Private* became a guest in a stranger's running instance with players at
+the arrival point.
+
 (Before round 72 a host alone in his instance who moved on was a fresh
 arrival too, with *Join* ending his instance and *Continue alone* keeping
 it. With instances per area his moves stay inside his instance and are
@@ -10121,12 +10137,21 @@ later groups spawned in the base's load step). In the world:
   the arrival decides on its own (a new instance with its remembered
   visibility, or the loading-screen form for other rows). With the base's
   visibility check this is symmetric again, so both barrier orders give
-  the same result. Unchanged: the members of one stage group passing the
+  the same result. (c) The automatic join of a *running* instance without
+  a prompt (19.7.1: a late-comer from a field, or every arrival with
+  `World:ArrivalPrompt` off) takes only an instance whose host the
+  remembered visibility lets in; a refused one is as if it did not exist
+  (the preselection among the others, else a new instance with the
+  remembered visibility; fix-d43, the decision 49 builder had left this
+  path out). Unchanged: the members of one stage group passing the
   same barrier (also one that reconnects while its group arrives: a
   barrier inside the instance), travel inside an instance, rows chosen
   explicitly, GO barriers, decision 48 for explicit choices. World log
-  `starting_refused ... by=remembered`, counters
-  `starting_refused_remembered`, `co_arrival_refused_remembered`.
+  `starting_refused ... by=remembered`, `auto_join_refused ...
+  by=remembered`, counters `starting_refused_remembered`,
+  `co_arrival_refused_remembered`, `auto_join_refused_remembered`. Every
+  path that lands an arrival without an explicit choice in another
+  player's instance asks the same `ChoiceAdmits` (19.32, fix-d43's list).
   **The guard**: since the remembered value decides more, the relay keeps
   its own newest remembered visibility (a *New instance* choice, a host's
   change of his instance's visibility) against an admission (a reconnect's
@@ -12308,6 +12333,7 @@ means round I1a):
 | W4f | I1b | (decision 49) as W4b, but b remembers Private (online_prefs): b's PLAN while a's instance is starting gets *nothing to choose* (flags 4, not *starting*), `starting_refused ... by=remembered`, b's own Private instance: two instances, b nobody's guest (counter-proof: without the change b's PLAN says *starting* and b is a's guest) |
 | W4g | I1b | (decision 49) as W4b, but b remembers Friends and is a's friend: *starting* (flags 2), b joins a's starting instance without a form, one instance |
 | W4h | I1b | (decision 49) as W4f without any answer: the relay drops every PLAN (`World:TestDropPlans`), both presses go out after 1 s with plan 0; b's BARRIER refuses a's starting instance (`starting_refused ... by=remembered`): two instances, b's Private (counter-proof: without the change b joins a) |
+| W4i | I1b | (decision 49 in I1a's automatic join, fix-d43) `World:ArrivalPrompt` off (the automatic join a late-comer from a field takes without a prompt): a's Public instance runs in stag0101 with a there; b, a stranger who remembers Private, takes the gate about 20 s later: `auto_join_refused ... by=remembered`, two instances, b's Private (counter-proof: without the change b joins a's running instance as a guest) |
 | W5 | I1 / I2 | a Private: b gets no prompt and a NEW; a moderator c sees a's row marked Private. a Friends: b not a friend, NEW; after the friendship (I2) listed |
 | W5s | I1b | (the integration's review) a Private; the moderator c chooses a's row himself in the gate form (the row only the staff bypass shows, never preselected): an audited staff join of a's instance (`instance_join role=staff how=join`, one `staff_join` in the audit) |
 | W6 | I1 | a's gate disc with b in another stage group: b sees the notice, takes the home departure 3 s later, is in its lobby on its own story within 5 s; `instance_history.end_reason` = host_left |
@@ -14893,6 +14919,71 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   does, so the window is hit now and then. A fix (the relay asks the new
   reporter for STATE when the reporter changes, or the client re-sends
   its STATE at a LEAVE) belongs to its own change.
+- **Decision 49 in round I1a's automatic join** (fix-d43, 2026-11-14,
+  relay only, protocol 50, no migration). The user's decision 49 (about
+  16:15): "the remembered New-instance visibility also governs arrivals
+  without a choice: whoever remembered Private never lands with someone
+  else (not even a friend), Friends only with friends (no block either
+  way); the own stage group stays together". Its builder had left one
+  path out: `FreshJoinOrNew`'s automatic join without a prompt
+  (`Matching.AutoJoinRow`, the I1a interim rule, 19.7.1), which a
+  late-comer from a field takes (with `World:ArrivalPrompt` on: a fresh
+  arrival whose departure stage is no hub stage) and every fresh arrival
+  with the prompt off: it joined a stranger's *running* instance with
+  players at the arrival point, or a friend's elsewhere in the area as a
+  guest's NEW, whatever the arrival remembered. Now
+  `RoomHub.AdmittedAutoJoin` gives `AutoJoinRow` only the rows whose host
+  `ChoiceAdmits` lets in (the remembered default, as decision 48's *New
+  instance* choice: Public any, Friends a friend host's, Private
+  nobody's); a refused instance is as if it did not exist (the
+  preselection among the others, else a new instance with the remembered
+  visibility; world log `auto_join_refused ... by=remembered chosen=`,
+  counter `auto_join_refused_remembered`). With the prompt on, no flow of
+  today's relay was found that reaches this path (fix-019 detaches every
+  stage group of a removed instance, a DISSOLVE home; a lost instance's
+  client goes home by itself, 19.6.10; a reconnect's lone barrier comes
+  from the empty hub stage and gets the prompt); the check covers it
+  wherever it is reached. **Every path that lands an arrival in another
+  player's instance without an explicit choice**, and its check: (1) the
+  co-arrival with a holding base (`Decide`: `Fits` / `MaySeeBase` and
+  `ChoiceAdmits(g, host)`, decisions 48 and 49); (2) a base holding for
+  announced members (`Decide`'s announced list: `ChoiceAdmits` with the
+  plan's *New instance* or the remembered default); (3) the co-arrivals at
+  a base's hold end (`FinishCoArrival` / `DropUnfitCoArrivals`:
+  `MaySeeBase` and `ChoiceAdmits`); (4) a starting instance without an
+  answer (`AdmittedStarting` in `FreshJoinOrNew`, OPTIONS *starting* in
+  `OnPlan` and the forms' refreshes); (5) plan 0xFFFF and a *New
+  instance* choice joining a starting instance (`StartingNotOffered`:
+  `ChoiceAdmits`); (6) the automatic join of a running instance, a JOIN
+  or a guest's NEW (`AdmittedAutoJoin`: `ChoiceAdmits`, new); (7) the
+  redecisions, which go through (1) to (6) again: a JOIN or boss hold
+  whose target ended or changed (`Redecide`), a member that lost its seat
+  while it waited (`DecideAlone`), an *Arriving now* hold's end
+  (`CheckArriving`), a co-arrival hold nobody joined (`CheckHolds`), the
+  co-arrivals of a gone base or of a base that chose a row
+  (`RedecideGroups`, `Decide`). Not checked, by the decision: a row
+  chosen explicitly (`DecideChoice` *Join*, also a quick A on a
+  preselected row), travel inside an instance (`JoinOrNew` with its
+  instance, the go-along's GO), the members of one stage group through
+  one barrier, a seat rejoin after a reconnect, and a joiner's fallback
+  NEW inside the instance it already sits in (`FallbackNew`); round I3's
+  *Join at* and I4's parties are not built. Unit tests
+  `PromptAutoJoinTests` (21): the matrix remembered Public / Friends /
+  Private x friends or not x no block / a block by either side for a
+  late-comer at a running instance with its host at the arrival stage
+  (`World:ArrivalPrompt` off); a remembered Private friend refuses a
+  friend's instance elsewhere in the area (the guest's NEW) while Friends
+  and Public still enter it; a remembered Friends late-comer refuses a
+  stranger's instance a friend of his plays in; the prompt's explicit row
+  choice unchanged. Without the relay change 5 fail (the three refusing
+  matrix cells, the guest's NEW and the friend inside;
+  `build/d43/r3/unit_counter_task1.log`). Real clients: W4i (new, 19.24;
+  `World:ArrivalPrompt` off: the harness gets no late-comer from a field
+  with the prompt on, see above, so it takes the path with the prompt
+  off) passes (runs `run_20261114_193907`, `run_20261115_093006`) and
+  fails without the change (b joined a's running instance, "You joined
+  ...", one instance; runs `run_20261114_194221`, `run_20261115_120037`).
+  Unit tests of this change's tree 678/678 (`build/d43/r3/unit_c1.log`).
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 

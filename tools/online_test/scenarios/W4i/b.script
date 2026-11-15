@@ -1,0 +1,10 @@
+# W4i, b (k5, a stranger who remembers Private): the gate at @105, without a prompt (World:ArrivalPrompt off: the relay answers its
+# PLAN with nothing to choose), while a's instance runs in stag0101 with a there. Decision 49 in the automatic join (fix-d43): its
+# BARRIER refuses a's instance: its own Private instance. It plays alone.
+campaign until stage=stagml11,control
+idle until epoch>=@105
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+follow 40 until frames>=1800 fail present>=2
+log b alone
+idle until frames>=60
