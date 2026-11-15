@@ -4,6 +4,11 @@ project(DW4_PC VERSION 0.46.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# No path of the build machine in the binaries: __FILE__ of every target from
+# here on, the fetched dependencies' included, is relative
+# (cmake/trim_build_paths.cmake).
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/trim_build_paths.cmake)
+dw4_trim_build_paths()
 option(DW4_BUILD_APP "Build the native game runtime (SDL3/OpenGL/ImGui)" ${WIN32})
 # One self-contained EXE: the C++ runtime linked in, so a clean Windows needs
 # no Visual C++ redistributable (applies to the dependencies built here too).
@@ -344,6 +349,7 @@ if(DW4_BUILD_APP)
   # found elsewhere on the build machine either.
   set(SDL_HIDAPI_LIBUSB OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(SDL3 imgui_src pl_mpeg_src stb_src zstd_src)
+  dw4_check_trimmed_paths(SDL3 imgui_src pl_mpeg_src stb_src zstd_src)
   set(ZSTD_LIB ${zstd_src_SOURCE_DIR}/lib)
   add_library(zstd_decoder STATIC
     ${ZSTD_LIB}/common/debug.c ${ZSTD_LIB}/common/entropy_common.c ${ZSTD_LIB}/common/error_private.c

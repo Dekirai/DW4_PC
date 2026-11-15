@@ -728,6 +728,15 @@ status and refuses to connect when the server's minimum protocol or minimum
 version is newer ("Update required ..."); the game's version is the CMake
 project version (`DW4_PC_VERSION`).
 
+No path of the build machine ends up in the binaries: every build cuts the
+checkout, the build folder and the FetchContent source folders off `__FILE__`
+(`cmake/trim_build_paths.cmake`: `/d1trimfile:` for MSVC,
+`-fmacro-prefix-map` for GCC and Clang; SDL's release asserts read
+`sdl3-src/src/...`). The configure step warns when a dependency's sources lie
+outside those folders. A release package's executables can be checked with
+`grep -a -o -E "Users[/\\][ -~]+" DW4_PC.exe` (no output). Release builds
+make no PDB; a build with one (RelWithDebInfo) names the PDB's absolute path.
+
 ## Further documentation
 
 | Document | Content |
