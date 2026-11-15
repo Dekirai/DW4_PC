@@ -158,6 +158,7 @@ public sealed partial class RoomHub
                         m.World is { Ending: false } seat && _worlds.ContainsKey(seat.Wid) && i.World == seat;
         m.Peer = peer;
         m.DisconnectedAt = 0;
+        if (resumable) SyncStateReporter(m.Instance!); // (back in its stage group: it may report its STATE again, W7f's race)
         m.LastHeard = now;
         m.LastInputOrPong = now;
         m.NextPingAt = now + FromMs(250.0 * (m.Id % 4)); // (one a second, spread over the housekeeping passes)

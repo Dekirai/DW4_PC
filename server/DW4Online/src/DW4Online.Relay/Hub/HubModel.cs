@@ -543,6 +543,15 @@ public sealed class HubInstance(uint id)
     public bool Joinable { get; set; }
     public bool MembershipSafe { get; set; }
     public StateReason Reason { get; set; } = StateReason.Loading;
+    /// <summary>The newest STATE of each member of the visit (fix-d43, W7f's race): the flags above come from the reporter's alone
+    /// (<c>RoomHub.StateReporter</c>), the others' are kept so that a change of the reporter takes its newest one.</summary>
+    public Dictionary<HubMember, StateMsg> States { get; } = [];
+    /// <summary>The reporter the flags were last checked against (null: none yet this visit).</summary>
+    public HubMember? StateReporter { get; set; }
+    /// <summary>The member whose STATE is in effect and its tick (<see cref="StateApplied"/>: one is, this visit).</summary>
+    public HubMember? StateFrom { get; set; }
+    public uint StateTick { get; set; }
+    public bool StateApplied { get; set; }
     /// <summary>The user's instance this stage group belongs to (null: a member's home, a hub stage group, or a stage group of
     /// nobody's instance after a detach).</summary>
     public DW4Online.Relay.World.WorldInstance? World { get; set; }

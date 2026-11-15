@@ -145,6 +145,7 @@ public sealed partial class RoomHub
         if (m.Peer != peer) return;
         m.Peer = null;
         m.DisconnectedAt = now;
+        if (m.Instance is { } si) SyncStateReporter(si); // (a reporter that is not connected reports nothing: W7f's race)
         // (Round I1b: an open plan answers nobody now; the held prompt goes with the arrival below. An answered plan waits for the
         // BARRIER that names it, so a link that drops between the CHOICE and that BARRIER and comes back keeps the player's answer;
         // a new PLAN or the next BARRIER from home ends it as before. Decision 48's review: the reconnected *New instance, Private*
@@ -258,7 +259,11 @@ public sealed partial class RoomHub
                     m.Slot = -1;
                     CheckBarrier(i, now);
                 }
-                else TryStartSealing(i, now);
+                else
+                {
+                    SyncStateReporter(i); // (the reporter may have gone)
+                    TryStartSealing(i, now);
+                }
             }
         }
         m.Instance = null;
@@ -689,7 +694,11 @@ public sealed partial class RoomHub
         Note("leave", i, ("slot", slot), ("member", m?.Index), ("tick", j));
         var remaining = i.Count;
         if (remaining == 0) EndInstance(i, now);
-        else if (remaining == 1) ScheduleLeadFrom(i, j + 1);
+        else
+        {
+            if (remaining == 1) ScheduleLeadFrom(i, j + 1);
+            SyncStateReporter(i); // (the reporter may have left: W7f's race)
+        }
     }
 
     private void ScheduleLeadFrom(HubInstance i, uint lead)
@@ -989,13 +998,75 @@ public sealed partial class RoomHub
         if (Mine(m, msg.Inst, msg.Visit) is not { } i) return;
         // The flags and the context come from one member, the connected one that has been in the instance longest (then
         // the lowest slot; a joiner still catching up sends none): every engine computes them alike, and another member's
-        // STATE marked the shared instance boss-locked or not joinable, or changed its context, at will.
-        if (i.Seats.Where(x => x.Member.Connected).OrderBy(x => x.Member.InstanceSince).ThenBy(x => x.Slot).Select(x => x.Member).FirstOrDefault() is { } reporter &&
-            reporter != m)
+        // STATE marked the shared instance boss-locked or not joinable, or changed its context, at will. Another member's STATE
+        // is kept all the same (fix-d43, W7f's race): when the reporter changes, its newest one takes effect (SyncStateReporter).
+        i.States[m] = msg;
+        if (StateReporter(i) is { } reporter && reporter != m)
         {
             Count("state_ignored");
+            // (A change of the reporter no step announced yet: the housekeeping would find it too.)
+            if (SyncStateReporter(i)) StateTookEffect(i, now);
             return;
         }
+        i.StateReporter = m;
+        ApplyState(i, m, msg);
+        StateTookEffect(i, now);
+    }
+
+    /// <summary>A STATE took effect: the held barriers that wait for the stage group's flags, and the GO requests (19.30.7).</summary>
+    private void StateTookEffect(HubInstance i, long now)
+    {
+        CheckHolds(now);
+        if (i.World is { } gw && gw.Members.Any(x => x.Go is not null)) TryGo(gw, now);
+    }
+
+    /// <summary>The member whose STATE sets a stage group's flags (<see cref="OnState"/>): the connected one in it longest, then the
+    /// lowest slot.</summary>
+    private static HubMember? StateReporter(HubInstance i) =>
+        i.Seats.Where(x => x.Member.Connected).OrderBy(x => x.Member.InstanceSince).ThenBy(x => x.Slot).Select(x => x.Member).FirstOrDefault();
+
+    /// <summary>
+    /// The reporter of <paramref name="i"/>'s STATE may have changed (a LEAVE, a lost or returned connection, a slot that went or came;
+    /// fix-d43, W7f's race): when it did, its newest STATE of this visit takes effect, so no change of the reporter loses a state (a
+    /// client sends STATE only on a change). Against the STATE in effect of a member still in the stage group it must be newer (by
+    /// tick): a reporter back from a lost link never takes a newer state back with its older one (nor with one it sent into the lost
+    /// link: its client sends that one no more). The STATE of a member that left counts no more (its tick may be another timeline's,
+    /// W7e's straggler). Before, the STATE of a member that was not the reporter was dropped: in W7f a, reconnecting, held slot 0 again
+    /// for 26 ms before its LEAVE, b's joinable STATE came in between and was ignored, b sent none again, so b's stage group stayed
+    /// *Scene* and a's JOIN of it waited Instances:JoinHoldSeconds for nothing and became a stage group of its own (HoldExpired). Only
+    /// the flags change here (no decision runs: the callers are inside other steps); a decision that reads them sees them at once, the
+    /// holds at the latest in the next housekeeping pass. True: a STATE took effect.
+    /// </summary>
+    private bool SyncStateReporter(HubInstance i)
+    {
+        if (i.Ended || i.Mode == InstanceMode.Hub) return false;
+        // (A member that left the stage group keeps nothing here, whether the reporter changes or not: back in it, its STATE of
+        // before is not its engine's now. Place drops it too when the member enters again before this runs. Removing while
+        // enumerating a Dictionary is allowed since .NET Core 3.0; no allocation in the housekeeping's pass.)
+        foreach (var x in i.States.Keys)
+            if (!InGroup(i, x)) i.States.Remove(x);
+        var reporter = StateReporter(i);
+        if (reporter == i.StateReporter) return false;
+        i.StateReporter = reporter;
+        if (reporter is null || !i.States.TryGetValue(reporter, out var newest) || newest.Visit != i.Visit ||
+            (i.StateApplied && i.StateFrom is { } from && InGroup(i, from) && newest.Tick <= i.StateTick))
+            return false;
+        Count("state_reporter_changed");
+        Note("state_reporter", i, ("member", reporter.Index), ("slot", reporter.Slot), ("tick", newest.Tick), ("flags", newest.Flags),
+            ("reason", newest.Reason.ToString()), ("was", i.StateFrom?.Index ?? 0), ("was_tick", i.StateTick));
+        ApplyState(i, reporter, newest);
+        return true;
+    }
+
+    /// <summary>The member holds its slot in the stage group (connected or not).</summary>
+    private static bool InGroup(HubInstance i, HubMember m) => m.Instance == i && m.Slot >= 0 && i.Slots[m.Slot] == m;
+
+    /// <summary>The reporter's STATE takes effect: the stage group's flags, its reason and context (and the visit's entry context).</summary>
+    private void ApplyState(HubInstance i, HubMember from, StateMsg msg)
+    {
+        i.StateFrom = from;
+        i.StateTick = msg.Tick;
+        i.StateApplied = true;
         i.Joinable = (msg.Flags & StateMsg.Joinable) != 0 && !i.LogFull;
         // A new instance is *starting* until its stage group is first joinable (19.7.6).
         if (i.Joinable && i.World is { StartingUntil: not 0 } starting) starting.StartingUntil = 0;
@@ -1013,8 +1084,6 @@ public sealed partial class RoomHub
         // report, a visit that ran from its entry into a boss took the boss kill's context - a quest flag - as its entry, and
         // an arrival with the old context joined after the kill and took that progress).
         if ((msg.Flags & StateMsg.LoadEnded) != 0 && i.EntryContext is null) i.EntryContext = msg.ContextHash;
-        CheckHolds(now);
-        if (i.World is { } gw && gw.Members.Any(x => x.Go is not null)) TryGo(gw, now);
     }
 
     // Barrier ------------------------------------------------------------------------------------------------------------
@@ -1957,6 +2026,11 @@ public sealed partial class RoomHub
         i.HomeTries = 0;
         i.AskedGo = null;
         i.NoLiving = false;
+        i.States.Clear();
+        i.StateReporter = null;
+        i.StateFrom = null;
+        i.StateTick = 0;
+        i.StateApplied = false;
         i.LogOwner = null;
         i.LogFull = false;
         i.Voted.Clear();
@@ -1985,9 +2059,14 @@ public sealed partial class RoomHub
     {
         i.Slots[slot] = m;
         if (i.Reserved[slot] == m) i.Reserved[slot] = null;
-        if (m.Instance != i) m.InstanceSince = now;
+        if (m.Instance != i)
+        {
+            m.InstanceSince = now;
+            i.States.Remove(m); // (a STATE from before it left this visit's stage group is not its engine's now: fix-d43)
+        }
         m.Instance = i;
         m.Slot = slot;
+        SyncStateReporter(i); // (a member placed in a stage group whose others are not connected reports for it)
         if (!string.IsNullOrEmpty(i.Stage))
         {
             m.LoneStage = null;
@@ -3341,6 +3420,9 @@ public sealed partial class RoomHub
 
     private void HousekeepInstance(HubInstance i, long now)
     {
+        // fix-d43 (W7f's race): a change of the STATE reporter no step announced (a fork, a lost gap, a timeout) takes the new
+        // reporter's newest STATE here at the latest; the holds see it in this pass (Housekeep's CheckHolds), a GO in HousekeepWorld.
+        SyncStateReporter(i);
         // Round J: an upload that does not finish (its donor left the instance or the connection, a chunk was dropped) no longer
         // blocks the periodic checkpoints for the rest of the visit (round J's review).
         if (i.Upload is { } upload && (upload.Donor.Instance != i || !upload.Donor.Connected || Ms(now - i.CheckpointAskedAt) > _inst.CheckpointWaitMs * 4))

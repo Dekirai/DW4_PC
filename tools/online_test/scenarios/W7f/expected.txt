@@ -3,11 +3,15 @@
 # snapshot, a resumes into the new visit and re-sends its old barrier, which lies past every tick b's stage group sealed: it is
 # decided apart at once (no stall for b, no desync's split) as a JOIN of b's stage group; a takes it (BARRIER_OK names a's own
 # instance and visit, not 0), sends READY and joins (before: no READY, join_ready_timeout, an instance of its own).
+# fix-d43: when a housekeeping pass falls into the ~20 ms between a's reconnect and its re-sent barrier, a (back from the host's
+# grace, its slot filled for 20 s) is taken out for lag first (lag_leave, as in W7) and its barrier is a straggler's
+# (barrier_alone): the same JOIN of b's stage group, so either path passes. W7f's STATE reporter race (a's JOIN held while b's
+# joinable STATE, sent while a held slot 0 again, was dropped, then a stage group of its own: HoldExpired) must not happen.
 a: online: test: the link is cut at the barrier's answer
 relay: new .*mode=Sealed
 relay: snapshot_ask
 relay: connect .*resumed=True
-relay: barrier_apart
+relay: barrier_a(part|lone)
 relay: join_decided
 relay: ready
 b: online-script: step .* log: b in stag0102
@@ -15,5 +19,6 @@ a: online-script: step .* log: a joined b there, still host
 !relay: join_ready_timeout
 !relay: barrier_split
 !relay: fallback_new
+!relay: new .*notice=HoldExpired
 !a: online-script: FAIL
 !b: online-script: FAIL

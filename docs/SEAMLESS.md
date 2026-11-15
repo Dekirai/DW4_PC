@@ -2361,7 +2361,20 @@ the same 47549cdd for stag0102.) The server compares per tick:
   (`Instances:ForkConfirmMs`), then the tick is compared (a forged SPLIT every
   two seconds hid every comparison). The instance's flags and context (STATE)
   come from one member only, the connected one that has been in the instance
-  longest (then the lowest slot).
+  longest (then the lowest slot): the *reporter*. The others' STATEs are
+  kept, not applied (`HubInstance.States`, the newest per member of the
+  visit; fix-d43, W7f's race, 19.32): when the reporter changes (its LEAVE,
+  its link lost, a member back in its slot by a reconnect, any slot that
+  goes or comes; `RoomHub.SyncStateReporter` at those steps and in every
+  housekeeping pass), the new reporter's newest STATE takes effect when its
+  tick is newer than the one in effect, or when the member whose STATE is
+  in effect left the stage group, so no change of the reporter loses a
+  state (a client sends STATE only on a change). A reporter back from a lost
+  link never takes a newer state back with its older one; a member that
+  leaves the stage group keeps no STATE there (back in it later in the
+  visit, only what its engine reports from then on counts); a new visit
+  starts with none (world log `state_reporter`, counter
+  `state_reporter_changed`).
 - **One vote per tick.** Only sealed ticks count, every tick is voted on once,
   a member is resynced at most once at a time and once per
   `Instances:ResyncCooldownSeconds` (10 s; further lost votes meanwhile are
@@ -12341,7 +12354,7 @@ means round I1a):
 | W7c | I1 | a half-open cut: the proxy swallows a's packets for 20 s without closing (no FIN, no RST): the grace starts within 5 s, a is never taken out by `lagOut`, a resumes |
 | W7d | I1 | a reconnects after 45 s (beyond the member timeout of 35 s): still host, the instance never ended |
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
-| W7f | I1b | (the integration's fix stage) W7e's race on demand: a's link goes as the sealed NEW's BARRIER_OK comes (`DW4_ONLINE_TEST_CUT_AT_ANSWER`, development builds: the answer is lost with it); SNAPSHOT_ASK makes b the uploader; a resumes into the new visit and re-sends its old barrier, which lies past b's sealed ticks: decided apart at once (`barrier_apart`, no split, no stall for b), a JOIN under a's visit, READY, still host |
+| W7f | I1b | (the integration's fix stage) W7e's race on demand: a's link goes as the sealed NEW's BARRIER_OK comes (`DW4_ONLINE_TEST_CUT_AT_ANSWER`, development builds: the answer is lost with it); SNAPSHOT_ASK makes b the uploader; a resumes into the new visit and re-sends its old barrier, which lies past b's sealed ticks: decided apart at once (`barrier_apart`, no split, no stall for b), a JOIN under a's visit, READY, still host. (fix-d43) When a housekeeping pass falls into the ~20 ms between a's reconnect and its re-sent barrier, a is taken out for lag first (`lag_leave`, as in W7) and its barrier is a straggler's (`barrier_alone`): the same JOIN, so either passes; a JOIN held until `HoldExpired` (the STATE reporter race, 19.32) fails it |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
 | W10 | I1b | a removes b: b goes home; b's prompt (its PLAN after the removal: no row, the cursor on *New instance*; the integration's check) and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
@@ -14918,7 +14931,8 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   (`HoldExpired`). W7f's 20 s cut ends about when stag0102's entry scene
   does, so the window is hit now and then. A fix (the relay asks the new
   reporter for STATE when the reporter changes, or the client re-sends
-  its STATE at a LEAVE) belongs to its own change.
+  its STATE at a LEAVE) belongs to its own change (built relay-only below:
+  "W7f's STATE reporter race, fixed").
 - **Decision 49 in round I1a's automatic join** (fix-d43, 2026-11-14,
   relay only, protocol 50, no migration). The user's decision 49 (about
   16:15): "the remembered New-instance visibility also governs arrivals
@@ -14984,6 +14998,72 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   fails without the change (b joined a's running instance, "You joined
   ...", one instance; runs `run_20261114_194221`, `run_20261115_120037`).
   Unit tests of this change's tree 678/678 (`build/d43/r3/unit_c1.log`).
+- **W7f's STATE reporter race, fixed** (fix-d43, 2026-11-14/15, relay
+  only, protocol 50). The race left above: a STATE of a member that is not the
+  reporter was dropped, and a client sends STATE only on a change, so a
+  change of the reporter could leave the flags with a state no engine had
+  any more. Now `HubInstance.States` keeps every member's newest STATE of
+  the visit (cleared with the visit) and `RoomHub.SyncStateReporter` runs
+  wherever the reporter can change: a LEAVE (`StampLeave`), a slot
+  released (`DetachLocked`), a lost link (`Disconnect`), a resumed
+  connection (`Connect`), a member placed (`Place`), a STATE of a member
+  that is not the reporter, and every housekeeping pass (a fork, a lost
+  gap, a timeout). When the reporter changed, its newest STATE takes
+  effect if its tick is newer than the one in effect, or if the member
+  whose STATE is in effect left the stage group (its tick may be another
+  timeline's: W7e's straggler); a reporter back from a lost link never
+  takes a newer state back with its older one (nor with one it sent into
+  the lost link, which its client never sends again). A member that leaves
+  the stage group keeps no STATE there, whether the reporter changes or
+  not (`SyncStateReporter` drops it at every call, `Place` when the member
+  enters again): back in the stage group later in the visit, a STATE from
+  before is not its engine's. Only the flags
+  change there; the decision that follows reads them (in W7f: a's
+  re-sent barrier is decided apart, its LEAVE makes b the reporter, b's
+  joinable STATE takes effect and a's JOIN of b's stage group goes at
+  once), the holds see them at the latest in the next housekeeping pass.
+  World log `state_reporter` (member, tick, flags, the one before),
+  counter `state_reporter_changed`; 6.9 says so. Unit tests
+  `StateReporterTests` (5): W7f's exact interleaving (b's load and entry
+  scene reported while a is away, a back in slot 0, b's joinable STATE in
+  between, a's re-sent old barrier: the JOIN goes at once, no
+  BARRIER_WAIT), the same with a STATE of the old timeline from a, a
+  reporter's lost link handing the flags to the next member's newest
+  STATE at once, a member taken out for lag keeping no STATE while the
+  reporter stays, and the guard (a returning reporter's older STATE takes
+  nothing back; a new visit keeps nothing of the last). Without the
+  change 4 fail (`build/d43/r3/unit_counter_task2.log`: W7f's
+  interleaving ends with the flags still *Scene* after a's LEAVE; the
+  guard passes), without the left-member rule alone 1
+  (`unit_counter_leftrule.log`), without the drop at every call alone 1
+  (`unit_counter_refine.log`).
+  **W7f's expectation** (19.24): two of seven runs on 2026-11-14 evening
+  failed on `barrier_apart` without the race (runs `run_20261114_194513`,
+  `run_20261114_210120`): a housekeeping pass fell into the ~20 ms
+  between a's reconnect and its re-sent barrier, a (back from the host's
+  grace, its slot filled for 20 s) was taken out for lag first
+  (`lag_leave`, as in W7) and its barrier was a straggler's
+  (`barrier_alone`): the same JOIN of b's stage group (at once, or after
+  b's real entry scene, 0.6 s). W7f now passes either path and fails on a
+  JOIN held until `HoldExpired`, the race's visible end (the old failure,
+  `run_20261114_180539`, fails it). The race's window itself (b's STATE
+  in the ~20 ms between a's reconnect and its LEAVE) was hit by no run:
+  a came back 6.2 to 12.7 s after b's load end, and where b's entry scene
+  still ran (about 6.8 s) a's JOIN was held for it and went when b's
+  joinable STATE came (126 to 496 ms), as it should; the unit test makes
+  the window. Runs with both changes (`build/d43/r3/`): unit 683/683,
+  integration 154 (3 skipped, own mysqld); real clients (the client of
+  d80617ef, md5 71496d63, `--parallel 1`): W4, W4b, W4d-W4i, W7, W7c,
+  W7d, W7e and W7f pass (run `run_20261115_093006`), W4c failed there on
+  an 11 s stall of the whole machine (both clients' longest pass 11 s, b
+  then taken out for lag) and passes again (`run_20261115_113935`); W7f
+  passes 9 of 11 runs (`093006`, `105340`, `105926`, `110504`, `111044`,
+  `111629`, `114334`, `114911`, `115450`, every one `barrier_apart`);
+  the other two failed on the loaded machine, not on the relay:
+  `103637` (b's bot never reached the mat, no cut at all) and `112210`
+  (the relay's path as above, a's JOIN decided at once, but its catch-up
+  ran at 44 ticks a second and b's script ended before a's 600 sealed
+  ticks with it).
 
 **Round I1b's second review** (2026-11-12, the prompt lane):
 
