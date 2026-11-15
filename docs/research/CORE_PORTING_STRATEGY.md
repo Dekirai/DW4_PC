@@ -40,7 +40,7 @@ that experiment as the active queue unless the owner changes direction.
 | `scripts/build.ps1` | Local MSVC/CMake/Ninja build and CTest; optional `dist/DW4_PC` install; four build jobs by default. |
 | `Play-DW4-PC.cmd`, `Start-DW4-PC.cmd` | Native walking-preview and workbench launchers respectively. Neither establishes original gameplay. |
 | `docs/`, `licenses/`, `THIRD_PARTY_NOTICES.md` | Recovery evidence, acceptance requirements and component provenance. Preserve these alongside implementation. |
-| `.github/` | Local validation documentation. No hosted workflows are permitted. |
+| `.github/` | Local validation documentation (since moved to [DEVELOPMENT.md](../DEVELOPMENT.md#local-validation)). No hosted workflows are permitted. |
 | `scripts/*recomp*`, `Play-Recompiled-DW4.cmd`, `patches/` | Set-aside runtime integration and developer tooling, retained for provenance and explicit reference work. Not the active build or acceptance lane. |
 | `work/moderngekko/`, `work/recomp-modules/`, `work/recomp-build-record.json` | Ignored historical source checkouts, generated modules and build identities. Generated code is not recovered game source. |
 | `dist/DW4_Recomp/` | Preserve every existing package, imported asset directory and adjacent save. The native workbench does not migrate these profiles. |

@@ -141,7 +141,7 @@ bilinearly. Dolphin comparisons of fire blasts (dng101b2) and disk sparkles
 
 ## Texture pack hash
 
-Texture packs (README, *Texture packs*) find a replacement by the 64-bit
+Texture packs ([PLAYER_GUIDE.md](PLAYER_GUIDE.md#texture-packs)) find a replacement by the 64-bit
 FNV-1a hash of the decoded texture: offset basis `0xcbf29ce484222325`, prime
 `0x100000001b3`, over the width and the height (each as four little-endian
 bytes) and then the RGBA8 rows top to bottom. A BC1 (GX CMPR) texel with
