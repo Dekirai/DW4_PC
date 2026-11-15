@@ -420,7 +420,8 @@ The full check pass on 0070a8f2 (the code of 3be2df8a; no code changed). Logs in
 ### The 0.2.0 delivery (2026-11-15)
 
 - **main**: `git merge --ff-only int-i1b` in the main checkout and `git push origin HEAD:main` (`4e2db6ac..3f99797f`,
-  no force, no tag). The GitHub repository was already public, so the commits were public with the push.
+  no force, no tag; the notes and docs fixes after it the same way). The GitHub repository was already public, so the
+  commits were public with the push.
 - **Server zip** `DW4Online-0.2.0.zip`: `publish.ps1` from main 3f99797f (`build/r020/logs/publish_main.log`), unit
   703/703, the dry run's 374 files. Its own DLLs and PDBs name the build folder, as every earlier server release did:
   the zip is for the own server, not an asset of the public release.
@@ -428,12 +429,15 @@ The full check pass on 0070a8f2 (the code of 3be2df8a; no code changed). Logs in
   path string, system DLLs only); det.sh on a copy 4004f056 / audio 396cb219 (`det_main020.log`); a hidden
   `--smoke-test 1800` with empty settings as `dw4_game.exe` and as `DW4_PC.exe`, exit 0 each at frame 1800
   (`smoke_main020.log`; its "0.0 s" is a missing `bc`, not the run time).
-- **Game zip** `DW4_PC-0.2.0-windows-x64.zip`: the layout of `cmake --install` (`DW4_PC.exe`, `dw4_inspect.exe`,
-  `dw4_catalog.exe`, README.md, LICENSE, THIRD_PARTY_NOTICES.md, `licenses/`, `docs/**/*.md`, `tools/verify_game.py`),
-  the texts from git at main's HEAD, the exes from `build/Game`. No `lang/`: language packs are not in release packages
-  yet (L10N.md), and a pack without its git-ignored `game.tsv` changes pictures only. The package check found the first
-  zip short of this layout (no `docs/`, no `tools/`, no `dw4_catalog` / `dw4_inspect`, which PLAYER_GUIDE promises in
-  the release folder) and with `lang/de`; it was built again (the first one moved to `build/r020/pkg/alt/`).
+- **Game zip** `DW4_PC-0.2.0-windows-x64.zip`, the player's part of the `cmake --install` layout: `DW4_PC.exe`,
+  `dw4_catalog.exe` (PLAYER_GUIDE promises it in the release folder), README.md, LICENSE, THIRD_PARTY_NOTICES.md,
+  `licenses/`, `docs/PLAYER_GUIDE.md` (the player docs only; its links to the developer docs work on GitHub only),
+  `tools/verify_game.py`, plus `lang/de/` (`language.ini`, `textures.tsv`: the user's decision, the German pack ships
+  without its git-ignored `game.tsv`, so it swaps pictures only; L10N.md 2). The texts from git at main's HEAD, the
+  exes from `build/Game`. The package check found the first zip short of what PLAYER_GUIDE promises (no `tools/`, no
+  `dw4_catalog`, no docs); a second one in the full install layout (all of `docs/`, `dw4_inspect`, no `lang/`) was
+  replaced by this one (both in `build/r020/pkg/alt/`). `cmake --install` itself installs all of `docs/` and
+  `dw4_inspect`, and no `lang/` (open below).
 
 ### Open after 0.2.0
 
@@ -457,6 +461,11 @@ found again in this stage, paths under `server/DW4Online/src/DW4Online.Relay/`):
 
 Also open: the scenarios the stopped marathon did not run (above). A hardening idea from W4b (no bug): the client's
 five seconds without an answer at a barrier (`session.cpp:385`) count its own long passes as the relay's silence.
+From the package check: the release zip was assembled by hand; `CMakeLists.txt`'s install rules differ from it (they
+install all of `docs/` and `dw4_inspect`, and no `lang/`), and F1's language list names the pack "Deutsch
+(Fan-Übersetzung) (pictures only, no game.tsv)" (`game_main.cpp:3889`), a file players never get; a player word alone
+("pictures only") would fit better. In the unpacked release, README's and PLAYER_GUIDE's links to the developer docs
+lead nowhere (absolute GitHub links would).
 
 **Known issues of 0.2.0** in player words (rare; fixed in the next update), for the release notes:
 

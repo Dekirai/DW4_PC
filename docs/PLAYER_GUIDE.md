@@ -120,9 +120,11 @@ Anything else shows as *Custom*.
 found in `lang\<code>\` next to the program, each in its own language. The
 choice applies at once. A pack changes the game's own text (and some
 pictures); the port's menus stay English. A pack without its text catalog
-says "(pictures only, no game.tsv)". Players with different languages can
-play together. Without packs the list is greyed out. Details:
-[L10N.md](L10N.md).
+says "(pictures only, no game.tsv)". The release comes with the German pack
+in this form, *Deutsch (Fan-Übersetzung)*: it shows the German originals of
+two pictures from your disc (the status labels and BITS), the game text stays
+English. Players with different languages can play together. Without packs
+the list is greyed out. Details: [L10N.md](L10N.md).
 
 ## Display and graphics
 
