@@ -125,7 +125,8 @@ public static class Matching
     /// <summary>The row I1a's automatic join takes (19.7.1, the I1a interim rule of fix-019; with World:ArrivalPrompt off): exactly the
     /// row I1b's prompt would preselect (decision 40, <see cref="Preselected"/>): the first row when it is not greyed and is the party's
     /// or a friend's or has players of its instance at the arrival stage; otherwise none (*New instance*). So a stranger's instance
-    /// with nobody of it at the arrival stage is never joined without a prompt.</summary>
+    /// with nobody of it at the arrival stage is never joined without a prompt. The relay passes only the rows whose host the arrival's
+    /// remembered visibility lets in (decision 49, fix-d43: <c>RoomHub.AdmittedAutoJoin</c>).</summary>
     public static CandidateRow? AutoJoinRow(IReadOnlyList<CandidateRow> ordered) => Preselected(ordered);
 
     /// <summary>The row I1b's prompt preselects (19.7.3): the first row when it is not greyed and is the party's or a friend's or has

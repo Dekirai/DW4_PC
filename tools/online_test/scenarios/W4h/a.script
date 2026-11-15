@@ -1,0 +1,9 @@
+# W4h, a (k5): takes the gate at @100 with nothing running (its PLAN dropped: the press goes out after 1 s); its new
+# instance (Public, its remembered default) is still starting when b arrives. It plays alone.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log a in stag0101
+wander -150 -60 20 until frames>=1800 fail present>=2
+log a alone
+idle until frames>=60

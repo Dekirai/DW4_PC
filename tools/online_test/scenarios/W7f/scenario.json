@@ -1,5 +1,5 @@
 {
-  "desc": "W7e's race on demand (round I1b's integration): a and b park together, the relay decides the sealed NEW of both, and a's link goes as its BARRIER_OK comes (DW4_ONLINE_TEST_CUT_AT_ANSWER: the answer is lost with it). b loads (SNAPSHOT_ASK makes it the uploader) and plays on; a resumes into the new visit with its engine still at the old barrier, sends that barrier again, it lies past b's sealed ticks and is decided apart at once: a JOIN of b's stage group, which a takes (its BARRIER_OK names a's visit) and joins, still host",
+  "desc": "W7e's race on demand (round I1b's integration): a and b park together, the relay decides the sealed NEW of both, and a's link goes as its BARRIER_OK comes (DW4_ONLINE_TEST_CUT_AT_ANSWER: the answer is lost with it). b loads (SNAPSHOT_ASK makes it the uploader) and plays on; a resumes into the new visit with its engine still at the old barrier, sends that barrier again, it lies past b's sealed ticks and is decided apart at once: a JOIN of b's stage group, which a takes (its BARRIER_OK names a's visit) and joins, still host (since 2b009cee the returned host is not taken out for lag first, the straggler path fix-d43 saw without it); never held until HoldExpired (fix-d43: the STATE reporter race)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,

@@ -8,8 +8,9 @@ namespace DW4Online.Tests;
 /// <summary>
 /// Decision 43 (the user's answer of 2026-11-11 to decision 21's open question, SEAMLESS.md 19.7.6): two players who leave together and
 /// both choose *New instance* land together. A *New instance* chooser is the co-arrival of a base it may see (the same rules as every
-/// co-arrival: visibility, blocks), and joins the starting instance of a base that went a moment earlier unless that instance was a row
-/// it saw and passed over. Players who chose a row still join their row.
+/// co-arrival: visibility, blocks) and whose host its own chosen visibility lets in (decision 48, PromptPrivateTests), and joins the
+/// starting instance of a base that went a moment earlier unless that instance was a row it saw and passed over. Players who chose a
+/// row still join their row.
 /// </summary>
 public partial class HubLogicTests
 {
@@ -27,13 +28,15 @@ public partial class HubLogicTests
     [Fact]
     public void Two_new_instance_choosers_who_leave_together_land_in_one_new_instance()
     {
-        var h = TogetherHarness();
+        // (Decision 43's case: both Public. Before decision 48 max chose Private here and still landed in lee's Public instance; a
+        // Private chooser is nobody's co-arrival now, PromptPrivateTests.)
+        var h = TogetherHarness(lee: Player(101, "lee") with { DefaultVisibility = Visibility.Private });
         var wk = W(h, "k");
         Plan(h, "lee", 1, "stag0101");
         Plan(h, "max", 1, "stag0101");
         Assert.Equal(wk.Wid, Assert.Single(LastOptions(h, "max").Rows).Wid);
         Choose(h, "lee", 1, ChoiceKind.New, visibility: Visibility.Public);
-        Choose(h, "max", 1, ChoiceKind.New, visibility: Visibility.Private);
+        Choose(h, "max", 1, ChoiceKind.New, visibility: Visibility.Public);
         Heading(h, "lee", "stag0101");
         Heading(h, "max", "stag0101");
         h.Advance(300);
@@ -54,7 +57,7 @@ public partial class HubLogicTests
         Assert.NotSame(wk, w);
         Assert.Equal(2, w.Seats.Count);
         Assert.Same(h.Mem("lee"), w.Host);
-        Assert.Equal(Visibility.Private, h.Mem("max").DefaultVisibility); // (his choice is remembered for his next New instance)
+        Assert.Equal(Visibility.Public, h.Mem("lee").DefaultVisibility); // (lee's choice is remembered for his next New instance)
     }
 
     [Fact]

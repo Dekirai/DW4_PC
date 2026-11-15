@@ -1,0 +1,49 @@
+{
+  "desc": "decision 49 (19.7.6, the remembered visibility without an answer): b remembers Private and takes the gate 6 s after a, a stranger whose Public instance is still starting: the PLAN gets no 'starting' (a's instance is none for b: nothing to choose) and b's BARRIER makes b's own Private instance; before decision 49 b became a's guest without a form (W4b)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "two instances: a's and b's",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^2$"
+    },
+    {
+      "name": "a's instance Public with a alone",
+      "sql": "SELECT h.visibility, COUNT(*) FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:a} GROUP BY h.id",
+      "expect": "^public\t1$"
+    },
+    {
+      "name": "b's instance Private with b alone",
+      "sql": "SELECT h.visibility, COUNT(*) FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:b} GROUP BY h.id",
+      "expect": "^private\t1$"
+    },
+    {
+      "name": "b was nobody's guest",
+      "sql": "SELECT COUNT(*) FROM instance_history_members WHERE account_id = {id:b} AND role <> 'host'",
+      "expect": "^0$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "prefs": {
+        "defaultVisibility": "private"
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# W4e, a (k5): the gate to stag0101 at @120; the gate form lists k's row; New instance with its Public default 1.5 s later
+# (DW4_ONLINE_AUTOCHOICE_DELAY_MS): its barrier comes after b's. b's instance is Private: a plays alone.
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 yes until stage=stag0101,control
+log a in stag0101
+wander -150 -60 20 until frames>=1800 fail present>=2
+log a alone
+idle until frames>=60

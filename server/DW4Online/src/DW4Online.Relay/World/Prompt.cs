@@ -6,7 +6,9 @@ namespace DW4Online.Relay.World
 {
     /// <summary>
     /// A member's gate-form plan (SEAMLESS.md 19.7.4): the PLAN the relay answered with OPTIONS, the member's CHOICE for it, and PLAN's
-    /// throttle (one a second). The BARRIER that names the plan id takes the choice; a disconnect, a new PLAN or that BARRIER ends it.
+    /// throttle (one a second). The BARRIER that names the plan id takes the choice; a new PLAN or the member's next BARRIER from home
+    /// ends it, a disconnect one without a CHOICE (an answered plan outlasts a reconnect, so its BARRIER still takes the answer:
+    /// decision 48's review).
     /// </summary>
     public sealed class PromptPlan
     {
@@ -29,8 +31,14 @@ namespace DW4Online.Relay.World
         public Dictionary<uint, string> Hosts { get; set; } = [];
 
         /// <summary>The member chose a row in the gate form: no automatic co-arrival base waits for it, and it joins no foreign base
-        /// (19.7.6). A *New instance* chooser groups with the others leaving with it (decision 43).</summary>
+        /// (19.7.6). A *New instance* chooser groups with the others leaving with it (decision 43) where its chosen visibility lets
+        /// their host in (decision 48).</summary>
         public bool ChoseRow => Plan != 0 && Choice is { Choice: ChoiceKind.Join };
+
+        /// <summary>The visibility the member chose with *New instance* for the open plan (null: none, or a row). Decision 48: a base
+        /// holds only for an announced member whose choice would let the base's host in (<see cref="Hub.RoomHub"/>.ChoiceAdmits); without
+        /// a choice its remembered default decides (decision 49).</summary>
+        public Visibility? ChoseNew => Plan != 0 && Choice is { Choice: ChoiceKind.New } c ? c.Visibility : null;
 
         public void Clear()
         {
@@ -100,7 +108,10 @@ namespace DW4Online.Relay.Hub
             p.Context = msg.Context;
             var g = PlanGroup(m, home, msg.Stage, msg.Point, msg.Context, now);
             var rows = Candidates(g, now, staffChoice: true);
-            var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !r.StaffOnly);
+            // (Decision 49: "starting" only for a starting instance whose host the member's remembered default lets in, as its BARRIER
+            // without an answer is decided, FreshJoinOrNew; one it refuses is no row either while it starts: the form for the other
+            // rows, else nothing to choose, a new instance with that visibility.)
+            var starting = AdmittedStarting(g, rows, note: true);
             OptionsMsg options;
             if (starting is not null)
                 options = new OptionsMsg(msg.Plan, 0, 0, msg.Stage.ToLowerInvariant(), OptionsMsg.Starting, m.DefaultVisibility, OptionsMsg.NewInstance,
@@ -218,12 +229,12 @@ namespace DW4Online.Relay.Hub
             Note("choice", m.Instance, ("member", m.Id), ("plan", msg.Plan), ("choice", msg.Choice.ToString().ToLowerInvariant()), ("wid", msg.Wid),
                 ("visibility", Visibilities.Text(msg.Visibility)), ("inst", msg.Inst), ("visit", msg.Visit));
 
-        /// <summary>*New instance* with a visibility: the member's remembered default from now on (Q9), written off the lock.</summary>
+        /// <summary>*New instance* with a visibility: the member's remembered default from now on (Q9), written off the lock; an admission
+        /// that read the account before that write keeps it (decision 49's guard, <see cref="AdmittedVisibility"/>).</summary>
         private void RememberChoice(HubMember m, Visibility v)
         {
             if (m.DefaultVisibility == v) return;
-            m.DefaultVisibility = v;
-            RememberVisibility?.Invoke(m.AccountId, v);
+            SetRemembered(m, v, post: true);
         }
 
         /// <summary>The gate form's answer of the plan the BARRIER named (a fresh arrival of one member): the arrival's choice.</summary>
@@ -257,7 +268,8 @@ namespace DW4Online.Relay.Hub
                     m.DefaultVisibility = c.Visibility;
                     // Decision 43: *New instance* choosers who leave together land together. One whose base went a moment earlier
                     // finds the base's starting instance (19.7.6) and joins it as its co-arrival, as an arrival without a choice
-                    // does, if it may see it, has seats and was never offered to it (a row it saw and passed over stays passed over).
+                    // does, if it may see it, has seats and was never offered to it (a row it saw and passed over stays passed over),
+                    // and if the chosen visibility lets that instance's host in (decision 48: Private stays private).
                     if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
                     {
                         Note("prompt_new", g.From, ("member", m.Id), ("visibility", Visibilities.Text(c.Visibility)), ("starting", start.World.Wid));
@@ -389,10 +401,26 @@ namespace DW4Online.Relay.Hub
                 .Any(x => !w.Seats.ContainsKey(x) && Unseatable(w, x, now));
 
         /// <summary>Decision 43: a starting instance at the arrival's stage (19.7.6) that the arrival may see and fits, and that was never
-        /// offered to it (the base of the others leaving with it went a moment earlier); null: none.</summary>
-        private CandidateRow? StartingNotOffered(ArrivalGroup g, long now) =>
-            Candidates(g, now).FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !g.PromptHosts.ContainsKey(r.World.Wid) &&
-                                                   !SeatsRefused(g, r.World, now));
+        /// offered to it (the base of the others leaving with it went a moment earlier), whose host the arrival's own *New instance*
+        /// choice lets in (decision 48: a Private chooser joins nobody's, a Friends chooser only a friend's); null: none.</summary>
+        private CandidateRow? StartingNotOffered(ArrivalGroup g, long now)
+        {
+            CandidateRow? refused = null;
+            foreach (var r in Candidates(g, now))
+            {
+                if (r.World.StartingUntil == 0 || r.Group is null || !r.Choosable || g.PromptHosts.ContainsKey(r.World.Wid) || SeatsRefused(g, r.World, now))
+                    continue;
+                if (ChoiceAdmits(g, r.World.Host)) return r;
+                refused ??= r;
+            }
+            if (refused is not null)
+            {
+                Count("new_choice_starting_refused");
+                Note("starting_refused", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", refused.World.Wid),
+                    ("visibility", Visibilities.Text(LandingVisibility(g) ?? Visibility.Public)));
+            }
+            return null;
+        }
 
         /// <summary>A *New instance* chooser joins a starting instance as its co-arrival (decision 43): a JOIN at the entrance with 3.4's
         /// hold, as an arrival without a choice does (19.7.6), with the co-arrival's toast.</summary>
@@ -414,6 +442,7 @@ namespace DW4Online.Relay.Hub
         private void HoldPrompt(ArrivalGroup g, List<CandidateRow> rows, byte notice, string noticeName, long now)
         {
             g.PromptChoice = null;
+            AdmittedStarting(g, rows, note: false); // (decision 49: no row for a starting instance the remembered default refuses)
             g.Hold = HoldKind.Prompt;
             g.Target = null;
             if (!_holds.Contains(g)) _holds.Add(g);
@@ -440,6 +469,7 @@ namespace DW4Online.Relay.Hub
             g.PromptOptionsAt = now;
             var m = g.Members[0].Member;
             var rows = Candidates(g, now, staffChoice: true);
+            AdmittedStarting(g, rows, note: false); // (decision 49: a refused starting instance stays out while it starts)
             var options = BuildOptions(m, 0, g.From.Id, g.From.Visit, g.Stage, rows, 0, "", OptionsMsg.Refresh);
             var frame = options.Frame();
             if (g.PromptOptions is { } last && last.AsSpan().SequenceEqual(frame)) return;
@@ -464,7 +494,9 @@ namespace DW4Online.Relay.Hub
                 }
                 if (Ms(now - p.OptionsAt) < _world.OptionsRefreshMs) continue;
                 p.OptionsAt = now;
-                var rows = Candidates(PlanGroup(m, home, p.Stage, p.Point, p.Context, now), now, staffChoice: true);
+                var plan = PlanGroup(m, home, p.Stage, p.Point, p.Context, now);
+                var rows = Candidates(plan, now, staffChoice: true);
+                AdmittedStarting(plan, rows, note: false); // (decision 49: a refused starting instance stays out while it starts)
                 var options = BuildOptions(m, p.Plan, 0, 0, p.Stage, rows, 0, "", OptionsMsg.Refresh);
                 var frame = options.Frame();
                 if (p.Options is { } last && last.AsSpan().SequenceEqual(frame)) continue;

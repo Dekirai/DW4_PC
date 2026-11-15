@@ -134,6 +134,12 @@ public sealed partial class RoomHub
             DetachLocked(m, now, leaveNow: true);
             if (m.World is { } w) FreeSeat(w, m, "left", now);
         }
+        if (m is not null && a.NewSession)
+        {
+            // (A new session's engine starts from the title on the own story: no instance's story it played on alone is its any more.)
+            m.LoneWorld = null;
+            m.LoneDetached = false;
+        }
         if (m is null)
         {
             m = new HubMember(_nextMemberId++, a.AccountId, a.Name);
@@ -158,6 +164,7 @@ public sealed partial class RoomHub
                         m.World is { Ending: false } seat && _worlds.ContainsKey(seat.Wid) && i.World == seat;
         m.Peer = peer;
         m.DisconnectedAt = 0;
+        if (resumable) SyncStateReporter(m.Instance!); // (back in its stage group: it may report its STATE again, W7f's race)
         m.LastHeard = now;
         m.LastInputOrPong = now;
         m.NextPingAt = now + FromMs(250.0 * (m.Id % 4)); // (one a second, spread over the housekeeping passes)
@@ -191,18 +198,122 @@ public sealed partial class RoomHub
         return m;
     }
 
-    private static void ApplyAdmit(HubMember m, HubAdmit a)
+    private void ApplyAdmit(HubMember m, HubAdmit a)
     {
         m.Name = a.Name;
         m.Staff = a.Staff;
         m.Box = Math.Max(1, a.Box);
         m.DataHash = a.DataHash;
-        m.DefaultVisibility = a.DefaultVisibility;
+        m.DefaultVisibility = AdmittedVisibility(m, a);
         m.Friends = a.Friends.ToHashSet();
         m.Blocks = a.Blocks.ToHashSet();
         m.BlockedBy = a.BlockedBy.ToHashSet();
         m.Admission = a.Handle ?? m.Admission;
         m.LeftWorld = false;
+    }
+
+    // The remembered visibility (Q9) and the admissions that read it (decision 49's staleness guard) ----------------------------
+
+    /// <summary>
+    /// The remembered default visibility the relay set for an account (a *New instance* choice, the host's change of his instance's
+    /// visibility) until online_prefs surely has it. The relay writes it off the lock through the history queue, and an admission (a
+    /// handshake, the live re-check of 19.14) reads the account off the lock too: one that read before the write would put the old
+    /// value back in memory (fix-d43's report, "left" item 2), and since decision 49 the remembered value decides where an arrival
+    /// without an answer may land. <see cref="Value"/>: the newest value the relay set; <see cref="Posted"/> / <see cref="Done"/>: its
+    /// writes queued and done (the queue's one consumer keeps them in order); <see cref="Unposted"/>: set in memory and not queued yet
+    /// (an instance's visibility before it settles, <see cref="FlushVisibility"/>); <see cref="WrittenAt"/>: when the last queued write
+    /// was done (the hub's clock). Kept per account, so a member that left the world and comes back finds it too.
+    /// </summary>
+    private sealed class RememberedVisibility
+    {
+        public Visibility Value { get; set; }
+        public long Posted { get; set; }
+        public long Done { get; set; }
+        public bool Unposted { get; set; }
+        public long WrittenAt { get; set; }
+        /// <summary>Every value the relay set is written.</summary>
+        public bool Settled => !Unposted && Done >= Posted;
+    }
+
+    private readonly Dictionary<long, RememberedVisibility> _remembered = [];
+
+    /// <summary>How long a written remembered visibility is still guarded against an admission that read before its write (one that
+    /// read later brings the written value itself and ends the guard at once).</summary>
+    public const double RememberedGuardMs = 60_000;
+
+    /// <summary>The member's remembered default set by the relay (Q9): in memory now; <paramref name="post"/>: written off the lock now
+    /// (<see cref="RememberVisibility"/>), else later (an instance's visibility once it settled, <see cref="FlushVisibility"/>).</summary>
+    private void SetRemembered(HubMember m, Visibility v, bool post)
+    {
+        m.DefaultVisibility = v;
+        if (post) PostRemembered(m.AccountId, v);
+        else
+        {
+            var r = RememberedOf(m.AccountId);
+            r.Value = v;
+            r.Unposted = true;
+        }
+    }
+
+    /// <summary>Queues the write of an account's remembered visibility (off the lock); its end comes back as <see cref="VisibilityWritten"/>.</summary>
+    private void PostRemembered(long account, Visibility v)
+    {
+        var r = RememberedOf(account);
+        r.Value = v;
+        r.Unposted = false;
+        if (RememberVisibility is not { } remember) return;
+        ++r.Posted;
+        remember(account, v);
+    }
+
+    private RememberedVisibility RememberedOf(long account)
+    {
+        if (!_remembered.TryGetValue(account, out var r)) _remembered[account] = r = new RememberedVisibility();
+        return r;
+    }
+
+    /// <summary>
+    /// A queued write of the account's remembered visibility is done (the gateway calls it under the lock after online_prefs took it,
+    /// or after the write failed: the database is the truth then). <paramref name="now"/>: the hub's clock when it was done.
+    /// </summary>
+    public void VisibilityWritten(long accountId, long now)
+    {
+        if (!_remembered.TryGetValue(accountId, out var r)) return;
+        ++r.Done;
+        if (r.Done >= r.Posted) r.WrittenAt = now;
+    }
+
+    /// <summary>
+    /// The default visibility an admission brings in (decision 49's staleness guard): the relay's own newest remembered value while it
+    /// is not written yet, or was written after the admission began to read the account (<see cref="HubAdmit.ReadAt"/>), since such an
+    /// admission may have read the old value; else the admission's (the written value or a newer one, e.g. the website's
+    /// <c>/account/friends</c>), which ends the guard. An admission without a read time is applied as it is (as before).
+    /// </summary>
+    private Visibility AdmittedVisibility(HubMember m, HubAdmit a)
+    {
+        if (!_remembered.TryGetValue(a.AccountId, out var r) || a.ReadAt == 0) return a.DefaultVisibility;
+        if (r.Settled && a.ReadAt > r.WrittenAt)
+        {
+            _remembered.Remove(a.AccountId);
+            return a.DefaultVisibility;
+        }
+        if (a.DefaultVisibility != r.Value)
+        {
+            Count("admit_visibility_kept");
+            Note("admit_visibility_kept", m.Instance, ("member", m.Id), ("account", a.AccountId), ("kept", Visibilities.Text(r.Value)),
+                ("read", Visibilities.Text(a.DefaultVisibility)), ("written", r.Settled));
+        }
+        return r.Value;
+    }
+
+    /// <summary>The housekeeping drops a guard whose value is written and older than <see cref="RememberedGuardMs"/> (or that never had a
+    /// write to wait for).</summary>
+    private void HousekeepRemembered(long now)
+    {
+        if (_remembered.Count == 0) return;
+        foreach (var (account, r) in _remembered.ToList())
+            if (r.Settled && (r.Posted == 0 || Ms(now - r.WrittenAt) >= RememberedGuardMs))
+                _remembered.Remove(account);
     }
 
     /// <summary>
@@ -675,6 +786,7 @@ public sealed partial class RoomHub
     private void HousekeepWorld(long now)
     {
         RefreshPlans(now); // (round I1b: the gate form's open prompts, 19.7.3)
+        HousekeepRemembered(now);
         foreach (var w in _worlds.Values.ToList())
         {
             if (!_worlds.ContainsKey(w.Wid)) continue;
@@ -833,7 +945,8 @@ public sealed partial class RoomHub
         w.VisibilityPending = (by, now);
         if (by == w.Host)
         {
-            by.DefaultVisibility = v;
+            // (His remembered default at once; written once it settled. Until then an admission keeps it, decision 49's guard.)
+            SetRemembered(by, v, post: false);
             w.HostChoicePending = v;
         }
         foreach (var x in w.Members) x.Peer?.Send(Notice(x, WorldNoticeKind.VisibilityChanged, by, (uint)v, ""));
@@ -854,7 +967,7 @@ public sealed partial class RoomHub
         if (w.HostChoicePending is { } choice)
         {
             w.HostChoicePending = null;
-            RememberVisibility?.Invoke(w.HostAccount, choice);
+            PostRemembered(w.HostAccount, choice);
         }
     }
 
@@ -1182,16 +1295,20 @@ public sealed partial class RoomHub
 
     /// <summary>
     /// The decision of a fresh arrival (from home) at a stage outside the hub after its co-arrival holds (19.7.1, 19.7.6): a
-    /// starting instance at the stage that may see it and fits takes it without a prompt; else round I1a's automatic join of the
+    /// starting instance at the stage that may see it and fits takes it without a prompt where the arrival's remembered default
+    /// visibility lets its host in (decision 49, <see cref="AdmittedStarting"/>); else round I1a's automatic join of the
     /// row I1b's prompt would preselect (19.7.3, decision 40; the I1a interim rule of fix-019: the party's or a friend's row, or
     /// one with players of its instance at the stage), a JOIN where the instance has a stage group at the stage or a guest's NEW
-    /// (19.30.4); else a new instance of its own.
+    /// (19.30.4), among the instances whose host the remembered default lets in (decision 49, <see cref="AdmittedAutoJoin"/>); else a
+    /// new instance of its own.
     /// </summary>
     private void FreshJoinOrNew(ArrivalGroup g, long now)
     {
         // The choice *New instance* (plan 0xFFFF) holds whatever came before this decision (a co-arrival hold nobody joined, a
         // redecision after its target ended): no row joined. Like the prompt's New instance (decision 43) it lands with the others
-        // leaving with it: a starting instance it may see takes it as a co-arrival.
+        // leaving with it: a starting instance it may see takes it as a co-arrival, where its remembered default visibility (the
+        // one its own instance would get) lets that instance's host in (decision 48; decision 49 asks the same of an arrival without
+        // an answer, below).
         if (g.PlanNew)
         {
             if (g.CoArrivals.Count == 0 && StartingNotOffered(g, now) is { } start)
@@ -1207,7 +1324,9 @@ public sealed partial class RoomHub
         // (The prompt's rows include a moderator's staff-only rows, his own choice; the automatic paths never take one.)
         var prompted = _world.ArrivalPrompt && StageNames.IsHub(g.From.Stage);
         var rows = Candidates(g, now, out var notice, out var names, staffChoice: prompted);
-        var starting = rows.FirstOrDefault(r => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !r.StaffOnly);
+        // Decision 49: without an answer the remembered default decides as a *New instance* choice would: a starting instance whose host
+        // it refuses is none for this arrival (the form only for other rows, else its own new instance with that visibility).
+        var starting = AdmittedStarting(g, rows, note: true);
         if (prompted && starting is null && rows.Count > 0)
         {
             // Round I1b (19.7.5): candidates and no answer: the loading-screen form (a PLAN's answer that came too late, a departure
@@ -1215,7 +1334,8 @@ public sealed partial class RoomHub
             HoldPrompt(g, rows, 0, "", now);
             return;
         }
-        var row = starting ?? Matching.AutoJoinRow(rows);
+        // Decision 49 on round I1a's automatic join too (fix-d43): only an instance whose host the remembered default lets in.
+        var row = starting ?? AdmittedAutoJoin(g, rows);
         Note("candidates", null, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("stage", g.Stage),
             ("rows", rows.Select(r => $"{r.World.Wid}:{r.State}:{r.Here}{(r.Why.Length > 0 ? ":" + r.Why : "")}").ToArray()),
             ("chosen", row?.World.Wid ?? 0));
@@ -1290,20 +1410,120 @@ public sealed partial class RoomHub
         return false;
     }
 
-    /// <summary>A co-arrival base of a fresh group may take this fresh group: no block between any of them, and the base's host's
-    /// default visibility lets every member of the group see the instance it will make (19.7.6: "visible to them"; a co-arrival is
-    /// automatic, so staff get no visibility bypass here, fix-019).</summary>
-    private static bool MaySeeBase(ArrivalGroup holder, ArrivalGroup g)
+    /// <summary>A co-arrival base of a fresh group may take this fresh group: no block between any of them, and the visibility the base's
+    /// instance will get (<see cref="BaseVisibility"/>) lets every member of the group see it (19.7.6: "visible to them"; a co-arrival is
+    /// automatic, so staff get no visibility bypass here, fix-019). <paramref name="coArrivals"/>: the base's co-arrivals that count
+    /// (default: all of them; <see cref="DropUnfitCoArrivals"/> checks each one against those it keeps).</summary>
+    private static bool MaySeeBase(ArrivalGroup holder, ArrivalGroup g, IEnumerable<ArrivalGroup>? coArrivals = null)
     {
         var host = holder.Members[0].Member;
-        var inBase = holder.Members.Select(a => a.Member).Concat(holder.CoArrivals.SelectMany(c => c.Members).Select(a => a.Member)).ToList();
+        var visibility = BaseVisibility(holder);
+        var inBase = holder.Members.Select(a => a.Member).Concat((coArrivals ?? holder.CoArrivals).SelectMany(c => c.Members).Select(a => a.Member)).ToList();
         foreach (var a in g.Members)
         {
             var x = a.Member;
             if (inBase.Any(y => Matching.Blocked(x, y))) return false;
-            if (!Matching.MayEnter(host.DefaultVisibility, host.AccountId, x)) return false;
+            if (!Matching.MayEnter(visibility, host.AccountId, x)) return false;
         }
         return host.DataHash == g.Members[0].Member.DataHash;
+    }
+
+    /// <summary>
+    /// The visibility the instance of a fresh co-arrival base will get: its *New instance* choice (<see cref="LandingVisibility"/>;
+    /// FinishCoArrival gives the prompt's choice to the new instance), else its host's default (CreateWorld). Decision 48's review:
+    /// MaySeeHost / MaySeeBase asked the host's default alone, which a live re-check (19.14, <see cref="Readmitted"/>) set back to the
+    /// stored value when it read the account before the remembered choice was written (off the lock, Q9): a *New instance, Private*
+    /// chooser's base then held for a stranger, who landed as a guest in the Private instance. (Decision 49's guard keeps such a re-check
+    /// from setting it back, <see cref="AdmittedVisibility"/>; this stays the base's own answer.)
+    /// </summary>
+    private static Visibility BaseVisibility(ArrivalGroup holder) => LandingVisibility(holder) ?? holder.Members[0].Member.DefaultVisibility;
+
+    /// <summary>
+    /// The visibility that decides with whom a fresh group may land automatically (another player's co-arrival base or starting
+    /// instance): decision 48, its *New instance* choice: the gate form's or the held prompt's CHOICE, or plan 0xFFFF (the client's *New
+    /// instance* without a plan) with the member's remembered default, the visibility its own instance gets; decision 49 (the user's
+    /// answer of 2026-11-14), without any answer (a plan never answered, a CHOICE the relay never got, a plan id it no longer knows after
+    /// a reconnect, the loading-screen form not answered yet): the remembered default as well, the visibility a New instance of its own
+    /// would get. Null: a row was chosen (it joins its row and lands with nobody, 19.7.6), or no member.
+    /// </summary>
+    private static Visibility? LandingVisibility(ArrivalGroup g) =>
+        g.Members.Count == 0 ? null :
+        g.PromptChoice is { } c ? (c.Choice == ChoiceKind.New ? c.Visibility : null) :
+        g.Members[0].Member.DefaultVisibility;
+
+    /// <summary>
+    /// Decision 48 (the user's answer of 2026-11-14, "Private stays private"): a *New instance* chooser lands with another player's
+    /// base or starting instance only where its own choice would let that host in, as the base's visibility must let the chooser in
+    /// (<see cref="MaySeeBase"/>, <see cref="Matching.Visible"/>): Public as before; Friends only with a host who is the chooser's friend
+    /// (the blocks count in both checks); Private with nobody's (the members leaving with it through the same barrier are its own
+    /// arrival group and stay with it). Both checks together are symmetric in the two players, so both barrier orders give the same
+    /// result. Staff are ordinary players here (fix-019). Decision 49: an arrival without any answer by its remembered default the same
+    /// way (<see cref="LandingVisibility"/>). Null (a row chosen): true.
+    /// </summary>
+    private static bool ChoiceAdmits(Visibility? chosen, HubMember chooser, HubMember host) =>
+        chosen is not { } v || Matching.MayEnter(v, chooser.AccountId, host);
+
+    /// <summary><see cref="ChoiceAdmits(Visibility?, HubMember, HubMember)"/> for a fresh arrival group (its first member chose, or its
+    /// remembered default decides) and the groups that came to it as co-arrivals (each by its own).</summary>
+    private static bool ChoiceAdmits(ArrivalGroup g, HubMember host) =>
+        g.Members.Count == 0 ||
+        ChoiceAdmits(LandingVisibility(g), g.Members[0].Member, host) && g.CoArrivals.All(c => ChoiceAdmits(c, host));
+
+    /// <summary>A starting instance among an arrival's candidates (19.7.6): its stage group at the arrival stage started a moment ago;
+    /// an automatic landing without a prompt (OPTIONS flag 2, the barrier's join without an answer), never by a row only the staff bypass
+    /// shows.</summary>
+    private static bool IsStarting(CandidateRow r) => r.World.StartingUntil != 0 && r.Group is not null && r.Choosable && !r.StaffOnly;
+
+    /// <summary>
+    /// Decision 49 (the user's answer of 2026-11-14): an arrival without an answer lands automatically only in a starting instance whose
+    /// host its remembered default lets in (<see cref="ChoiceAdmits(ArrivalGroup, HubMember)"/>: Public any, Friends a friend's,
+    /// Private nobody's; the instance's own visibility and the blocks already chose the candidates, <see cref="Matching.Visible"/>). A
+    /// starting instance it refuses is as if it did not exist for this arrival while it starts: it leaves <paramref name="rows"/> (no
+    /// form for it alone, no row in a form, so no preselected stranger's row under a quick A); once it runs it is a row like any other.
+    /// Returns the admitted starting row (null: none). <paramref name="note"/>: the world log's <c>starting_refused</c> and the counter
+    /// <c>starting_refused_remembered</c> (the decisions, not the refreshes).
+    /// </summary>
+    private CandidateRow? AdmittedStarting(ArrivalGroup g, List<CandidateRow> rows, bool note)
+    {
+        var refused = rows.Where(r => IsStarting(r) && !ChoiceAdmits(g, r.World.Host)).ToList();
+        if (refused.Count > 0)
+        {
+            rows.RemoveAll(refused.Contains);
+            if (note)
+            {
+                Count("starting_refused_remembered");
+                foreach (var r in refused)
+                    Note("starting_refused", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", r.World.Wid),
+                        ("visibility", Visibilities.Text(LandingVisibility(g) ?? Visibility.Public)), ("by", "remembered"));
+            }
+        }
+        return rows.FirstOrDefault(IsStarting);
+    }
+
+    /// <summary>
+    /// Decision 49 on round I1a's automatic join (fix-d43; the user's answer of 2026-11-14: "whoever remembered Private never lands with
+    /// someone else, Friends only with friends"): an arrival without a prompt (with World:ArrivalPrompt on a fresh arrival whose
+    /// departure stage is a field, which no known flow is since fix-d43's review sent a removed guest playing on alone home; with it
+    /// off every fresh arrival) and without an answer joins
+    /// automatically, as a JOIN at the stage or a guest's NEW (19.30.4), only an instance whose host its remembered default lets in
+    /// (<see cref="ChoiceAdmits(ArrivalGroup, HubMember)"/>: Public any, Friends a friend's, Private nobody's; the instance's own
+    /// visibility and the blocks already chose the candidates, <see cref="Matching.Visible"/>). A refused instance is as if it did not
+    /// exist for this arrival: the preselection of decision 40 (<see cref="Matching.AutoJoinRow"/>) is made among the others, else a new
+    /// instance with the remembered visibility. Before, a remembered Private late-comer from a field became a guest in a stranger's
+    /// running instance with players at the arrival point. World log <c>auto_join_refused</c> (the row the automatic join would have
+    /// taken), counter <c>auto_join_refused_remembered</c>.
+    /// </summary>
+    private CandidateRow? AdmittedAutoJoin(ArrivalGroup g, List<CandidateRow> rows)
+    {
+        var admitted = rows.Where(r => ChoiceAdmits(g, r.World.Host)).ToList();
+        var row = Matching.AutoJoinRow(admitted);
+        if (admitted.Count < rows.Count && Matching.AutoJoinRow(rows) is { } refused && !admitted.Contains(refused))
+        {
+            Count("auto_join_refused_remembered");
+            Note("auto_join_refused", g.From, ("members", g.Members.Select(a => a.Member.Id).ToArray()), ("wid", refused.World.Wid),
+                ("visibility", Visibilities.Text(LandingVisibility(g) ?? Visibility.Public)), ("by", "remembered"), ("chosen", row?.World.Wid ?? 0));
+        }
+        return row;
     }
 
     /// <summary>The world part of BARRIER_OK for a member arriving in an instance (19.18): the story owner is the instance's host (his

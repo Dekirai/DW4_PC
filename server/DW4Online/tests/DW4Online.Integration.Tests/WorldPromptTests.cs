@@ -114,6 +114,83 @@ public class WorldPromptTests
         Assert.True(forgotten);
     }
 
+    /// <summary>
+    /// Decision 49 (SEAMLESS.md 19.7.6) through the real admission: b remembers Private (online_prefs, the website's setting). a's new
+    /// instance is starting when b PLANs at the same gate: not "starting" for b (a stranger) but nothing to choose, and b's BARRIER of
+    /// that plan makes b's own Private instance.
+    /// </summary>
+    [DbFact]
+    public async Task A_remembered_private_default_gets_no_starting_flag_for_a_strangers_starting_instance_and_lands_in_its_own()
+    {
+        var (host, port) = await StartAsync();
+        await using var scope = host;
+        var (_, _, hostId) = await host.RegisterAsync("StartingHost");
+        var (_, _, guestId) = await host.RegisterAsync("PrivateGuest");
+        var world = host.App.Services.GetRequiredService<DW4Online.Domain.Services.WorldService>();
+        Assert.True((await world.SavePrefsAsync(guestId, DW4Online.Domain.World.OnlinePrefs.Default with { DefaultVisibility = "private" })).Ok);
+        await using var a = await Member.ConnectAsync(port, Ticket(host, hostId));
+        await using var b = await Member.ConnectAsync(port, Ticket(host, guestId));
+        await a.SendAsync(new BarrierMsg(a.Inst, a.Visit, 0, "stag0101", 0, 1, 1, 5, [1], 0, BarrierMsg.PlanNewInstance).Frame());
+        var okA = BarrierOkMsg.Parse(await a.NextAsync(Msg.BarrierOk));
+        Assert.Equal((BarrierDecision.New, Visibility.Public), (okA.Decision, okA.World.Visibility));
+        await b.SendAsync(new PlanMsg(2, PlanPurpose.Gate, "stag0101", 0, 5, 1).Frame());
+        var options = OptionsMsg.Parse(await b.NextAsync(Msg.Options));
+        Assert.Equal((OptionsMsg.Nothing, 0, Visibility.Private), (options.Flags, options.Rows.Count, options.Visibility));
+        await b.SendAsync(new BarrierMsg(b.Inst, b.Visit, 0, "stag0101", 0, 1, 1, 5, [2], 0, 2).Frame());
+        var okB = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, Visibility.Private), (okB.Decision, okB.World.Arrival, okB.World.Visibility));
+        Assert.NotEqual(okA.World.Wid, okB.World.Wid);
+    }
+
+    /// <summary>
+    /// Decision 49's staleness guard through the gateway: a *New instance, Private* choice is remembered in memory at once and written
+    /// through the history queue (held back here); a live re-check that reads the account meanwhile (still Public there) keeps Private in
+    /// memory. Once the write is done, the website's newer setting (Friends) is taken as before.
+    /// </summary>
+    [DbFact]
+    public async Task A_recheck_that_read_the_account_before_the_remembered_choice_was_written_keeps_the_choice_in_memory()
+    {
+        var (host, port) = await StartAsync();
+        await using var scope = host;
+        var (_, _, id) = await host.RegisterAsync("GuardPlayer");
+        var gateway = host.App.Services.GetRequiredService<DW4Online.Server.WorldGateway>();
+        var hub = host.App.Services.GetRequiredService<RelayHub>();
+        var world = host.App.Services.GetRequiredService<DW4Online.Domain.Services.WorldService>();
+        var notifier = host.App.Services.GetRequiredService<DW4Online.Domain.Abstractions.IWorldNotifier>();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var write = gateway.RememberVisibility!;
+        gateway.RememberVisibility = async (account, v) =>
+        {
+            await release.Task;
+            await write(account, v);
+        };
+        Visibility Default() => hub.Locked((h, _) => h.MemberOf(id)!.DefaultVisibility);
+        long Kept() => hub.Locked((h, _) => h.Counters.GetValueOrDefault("admit_visibility_kept"));
+        static async Task Until(Func<bool> done)
+        {
+            for (var k = 0; k < 100 && !done(); ++k) await Task.Delay(50);
+            Assert.True(done());
+        }
+
+        await using var m = await Member.ConnectAsync(port, Ticket(host, id));
+        await m.SendAsync(new PlanMsg(1, PlanPurpose.Gate, "stag0101", 0, 5, 1).Frame());
+        Assert.Equal(OptionsMsg.Nothing, OptionsMsg.Parse(await m.NextAsync(Msg.Options)).Flags);
+        await m.SendAsync(new ChoiceMsg(1, 0, 0, ChoiceKind.New, 0, Visibility.Private, 0, ChoiceMsg.DefaultBackPoint).Frame());
+        await m.SendAsync(new ChoiceMsg(1, 0, 0, ChoiceKind.Back, 0, Visibility.Private, 0, ChoiceMsg.DefaultBackPoint).Frame()); // (B)
+        await Until(() => Default() == Visibility.Private);
+        notifier.PrefsChanged(id); // (a re-check: it reads online_prefs, still Public)
+        await Until(() => Kept() == 1);
+        Assert.Equal(Visibility.Private, Default());
+        Assert.Equal("public", (await world.GetPrefsAsync(id)).DefaultVisibility);
+        release.SetResult();
+        Assert.True(await gateway.Queue.DrainAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("private", (await world.GetPrefsAsync(id)).DefaultVisibility);
+        // The website's newer setting after the write: taken (the guard ended).
+        Assert.True((await world.SavePrefsAsync(id, DW4Online.Domain.World.OnlinePrefs.Default with { DefaultVisibility = "friends" })).Ok);
+        await Until(() => Default() == Visibility.Friends);
+        Assert.Equal(1, Kept());
+    }
+
     /// <summary>A world member over a socket that keeps the frames it skipped while waiting for another type.</summary>
     private sealed class Member : IAsyncDisposable
     {

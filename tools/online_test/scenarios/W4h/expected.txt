@@ -1,0 +1,21 @@
+# W4h (19.24, 19.7.6, decision 49 of 2026-11-14): an arrival without any answer. The relay drops every PLAN
+# (World:TestDropPlans): both presses go out after World:PlanWaitMs and both BARRIERs carry plan 0. b remembers Private and
+# arrives 6 s after a, a stranger whose Public instance is still starting: b's barrier refuses it (starting_refused
+# by=remembered) and makes b's own Private instance; before decision 49 it joined a's starting instance as a guest.
+a: online-trace: prompt plan-timeout
+a: online-script: step .* log: a alone
+b: online-trace: prompt plan-timeout
+b: online-trace: barrier to=stag0101 point=0 plan=0
+b: online-script: step .* log: b alone
+relay: plan_dropped .*stage=stag0101
+relay: instance_start .*visibility=public
+relay: plan_dropped .*stage=stag0101
+relay: starting_refused .*visibility=private .*by=remembered
+relay: instance_start .*visibility=private
+!b: online-trace: prompt open
+!b: online: You arrived together
+!b: online: You joined
+!relay: instance_join .*role=guest
+!relay: prompt_hold
+!a: online-script: FAIL
+!b: online-script: FAIL

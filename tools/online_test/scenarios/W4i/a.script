@@ -1,0 +1,10 @@
+# W4i, a (k5): takes the gate at @80 with nothing running and hosts a Public instance (its remembered default) in stag0101; it
+# plays there (players at b's arrival stage) when b arrives about 20 s later, so a's instance runs (no longer starting). It plays
+# alone (b never arrives in its stage group).
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts in stag0101
+wander -150 -60 20 until frames>=2400 fail present>=2
+log a alone
+idle until frames>=60
