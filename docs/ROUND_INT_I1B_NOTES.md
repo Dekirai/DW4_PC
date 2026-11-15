@@ -327,6 +327,45 @@ dropping").
   the rates above), so the close was added to end the debt's grace inside a cut (twelve half-open cuts had split the
   END's HOME barrier in the builder's run, `scen_w7g_2.log`).
 
+## The 0.2.0 release state (2026-11-15)
+
+From 0ef550e9: the two fix branches, main's README split, two engine fixes of the Android line, release privacy. Not
+pushed. Builds and logs in `build/r020/` (gitignored; "How to run" below).
+
+| Step | What | Commit | Conflicts and their resolution |
+| --- | --- | --- | --- |
+| a | merge `fix-d43` (dbb37bb4: decisions 48 and 49, `AdmittedAutoJoin`, the STATE reporter race, the removed guest playing on alone). It branched from 389bbb1d, before this branch's fix stage after the merge of main (2b009cee and the rest) | 4057c335 | `W7f/expected.txt`: this branch expects `barrier_apart` and `!lag_leave` (2b009cee), fix-d43 `barrier_a(part\|lone)` (the `lag_leave` path it saw without 2b009cee) and `!relay: new .*notice=HoldExpired`. Kept: `barrier_apart`, `!lag_leave` and `!HoldExpired` (with `!lag_leave` the straggler path cannot come); W7f's description and its SEAMLESS 19.24 row say so. RoomHub.cs, WorldHub.cs, SEAMLESS and these notes merged by git. Unit 691/691 |
+| b | merge `fix-flap` (6ddfd828: the host's absence debt, W7g, the proxy's repeated cuts) | 55f5041d | SEAMLESS 19.24: fix-d43's W7f row (step a) and fix-flap's new W7g row, both kept. RoomHub.cs (`lagOut` with `HostDebtSpent`; `HousekeepInstance` keeps `SyncStateReporter`), WorldHub.cs (`HousekeepWorld`: `HousekeepRemembered` and `AccrueHostDebt`), WorldInstance.cs, SlotStream.cs, the server README, these notes merged by git. Unit 703/703 |
+| c | merge main 4e2db6ac (the player README landing page, docs/PLAYER_GUIDE.md, docs/DEVELOPMENT.md; .github/README.md removed) | ce52de9d | README.md: main's README is the base; the audit below |
+| d | cherry-picks 778eb680, 42825960 (feat-android-cux: no dangling layer switch and no picture traversal in a stage change's held fields; no draw list from before the module reload) | 3973088b, 68bae4ee | none; the four files (managers.hpp, engine.cpp, managers_core.cpp, host_view.cpp) are byte-identical to the dry run daa1f336, and the whole C++ tree equals daa1f336's but for dev_present.hpp's comment (main) and the CMake change of step e |
+| e | release privacy: `cmake/trim_build_paths.cmake` (`/d1trimfile:` for MSVC, `-fmacro-prefix-map` for GCC / Clang) | 3be2df8a | - |
+
+**The README audit** (everything int-i1b, fix-d43 and fix-flap changed in the old README since 12f6a1a8, all in its
+online section; fix-flap changed only the server README):
+
+| Old README item | Where now |
+| --- | --- |
+| The arrival prompt (rows, *Here (n)*, states, the cursor, *New instance* with Left/Right, A / X / B, the loading-screen form) | PLAYER_GUIDE "The arrival prompt" (main had it) |
+| "Players who take the same gate ... arrive together" | PLAYER_GUIDE, first item |
+| Decision 48 (*New instance* with Private / Friends, 7f879b53) and 49 (the remembered default without a choice, 4dce8f5c, ddfedaf0: "not even a friend's"; 10d47609: "not one you would join automatically without a prompt") | PLAYER_GUIDE had fix-d43's intermediate text (only "an instance that is just starting"); now the item **Private stays private** (chosen or remembered, never anyone else's instance, not even a friend's: not with players at the same gate, not a starting one, not the automatic join; only a row chosen in the prompt) and *Friends* only with friends; the new item "Your own group stays together"; README's "take the same gate" says Private never lands with a friend; the relay side (`ChoiceAdmits`, `AdmittedStarting`, `AdmittedAutoJoin`, SEAMLESS 19.7) in DEVELOPMENT's Online development |
+| "Without anything to choose ... New instance (Public)", "Only instances whose visibility lets you in are listed" (moderators) | PLAYER_GUIDE items 4 and 5 (main had them) |
+| "An instance belongs to its area ..." | PLAYER_GUIDE "Instances" (main had it) |
+| Go along; Removing and reporting | PLAYER_GUIDE (main had them) |
+| Known limits: the instance browser and parties, the arrival prompt lists a friend's instance | PLAYER_GUIDE "Known limits" and README (main had them) |
+| The I1a interim text (the automatic, cautious choice "until the arrival prompt comes", the toast "You joined Kim's instance ...") | obsolete (removed by int-i1b; neither main text has it) |
+| fix-flap (the server README's `Relay` row) | merged as is; the player side (a host whose link keeps dropping gets less time with each drop) added to PLAYER_GUIDE's Online menu paragraph, the rule to DEVELOPMENT's pointer (SEAMLESS 19.6.7) |
+
+**Release privacy.** Before (a Release DEV=OFF `dw4_game.exe` of 68bae4ee, `build/r020/pre`): 8 strings with the
+build machine's profile folder, all `__FILE__` of SDL's release asserts under the FetchContent source folder (SDL_gpu.c,
+SDL_sysgpu.h twice, SDL_gpu_vulkan.c, SDL_gpu_d3d12.c, SDL_render_gl.c, SDL_render_sw.c, SDL_windowswindow.c); the
+game's own sources none (NDEBUG), `dw4_inspect` / `dw4_catalog` none, no PDB path. After (`build/r020/rel`, fresh): none
+in `dw4_game.exe`, `dw4_inspect.exe`, `dw4_catalog.exe`, `dw4_texpack.exe` (ASCII and UTF-16, `Users/`, `Users\`, the
+profile name, `source/repos`, the build folders); SDL's asserts read `sdl3-src\src\gpu\SDL_gpu.c`; the compiler's
+warnings are the same 139. MSVC's `/d1trimfile:` was checked first on a test file (cuts the prefix, case and slash
+insensitive, several allowed, the first match applies; a quoted prefix ending in `\` breaks the command line, so the
+prefixes end in `/`); `/pathmap:` needs `/experimental:deterministic` and was not taken. The NDK's Clang 21 takes the
+longest `-fmacro-prefix-map` in either order.
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
@@ -347,7 +386,7 @@ dropping").
 - ~~To watch: each return restarts the host slot's lag clock, and 4 s of silence start a new grace; a host whose link
   keeps dropping for a few seconds and coming back would stay in his stage group without a pad in time.~~ **Done** on
   branch `fix-flap` (from 0ef550e9; "The flapping host" above): the host's absence debt, a stretch without play in time
-  bounded by one absence's worst case (80 s); `WorldFlapTests`, W7g. Not pushed, not merged into int-i1b.
+  bounded by one absence's worst case (80 s); `WorldFlapTests`, W7g. Merged into int-i1b for 0.2.0 (55f5041d).
 - The lag rule's own gap ("The flapping host", left): a member whose half-open drops each stay below the lag limit (a
   host: below the 4 s of silence that start a grace), with a burst of pads in time between them, stays in his stage
   group; a guest so for any length of such drops below `Relay:LagLeaveSeconds`.
