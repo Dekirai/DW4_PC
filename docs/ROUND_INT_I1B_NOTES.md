@@ -3,7 +3,8 @@
 Branch `int-i1b` from main 463c7a5b (DW4Online 0.1.9 server-only fixes of fix-019, the controller families and prompts,
 the Switch 2 Pro reader), worktree `DW4_PC-wt/int-i1b`. It merges the three I1b lanes (moderation, prompt, go along;
 each from `int-i1a` bfc3b0a5), resolves them against fix-019, and adds the integration's own tasks. Release: DW4Online
-**0.2.0**, protocol **50**, schema **14**. Not pushed, not merged into main. Data Overflow untouched. Main 12f6a1a8
+**0.2.0**, protocol **50**, schema **14**. Merged into main (fast-forward) and pushed on 2026-11-15
+(`4e2db6ac..3f99797f`, "The 0.2.0 delivery" below). Data Overflow untouched. Main 12f6a1a8
 (the display languages, texture pack format 2, tools/remaster) is merged in since 2026-11-14 (d80617ef, see "The merge
 of main" below).
 
@@ -329,8 +330,9 @@ dropping").
 
 ## The 0.2.0 release state (2026-11-15)
 
-From 0ef550e9: the two fix branches, main's README split, two engine fixes of the Android line, release privacy. Not
-pushed. Builds and logs in `build/r020/` (gitignored; "How to run" below).
+From 0ef550e9: the two fix branches, main's README split, two engine fixes of the Android line, release privacy. Merged
+into main and pushed with the release (3f99797f, "The 0.2.0 delivery" below). Builds and logs in `build/r020/`
+(gitignored; "How to run" below).
 
 | Step | What | Commit | Conflicts and their resolution |
 | --- | --- | --- | --- |
@@ -415,6 +417,24 @@ The full check pass on 0070a8f2 (the code of 3be2df8a; no code changed). Logs in
   instead of the usual 10.5 s: a's slowed play), b never sent READY (`join_ready_timeout`, `fallback_new`), both played
   alone to the 1000 s timeout; `host_away` is the run's end (`why=closed` at 1002 s). Not a fault of this release.
 
+### The 0.2.0 delivery (2026-11-15)
+
+- **main**: `git merge --ff-only int-i1b` in the main checkout and `git push origin HEAD:main` (`4e2db6ac..3f99797f`,
+  no force, no tag). The GitHub repository was already public, so the commits were public with the push.
+- **Server zip** `DW4Online-0.2.0.zip`: `publish.ps1` from main 3f99797f (`build/r020/logs/publish_main.log`), unit
+  703/703, the dry run's 374 files. Its own DLLs and PDBs name the build folder, as every earlier server release did:
+  the zip is for the own server, not an asset of the public release.
+- **Release game**: the main checkout's `build/Game` (Release, DEV=OFF) at 3f99797f, `dw4_game.exe` md5 19be8962 (no
+  path string, system DLLs only); det.sh on a copy 4004f056 / audio 396cb219 (`det_main020.log`); a hidden
+  `--smoke-test 1800` with empty settings as `dw4_game.exe` and as `DW4_PC.exe`, exit 0 each at frame 1800
+  (`smoke_main020.log`; its "0.0 s" is a missing `bc`, not the run time).
+- **Game zip** `DW4_PC-0.2.0-windows-x64.zip`: the layout of `cmake --install` (`DW4_PC.exe`, `dw4_inspect.exe`,
+  `dw4_catalog.exe`, README.md, LICENSE, THIRD_PARTY_NOTICES.md, `licenses/`, `docs/**/*.md`, `tools/verify_game.py`),
+  the texts from git at main's HEAD, the exes from `build/Game`. No `lang/`: language packs are not in release packages
+  yet (L10N.md), and a pack without its git-ignored `game.tsv` changes pictures only. The package check found the first
+  zip short of this layout (no `docs/`, no `tools/`, no `dw4_catalog` / `dw4_inspect`, which PLAYER_GUIDE promises in
+  the release folder) and with `lang/de`; it was built again (the first one moved to `build/r020/pkg/alt/`).
+
 ### Open after 0.2.0
 
 Not fixed in 0.2.0, for the next round (0.2.1). The review's four relay findings (should_fix, rare; the places as
@@ -453,7 +473,7 @@ five seconds without an answer at a barrier (`session.cpp:385`) count its own lo
 
 ## Left
 
-- Not pushed and not merged into main (as asked).
+- Merged into main and pushed on 2026-11-15 ("The 0.2.0 delivery"); the GitHub release and its tag are the user's.
 - Done (2026-11-14, `fix-d43`): decision 43 and an explicit *New instance, Private* (the review's finding 3): the user
   chose (1), decision 48 "Private stays private": a *New instance, Private* chooser is never the co-arrival of another's
   base nor joins another's starting instance, a *Friends* chooser only a friend's; both barrier orders give the same
