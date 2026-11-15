@@ -9687,6 +9687,26 @@ achievements' play context (19.8.9). W10s checks the fallback from
 nobody's instance with a real client (a staff removal during a classic
 catch-up whose target leaves the stage).
 
+fix-d43's review (2026-11-15): **a guest removed while it plays on alone
+goes home at its next barrier too.** A member that went its own way from a
+stage group of the instance (taken out for lag, a resync or a missing
+hash; its link timed out and it came back without its slot; its barrier
+split off or decided apart, 6.9) plays on alone on the host's story and
+keeps its seat. Removed meanwhile, its next barrier is a DISSOLVE
+redirected home with the replace, whatever stage it names, like a stage
+group whose members hold no seat. Before, the relay's stand-in for that
+barrier named no instance, so it was a fresh arrival from that field: its
+own new instance merging the former host's story into the own (the error
+type fix-019 closed for stage groups), or round I1a's automatic join of
+another player's instance at the arrival stage without the prompt, also
+with `World:ArrivalPrompt` on (after a reconnect without its slot: the
+prompt, with the host's story still in its engine). The stand-in now
+names the instance its engine played on (`HubInstance.ApartFrom`, from
+`HubMember.LoneWorld` set where the member goes on alone and cleared when
+it is placed again or starts a new session); with its seat the barrier is
+decided inside the instance as before. A member that went on alone from a
+detached stage group goes home the same way.
+
 #### 19.6.7 The host's connection loss (Q8)
 
 - **When it starts.** Today the relay notices a lost connection in two
@@ -14952,12 +14972,20 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   nobody's); a refused instance is as if it did not exist (the
   preselection among the others, else a new instance with the remembered
   visibility; world log `auto_join_refused ... by=remembered chosen=`,
-  counter `auto_join_refused_remembered`). With the prompt on, no flow of
-  today's relay was found that reaches this path (fix-019 detaches every
+  counter `auto_join_refused_remembered`). With the prompt on, this
+  builder found no flow that reaches this path (fix-019 detaches every
   stage group of a removed instance, a DISSOLVE home; a lost instance's
   client goes home by itself, 19.6.10; a reconnect's lone barrier comes
-  from the empty hub stage and gets the prompt); the check covers it
-  wherever it is reached. **Every path that lands an arrival in another
+  from the empty hub stage and gets the prompt). That was wrong: fix-d43's
+  review found one, a guest taken out of its stage group (lag, a resync, a
+  timed-out link, a split, a barrier apart) and removed while it played on
+  alone; its barrier was a fresh arrival from its field and took this
+  path (after a reconnect without its slot: the prompt), with the host's
+  story in its engine. That flow goes home now (19.6.6, "fix-d43's review"
+  below), and a barrier decided alone is decided inside the instance its
+  engine played on, so no flow of today's relay is known that reaches
+  this path with the prompt on; the check covers it wherever it is
+  reached. **Every path that lands an arrival in another
   player's instance without an explicit choice**, and its check: (1) the
   co-arrival with a holding base (`Decide`: `Fits` / `MaySeeBase` and
   `ChoiceAdmits(g, host)`, decisions 48 and 49); (2) a base holding for
@@ -14975,7 +15003,11 @@ the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
   while it waited (`DecideAlone`), an *Arriving now* hold's end
   (`CheckArriving`), a co-arrival hold nobody joined (`CheckHolds`), the
   co-arrivals of a gone base or of a base that chose a row
-  (`RedecideGroups`, `Decide`). Not checked, by the decision: a row
+  (`RedecideGroups`, `Decide`). A barrier decided alone (the stand-in of
+  a member that went its own way from a stage group: a lone BARRIER, a
+  barrier apart, a split) is none of these since fix-d43's review: it is
+  the instance's its engine played on (inside it with a seat, home
+  without one). Not checked, by the decision: a row
   chosen explicitly (`DecideChoice` *Join*, also a quick A on a
   preselected row), travel inside an instance (`JoinOrNew` with its
   instance, the go-along's GO), the members of one stage group through

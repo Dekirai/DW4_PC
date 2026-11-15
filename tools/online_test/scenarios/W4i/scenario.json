@@ -1,5 +1,5 @@
 {
-  "desc": "decision 49 in round I1a's automatic join (fix-d43): World:ArrivalPrompt off, so an arrival takes the automatic join of the row the prompt would preselect (the path a late-comer from a field without a prompt takes); a hosts a Public instance in stag0101 and plays there; b, a stranger who remembers Private, takes the gate when a's instance runs (not starting) with a at the arrival stage: b's BARRIER refuses a's instance (auto_join_refused by=remembered) and makes b's own Private instance; before fix-d43 b joined a's instance as a guest",
+  "desc": "decision 49 in round I1a's automatic join (fix-d43): World:ArrivalPrompt off, so an arrival takes the automatic join of the row the prompt would preselect (with the prompt on, the path of a fresh arrival from a field, which since fix-d43's review no known flow reaches); a hosts a Public instance in stag0101 and plays there; b, a stranger who remembers Private, takes the gate when a's instance runs (not starting) with a at the arrival stage: b's BARRIER refuses a's instance (auto_join_refused by=remembered) and makes b's own Private instance; before fix-d43 b joined a's instance as a guest",
   "world": true,
   "autochoice": "first",
   "seed_story": true,

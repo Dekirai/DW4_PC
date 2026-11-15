@@ -125,6 +125,7 @@ public sealed partial class RoomHub
             m.LoneStage = parked.Stage;
             m.LoneSince = parked.ParkedAt;
             m.LoneKey = 1UL << 63 | (ulong)parked.ParkedAt;
+            MarkLoneWorld(m, parked.From);
         }
         else if (m.Instance is { Ended: false } was && !string.IsNullOrEmpty(was.Stage) && m.Slot >= 0)
         {
@@ -133,7 +134,17 @@ public sealed partial class RoomHub
             // The visit goes on alone: it keeps its key, so what it gave (one phase step, one key item) stays given (a
             // reconnect without resuming made a fresh visit of it before).
             m.LoneKey = (ulong)was.Id << 32 | was.Visit;
+            MarkLoneWorld(m, was);
         }
+    }
+
+    /// <summary>The member's engine goes on alone from the stage group <paramref name="from"/>: on that group's instance's story (a
+    /// detached group's former one; none from a hub stage group), which its next barrier decided alone stands for (fix-d43's review,
+    /// <see cref="HubMember.LoneWorld"/>).</summary>
+    private static void MarkLoneWorld(HubMember m, HubInstance from)
+    {
+        m.LoneWorld = from.StoryWorld;
+        m.LoneDetached = from.Detached;
     }
 
     /// <summary>
@@ -686,6 +697,7 @@ public sealed partial class RoomHub
             m.LoneStage = i.Stage;
             m.LoneSince = Math.Max(m.InstanceSince, i.VisitStartedAt);
             m.LoneKey = (ulong)i.Id << 32 | i.Visit;
+            MarkLoneWorld(m, i); // (on the instance's story: its next barrier is that instance's, home once its seat went)
             // A member taken out while it still plays (lag, a resync too long or too many, a missing hash) gets the ticks
             // up to its LEAVE: its client sees it and continues alone until its next barrier (before, it waited for
             // ticks nobody sent it). A member that parks, joins or reconnects meanwhile drops out of this (PumpAll).
@@ -1134,16 +1146,24 @@ public sealed partial class RoomHub
             // joiners were sent to). Its engine's slot: the BARRIER's only present slot, else the server's.
             var slot = BitOperations.PopCount(msg.PresentMask) == 1 ? BitOperations.TrailingZeroCount(msg.PresentMask) : Math.Max(0, m.Slot);
             var stage = i?.Stage ?? m.LoneStage ?? "";
+            // The story its engine plays on (fix-d43's review): the stage group the server still had it in, else the one it went on
+            // alone from (a hub stage group, a reconnect's empty one: the lone play's). The decision reads the stand-in as a stage group
+            // of that instance: inside it with a seat there, else home (19.6.6; before, a guest taken out and removed meanwhile was a
+            // fresh arrival from its field: its own instance merging the host's story, or the automatic join of a stranger's).
+            var field = i is { Mode: not InstanceMode.Hub };
+            var apartFrom = field ? i!.StoryWorld : m.LoneWorld;
+            var detached = field ? i!.Detached : m.LoneDetached;
             DetachLocked(m, now, leaveNow: true);
             // (The lone group answers under the instance and visit the BARRIER named, the client's current ones: BARRIER_OK's old
             // inst and visit, which a parked client matches. Instance 0 made every answer to a straggler go unheard; round I1b's
             // integration, W7e.)
-            var lone = new HubInstance(msg.Inst) { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = i?.Detached == true };
+            var lone = new HubInstance(msg.Inst)
+                { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = detached, ApartFrom = apartFrom };
             var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now, Alive = msg.AliveMask,
                 PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance, PlanId = msg.PlanId == BarrierMsg.PlanNewInstance ? (ushort)0 : msg.PlanId };
             g.Members.Add(new Arrival(m, slot, msg.Carry));
             m.Arrival = g;
-            Note("barrier_alone", null, ("member", m.Index), ("to", msg.Stage));
+            Note("barrier_alone", null, ("member", m.Index), ("to", msg.Stage), ("wid", apartFrom?.Wid ?? 0), ("seat", apartFrom is not null && m.World == apartFrom));
             Decide(g, now);
             return;
         }
@@ -1192,7 +1212,9 @@ public sealed partial class RoomHub
         var slot = m.Slot;
         Count("barrier_apart");
         Note("barrier_apart", i, ("member", m.Index), ("slot", slot), ("tick", msg.Tick), ("sealed_to", i.NextSeal), ("to", msg.Stage));
-        var lone = new HubInstance(msg.Inst) { Stage = i.Stage, Visit = i.Visit, ContextHash = msg.ContextHash, Ended = true };
+        // (A stand-in of the stage group's instance, fix-d43's review: a removed member's barrier apart goes home, not a fresh arrival.)
+        var lone = new HubInstance(msg.Inst)
+            { Stage = i.Stage, Visit = i.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = i.Detached, ApartFrom = i.StoryWorld };
         var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now,
             Alive = msg.AliveMask, PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance,
             PlanId = msg.PlanId == BarrierMsg.PlanNewInstance ? (ushort)0 : msg.PlanId };
@@ -1295,7 +1317,8 @@ public sealed partial class RoomHub
         // client matches; round I1b's integration, W7e: with instance 0 a member that resumed into the next visit after a cut and
         // re-sent its old barrier never took the JOIN's BARRIER_OK, so it dropped the state and never sent READY).
         var named = b.Messages.TryGetValue(reporters[0].Key, out var firstReport) ? firstReport.Inst : i.Id;
-        var lone = new HubInstance(named) { Stage = i.Stage, Visit = i.Visit, ContextHash = b.Context, Ended = true };
+        // (A stand-in of the stage group's instance, fix-d43's review: reporters removed while it gathered go home, not a fresh arrival.)
+        var lone = new HubInstance(named) { Stage = i.Stage, Visit = i.Visit, ContextHash = b.Context, Ended = true, Detached = i.Detached, ApartFrom = i.StoryWorld };
         var g = new ArrivalGroup { From = lone, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive };
         i.Barrier = null;
         i.SealStop = null;
@@ -1331,8 +1354,10 @@ public sealed partial class RoomHub
         foreach (var a in g.Members) a.Member.HeadingAskedFor = null; // (this departure's asked members are used: a later HEADING starts anew)
         if (TestHoldGoBarrier(g, now)) return;
         // (A stage group of an instance whose members hold no seat in it any more, removed ones: their engines hold the host's
-        // story, so they go home like a detached group, 19.6.6.)
-        var seatless = w is null && g.From.World is not null;
+        // story, so they go home like a detached group, 19.6.6. So does the stand-in of a member that went its own way from a stage
+        // group of an instance it holds no seat in any more: a lone barrier, a barrier apart, a split; fix-d43's review: a guest
+        // taken out for lag and removed while it played on alone was a fresh arrival from its field.)
+        var seatless = w is null && (g.From.World ?? g.From.ApartFrom) is not null;
         if (g.From.Detached || seatless || w is { Ending: true } || (w is not null && !_worlds.ContainsKey(w.Wid)))
         {
             Dissolve(g, now, redirectHome: true);
@@ -2071,6 +2096,8 @@ public sealed partial class RoomHub
         {
             m.LoneStage = null;
             m.LoneKey = 0;
+            m.LoneWorld = null;
+            m.LoneDetached = false;
             m.GaveUp = false;
             // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
             // member may report (8.7).
@@ -3236,6 +3263,8 @@ public sealed partial class RoomHub
                 m.LoneStage = msg.Stage;
                 m.LoneSince = now;
                 m.LoneKey = 0;
+                m.LoneWorld = w; // (on its instance's story: removed before its barrier, it goes home from there, fix-d43's review)
+                m.LoneDetached = false;
                 Count("resume_filed_alone");
                 Note("resume_alone", null, ("member", m.Id), ("wid", w.Wid), ("stage", msg.Stage));
                 MarkInfoDirty(w);

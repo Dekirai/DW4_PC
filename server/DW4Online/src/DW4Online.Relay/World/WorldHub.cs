@@ -134,6 +134,12 @@ public sealed partial class RoomHub
             DetachLocked(m, now, leaveNow: true);
             if (m.World is { } w) FreeSeat(w, m, "left", now);
         }
+        if (m is not null && a.NewSession)
+        {
+            // (A new session's engine starts from the title on the own story: no instance's story it played on alone is its any more.)
+            m.LoneWorld = null;
+            m.LoneDetached = false;
+        }
         if (m is null)
         {
             m = new HubMember(_nextMemberId++, a.AccountId, a.Name);
@@ -1491,7 +1497,8 @@ public sealed partial class RoomHub
     /// <summary>
     /// Decision 49 on round I1a's automatic join (fix-d43; the user's answer of 2026-11-14: "whoever remembered Private never lands with
     /// someone else, Friends only with friends"): an arrival without a prompt (with World:ArrivalPrompt on a fresh arrival whose
-    /// departure stage is a field, a straggler that lost its instance; with it off every fresh arrival) and without an answer joins
+    /// departure stage is a field, which no known flow is since fix-d43's review sent a removed guest playing on alone home; with it
+    /// off every fresh arrival) and without an answer joins
     /// automatically, as a JOIN at the stage or a guest's NEW (19.30.4), only an instance whose host its remembered default lets in
     /// (<see cref="ChoiceAdmits(ArrivalGroup, HubMember)"/>: Public any, Friends a friend's, Private nobody's; the instance's own
     /// visibility and the blocks already chose the candidates, <see cref="Matching.Visible"/>). A refused instance is as if it did not

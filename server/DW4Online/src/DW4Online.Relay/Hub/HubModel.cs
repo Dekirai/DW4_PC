@@ -173,6 +173,16 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>The visit key the member's lone play counts under (the instance visit it went on from alone; 0: from
     /// <see cref="LoneSince"/>), so a reconnect without resuming is no new visit for the per-visit rules.</summary>
     public ulong LoneKey { get; set; }
+    /// <summary>The instance whose story the member's engine plays on while it plays alone (<see cref="LoneStage"/>): the instance of
+    /// the stage group it went on from alone (taken out of it, its link lost there, its field filed after a reconnect; a detached
+    /// group's former instance), null when that was a hub stage group (its own story). Its next barrier, decided alone, is that
+    /// instance's: inside it while the member holds a seat there, else a DISSOLVE home with the replace (19.6.6; fix-d43's review:
+    /// a guest taken out for lag and removed meanwhile was a fresh arrival from its field, its own instance merging the host's story,
+    /// or the automatic join of a stranger's instance). Kept and cleared with <see cref="LoneStage"/>; a new session's engine starts
+    /// on its own story.</summary>
+    public DW4Online.Relay.World.WorldInstance? LoneWorld { get; set; }
+    /// <summary>The member went on alone from a stage group of nobody's instance (detached, 19.6.6): its next barrier goes home.</summary>
+    public bool LoneDetached { get; set; }
     /// <summary>When the housekeeping last saw the member in an instance of n players (index n, 1..4): the achievements'
     /// players claim is capped by it (<see cref="RoomHub.RecentInstancePlayers"/>).</summary>
     public long[] SeenInSize { get; } = new long[Wire.MaxSlots + 1];
@@ -569,6 +579,13 @@ public sealed class HubInstance(uint id)
     /// <summary>A detached stage group's former instance (fix-019's refix): its engines hold that instance's story and settings until
     /// their way home, the own story only for its former host. The STORY refusal and the achievements' play context read it.</summary>
     public DW4Online.Relay.World.WorldInstance? DetachedFrom { get; set; }
+    /// <summary>The stand-in of a member that goes its own way at a barrier (a BARRIER decided alone, a barrier apart, a split; fix-d43's
+    /// review): the instance whose story its engines played on (its stage group's instance, <see cref="HubMember.LoneWorld"/>). The
+    /// decision reads it as a stage group of that instance: inside it while its members hold a seat there, else a DISSOLVE home with the
+    /// redirect, like a stage group whose members hold no seat (19.6.6).</summary>
+    public DW4Online.Relay.World.WorldInstance? ApartFrom { get; set; }
+    /// <summary>The instance whose story this stage group's engines play on (its own, a stand-in's, a detached group's former one).</summary>
+    public DW4Online.Relay.World.WorldInstance? StoryWorld => World ?? ApartFrom ?? DetachedFrom;
     /// <summary>Round I1b (19.18): STATE's flag 16, no present slot alive (the go-along wait and the GO's join hold read it).</summary>
     public bool NoLiving { get; set; }
     /// <summary>Round I1b (19.30.5): the point the visit's barrier entered the stage through (a go-along's target point).</summary>
