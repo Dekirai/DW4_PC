@@ -1,0 +1,96 @@
+# E / F: the top screen on a device: the virtual Thor pad (its family first), categories, values, Select does
+# nothing, the Back key (pushed as SDL's), the capture (analog L2, the Thor's digital R2, cancelled by Back),
+# the text sheet (account, password: the system keyboard), Start closes.
+expect log + pad Odin Controller thor
+wait 30
+expect open
+expect page saves
+shot e1_00_saves
+pad down
+expect page general
+pad a
+expect focus general.language
+pad down
+pad down
+pad down
+expect focus general.loading
+pad down
+expect focus general.volume
+pad left
+expect setting audio.volume 95
+pad right
+pad r1
+expect page display
+shot e1_01_display
+pad select
+wait 6
+expect open
+back
+wait 6
+expect log menu: closed (the Back key)
+expect closed
+back
+wait 6
+expect open
+pad r1
+pad r1
+expect page controls
+pad down
+pad down
+pad down
+pad down
+expect focus controls.bind.buttons
+pad a
+expect page controls/bindings.buttons
+pad right
+pad a
+wait 8
+expect dialog capture
+shot e1_02_capture
+pad l2
+wait 6
+expect log menu: capture A slot 2 = lefttrigger
+pad right
+pad a
+wait 8
+pad thor-r2
+wait 6
+expect log menu: capture A slot 3 = righttrigger
+pad a
+wait 8
+back
+wait 6
+expect log menu: capture A slot 3 cancelled (the Back key)
+expect open
+pad l1
+pad l1
+pad l1
+pad l1
+expect page saves
+pad down
+pad down
+pad down
+pad down
+pad down
+expect focus saves.cloud
+pad a
+expect page saves/cloud
+pad a
+wait 8
+expect log menu: edit cloud.account active
+shot e1_03_text
+type thor
+pad a
+wait 6
+expect focus cloud.password
+pad a
+wait 8
+expect log menu: edit cloud.password active
+shot e1_04_password
+type pw
+pad a
+wait 6
+expect value cloud.password ****
+pad start
+wait 6
+expect closed

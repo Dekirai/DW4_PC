@@ -60,6 +60,7 @@ bool MenuScript::load(const std::filesystem::path& file, std::string& error) {
     auto parsed = parse_menu_script(text, error);
     if (!parsed) return false;
     commands_ = std::move(*parsed);
+    menu_log_keep(true); // ("expect log" reads the lines since its last expect)
     return true;
 }
 
@@ -235,6 +236,12 @@ void MenuScript::update(Host& host) {
     case MenuCommand::Kind::stick:
         if (!joystick_) {
             fail(c, "no virtual pad");
+            done = true;
+            break;
+        }
+        if (c.kind == MenuCommand::Kind::pad && c.count < 0) {
+            // ("pad a down" / "pad a up": the button stays as set.)
+            set_button(c.name, c.count == -1);
             done = true;
             break;
         }

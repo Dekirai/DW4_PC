@@ -1,0 +1,181 @@
+# D1: every root page's rows by the pad, settings changed and checked (Android's rules, the Thor's virtual pad).
+expect log + pad Odin Controller thor
+wait 3
+expect open
+expect page saves
+shot d1_00_saves_sidebar
+# ---- General
+pad down
+expect page general
+pad a
+expect focus general.language
+pad down
+expect focus general.preset
+pad down
+expect focus general.preset_info
+pad a
+pad a
+pad down
+expect focus general.loading
+# (Test runs show Original whatever the setting: DW4_FAST_LOADING decides there.)
+pad right
+expect log menu: General > Loading = Fast
+expect setting gameplay.loading fast
+pad b
+pad a
+expect focus general.loading
+pad x
+pad left
+pad down
+expect focus general.volume
+pad left
+expect setting audio.volume 95
+pad left
+expect setting audio.volume 90
+pad right
+pad right
+expect setting audio.volume 100
+pad down
+expect focus general.label_mode
+pad right
+expect setting hud.overhead_labels all
+pad left
+expect setting hud.overhead_labels auto
+pad down
+pad right
+expect setting hud.label_scale 110
+pad left
+expect setting hud.label_scale 100
+pad down
+expect focus general.label_numbers
+pad a
+expect setting hud.label_numbers true
+pad left
+expect setting hud.label_numbers false
+pad down
+expect focus general.pause
+pad a
+expect setting menu.pause false
+pad a
+expect setting menu.pause true
+pad down
+expect focus general.pause_unfocused
+pad down
+expect focus general.skip_intro
+pad right
+expect setting preferences.skip_intro true
+pad left
+expect setting preferences.skip_intro false
+pad down
+expect focus general.files
+pad a
+expect page general/files
+shot d1_01_general_files
+pad b
+expect page general
+expect focus general.files
+# ---- Display (R1)
+pad r1
+expect page display
+expect focus display.ui_scale
+pad down
+expect focus display.widescreen
+pad a
+expect setting window.widescreen true
+pad a
+expect setting window.widescreen false
+pad down
+expect focus display.frame_limit
+pad right
+expect setting window.fps_limit 30
+pad right
+pad right
+expect setting window.fps_limit 120
+pad right
+expect setting window.fps_limit 120
+pad left
+pad left
+pad left
+expect setting window.fps_limit 0
+pad down
+expect focus display.smooth_motion
+pad down
+expect focus display.msaa
+pad down
+expect focus display.screen2_mode
+pad right
+expect setting screen2.mode off
+pad left
+expect value display.screen2_mode Automatic
+pad down
+expect focus display.screen2_overlay
+pad down
+expect focus display.advanced
+pad right
+expect page display/advanced
+pad a
+expect setting window.vsync false
+pad a
+expect setting window.vsync true
+pad down
+pad a
+expect page display/advanced/performance
+shot d1_02_performance
+pad b
+pad b
+expect page display
+expect focus display.advanced
+# ---- Graphics (R1)
+pad r1
+expect page graphics
+pad down
+pad down
+pad down
+pad down
+expect focus graphics.texture_memory
+pad left
+expect setting graphics.texture_memory 512
+pad right
+expect setting graphics.texture_memory 1024
+pad down
+expect focus graphics.advanced
+pad a
+expect focus graphics.lod_bias
+pad right
+expect setting graphics.lod_bias 0.25
+pad left
+expect setting graphics.lod_bias 0.00
+pad b
+# ---- Controls
+pad r1
+expect page controls
+pad r1
+expect page cheats
+# ---- Cheats: a rate stepper
+pad down
+pad down
+pad down
+expect focus cheats.exp_rate
+pad right
+expect setting gameplay.exp_rate 125
+pad left
+expect setting gameplay.exp_rate 100
+# ---- Achievements, Online (wrap back to Saves)
+pad r1
+expect page achievements
+pad r1
+expect page online
+pad r1
+expect page saves
+pad l1
+expect page online
+# ---- B chain: the sidebar, then closed; the pad latched
+pad b
+pad b
+expect log menu: closed (the menu's B)
+expect closed
+f1
+wait 2
+expect open
+expect page online
+shot d1_03_reopened

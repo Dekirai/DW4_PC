@@ -89,6 +89,10 @@ void NavCore::select_category(int index) {
     category_ = std::clamp(index, 0, int(roots_.size()) - 1);
     stack_ = {roots_[std::size_t(category_)]};
     show_page_memo();
+    if (const auto found = home.find(stack_.front()); found != home.end() && found->second != focus_id) {
+        focus_id = found->second;
+        focus = -1;
+    }
 }
 
 std::string NavCore::path() const {

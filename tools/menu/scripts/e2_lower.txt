@@ -1,0 +1,25 @@
+# E / F: F1 on the lower screen (DW4_SCREEN2_MENU=1, DW4_MENU_PAGE=display): touch through its queue, the pad.
+expect log + pad Odin Controller thor
+wait 30
+screen2
+wait 12
+expect open
+expect page display
+shot e2_00_lower
+tap 300 253.2 lower
+wait 6
+expect setting window.widescreen true
+tap 486.6 315.2 lower
+wait 6
+expect setting window.fps_limit 30
+pad down
+pad left
+expect setting window.fps_limit 0
+pad r1
+expect page graphics
+drag 350 400 350 150 500 lower
+wait 6
+shot e2_01_lower_graphics
+pad r1
+expect page controls
+shot e2_02_lower_controls

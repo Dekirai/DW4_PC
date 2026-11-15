@@ -74,6 +74,7 @@ int g_wanted_sent = -1;
 int g_gl_errors = 0, g_frames = 0, g_swaps = 0;
 SDL_Window* g_text_window = nullptr;        // a lower text field has SDL's text input (the game window's)
 bool g_text_secret = false;                 // ... a password field's kind
+int g_text_kind = 0;                        // ... its keyboard: 0 text, 1 password, 2 number, 3 plain (a name, a path)
 ImGuiID g_text_field = 0;                   // ... for that field (the lower context's ActiveId)
 std::uint64_t g_digest = 0;                 // the last swapped picture's draw data (0: none)
 bool g_logged_failure = false;
@@ -102,6 +103,7 @@ void drop_imgui() {
         g_text_window = nullptr;
     }
     g_text_secret = false;
+    g_text_kind = 0;
     g_text_field = 0;
     if (!g_imgui) return;
     ImGuiContext* top = ImGui::GetCurrentContext();
@@ -335,26 +337,31 @@ bool screen2_frame(const std::function<void()>& input, const std::function<void(
     if (io.WantTextInput && g_imgui->ActiveId != 0 && g_imgui->ActiveId == g_imgui->InputTextState.ID) {
         SDL_Window* window = g_text_window ? g_text_window : SDL_GL_GetCurrentWindow();
         const bool secret = password_field_active(*g_imgui);
+        const bool numeric = numeric_field_active(*g_imgui), plain = plain_field_active(*g_imgui);
+        const int kind = secret ? 1 : numeric ? 2 : plain ? 3 : 0;
         const ImGuiID field = g_imgui->ActiveId;
         const bool away = !window || !SDL_TextInputActive(window) || !screen_keyboard_visible();
-        const bool start = !g_text_window || secret != g_text_secret || (away && (tapped || field != g_text_field));
+        const bool start = !g_text_window || secret != g_text_secret || kind != g_text_kind || (away && (tapped || field != g_text_field));
         if (window && start) {
             const bool again = g_text_window != nullptr;
             // (The field is on the lower screen: the top screen's picture
             // need not pan for the keyboard, so the area is its top corner.)
             const SDL_Rect corner{0, 0, 1, 1};
             SDL_SetTextInputArea(window, &corner, 0);
-            start_text_input(window, secret, numeric_field_active(*g_imgui));
-            std::printf("second screen: a %s field takes the keyboard%s\n", secret ? "password" : "text", again ? " (again)" : "");
+            start_text_input(window, secret, numeric, plain);
+            std::printf("second screen: a %s field takes the keyboard%s\n", secret ? "password" : numeric ? "number" : plain ? "plain text" : "text",
+                        again ? " (again)" : "");
             std::fflush(stdout);
         }
         g_text_window = window;
         g_text_secret = secret;
+        g_text_kind = kind;
         g_text_field = field;
     } else if (g_text_window) {
         SDL_StopTextInput(g_text_window);
         g_text_window = nullptr;
         g_text_secret = false;
+        g_text_kind = 0;
         g_text_field = 0;
     }
     const std::uint64_t digest = draw_digest(ImGui::GetDrawData(), width, height);
@@ -428,6 +435,7 @@ void screen2_release_input() {
     SDL_StopTextInput(g_text_window);
     g_text_window = nullptr;
     g_text_secret = false;
+    g_text_kind = 0;
     g_text_field = 0;
     if (g_imgui) {
         ImGuiContext* top = ImGui::GetCurrentContext();

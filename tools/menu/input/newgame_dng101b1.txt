@@ -1,0 +1,26 @@
+# The console menu checks' stage input (tools/menu/run.sh): a new game, then dng101b1.
+# Same new game as newgame_lobby.txt, but the hand-off to the lobby starts
+# dng101b1 (Death Valley / Humid Cave) instead, with the created player.
+# Dolphin: needs the AR code ar/ng_dng101b1.txt (tools/arcode.py redirect stagml11 dng101b1).
+# Port: the SEND line below replaces gameStart's pending "stagml11" request
+#       in the step that would start loading it (port frame 3604).
+# r41audio: the title segment was round 1's +350 (before the load fixes); the title now follows the film skip like the
+# port (verify:acmp F8): +239, measured again with hidden Dolphin runs (menu SEs and title streams at one shift).
+@offset 0 76
+@offset 158 166
+@offset 452 157
+@offset 870 237
+@offset 1503 239
+@offset 3598 238    # loading card "Humid Cave / Death Valley" starts (r41audio: Dolphin counter = port - 84)
+@offset 3716 276    # dungeon intro + play (r41audio: Dolphin counter = port - 54, its card now ~30 fields longer; was 730)
+1500 START 3
+2000 START 3
+2200 A 3
+2500 A 3
+2650 A 3
+2800 A 3
+2900 START 3
+3100 A 3
+3300 A 3
+3500 START 3
+3600 SEND STAGECTL NEXTSTAGE dng101b1

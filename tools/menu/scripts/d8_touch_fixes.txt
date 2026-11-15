@@ -1,0 +1,32 @@
+# D8 (review fixes, touch on the top screen, DW4_MENU_PAGE=general): the first tap after a button counts (the
+# layout does not change with the input mode); a drag that starts on a section title scrolls; an arrow under the
+# finger stays where it is while its value changes.
+expect log + pad Odin Controller thor
+wait 3
+expect open
+expect page general
+pad down
+wait 2
+shot d8_00_pad_mode
+# Achievements' entry at the 231 % layout (the sidebar: 62..419 u, 8 entries of 44.6 u)
+tap 100 352
+expect page achievements
+shot d8_01_first_tap
+tap 100 129
+expect page general
+shot d8_02_general_touch
+# ---- the value zone stays put: Language's right arrow (780 u, 123 u) to Deutsch, then its left arrow (270 u) back
+tap 780 123
+expect setting preferences.language de
+expect dialog none
+shot d8_03_language_de
+tap 270 123
+expect setting preferences.language en
+expect dialog none
+# ---- a drag that starts on the section title SOUND (268 u, 386 u) scrolls the list
+expect page general
+drag 268 386 268 200 300
+waitms 2000
+wait 3
+expect log menu: scroll general
+shot d8_04_dragged_from_section

@@ -255,7 +255,14 @@ void menu_panel(Screen2Menu& menu) {
     ImGui::PushTextWrapPos(0.0f);
     if (menu.open) {
         ImGui::TextUnformatted("The menu is open on the top screen.");
-        if (ImGui::Button("Show it here")) menu.ask = Screen2Menu::Ask::move_here;
+        if (menu.own_chrome) {
+            // (The console menu: a target as large as "Open the menu", at
+            // least 48 u high, for a finger on the lower screen.)
+            const float width = ImGui::GetContentRegionAvail().x;
+            if (ImGui::Button("Show it here", ImVec2(width, std::max(ImGui::GetFrameHeight() * 2.0f, ui_px(48.0f))))) menu.ask = Screen2Menu::Ask::move_here;
+        } else if (ImGui::Button("Show it here")) {
+            menu.ask = Screen2Menu::Ask::move_here;
+        }
     } else {
         ImGui::TextUnformatted("The F1 menu: settings, controls, saves, cheats, achievements.");
         const float width = ImGui::GetContentRegionAvail().x;

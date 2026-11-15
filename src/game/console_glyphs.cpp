@@ -68,6 +68,8 @@ std::vector<PromptFace> console_faces(ConsoleGlyph glyph, PadFamily family, cons
                                                                                            : int(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)}))};
     case ConsoleGlyph::start:
         return {layout ? layout_button(family, settings, SDL_GAMEPAD_BUTTON_START) : prompt_face(family, settings, PromptControl::start)};
+    case ConsoleGlyph::look:
+        return {layout ? layout_button(family, settings, SDL_GAMEPAD_BUTTON_NORTH) : prompt_face(family, settings, PromptControl::y)};
     default: return {};
     }
 }

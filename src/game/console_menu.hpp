@@ -79,7 +79,7 @@ public:
     // Test runs and the menu script: where the menu is.
     std::string page_path() const;
     std::string focus_row() const;
-    std::string dialog_kind() const; // "", "picker", "confirm", "text", "capture"
+    std::string dialog_kind() const; // "none", "picker", "confirm", "text", "capture"
     // The shown value of a row of the current page ("" when there is none).
     std::string row_value(HostView& view, const std::string& id);
     // A modal for a picture (DW4_MENU_DIALOG=picker:<row> ...).
@@ -102,9 +102,11 @@ MenuPlatform menu_platform(const HostView& view);
 // button), everywhere else as before.
 bool back_toggles_menu(MenuPlatform platform, PadFamily family);
 
-// The console menu's log lines (also kept for the menu script's "expect
-// log"): printed to stdout.
+// The console menu's log lines: printed to stdout, and kept for the menu
+// script's "expect log" while menu_log_keep(true) (a script runs; else no
+// history is held).
 void menu_log(const std::string& line);
+void menu_log_keep(bool keep);
 // The lines since `from` (an index of menu_log_count()).
 std::vector<std::string> menu_log_since(std::size_t from);
 std::size_t menu_log_count();

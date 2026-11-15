@@ -58,6 +58,7 @@ struct F1Actions {
     std::function<bool()> online_room;                            // a world (room) session runs
     // ---- Save states
     std::function<std::string()> can_save;                        // empty: a state can be saved now, else why not
+    std::function<std::string(std::size_t slot)> can_load;       // empty: the slot can be loaded now (also on the title), else why not
     std::function<void(std::size_t slot)> save_state;
     std::function<bool(std::size_t slot)> load_state;             // true: loaded
     std::function<std::string(std::size_t slot)> slot_text;       // "stagis10, 120 steps since its stage loaded"; empty: empty slot
@@ -80,7 +81,11 @@ struct F1Actions {
     const AchievementTracker* achievements = nullptr;
     std::function<std::vector<InfoLine>()> achievement_notes;     // the gate's warning, the profile's place
     std::function<std::string()> play_time;                       // "H:MM"
-    std::function<std::vector<InfoLine>()> saves_summary;         // F1 > Saves' "Where the save lives" (read every 2 s)
+    // F1 > Saves' "Where the save lives" (read every 2 s); `player_words`
+    // (Android): the slots without their paths. The details: the files, the
+    // store's choice, the Dolphin note.
+    std::function<std::vector<InfoLine>(bool player_words)> saves_summary;
+    std::function<std::vector<InfoLine>()> saves_details;
     std::function<std::string()> save_slot_a;                     // player_store.describe(0)
     std::function<std::filesystem::path()> settings_file;
     std::function<std::string()> controller_log;                  // its path, empty without one
@@ -99,7 +104,7 @@ struct F1Actions {
     std::function<void()> end_session, net_close, leave_room, copy_log_path;
     // ---- Developer
     std::function<std::string()> stage_info;
-    std::function<bool()> game_paused;
+    std::function<bool()> game_paused;                             // F1 pauses the game now (the classic menu's pause uses it too)
     // A notice top right (the toasts).
     std::function<void(const std::string& title, const std::string& text)> toast;
 };

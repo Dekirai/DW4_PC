@@ -50,7 +50,7 @@ struct MenuCommand {
     int line = 0;
     std::string name;              // pad: the button; key: its name; expect: what; shot / type: the text
     std::vector<std::string> args; // expect's arguments
-    int count = 0;                 // wait / waitms / hold / drag ms
+    int count = 0;                 // wait / waitms / hold / drag ms; pad: -1 "down", -2 "up" (held across commands)
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     bool lower = false;
 };

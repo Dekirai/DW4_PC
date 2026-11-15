@@ -184,6 +184,20 @@ void CloudBackupPanel::request_restore(int revision) {
     if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) cloud_->restore(revision);
 }
 
+void CloudBackupPanel::test_step(const save::CardStore& store) {
+    poll();
+    if (std::exchange(test_login_, false)) log_in();
+    if (test_action_.empty() || !cloud_ || !cloud_->known() || cloud_->busy() != online::cloud::CloudBackup::Busy::none) return;
+    const auto action = std::exchange(test_action_, std::string());
+    std::printf("cloud backup test: %s\n", action.c_str());
+    std::fflush(stdout);
+    if (action == "upload") {
+        if (const auto local = store.read(0)) cloud_->upload(*local);
+    } else if (action == "download" && cloud_->overview()) {
+        cloud_->download(0, store, save::backup_folder(store));
+    }
+}
+
 void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     ImGui::SeparatorText("Cloud backup (online account)");
     poll();

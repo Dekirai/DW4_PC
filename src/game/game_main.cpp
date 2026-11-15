@@ -33,6 +33,7 @@
 #include "cloud_backup_panel.hpp"
 #include "online_ui.hpp"
 #include "online_ui_script.hpp"
+#include "console_glyphs.hpp"
 #include "console_menu.hpp"
 #include "menu_script.hpp"
 #include "f1_actions.hpp"
@@ -600,6 +601,7 @@ bool status_frame(GameWindow& w, const char* title, const std::vector<std::strin
             std::cout << "lifecycle: the OpenGL context was recreated (status screen)\n";
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplOpenGL3_Init("#version 300 es");
+            dw4::game::console_glyphs().reset(); // (an F1 menu shown before left its pictures' names)
         }
 #endif
     }
@@ -2513,14 +2515,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         };
+        // (Loading works on the title too, unlike saving: can_save.)
+        auto can_load = [&](std::size_t slot) -> std::string {
+            if (net.active() || online) return "Save states are off in online sessions.";
+            if (!state_slots[slot]) return "State " + std::to_string(slot + 1) + " is empty.";
+            return {};
+        };
         auto load_state = [&](std::size_t slot) {
-            if (net.active() || online) {
-                state_message = "Save states are off in online sessions.";
-                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-                return;
-            }
-            if (!state_slots[slot]) {
-                state_message = "State " + std::to_string(slot + 1) + " is empty.";
+            if (const auto problem = can_load(slot); !problem.empty()) {
+                state_message = problem;
                 message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                 return;
             }
@@ -2895,6 +2898,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         f1.net_active = [&] { return net.active(); };
         f1.online_room = [&] { return online != nullptr; };
         f1.can_save = [&] { return can_save(); };
+        f1.can_load = [&](std::size_t slot) { return can_load(slot); };
         f1.save_state = [&](std::size_t slot) { save_state(slot); };
         f1.load_state = [&](std::size_t slot) {
             load_state(slot);
@@ -2934,6 +2938,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             return lines;
         };
+        // (The classic menu shows these buttons by the same two questions.)
         f1.randomizer_can_unbind = [&] { return !net.active() && randomizer_unique != 0 && randomizer_bound && randomizer_bound->active(); };
         f1.randomizer_can_bind = [&] {
             return !net.active() && randomizer_unique != 0 && randomizer_bound && randomizer_settings().active() &&
@@ -2995,7 +3000,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::snprintf(text, sizeof text, "%lld:%02lld", (long long)(minutes / 60), (long long)(minutes % 60));
             return std::string(text);
         };
-        f1.saves_summary = [&] {
+        f1.saves_summary = [&](bool player_words) {
             std::vector<dw4::game::InfoLine> lines;
             auto& tab = saves_tab;
             const auto now = std::chrono::steady_clock::now();
@@ -3011,23 +3016,36 @@ int run(const Options& options, dw4::game::Settings& settings) {
             for (int slot = 0; slot < 2; ++slot) {
                 const bool card = slot == 0 || player_store.slot_exists(1) ||
                                   player_card_settings[1].mode == dw4::engine::CardSetting::Mode::inserted;
-                lines.push_back({dw4::game::InfoTone::normal, std::string("Slot ") + (slot == 0 ? 'A' : 'B') + ": " + player_store.describe(slot) +
-                                                                  (!card ? " (no memory card in this slot)" : tab.has_file[std::size_t(slot)] ? "" : " (no save yet)")});
+                // (Android: where it is in the player's words; the path is in the details.)
+                const std::string where = player_words ? (card ? std::string("on this device") : std::string("none")) : player_store.describe(slot);
+                lines.push_back({dw4::game::InfoTone::normal, std::string(player_words ? "Memory card " : "Slot ") + (slot == 0 ? 'A' : 'B') + ": " + where +
+                                                                  (!card ? (player_words ? "" : " (no memory card in this slot)")
+                                                                   : tab.has_file[std::size_t(slot)] ? ""
+                                                                                                      : " (no save yet)")});
                 if (const auto& boxes = tab.boxes[std::size_t(slot)])
                     for (std::size_t i = 0; i < boxes->size(); ++i)
                         lines.push_back({dw4::game::InfoTone::dim, "Box " + std::to_string(i + 1) + ": " + dw4::save::describe_box((*boxes)[i])});
                 else if (tab.has_file[std::size_t(slot)])
                     lines.push_back({dw4::game::InfoTone::error, "The save is damaged (neither data copy passes its check)."});
             }
+            if (single && player_words) lines.push_back({dw4::game::InfoTone::dim, "Every save keeps the one before it as a backup copy."});
+            for (const auto& note : save_choice.notes) lines.push_back({dw4::game::InfoTone::normal, note});
+            for (const auto& problem : save_choice.problems) lines.push_back({dw4::game::InfoTone::warn, problem});
+            if (net.active()) lines.push_back({dw4::game::InfoTone::normal, "Online, the session plays from shared copies of the cards."});
+            return lines;
+        };
+        f1.saves_details = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            const bool single = player_store.kind() == dw4::save::CardStore::Kind::single_file;
+            for (int slot = 0; slot < 2; ++slot)
+                if (slot == 0 || player_store.slot_exists(1))
+                    lines.push_back({dw4::game::InfoTone::dim, std::string("Slot ") + (slot == 0 ? 'A' : 'B') + ": " + player_store.describe(slot)});
             lines.push_back({dw4::game::InfoTone::dim, std::string("Chosen by ") + dw4::game::why_text(save_choice.why) + "."});
             if (single)
                 lines.push_back({dw4::game::InfoTone::dim, "Each save keeps the previous file as .bak beside it. The file holds the same bytes as "
                                                            "Dolphin's B2-GDJE-NDMWSaveData.gci (rename it to use it there). settings.ini [data] "
                                                            "save / save_b move the files; [data] cards = a GCI folder (e.g. Dolphin's GC/USA) "
                                                            "plays from that folder instead. Slot B holds a card once its file exists."});
-            for (const auto& note : save_choice.notes) lines.push_back({dw4::game::InfoTone::normal, note});
-            for (const auto& problem : save_choice.problems) lines.push_back({dw4::game::InfoTone::warn, problem});
-            if (net.active()) lines.push_back({dw4::game::InfoTone::normal, "Online, the session plays from shared copies of the cards."});
             return lines;
         };
         f1.save_slot_a = [&] { return player_store.describe(0); };
@@ -3035,7 +3053,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         f1.controller_log = [&] { return view.controller_log ? view.controller_log->path().string() : std::string(); };
         f1.cloud_panel = &cloud_panel;
         f1.card_store = &player_store;
-        f1.cloud_available = [&] { return !online && !net.active() && !net.in_lobby(); };
+        f1.cloud_available = [&] { return !online && !net.active() && !net.in_lobby(); }; // (the classic menu's panel too)
         f1.texture_panel = [&] {
             dw4::game::TexturePackPanel panel;
             panel.pack = &texture_pack;
@@ -3131,7 +3149,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             return "Stage: " + engine.stage_name() + "  (" + engine.loader_state() + ")  frame " +
                    std::to_string((unsigned long long)(dw4::game::menu_still() ? 0 : engine.frame()));
         };
-        f1.game_paused = [&] { return show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online; };
+        // (Whether F1 pauses the game when it is open: the loop's pause, the
+        // lower screen's Menu tab and the console menu's chip.)
+        const auto menu_pauses = [&] { return settings.pause_in_menu && !options.smoke_frames && !net.active() && !online; };
+        f1.game_paused = [&, menu_pauses] { return show_menu && menu_pauses(); };
         f1.toast = [&](const std::string& title, const std::string& text) {
             toasts.push_back({title, text, std::chrono::steady_clock::now() + std::chrono::seconds(4)});
         };
@@ -3168,6 +3189,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
         dw4::game::MenuScript menu_script;
         {
             std::string script_file = options.menu_script.string();
+#ifndef SDL_PLATFORM_ANDROID
+            // (A test switch: without --smoke-test it would attach a virtual
+            // pad and end the run at the script's end.)
+            if (!script_file.empty() && !options.smoke_frames) {
+                std::cout << "menu script: ignored (--menu-script needs --smoke-test)\n";
+                script_file.clear();
+            }
+#endif
             if (const char* file = menu_env("DW4_MENU_SCRIPT"); file && script_file.empty()) script_file = file;
             std::string error;
             if (!script_file.empty() && !menu_script.load(std::filesystem::u8path(script_file), error)) throw std::runtime_error("menu script: " + error);
@@ -3478,7 +3507,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // no menu, so no attract movie starts while the player types; over
             // the menu the title runs on: it waits for the player anyway.)
             const auto* title_menu = engine.get<dw4::engine::Title2Manager>();
-            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online) || net.in_lobby() || focus_paused ||
+            const bool paused = f1.game_paused() || net.in_lobby() || focus_paused ||
                                 (title_online.active && !online && !(title_menu && title_menu->menu_open()));
             if (net.active())
                 if (auto message = net.take_message(); !message.empty()) {
@@ -4731,7 +4760,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         screen2_net.direct = lobby_status;
                 }
                 screen2_online_shown = false;
-                if (!screen2_on_lower)
+                // (Not over the console menu on this screen: it fills the
+                // screen, and the panels' window would lie over its rows.)
+                const bool console_on_top = show_menu && view.console_menu && !view.menu_on_screen2;
+                if (!screen2_on_lower && !console_on_top)
                     screen2_online_shown = dw4::game::draw_screen2_overlay(settings, settings_changed, screen2_facts, screen2_net);
                 // The F1 menu: in the window, or on the second screen's Menu
                 // tab when it was opened there (the same tabs either way).
@@ -5066,7 +5098,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::PopTextWrapPos();
                         }
                         if (!tab.message.empty()) ImGui::TextWrapped("%s", tab.message.c_str());
-                        cloud_panel.draw(player_store, !online && !net.active() && !net.in_lobby());
+                        cloud_panel.draw(player_store, f1.cloud_available());
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Online", nullptr, tab_flags("Online"))) {
@@ -5203,17 +5235,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::TextDisabled("No save in play: a new game binds the settings below to its save.");
                             }
                             ImGui::PopTextWrapPos();
-                            if (!net.active() && randomizer_unique != 0 && randomizer_bound) {
-                                if (randomizer_bound->active() && ImGui::Button("Play this save without the randomizer")) {
-                                    f1.randomizer_unbind();
+                            // (f1.randomizer_can_*: the console menu's rows ask the same.)
+                            const bool can_unbind = f1.randomizer_can_unbind();
+                            if (can_unbind && ImGui::Button("Play this save without the randomizer")) {
+                                f1.randomizer_unbind();
+                                gameplay_changed = true;
+                            }
+                            if (f1.randomizer_can_bind()) {
+                                if (can_unbind) ImGui::SameLine();
+                                if (ImGui::Button("Bind the settings below to this save")) {
+                                    f1.randomizer_bind();
                                     gameplay_changed = true;
-                                }
-                                if (randomizer_settings().active() && !(*randomizer_bound == randomizer_settings())) {
-                                    if (randomizer_bound->active()) ImGui::SameLine();
-                                    if (ImGui::Button("Bind the settings below to this save")) {
-                                        f1.randomizer_bind();
-                                        gameplay_changed = true;
-                                    }
                                 }
                             }
                         }
@@ -5410,8 +5442,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 } else if (title_online.active && !lobby) {
                     title_online.active = false;
                 }
+                // (Under the console menu's header while it fills this screen:
+                // 8 u margin, 48 u header, 8 u.)
+                const float notice_y = show_menu && view.console_menu && !view.menu_on_screen2 ? dw4::game::ui_px(64) : dw4::game::ui_px(12);
                 if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
-                    ImGui::SetNextWindowPos(ImVec2(dw4::game::ui_px(12), dw4::game::ui_px(12)));
+                    ImGui::SetNextWindowPos(ImVec2(dw4::game::ui_px(12), notice_y));
                     ImGui::SetNextWindowBgAlpha(0.6f);
                     ImGui::Begin("##state", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -5546,7 +5581,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
                 if (!toasts.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(display.x - dw4::game::ui_px(12), dw4::game::ui_px(12)), ImGuiCond_Always, ImVec2(1, 0));
+                    ImGui::SetNextWindowPos(ImVec2(display.x - dw4::game::ui_px(12), notice_y), ImGuiCond_Always, ImVec2(1, 0));
                     ImGui::SetNextWindowBgAlpha(0.75f);
                     ImGui::Begin("##achievements", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -5629,7 +5664,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     dw4::game::Screen2Menu screen2_menu;
                     screen2_menu.open = show_menu;
                     screen2_menu.here = view.menu_on_screen2;
-                    screen2_menu.pauses = settings.pause_in_menu && !options.smoke_frames && !net.active() && !online;
+                    screen2_menu.pauses = menu_pauses();
                     screen2_menu.own_chrome = view.console_menu;
                     screen2_menu.draw = [&] { draw_f1_menu(true); };
                     const bool menu_here = show_menu && view.menu_on_screen2;

@@ -162,6 +162,10 @@ public:
     int focus = -1;          // its index after resolve()
     int cell = 0;            // the focused row's cell (cells, binding)
     std::map<std::string, int> cells; // the last cell per row id
+    // A category's own row to come back to (its root page shown by the
+    // sidebar, L1 / R1 or a tap: Saves' last used state slot) instead of
+    // the last focused one; a reopened menu keeps its last place.
+    std::map<std::string, std::string> home;
     float scroll = 0;        // the shown page's scroll (u)
 
     // The page's rows of this pass: the focus is found again by its id.

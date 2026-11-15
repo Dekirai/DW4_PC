@@ -62,6 +62,9 @@ public:
     void request_upload(const save::CardStore& store);
     void request_download(int revision, const save::CardStore& store);
     void request_restore(int revision);
+    // The console menu's DW4_MENU_CLOUD: the test login at its first call,
+    // the test action once the backup was read (draw() runs the same).
+    void test_step(const save::CardStore& store);
 
 private:
     void poll();

@@ -129,15 +129,18 @@ void saves_root(Builder& b) {
     auto& a = b.a;
     State& st = b.st;
     b.section("Save states");
+    // (Saving can be refused for every slot at once, as on the title: one
+    // line above them; Load is its own question, docs/CONSOLE_MENU.md.)
     const std::string refused = a.can_save ? a.can_save() : std::string();
+    if (!refused.empty()) b.info(refused, InfoTone::warn);
     for (std::size_t slot = 0; slot < a.state_count; ++slot) {
         const std::string n = std::to_string(slot + 1);
         const std::string text = a.slot_text ? a.slot_text(slot) : std::string();
         Row& r = b.add(RowKind::cells, "saves.state." + n, "State " + n);
         r.desc = text.empty() ? "empty" : text;
-        r.locked = refused;
         Cell save;
         save.label = "Save";
+        save.locked = refused;
         const std::string id = r.id;
         const auto do_save = [&a, &st, slot, id] {
             a.save_state(slot);
@@ -147,21 +150,31 @@ void saves_root(Builder& b) {
         else save.run = do_save;
         Cell load;
         load.label = "Load";
-        if (text.empty()) load.locked = "State " + n + " is empty.";
+        load.locked = a.can_load ? a.can_load(slot) : text.empty() ? "State " + n + " is empty." : std::string();
         const std::string stage = a.slot_stage ? a.slot_stage(slot) : std::string();
+        // (The load runs at the pass after its card showed: console_menu.cpp.)
         load.confirm = confirm("Load state " + n + "?", "Play continues from " + stage + ". Progress since then is lost.", {"Load", "Cancel"},
-                               {[&a, &st, slot, id] {
-                                    if (a.load_state(slot)) request_close(st, "Load state");
-                                    else note(st, id, a.state_message ? *a.state_message : std::string(), InfoTone::warn);
+                               {[&st, slot, id] {
+                                    st.pending_load = int(slot);
+                                    st.pending_load_drawn = false;
+                                    st.pending_load_row = id;
                                 },
                                 {}},
                                0);
         r.cells = {save, load};
         if (!load.locked.empty()) r.cells[1].confirm.reset();
     }
-    b.info("Files: " + (a.state_dir ? a.state_dir().string() : std::string()));
+    // (Android: the folder is under General > Files, not in the player's way.)
+    if (st.platform != MenuPlatform::android) b.info("Files: " + (a.state_dir ? a.state_dir().string() : std::string()));
     b.section("Memory card");
-    b.link("saves.card", "Where the save lives", "card", a.save_slot_a ? a.save_slot_a() : std::string());
+    {
+        // (Android: the card in the player's words, the first line of the
+        // page; the PC: slot A's file.)
+        std::string where = a.save_slot_a ? a.save_slot_a() : std::string();
+        if (st.platform == MenuPlatform::android && a.saves_summary)
+            if (const auto lines = a.saves_summary(true); !lines.empty()) where = lines.front().text;
+        b.link("saves.card", "Where the save lives", "card", where);
+    }
     {
         std::string desc = "Not logged in";
         if (a.cloud_panel) {
@@ -176,7 +189,15 @@ void saves_root(Builder& b) {
 }
 
 void saves_card(Builder& b) {
-    if (b.a.saves_summary) b.infos_of(b.a.saves_summary());
+    // (Android: in the player's words; the files, the store's choice and the
+    // Dolphin note fold under "Technical details".)
+    const bool player_words = b.st.platform == MenuPlatform::android;
+    if (b.a.saves_summary) b.infos_of(b.a.saves_summary(player_words));
+    if (b.a.saves_details) {
+        std::string text;
+        for (const auto& line : b.a.saves_details()) text += (text.empty() ? "" : "\n\n") + line.text;
+        if (!text.empty()) b.more("saves.card.details", "Technical details", text);
+    }
 }
 
 std::string when(const std::string& iso) { return iso.size() < 16 ? iso : iso.substr(0, 10) + " " + iso.substr(11, 5) + " UTC"; }
@@ -190,7 +211,30 @@ void saves_cloud(Builder& b, bool revisions_page) {
     }
     CloudBackupPanel& panel = *a.cloud_panel;
     const save::CardStore& store = *a.card_store;
+    panel.test_step(store); // (DW4_MENU_CLOUD: the test login and action, as the PC's panel runs them)
     const auto v = panel.view();
+    // A request's answer as a notice too (the page's line shows it as well).
+    auto& local = st.cloud_local;
+    const bool finished = (local.was_busy && !v.busy) || (local.was_logging_in && !v.logging_in);
+    if (finished && st.actions.toast) {
+        if (local.was_busy && !v.message.empty()) st.actions.toast("Cloud backup", v.message);
+        else if (local.was_logging_in && !v.login_message.empty()) st.actions.toast("Cloud backup", v.login_message);
+        else if (local.was_logging_in && v.logged_in) st.actions.toast("Cloud backup", "Logged in as " + v.account + ".");
+    }
+    local.was_busy = v.busy;
+    local.was_logging_in = v.logging_in;
+    // This device's save: read every 2 s, and at once after a request
+    // (an upload or a download changed it), not at every build.
+    if (local.read_at < 0 || st.now - local.read_at >= 2.0 || finished) {
+        local.read_at = st.now;
+        const auto bytes = store.read(0);
+        local.has = bytes.has_value();
+        local.describe = local.has ? store.describe(0) : std::string();
+        local.boxes.clear();
+        if (bytes)
+            if (const auto boxes = save::summarize_save(*bytes))
+                for (const auto& box : *boxes) local.boxes.push_back(save::describe_box(box));
+    }
     if (revisions_page) {
         if (!v.logged_in || !v.overview) {
             b.page.valid = false;
@@ -217,19 +261,26 @@ void saves_cloud(Builder& b, bool revisions_page) {
         return;
     }
     if (!v.message.empty()) b.info(v.message, v.message_error ? InfoTone::error : InfoTone::ok);
+    // (Android keeps no login: the token store is Windows' DPAPI, token_store.cpp.)
+    const bool remembers = st.platform != MenuPlatform::android;
     if (!v.logged_in) {
         b.info("One backup of your local save per online account, plus its five earlier revisions.");
         Row& account = b.add(RowKind::text, "cloud.account", "Account");
         account.text = v.typed_account;
         account.max_length = 63;
+        account.plain = true; // (a name: no suggestions, no autocorrection, no capitals)
         account.commit = [&panel](const std::string& text) { panel.set_account(text); };
         Row& password = b.add(RowKind::password, "cloud.password", "Password");
         password.text = v.password_typed ? "****" : "";
         password.max_length = 127;
+        password.next_focus = "cloud.login";
         password.commit = [&panel](const std::string& text) { panel.set_password(text); };
-        b.toggle("cloud.remember", "Remember me", v.remember, [&panel](bool on) { panel.set_remember(on); });
-        Row& login = b.action("cloud.login", "Log in", [&panel] { panel.request_login(); });
-        login.desc = std::string("Without a password a remembered login of ") + kThisMachine + " is used.";
+        if (remembers) b.toggle("cloud.remember", "Remember me", v.remember, [&panel](bool on) { panel.set_remember(on); });
+        Row& login = b.action("cloud.login", "Log in", [&panel, remembers] {
+            if (!remembers) panel.set_remember(false);
+            panel.request_login();
+        });
+        if (remembers) login.desc = std::string("Without a password a remembered login of ") + kThisMachine + " is used.";
         if (v.typed_account.empty()) login.locked = "Enter the account and the password.";
         else if (v.logging_in) login.locked = "Logging in...";
         if (!v.login_message.empty()) b.info(v.login_message, v.login_message.rfind("Logg", 0) == 0 ? InfoTone::dim : InfoTone::warn);
@@ -267,13 +318,11 @@ void saves_cloud(Builder& b, bool revisions_page) {
         b.info("Reading the backup...");
     }
     b.section(std::string(kThisMachine) == "this PC" ? "This PC's save" : "This device's save");
-    const auto local = store.read(0);
-    b.info(std::string("Slot A: ") + (local ? store.describe(0) : std::string("none")), InfoTone::normal);
-    if (local)
-        if (const auto boxes = save::summarize_save(*local))
-            for (std::size_t i = 0; i < boxes->size(); ++i) b.info("Box " + std::to_string(i + 1) + ": " + save::describe_box((*boxes)[i]));
+    if (st.platform == MenuPlatform::android) b.info(local.has ? std::string("Slot A: has a save") : std::string("Slot A: no save yet"), InfoTone::normal);
+    else b.info(std::string("Slot A: ") + (local.has ? local.describe : std::string("none")), InfoTone::normal);
+    for (std::size_t i = 0; i < local.boxes.size(); ++i) b.info("Box " + std::to_string(i + 1) + ": " + local.boxes[i]);
     Row& up = b.action("cloud.upload", "Upload this save", {});
-    up.locked = !local ? "There is no local save." : !v.known ? "Wait for the backup to be read." : wait;
+    up.locked = !local.has ? "There is no local save." : !v.known ? "Wait for the backup to be read." : wait;
     up.confirm = confirm("Replace the cloud backup with this save?",
                          v.overview ? "The replaced one (revision " + std::to_string(v.overview->latest.revision) + ") stays as an earlier revision."
                                     : std::string("Your first cloud backup."),
@@ -283,7 +332,7 @@ void saves_cloud(Builder& b, bool revisions_page) {
     forget.destructive = true;
     forget.confirm = confirm("Forget this login?", std::string("The remembered login is removed from ") + kThisMachine + ".", {"Forget", "Cancel"},
                              {[&panel] { panel.request_logout(true); }, {}}, 1, 0);
-    (void)st;
+    if (!remembers) b.page.rows.pop_back(); // (nothing remembered on Android: Log out is all)
 }
 
 // ---------------------------------------------------------------- General
@@ -327,10 +376,12 @@ void general_root(Builder& b) {
             c->row = "general.preset";
             open_confirm(st, c);
         };
-        r.step = [current, ask](int dir) {
-            const int target = current == 2 ? (dir < 0 ? 0 : 1) : std::clamp(current + (dir < 0 ? -1 : 1), 0, 1);
-            if (target != current) ask(target);
+        const auto target_of = [current](int dir) { return current == 2 ? (dir < 0 ? 0 : 1) : std::clamp(current + (dir < 0 ? -1 : 1), 0, 1); };
+        r.step = [current, ask, target_of](int dir) {
+            if (const int target = target_of(dir); target != current) ask(target);
         };
+        // (From Custom both arrows lead somewhere: Original and Modernized.)
+        r.can_step = [current, target_of](int dir) { return target_of(dir) != current; };
         r.choose = [current, ask](int index) {
             if (index != current && index < 2) ask(index);
         };
@@ -454,7 +505,10 @@ void display_root(Builder& b) {
         for (int i = 0; i < offered; ++i)
             if (settings.msaa >= menu::kMsaaValues[i]) current = i;
         Row& r = b.choice("display.msaa", "Anti-aliasing", labels, current, [&view](int i) { ops::set_msaa(host_ops(view), menu::kMsaaValues[i]); });
-        r.desc = "Now " + std::to_string(view.samples > 1 ? view.samples : 0) + "x.";
+        const int now_samples = view.samples > 1 ? view.samples : 0;
+        r.desc = "Now " + std::to_string(now_samples) + "x.";
+        if (st.platform == MenuPlatform::android && menu::kMsaaValues[current] != now_samples)
+            r.desc += " Applies after you close and reopen the app.";
         r.badge = "Next start";
     }
     b.section("Second screen");
@@ -493,10 +547,11 @@ void display_performance(Builder& b) {
     std::snprintf(text, sizeof text, "Worst %.1f ms", worst);
     b.info(text, InfoTone::normal);
     b.info("Now " + st.live_fps + " fps", InfoTone::normal);
-    // (The graph: a progress row per bucket would be too many rows; the
-    // frame times as bars, drawn by the info row's glyph line: none here.)
-    Row& graph = b.add(RowKind::progress, "display.frame_graph", "Frame time (the last 240 frames, 33 ms full)");
-    graph.progress = std::clamp(worst / 33.4f, 0.0f, 1.0f);
+    // The frame time graph (the last 240 frames; taken at 2 Hz like the
+    // numbers, so the lower screen does not swap every pass).
+    Row& graph = b.add(RowKind::progress, "display.frame_graph", "Frame time, the last 240 frames (the line: 16.7 ms)");
+    graph.graph.assign(st.live_frames.begin(), st.live_frames.end());
+    graph.graph_full = std::max(33.4f, worst);
 }
 
 // ---------------------------------------------------------------- Graphics
@@ -596,21 +651,33 @@ void graphics_advanced(Builder& b) {
                  ops::set_graphics(host_ops(view), o);
              })
         .desc = "For mipmapped textures: below 0 sharper (may shimmer), above 0 softer.";
-    Row& folder = b.add(RowKind::text, "graphics.pack_folder", "Texture pack folder");
-    folder.text = view.settings.texture_pack.string();
-    folder.hint = "mods/textures";
-    folder.max_length = 255;
     F1Actions& a = b.a;
-    folder.commit = [&a, &view](const std::string& text) {
-        const auto reload = a.texture_panel ? a.texture_panel().reload : std::function<void()>();
-        ops::set_texture_pack_folder(host_ops(view), std::filesystem::path(std::u8string(text.begin(), text.end())), reload);
-    };
+    const bool android = b.st.platform == MenuPlatform::android;
+    if (android) {
+        // (Android: the packs' folder is the app's own; a typed path could
+        // point nowhere the app may read.)
+        // (A relative folder, while the app's mods folder does not exist
+        // yet: where it goes, under the app's own folder.)
+        std::filesystem::path folder = a.texture_panel ? a.texture_panel().folder : std::filesystem::path();
+        if (folder.is_relative() && !app_root().empty()) folder = app_root() / folder;
+        b.info("Put texture packs into " + folder.generic_string() + ".", InfoTone::normal);
+    } else {
+        Row& folder = b.add(RowKind::text, "graphics.pack_folder", "Texture pack folder");
+        folder.text = view.settings.texture_pack.string();
+        folder.hint = "mods/textures";
+        folder.max_length = 255;
+        folder.plain = true; // (a path: no suggestions, no autocorrection, no capitals)
+        folder.commit = [&a, &view](const std::string& text) {
+            const auto reload = a.texture_panel ? a.texture_panel().reload : std::function<void()>();
+            ops::set_texture_pack_folder(host_ops(view), std::filesystem::path(std::u8string(text.begin(), text.end())), reload);
+        };
+    }
     b.action("graphics.reload", "Reload texture pack", [&a] {
         if (a.texture_panel)
             if (const auto reload = a.texture_panel().reload) reload();
     });
-    b.info("A pack is a folder with a dw4pack.tsv manifest and DDS files, or loose PNG / DDS files named ..._<16 hex digit hash>.png / .dds "
-           "(docs/TEXTURES.md).");
+    b.info(std::string("A pack is a folder with a dw4pack.tsv manifest and DDS files, or loose PNG / DDS files named ..._<16 hex digit hash>.png / .dds") +
+           (android ? "." : " (docs/TEXTURES.md)."));
 }
 
 // ---------------------------------------------------------------- Controls
@@ -632,11 +699,17 @@ void controls_root(Builder& b) {
             ops::set_prompts(host_ops(view), i == 0 ? std::nullopt : std::optional<PadFamily>(menu::kPromptFamilies[i - 1]));
         });
         const PadFamily family = view.prompt_family();
-        Row& preview = b.info(std::string("Now: ") + family_name(family));
+        // (Each GameCube control with the picture it shows: "L {L2}".)
+        Row& preview = b.info(std::string("The game's buttons on ") + family_name(family) + ":");
         preview.glyph_family = family;
-        for (const PromptControl c : {PromptControl::a, PromptControl::b, PromptControl::x, PromptControl::y, PromptControl::start, PromptControl::l,
-                                      PromptControl::r, PromptControl::z, PromptControl::stick, PromptControl::c_stick, PromptControl::dpad})
-            preview.glyphs.push_back(prompt_face(family, settings, c));
+        static const std::pair<PromptControl, const char*> kPreview[] = {
+            {PromptControl::a, "A"},         {PromptControl::b, "B"},     {PromptControl::x, "X"},           {PromptControl::y, "Y"},
+            {PromptControl::start, "START"}, {PromptControl::l, "L"},     {PromptControl::r, "R"},           {PromptControl::z, "Z"},
+            {PromptControl::stick, "Stick"}, {PromptControl::c_stick, "C-stick"}, {PromptControl::dpad, "D-pad"}};
+        for (const auto& [control, name] : kPreview) {
+            preview.glyphs.push_back(prompt_face(family, settings, control));
+            preview.glyph_captions.push_back(name);
+        }
     }
     {
         bool thor_pad = false, gc_pad = false;
@@ -644,7 +717,9 @@ void controls_root(Builder& b) {
             thor_pad = thor_pad || pad.family == PadFamily::thor;
             gc_pad = gc_pad || pad.family == PadFamily::gamecube;
         }
-        if (thor_pad || settings.thor_style != ThorStyle::automatic || st.platform == MenuPlatform::android) {
+        // (As on the PC: with a Thor's pad or a chosen style; a PC test run
+        // with Android's rules shows it always.)
+        if (thor_pad || settings.thor_style != ThorStyle::automatic || (view.test_run && st.platform == MenuPlatform::android)) {
             const std::string automatic = std::string("As the Thor's setting (") +
                                           (view.thor_device ? (*view.thor_device == ThorStyle::xbox ? "Xbox" : "Standard") : "unknown") + ")";
             const int current = settings.thor_style == ThorStyle::standard ? 1 : settings.thor_style == ThorStyle::xbox ? 2 : 0;
@@ -660,16 +735,16 @@ void controls_root(Builder& b) {
         Row& menu_row = b.choice("controls.menu_buttons", "Menu buttons", {menu::kMenuButtonNames[0], menu::kMenuButtonNames[1]},
                                  settings.menu_buttons == MenuButtons::bindings ? 1 : 0,
                                  [&view](int i) { ops::set_menu_buttons(host_ops(view), i ? MenuButtons::bindings : MenuButtons::layout); });
-        menu_row.desc = "The first confirms, the second goes back:";
+        (void)menu_row;
         if (gc_pad || settings.gamecube_layout != GameCubeLayout::original)
             b.choice("controls.gamecube_layout", "GameCube controller", {menu::kGameCubeNames[0], menu::kGameCubeNames[1]},
                      settings.gamecube_layout == GameCubeLayout::bindings ? 1 : 0,
                      [&view](int i) { ops::set_gamecube_layout(host_ops(view), i ? GameCubeLayout::bindings : GameCubeLayout::original); });
-        Row& glyphs = b.info("");
+        Row& glyphs = b.info("The menus' buttons now:");
         glyphs.glyph_family = view.prompt_family();
         glyphs.glyphs = {console_face(ConsoleGlyph::ok, glyphs.glyph_family, settings, st.platform),
                          console_face(ConsoleGlyph::back, glyphs.glyph_family, settings, st.platform)};
-        glyphs.label = "Menu buttons now:";
+        glyphs.glyph_captions = {"Confirm", "Back"};
     }
     b.section("Bindings");
     for (int group = 0; group < 4; ++group) {
@@ -687,10 +762,22 @@ void controls_bindings(Builder& b, int group) {
     HostView& view = b.view;
     Settings& settings = view.settings;
     const PadFamily family = binding_family(view);
-    b.info("Tap a slot, then press a button. Long-press a slot or press the clear button to clear it.");
+    {
+        // ("Clear a slot: long-press it or {DEL}": the clear button's picture
+        // after its caption, on a line of its own.)
+        Row& how = b.info("Tap a slot, then press a button or pull a trigger.");
+        how.glyph_family = view.prompt_family();
+        how.glyphs = {console_face(ConsoleGlyph::del, how.glyph_family, settings, b.st.platform)};
+        how.glyph_captions = {"Clear a slot: long-press it or"};
+        if (how.glyphs.front().face == Face::none && how.glyphs.front().key.empty()) {
+            how.glyphs.clear();
+            how.glyph_captions.clear();
+            how.label = "Tap a slot, then press a button or pull a trigger. To clear a slot, long-press it.";
+        }
+    }
     if (family == PadFamily::gamecube && settings.gamecube_layout == GameCubeLayout::original)
         b.info("A GameCube controller plays 1:1 and does not use these bindings.", InfoTone::warn);
-    b.info(std::string("Shown as on: ") + family_name(family));
+    b.info(std::string("Pictures: ") + family_name(family));
     static const char* ids[] = {"buttons", "stick", "dpad", "cstick"};
     for (std::size_t k = 0; k < settings.pad.size(); ++k) {
         if (pad_key_group(PadKey(k)) != PadGroup(group)) continue;
@@ -761,8 +848,11 @@ void cheats_randomizer(Builder& b) {
     Settings& settings = view.settings;
     const bool off = a.cheats_online && a.cheats_online();
     if (a.randomizer_status) b.infos_of(a.randomizer_status());
+    // (Online the PC shows them disabled: the same reason as the rows below.)
+    const std::string lock = off ? "Online, the host's settings apply." : "";
     if (a.randomizer_can_unbind && a.randomizer_can_unbind()) {
         Row& r = b.action("cheats.unbind", "Play this save without the randomizer", {});
+        r.locked = lock;
         r.confirm = confirm("Play this save without the randomizer?", "The save plays the original game from now on, also after a restart.",
                             {"Play original", "Cancel"},
                             {[&a] {
@@ -774,6 +864,7 @@ void cheats_randomizer(Builder& b) {
     }
     if (a.randomizer_can_bind && a.randomizer_can_bind()) {
         Row& r = b.action("cheats.bind", "Bind the settings below to this save", {});
+        r.locked = lock;
         r.confirm = confirm("Bind the settings below to this save?", "The save plays these randomizer settings from now on.", {"Bind", "Cancel"},
                             {[&a] {
                                  a.randomizer_bind();
@@ -783,7 +874,6 @@ void cheats_randomizer(Builder& b) {
                             1);
     }
     b.section("For new games");
-    const std::string lock = off ? "Online, the host's settings apply." : "";
     Row& seed = b.add(RowKind::number, "cheats.seed", "Seed");
     seed.text = std::to_string(settings.rand_seed);
     seed.desc = "0 is off.";
@@ -916,12 +1006,12 @@ void online_root(Builder& b) {
     } else if (in_lobby) {
         if (a.session_lines) b.infos_of(a.session_lines());
         b.action("online.cancel", "Cancel", [&a] { a.net_close(); });
-    } else if (a.has_lobby && a.has_lobby()) {
-        b.info("Online play on Android comes in a later version.", InfoTone::warn);
     } else if (room) {
         if (a.session_lines) b.infos_of(a.session_lines());
         Row& off = b.action("online.go_offline", "Go offline", {});
         off.confirm = confirm("Go offline?", "You leave the world session.", {"Go offline", "Stay"}, {[&a] { a.leave_room(); }, {}}, 1);
+    } else if (a.has_lobby && a.has_lobby()) {
+        b.info("Online play on Android comes in a later version.", InfoTone::warn);
     } else {
         b.info("This run has no online screens.");
     }
@@ -1035,8 +1125,9 @@ void build_page(State& st, HostView& view, Page& page) {
         const auto s = menu_still() ? GlRenderer::TextureStats{} : view.renderer->texture_stats();
         constexpr double mib = 1024.0 * 1024.0;
         char text[160];
-        std::snprintf(text, sizeof text, "In use: %zu game textures (%.0f MiB), %zu pack textures (%.0f MiB)%s.", s.originals, double(s.original_bytes) / mib,
-                      s.replacements, double(s.replacement_bytes) / mib, s.pending ? ", more loading" : "");
+        std::snprintf(text, sizeof text, "In use: %zu game texture%s (%.0f MiB), %zu pack texture%s (%.0f MiB)%s.", s.originals, s.originals == 1 ? "" : "s",
+                      double(s.original_bytes) / mib, s.replacements, s.replacements == 1 ? "" : "s", double(s.replacement_bytes) / mib,
+                      s.pending ? ", more loading" : "");
         st.live_memory = text;
     }
     Builder b{st, view, st.actions, page};

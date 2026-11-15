@@ -195,6 +195,11 @@ struct HostView {
     // The menu script's virtual pad (menu_script.hpp): player 1's menu keys
     // come from it instead of the first pad.
     SDL_Gamepad* menu_pad_override = nullptr;
+    // The console menu's binding capture shows (also while it waits for the
+    // button that chose the slot to be let go): the Back key cancels it.
+    bool console_capturing = false;
+    // Counts the captures the Back key cancelled (the console menu sees it).
+    std::uint32_t capture_cancels = 0;
     bool settings_changed = false;
     bool quit_requested = false; // the window was closed
     // Android: another window has the focus (the notification shade, the
@@ -462,13 +467,20 @@ bool screen_keyboard_visible();
 bool password_field_active(const ImGuiContext& context);
 // ... a number field (ImGuiInputTextFlags_CharsDecimal: the console menu's).
 bool numeric_field_active(const ImGuiContext& context);
+// ... a plain field: a name or a path (the console menu marks its field with
+// set_plain_text_field; 0: none), typed without suggestions, autocorrection
+// or capitals.
+bool plain_field_active(const ImGuiContext& context);
+void set_plain_text_field(unsigned id);
 // SDL's text input on `window` (stopped first when it runs) for a field of
 // that kind: on Android a password field's (SDL's TEXT_PASSWORD_HIDDEN, no
 // autocorrection, so the keyboard offers no suggestions and learns nothing)
 // or a text field's, with the keyboard's input restarted so it takes the
 // kind. The top screen's fields and the second screen's share it.
-// `numeric` (Android): a number field's keyboard (SDL's TEXTINPUT_TYPE_NUMBER).
-void start_text_input(SDL_Window* window, bool secret, bool numeric = false);
+// `numeric` (Android): a number field's keyboard (SDL's TEXTINPUT_TYPE_NUMBER);
+// `plain` (Android): a text field's without suggestions, autocorrection or
+// capitals (Android: a visible password's input type, which no keyboard corrects).
+void start_text_input(SDL_Window* window, bool secret, bool numeric = false, bool plain = false);
 
 // ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
 // The menu button's rectangle in window pixels: a small square in the top

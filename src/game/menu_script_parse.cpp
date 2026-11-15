@@ -75,7 +75,9 @@ std::optional<std::vector<MenuCommand>> parse_menu_script(std::string_view text,
             if (w.size() < 2 || !listed(kPadButtons, w[1])) return bad("pad needs a button");
             c.kind = MenuCommand::Kind::pad;
             c.name = w[1];
-            if (!hold(2, 2)) return bad("pad BUTTON [hold N]");
+            // ("pad a down" ... "pad a up": held while the next commands run.)
+            if (w.size() == 3 && (w[2] == "down" || w[2] == "up")) c.count = w[2] == "down" ? -1 : -2;
+            else if (!hold(2, 2)) return bad("pad BUTTON [hold N | down | up]");
         } else if (cmd == "stick") {
             if (w.size() < 3 || !number(w[1], c.x0) || !number(w[2], c.y0)) return bad("stick LX LY [hold N]");
             c.kind = MenuCommand::Kind::stick;

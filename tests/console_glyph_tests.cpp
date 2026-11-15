@@ -35,6 +35,9 @@ void glyphs() {
     check(face(ConsoleGlyph::close, PadFamily::thor, layout) == Face::back_key, "Android, Thor: CLOSE is the Back key");
     check(face(ConsoleGlyph::close, PadFamily::thor, layout, MenuPlatform::pc) == Face::select_square, "PC, Thor: CLOSE is its SELECT");
     check(std::string(face_name(Face::back_key)) == "Back", "back_key's name");
+    check(face(ConsoleGlyph::look, PadFamily::thor, layout) == Face::letter_y, "Thor LOOK = Y (the north button by label)");
+    check(face(ConsoleGlyph::look, PadFamily::xbox_one, layout) == Face::letter_y, "Xbox LOOK = Y");
+    check(console_faces(ConsoleGlyph::look, PadFamily::keyboard, layout, MenuPlatform::pc).empty(), "keyboard: no LOOK");
     // Xbox: A / B / X, LB / RB, LT, Menu; CLOSE the View button.
     check(face(ConsoleGlyph::ok, PadFamily::xbox_one, layout) == Face::letter_a && face(ConsoleGlyph::back, PadFamily::xbox_one, layout) == Face::letter_b,
           "Xbox A / B");
@@ -74,6 +77,11 @@ void script_parser() {
     check(parsed.has_value() && parsed->size() == 18, "a script parses: " + error);
     const auto& c = *parsed;
     check(c[1].kind == MenuCommand::Kind::pad && c[1].name == "a" && c[1].count == 4, "pad a hold 4");
+    {
+        std::string held_error;
+        const auto held = parse_menu_script("pad a down\npad a up\n", held_error);
+        check(held && held->size() == 2 && (*held)[0].count == -1 && (*held)[1].count == -2, "pad a down / up");
+    }
     check(c[2].kind == MenuCommand::Kind::stick && c[2].x0 == 0.5f && c[2].y0 == -1.0f && c[2].count == 2, "stick");
     check(c[6].kind == MenuCommand::Kind::tap && c[6].lower && c[6].x0 == 10 && c[6].y0 == 20, "tap ... lower");
     check(c[8].kind == MenuCommand::Kind::drag && c[8].count == 300 && c[8].x1 == 3, "drag");

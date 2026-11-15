@@ -139,10 +139,12 @@ void toggle_menu_by(HostView& view, const char* input) { toggle_menu_logged(view
 } // namespace
 
 void menu_back_key(HostView& view) {
-    if (view.console_menu && view.show_menu && view.capture) {
-        // (The console menu's capture: Back cancels it, F1 stays open; B,
-        // Start and Select are bindable.)
+    if (view.console_menu && view.show_menu && (view.capture || view.console_capturing)) {
+        // (The console menu's capture, also while it waits for the button
+        // that chose the slot: Back cancels it, F1 stays open; B, Start and
+        // Select are bindable.)
         view.capture.reset();
+        ++view.capture_cancels;
         menu_log("menu: capture cancelled (the Back key)");
         return;
     }
@@ -298,8 +300,9 @@ bool host_event(HostView& view, const SDL_Event& event) {
     }
 #endif
     // The console menu's keys (arrows, Enter, Escape, ...; not while a text
-    // field takes the typing).
-    if (view.console_menu && view.show_menu && event.type == SDL_EVENT_KEY_DOWN && view.console_keys.size() < 64 &&
+    // field takes the typing). The system's key repeat is no new press (the
+    // menu repeats held arrows itself: ConsoleMenu::update reads them held).
+    if (view.console_menu && view.show_menu && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && view.console_keys.size() < 64 &&
         !(ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput))
         view.console_keys.push_back(event.key.key);
     if (view.draw) ImGui_ImplSDL3_ProcessEvent(&event);
@@ -1676,6 +1679,7 @@ using ImeDataFn = void (*)(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData*)
 ImeDataFn g_backend_ime = nullptr;
 bool g_secret_input = false;
 bool g_numeric_input = false;
+bool g_plain_input = false;
 // The system keyboard on the screen (SDL's SHOWN / HIDDEN events, from the
 // window's insets; SDL_ScreenKeyboardShown stays true while the input
 // connection lives, also after the player put the keyboard away).
@@ -1690,10 +1694,11 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
     const bool wants = data->WantVisible || data->WantTextInput;
     const bool secret = wants && password_field_active(g);
     const bool numeric = wants && numeric_field_active(g);
+    const bool plain = wants && plain_field_active(g);
     if (std::getenv("DW4_TRACE_IME"))
         std::printf("text input: ime visible %d text %d, field %08x active %08x flags %x focus %p\n", int(data->WantVisible), int(data->WantTextInput),
                     unsigned(g.InputTextState.ID), unsigned(g.ActiveId), unsigned(g.InputTextState.Flags), static_cast<void*>(SDL_GetKeyboardFocus()));
-    if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && (secret != g_secret_input || numeric != g_numeric_input)) {
+    if (SDL_Window* window = SDL_GetKeyboardFocus(); window && wants && (secret != g_secret_input || numeric != g_numeric_input || plain != g_plain_input)) {
         const bool was_active = SDL_TextInputActive(window);
         // The new field's place first, as the backend sets it only after this
         // hook: Android takes SDL's text input area only when the keyboard
@@ -1701,13 +1706,15 @@ void ime_data(ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeDa
         // so with the last field's area the keyboard covered the new field.
         const SDL_Rect area{int(data->InputPos.x), int(data->InputPos.y), 1, int(data->InputLineHeight)};
         SDL_SetTextInputArea(window, &area, 0);
-        start_text_input(window, secret, numeric);
-        std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : numeric ? "a number" : "a text", was_active ? " restarted" : "");
+        start_text_input(window, secret, numeric, plain);
+        std::printf("text input: %s field, the system keyboard%s\n", secret ? "a password" : numeric ? "a number" : plain ? "a plain text" : "a text",
+                    was_active ? " restarted" : "");
         std::fflush(stdout);
         g_secret_input = secret;
         g_numeric_input = numeric;
+        g_plain_input = plain;
     }
-    if (!wants) g_secret_input = g_numeric_input = false;
+    if (!wants) g_secret_input = g_numeric_input = g_plain_input = false;
     if (g_backend_ime) g_backend_ime(context, viewport, data);
 }
 #endif
@@ -1721,7 +1728,27 @@ bool numeric_field_active(const ImGuiContext& g) {
     return g.InputTextState.ID != 0 && g.InputTextState.ID == g.ActiveId && (g.InputTextState.Flags & ImGuiInputTextFlags_CharsDecimal) != 0;
 }
 
-void start_text_input(SDL_Window* window, bool secret, bool numeric) {
+namespace {
+unsigned g_plain_field = 0;
+#ifdef SDL_PLATFORM_ANDROID
+// Android's EditorInfo input type of a plain field: TYPE_CLASS_TEXT |
+// TYPE_TEXT_VARIATION_VISIBLE_PASSWORD (0x90: the text shows, but no
+// keyboard suggests, corrects or capitalizes it; Gboard ignored
+// TYPE_TEXT_FLAG_NO_SUGGESTIONS alone and turned "uxtest" into "I test" on
+// the Thor) | TYPE_TEXT_FLAG_MULTI_LINE (Enter reaches the game, as with
+// SDL's text field's 0x3c001) | TYPE_TEXT_FLAG_NO_SUGGESTIONS; no
+// CAP_SENTENCES, AUTO_CORRECT or AUTO_COMPLETE.
+constexpr int kAndroidPlainText = 0x00001 | 0x00090 | 0x20000 | 0x80000;
+#endif
+} // namespace
+
+void set_plain_text_field(unsigned id) { g_plain_field = id; }
+
+bool plain_field_active(const ImGuiContext& g) {
+    return g_plain_field != 0 && g.InputTextState.ID == g_plain_field && g.InputTextState.ID == g.ActiveId;
+}
+
+void start_text_input(SDL_Window* window, bool secret, bool numeric, bool plain) {
     if (!window) return;
 #ifdef SDL_PLATFORM_ANDROID
     const SDL_PropertiesID props = SDL_CreateProperties();
@@ -1730,6 +1757,10 @@ void start_text_input(SDL_Window* window, bool secret, bool numeric) {
         SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
     } else if (numeric) {
         SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_NUMBER);
+    } else if (plain) {
+        SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, SDL_CAPITALIZE_NONE);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER, kAndroidPlainText);
     }
     if (SDL_TextInputActive(window) && SDL_ScreenKeyboardShown(window)) {
         // The keyboard is up: it takes the new field's kind and place where
@@ -1746,7 +1777,7 @@ void start_text_input(SDL_Window* window, bool secret, bool numeric) {
         int cursor = 0;
         SDL_GetTextInputArea(window, &area, &cursor);
         // (A number field: TYPE_CLASS_NUMBER.)
-        android_show_text_input(secret ? 0x20081 : numeric ? 0x2 : 0x3c001, area.x, area.y, area.w, area.h);
+        android_show_text_input(secret ? 0x20081 : numeric ? 0x2 : plain ? kAndroidPlainText : 0x3c001, area.x, area.y, area.w, area.h);
     } else {
         if (SDL_TextInputActive(window)) SDL_StopTextInput(window);
         SDL_StartTextInputWithProperties(window, props);
@@ -1755,7 +1786,7 @@ void start_text_input(SDL_Window* window, bool secret, bool numeric) {
     }
     SDL_DestroyProperties(props);
 #else
-    (void)secret, (void)numeric;
+    (void)secret, (void)numeric, (void)plain;
     SDL_StartTextInput(window);
 #endif
 }
@@ -1790,7 +1821,7 @@ void reopen_text_input(SDL_Window* window, float x, float y) {
     const float line = std::max(ime.InputLineHeight, 1.0f);
     if (y < ime.InputPos.y - line * 0.75f || y > ime.InputPos.y + line * 1.75f) return;
     (void)x;
-    start_text_input(window, g_secret_input, g_numeric_input);
+    start_text_input(window, g_secret_input, g_numeric_input, g_plain_input);
     std::printf("text input: the system keyboard again (a tap on the field after the keyboard was put away)\n");
     std::fflush(stdout);
 #else

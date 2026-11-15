@@ -125,6 +125,26 @@ void categories_and_sidebar() {
     check(d.nav.category() == 2 && d.nav.focus_id == "t2", "the category's root comes back with its row");
 }
 
+// A category's home row (Saves' last used state slot): the sidebar, L1 / R1
+// come back to it instead of the last focused row; a reopened menu keeps its
+// place (no select_category).
+void home_rows() {
+    const auto rows = page();
+    Driver d;
+    d.nav.set_categories({"saves", "general"});
+    d.tap(Button::a, rows); // the list, t1
+    d.tap(Button::down, rows);
+    d.tap(Button::down, rows); // c
+    d.nav.home["saves"] = "t2";
+    d.tap(Button::r1, rows);
+    d.tap(Button::l1, rows);
+    d.nav.resolve(rows);
+    check(d.nav.category() == 0 && d.nav.focus_id == "t2", "Saves comes back on its home row");
+    d.tap(Button::down, rows); // c
+    d.nav.remember();
+    check(d.nav.focus_id == "c", "the place itself stays where it is until the category changes");
+}
+
 void left_right() {
     const auto rows = page();
     Driver d;
@@ -320,6 +340,7 @@ int main() {
         focus_skips_sections_and_info();
         wrap_only_on_a_fresh_press_and_repeat();
         categories_and_sidebar();
+        home_rows();
         left_right();
         back_chain();
         latch();

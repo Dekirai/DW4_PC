@@ -33,6 +33,7 @@ enum class ConsoleGlyph : std::uint8_t {
     close, // {CLOSE}: what opens and closes F1 (the Thor on Android: its Back key)
     lr,    // {LR}: the D-pad's left and right
     ud,    // {UD}: the D-pad's up and down
+    look,  // {LOOK}: Y held shows the game (the menus' north button; menu_buttons=bindings: the game's Y)
 };
 
 // The picture(s) of a glyph for a family (two for LR / UD; none when the
