@@ -378,6 +378,29 @@ WinHTTP client, the certificate-store test) plus `Spike_python_relay_test`, whic
 renamed by int-i1b before (1ef2b04f). The relay sources are git's own merges (no hand resolution in them); W4d-W4i
 equal fix-d43's, W7g fix-flap's, W7f the resolution of step a.
 
+### The 0.2.0 check pass (2026-11-15)
+
+The full check pass on 0070a8f2 (the code of 3be2df8a; no code changed). Logs in `build/r020/logs/`, scripts in
+`build/r020/` ("How to run").
+
+- **Builds**: `rel` (DEV=OFF) and `dev` (DEV=ON, tests) "no work to do" at 0070a8f2 (`bld_rel.log`, `bld_dev.log`;
+  `dw4_game.exe` md5 c9e700f7 / 8d90e6d0). **ctest** dev 78/78 (`ctest_dev.log`).
+- **Server**: the solution builds with 0 warnings (`sln_build.log`), unit 703/703 (`unit.log`), integration 155 passed,
+  3 skipped (`it.log`; own mysqld on 3740, shut down by SQL; `Spike_python_relay_test` ran and passed with env.sh's
+  `DW4ONLINE_PYTHON`; the three skipped are fix-d43's opt-in end-to-end tests).
+- **det.sh** (the main checkout's) twice on a copy of `rel`'s `dw4_game.exe` (`build/r020/off/dw4_r020_off.exe`): all
+  four runs 4004f056 / audio 396cb219 (`det.log`, `work/dref/checks/det/det_r020_1`, `det_r020_2`).
+- **Save state suite** (the private copy `build/r020/st`): 17/17 in English (`st_en.log`) and 17/17 with the German game
+  text (`st_de.log`; every case "game.tsv 4515 texts, 0 rejected").
+- **Publish dry run**: `publish.ps1` from a clean `git archive` of HEAD in `build/r020/pub/src` (its `dist` there, not
+  the main checkout's): unit 703/703 in Release, `DW4Online-0.2.0.zip` (50.6 MB, 374 files, md5 254c2b3b). Read from the
+  zip's assemblies (`build/r020/pub/inspect/inspect.cs`, `publish_inspect.log`): every assembly 0.2.0+0070a8f2,
+  `WorldProtocol.Version` 50, the 14 embedded migrations up to 0014_reports (`sql/` 0001-0014 beside them). No
+  appsettings.Production / Development / Local.json, no key or certificate file; the example settings hold placeholders
+  only (`publish.log`, `publish_zip_list.txt`). The server DLLs name their PDB path (the build folder), as every earlier
+  server release did; the zip goes to the own server only.
+- **Scenarios**: running (`marathon.log`).
+
 ## Left
 
 - Not pushed and not merged into main (as asked).
@@ -428,6 +451,12 @@ equal fix-d43's, W7g fix-flap's, W7f the resolution of step a.
   `dev ON dev`; `ctest.cmd dev`; `utest.sh LOG [filter]`; `itest.sh LOG [filter]` with an own mysqld on 3740, data
   `build/r020/it-mysql`, test ports 60400-60599). The path check: `grep -a -o -i -E '[[:print:]]*Users[/\\][[:print:]]*'`
   on each exe of `build/r020/rel` (0 lines; UTF-16 checked by a scan of its own).
+- The 0.2.0 check pass: `build/r020/srv.sh` (the solution build, `utest.sh`, `itest.sh`), `checks.sh det st_en st_de`
+  (det.sh on `off/dw4_r020_off.exe`, the save state suite in `build/r020/st` on `off/dw4_r020_st.exe`, German with
+  `build/r020/lang`), `marathon.sh [BATCH...]` (resumes after a restart: a batch whose log ends with EXIT is skipped; a
+  batch's failures run once more) through `scen.sh LOG ARGS...` (run.py under `python -I` through `wrap/run_wrap.py`, a
+  copy of d43's; mysqld 3741, ports 60500-60599; the client `scen/dw4_r020_dev.exe`, a copy of `dev`'s). Logs in
+  `build/r020/logs/`.
 
 - C++: `cmd //c "start /low /wait /b cmd /c build\int\bld.cmd rel ON nodev"` (Release, DEV=OFF, tests; ctest:
   `build\int\ctest.cmd rel` or ctest.exe `--test-dir build/int/rel`), `... bld.cmd dev OFF dev --target dw4_game` (the
