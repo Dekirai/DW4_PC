@@ -12,3 +12,5 @@
 /android/*.sh text eol=lf
 /android/*.bat text eol=crlf
 /android/*.cmd text eol=crlf
+# The console menu's checks (docs/CONSOLE_MENU.md): bash and the game's script readers take them with LF.
+/tools/menu/** text eol=lf
