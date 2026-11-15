@@ -399,7 +399,57 @@ The full check pass on 0070a8f2 (the code of 3be2df8a; no code changed). Logs in
   appsettings.Production / Development / Local.json, no key or certificate file; the example settings hold placeholders
   only (`publish.log`, `publish_zip_list.txt`). The server DLLs name their PDB path (the build folder), as every earlier
   server release did; the zip goes to the own server only.
-- **Scenarios**: running (`marathon.log`).
+- **Scenarios** (`marathon.log`, `scen_m_*.log`): the user stopped the marathon for the release (2026-11-15, ~20:50).
+  Passed: W1 W4c W10 W31 S22b RGJ1, ui home, ui goalong, W4 W4d W4e W4f W4g W4h W4i, W7 W7b W7c W7d W7e. W4b failed
+  once (below; the batch's first try had stopped at "mysqld did not open port 3741" and ran again whole). W7f was running
+  when the marathon stopped; not run: W7f, W7g, `m_mod` (W10b W10c W10d W10s W5 W5s), `m_prompt` (W2 W2b W11 W11b W11r
+  W30c), `m_drops` (S11a S11b), `m_ui` (ui card cheats gate leave navigation newchars offline unreachable accounts
+  areas), `m_go` (W31b W31c W31c2 W31d W31d2 W31e W31f W31g W31h W31h2 W31i) and the triple repeats of W7f and W7g.
+- **W4b**: two runs alone afterwards pass (200 s each; `scen_w4b_re1.log`, `scen_w4b_re2.log`, runs
+  `run_20261115_205727`, `run_20261115_210053`). The failed run (`scen_m_w4_rep.log`, `run_20261115_194707`, 1003 s) was
+  a machine-wide stall: both clients report a `longest pass` of 6265 / 6269 ms in the same seconds (19:52:40-50; a second
+  one of 6301 / 4845 ms at 19:55), a's play there 266 pads in 13.7 s. b waited at the gate in the relay's join hold
+  (`hold_join`, a BARRIER_WAIT every second); after its own stall its client found no word of the relay for more than
+  5 s and went on alone ("the relay did not answer the barrier into stag0101 within 5 s: a NEW", 19:52:48.4;
+  `src/game/online/session.cpp:385`). The relay's join came 5 s later (`join_decided` 19.8 s after a's `load_end`
+  instead of the usual 10.5 s: a's slowed play), b never sent READY (`join_ready_timeout`, `fallback_new`), both played
+  alone to the 1000 s timeout; `host_away` is the run's end (`why=closed` at 1002 s). Not a fault of this release.
+
+### Open after 0.2.0
+
+Not fixed in 0.2.0, for the next round (0.2.1). The review's four relay findings (should_fix, rare; the places as
+found again in this stage, paths under `server/DW4Online/src/DW4Online.Relay/`):
+
+1. `Hub/RoomHub.cs:1037` `StateReporter` takes the connected member longest in the stage group: a host in a grace
+   started by silence (his link hangs open, up to the 60 s grace) stays the reporter, the guests' STATEs are
+   `state_ignored` (`OnState`, :1016), so a joiner is let in on stale flags or waits `Instances:JoinHoldSeconds` (30)
+   and gets a NEW (`HoldExpired`).
+2. `Hub/RoomHub.cs:1023` `OnState` applies the reporter's every STATE without the newer-by-tick check that
+   `SyncStateReporter` makes at a change of the reporter (:1064): a host back from a drop (`World/WorldHub.cs:167`)
+   sends the STATEs of the ticks he catches up, older than a guest's in effect, and they override it for a moment.
+3. `World/WorldHub.cs:814` `StartGrace` (with `SharedGroup`, :754): a host who drops exactly at a gate still shares his
+   parked stage group with a guest, so the absence debt of his earlier drops shortens this grace although the guests go
+   on at once (W7e): the instance ends for everyone before the usual 60 s.
+4. `World/WorldHub.cs:1531` `ChoiceAdmits` (`Matching.MayEnter`, `World/Matching.cs:62`): *Friends* (chosen or
+   remembered) checks only the host; the base's other co-arrivals can be strangers, and with several fresh arrivals at
+   one gate the first barrier is the base, so who lands with whom depends on the order. The rule, not a bug: now in
+   PLAYER_GUIDE ("Friends means the host is your friend"); whether to check co-arrivals pairwise is a design question.
+
+Also open: the scenarios the stopped marathon did not run (above). A hardening idea from W4b (no bug): the client's
+five seconds without an answer at a barrier (`session.cpp:385`) count its own long passes as the relay's silence.
+
+**Known issues of 0.2.0** in player words (rare; fixed in the next update), for the release notes:
+
+- While a host's connection hangs without dropping (up to the minute he has to come back), the group's story state
+  stays the host's: what the guests do meanwhile (a boss fight starting, for example) is not taken over, so a player
+  who arrives in that minute can be let in at the wrong moment, or wait 30 s and then play alone.
+- A host who comes back after a drop and catches up can for a moment send older story states that override a guest's
+  newer one (the same effect: a join at the wrong moment).
+- A host whose connection drops exactly at a gate, after earlier drops, can make the instance end for everyone a little
+  earlier than the usual minute.
+- *Friends* (chosen or remembered) lets you only into an instance whose host is your friend; other players who arrive
+  with you there can be strangers, and when several players take a gate at once, who lands with whom can depend on who
+  arrives first.
 
 ## Left
 

@@ -179,7 +179,7 @@ The final linked HITBOX and existing subcommand suites also passed the 65 and
 67 checks reported above. The local rerun command is:
 
 ```powershell
-& 'C:/Users/shinz/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' work/v26-hitbox-oracle.py --native build/Release/dw4_model_hitbox_tests.exe
+& "$env:USERPROFILE/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe" work/v26-hitbox-oracle.py --native build/Release/dw4_model_hitbox_tests.exe
 ```
 
 The ignored JSON report records the executable hash, complete cases, expected

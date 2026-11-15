@@ -125,7 +125,7 @@ build/bld.cmd            # Ninja Release into build/rel (FETCHCONTENT from the m
 build/ctest.cmd          # all ctest
 build/rel/dw4_overflow_screens_tests.exe "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted"   # T9 with the font
 # det.sh from the main repo (a copy of the exe):
-cd C:/Users/shinz/source/repos/DW4_PC && bash work/dref/checks/det.sh <copy of dw4_game.exe> <name>
+cd ~/source/repos/DW4_PC && bash work/dref/checks/det.sh <copy of dw4_game.exe> <name>
 # T3 variant with a walk after the return (EXE= a copy; two runs one after another):
 bash build/t3/walkback.sh
 #   walkback_ref.txt: work/dref/scripts/newgame_lobby.txt to 3500 START, "A 3" every 150 frames 4300-6700,

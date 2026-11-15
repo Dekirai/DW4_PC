@@ -669,8 +669,13 @@ appears on the loading screen, with B taking you back to the lobby.
   instance, not even a friend's: not with players who take the gate at the
   same moment, not in one that is just starting, not in one you would
   otherwise join automatically. Only a row you choose yourself in the prompt
-  takes you into another player's instance. With *Friends* you land only with
-  your friends (and nobody blocked either way).
+  takes you into another player's instance.
+- **Friends means the host is your friend.** With *Friends*, whether you
+  choose it or it is your remembered default, you land only in an instance
+  whose host is your friend (and nobody blocked either way). The other
+  players in it, and others who take the gate with you, can be strangers to
+  you. When several players take a gate at the same moment, who lands with
+  whom can depend on who arrives first.
 - Your own group stays together: the members of your instance who play the
   same stage with you and take the same exit or gate arrive together,
   whatever the visibility.
@@ -711,11 +716,13 @@ You return to your lobby."; for the host "End the instance for everyone?").
 When the host leaves, is defeated or does not come back within a minute after
 losing the connection ("Kim lost the connection. Waiting for Kim..."), the
 instance ends for everyone ("Kim left. The instance ends.") and every member
-goes home. A host who comes back in time plays on; one whose connection keeps
-dropping gets less time to come back with each drop until he has played on
-long enough again (the countdown shows it), so he cannot hold the others up
-for long. **Go offline** saves the online character and returns to the
-title.
+goes home. A host who comes back in time after a single drop plays on with
+the group. One whose connection keeps dropping gets less time to come back
+with each drop until he has played on long enough again (the countdown shows
+it), and if he still holds the others up he is set apart: he plays on in a
+stage instance of his own, still the host, and the instance goes on. So he
+cannot hold the others up for long. **Go offline** saves the online character
+and returns to the title.
 
 **Menus do not pause.** Everyone plays for themselves as in an online game:
 the status window (START), NPC talks and the map recorders in fields and

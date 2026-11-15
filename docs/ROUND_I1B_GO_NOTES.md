@@ -148,7 +148,7 @@ The helpers live in `build/go/` (gitignored); recreate them from these copies af
   `bash build/go/scen.sh LOG TAG W31 ...` (run.py --parallel 1 --keep, mysqld 3653, ports 58400-58599, the r25c cards;
   `--no-build` after the first run). Run folders: `tools/online_test/.work/run_*`. A run whose script failed early runs
   on to its frames or timeout: stop its game clients by PID (never by image name), the runner goes on.
-- det.sh: `bash /c/Users/shinz/source/repos/DW4_PC/work/dref/checks/det.sh <DEV=OFF exe copy> <name>` (copy
+- det.sh: `bash ~/source/repos/DW4_PC/work/dref/checks/det.sh <DEV=OFF exe copy> <name>` (copy
   `build/go/rel/dw4_game.exe` to `build/go/off/`).
 
 `build/go/bld.cmd`:
@@ -158,8 +158,8 @@ The helpers live in `build/go/` (gitignored); recreate them from these copies af
 rem i1b-go: bld.cmd DIR TESTING [dev|nodev] [extra build args]  (Release, Ninja, --parallel 4)
 call "C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars64.bat" >nul 2>nul
 set CMAKE="C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-set DEPS=C:/Users/shinz/source/repos/DW4_PC/build/Release/_deps
-cd /d C:\Users\shinz\source\repos\DW4_PC-wt\i1b-go
+set DEPS=%USERPROFILE%/source/repos/DW4_PC/build/Release/_deps
+cd /d %USERPROFILE%\source\repos\DW4_PC-wt\i1b-go
 set BDIR=build/go/%1
 set BT=%2
 set DEV=OFF
@@ -176,7 +176,7 @@ if not exist %BDIR%\CMakeCache.txt (
 ```
 @echo off
 set CTEST="C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
-cd /d C:\Users\shinz\source\repos\DW4_PC-wt\i1b-go
+cd /d %USERPROFILE%\source\repos\DW4_PC-wt\i1b-go
 %CTEST% --test-dir build/go/%1 --output-on-failure %2 %3 %4 %5
 ```
 
@@ -187,14 +187,14 @@ cd /d C:\Users\shinz\source\repos\DW4_PC-wt\i1b-go
 # i1b-go: scenarios with real hidden clients. Usage: scen.sh LOG EXE_TAG SCENARIO... (extra run.py args allowed)
 export PATH="/usr/bin:/mingw64/bin:/c/Program Files/dotnet:/c/Windows/System32:/c/Windows:$PATH"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 PYTHONIOENCODING=utf-8 DW4_NO_ERROR_BOX=1
-W=/c/Users/shinz/source/repos/DW4_PC-wt/i1b-go
+W=~/source/repos/DW4_PC-wt/i1b-go
 LOG=$1; TAG=$2; shift 2
 cd $W
 if netstat -ano -p TCP | grep -qE ':3653 .*(LISTEN|ABH)'; then echo "port 3653 in use" > $LOG; exit 3; fi
 echo "start $(date) head=$(git -C $W rev-parse --short HEAD) exe=dw4_go_dev_$TAG.exe" > $LOG
-nice -n 10 /c/Users/shinz/AppData/Local/Programs/Python/Python313/python.exe tools/online_test/run.py "$@" --parallel 1 --keep \
+nice -n 10 ~/AppData/Local/Programs/Python/Python313/python.exe tools/online_test/run.py "$@" --parallel 1 --keep \
   --game-exe "$(cygpath -w $W/build/go/scen/dw4_go_dev_$TAG.exe)" --data "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted" \
-  --cards "C:/Users/shinz/source/repos/DW4_PC/work/campaign/checkpoints/r25c" --mysql-port 3653 --ports 58400-58599 >> $LOG 2>&1
+  --cards "$HOME/source/repos/DW4_PC/work/campaign/checkpoints/r25c" --mysql-port 3653 --ports 58400-58599 >> $LOG 2>&1
 echo "EXIT $? $(date)" >> $LOG
 ```
 
@@ -205,7 +205,7 @@ echo "EXIT $? $(date)" >> $LOG
 # i1b-go: the server's integration tests with an own mysqld on 3653 (only while no scenario runs). Usage: itest.sh LOG [filter]
 export PATH="/usr/bin:/mingw64/bin:/c/Program Files/dotnet:/c/Windows/System32:/c/Windows:$PATH"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-W=/c/Users/shinz/source/repos/DW4_PC-wt/i1b-go
+W=~/source/repos/DW4_PC-wt/i1b-go
 LOG=$1; FILTER=$2
 DATA=$W/tools/online_test/.work/mysql-data
 PW=$(cat $W/tools/online_test/.work/mysql-root.txt)

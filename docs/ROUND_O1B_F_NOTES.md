@@ -133,8 +133,8 @@ The T3 / T5 check (`build/t3/t3meta.sh`, not in git; recreate it from here):
 # (A) and without (B); the story's fingerprint lines, the card folders and the achievement profiles must be equal,
 # only A writes the DW4_OVERFLOW_PROFILE file.
 export PATH=/usr/bin:/mingw64/bin:/c/Windows/System32:/c/Windows:$PATH
-exe=$1; R=/c/Users/shinz/source/repos/DW4_PC-wt/o1b-meta/build/t3/out; rm -rf $R; mkdir -p $R
-cd /c/Users/shinz/source/repos/DW4_PC
+exe=$1; R=~/source/repos/DW4_PC-wt/o1b-meta/build/t3/out; rm -rf $R; mkdir -p $R
+cd ~/source/repos/DW4_PC
 for v in A B; do
   mkdir -p "$R/$v/card/Card A" "$R/$v/card/Card B"
   extra=(); [ $v = A ] && extra=(--overflow-run form=p_agumon seed=3 bot=kite at=3000 frames=1800)
