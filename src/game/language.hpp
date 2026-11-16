@@ -8,6 +8,7 @@
 // (GlRenderer::set_language_textures). None of it is part of the game
 // state, a fingerprint, a save, a save state, a snapshot or an online
 // session: players with different languages play the same session.
+#include "language_switches.hpp"
 #include "texture_pack.hpp"
 
 #include "dw4/i18n/game_text.hpp"
@@ -58,7 +59,8 @@ public:
     void sync(engine::Engine& engine, GlRenderer* renderer);
     // Test runs: language changes at given frames (DW4_L10N_SWITCH
     // "F:code,F:code"), or every N frames between English and `other`
-    // (DW4_L10N_SWITCH_EVERY); applied by at_frame before that frame's step.
+    // (DW4_L10N_SWITCH_EVERY); applied by at_frame before that frame's step,
+    // once however many passes run at that frame (LanguageSwitches).
     bool parse_schedule(std::string_view text, std::string* error = nullptr);
     void switch_every(int frames, std::string other);
     void at_frame(int frame);
@@ -88,9 +90,7 @@ private:
     std::uint64_t generation_ = 1;          // changes with the selection and the built pictures
     std::uint64_t renderer_generation_ = 0; // what the renderer was given last
     const GlRenderer* renderer_ = nullptr;
-    std::vector<std::pair<int, std::string>> schedule_;
-    int every_ = 0;
-    std::string every_other_;
+    LanguageSwitches switches_;
     std::filesystem::path dump_;
 };
 

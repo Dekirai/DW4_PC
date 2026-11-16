@@ -7,8 +7,9 @@ namespace DW4Online.Domain.World;
 /// </summary>
 public static class WorldProtocol
 {
-    /// <summary>Round I1's protocol: 49 (round J's READY check took 48).</summary>
-    public const int Version = 49;
+    /// <summary>Round I1b's protocol: 50 (the arrival prompt, go along, REPORT, HEADING's asked byte and the client's snapshot version 44,
+    /// whose stage snapshot carries the random WAITCHECK minimum; DW4Online 0.2.0). Round I1's was 49, round J's READY check 48.</summary>
+    public const int Version = 50;
 }
 
 /// <summary>The visibility of an instance (19.6.2): who may see and join it.</summary>

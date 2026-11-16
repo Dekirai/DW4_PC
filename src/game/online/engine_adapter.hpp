@@ -71,6 +71,7 @@ public:
     std::optional<HeadingInfo> take_heading() override;
     PresenceFacts presence(int slot) const override;
     engine::StoryValues story_values() const override;
+    std::optional<engine::DepartureChoice> pending_departure_choice() const override;
 
     void replay_step(const std::array<PadSample, 4>& pads) override;
     bool restore(std::span<const std::uint8_t> snapshot) override;
@@ -85,6 +86,9 @@ public:
     void intent(int slot, wire::IntentKind kind, int argument) override;
     void home(std::uint8_t mask) override;
     bool depart_home() override;
+    bool go(std::uint8_t mask, const std::string& stage, int point) override;
+    void test_hook(int slot, wire::TestHook hook, int argument) override;
+    bool own_scene(int slot) const override;
     void set_view_slot(int slot) override;
 
     // The member's own settings (round I1a, 19.8.7): its Game Start's

@@ -74,8 +74,19 @@ public sealed class SlotStream
     /// <summary>Consecutive filled ticks (0 after a pad sealed in time; a late pad does not end it: the lag rule counts
     /// the ticks the member's own pads missed).</summary>
     public int FillStreak { get; private set; }
-    /// <summary>The server time (timestamp) at which the current fill streak began.</summary>
+    /// <summary>The server time (timestamp) at which the current fill streak began (or, for a host back from his grace, his return:
+    /// <see cref="RestartFillStreakClock"/>).</summary>
     public long FillStreakSince { get; private set; }
+
+    /// <summary>The host back within his grace (SEAMLESS.md 19.6.7, "back in time: play on"): the lag rule (Relay:LagLeaveSeconds)
+    /// counts his fill streak from his return, so his resumed client has that long to catch up to the ticks sealed meanwhile. The
+    /// streak's length stays: he lags until a pad of his is sealed in time. (Before, the streak counted from the grace's start, and a
+    /// host away longer than LagLeaveSeconds was taken out of his stage group by the next housekeeping after his return.) Every
+    /// return restarts it; what bounds a link that keeps dropping is the host's absence debt (WorldInstance.HostDebt, fix-flap).</summary>
+    public void RestartFillStreakClock(long now)
+    {
+        if (FillStreak > 0) FillStreakSince = now;
+    }
     /// <summary>The furthest tick this member submitted a pad for (its horizon).</summary>
     public uint Horizon { get; private set; }
     public bool HasHorizon { get; private set; }

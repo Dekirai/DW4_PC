@@ -32,6 +32,7 @@
 #include "online_run.hpp"
 #include "cloud_backup_panel.hpp"
 #include "online_ui.hpp"
+#include "online_prompt_ui.hpp"
 #include "online_ui_script.hpp"
 #include "console_glyphs.hpp"
 #include "console_menu.hpp"
@@ -1060,6 +1061,30 @@ std::uint64_t data_hash(const dw4::MountedResources& resources) {
         }
     }
     return h;
+}
+
+// Round I1b: the online script's go-along view of the session (online_script.hpp).
+void go_facts(dw4::game::OnlineScriptFacts& facts, const dw4::game::online::Session& session, double now) {
+    for (const auto& offer : session.go_offers())
+        if (offer.open) {
+            ++facts.offers;
+            facts.open_offers.emplace_back(offer.id, offer.stage);
+            if (!facts.newest_offer) {
+                facts.newest_offer = offer.id;
+                facts.offer_stage = offer.stage;
+            }
+        }
+    for (const auto& offer : session.go_offers())
+        if (!offer.open && !facts.closing_offer) facts.closing_offer = offer.id;
+    facts.notices = int(session.go_notices(now).size());
+    static const char* kGo[] = {"none", "asked", "waiting", "boss", "stamped", "going"};
+    facts.go = kGo[std::min<std::size_t>(std::size_t(session.go_state()), 5)];
+    facts.go_back = session.overlay(now).go_back;
+    for (const auto& offer : session.go_offers())
+        if (offer.open) {
+            facts.go_ready = session.go_grey(offer).empty();
+            break;
+        }
 }
 
 int run(const Options& options, dw4::game::Settings& settings) {
@@ -2112,6 +2137,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::chrono::steady_clock::time_point until;
         };
         std::deque<Toast> toasts;
+        bool go_back_b_held = false; // (round I1b: B on a GO's held loading screen, pressed once)
+        bool go_back_a_held = false; // (and A on the host's question there)
         // The account and room screens (online_ui.hpp): over the title (its
         // menu's third entry "Online" opens them), the F1 Online tab, the test
         // run's script (--online-ui).
@@ -3525,6 +3552,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // none).
             if (online) {
                 online->pass(steady_seconds());
+                {
+                    // Round I1b (19.5.7): the arrival prompt's keys, the own pad's and the keyboard's arrows, Enter
+                    // and Backspace (read every pass, so a press held when it opens is no answer).
+                    std::uint32_t keys = dw4::game::prompt_buttons(live[0].buttons, live[0].stick_directions, live[0].stick.x, live[0].stick.y);
+                    if (online->session().prompt() && !show_menu)
+                        if (const bool* k = SDL_GetKeyboardState(nullptr)) {
+                            if (k[SDL_SCANCODE_UP]) keys |= dw4::pad_button::up;
+                            if (k[SDL_SCANCODE_DOWN]) keys |= dw4::pad_button::down;
+                            if (k[SDL_SCANCODE_LEFT]) keys |= dw4::pad_button::left;
+                            if (k[SDL_SCANCODE_RIGHT]) keys |= dw4::pad_button::right;
+                            if (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]) keys |= dw4::pad_button::a;
+                            if (k[SDL_SCANCODE_BACKSPACE]) keys |= dw4::pad_button::b;
+                        }
+                    online->session().prompt_input(keys, steady_seconds());
+                }
                 if (online_achievements) online_achievements->pass(steady_seconds());
                 steps = online->session().steps_allowed(steps, pass_seconds);
                 if (online->session().paces()) accumulator = 0;
@@ -3625,11 +3667,45 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.mode = dw4::game::online::mode_name(online->session().mode());
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
+                        if (const auto& info = online->session().instance(); info && online->session().in_instance())
+                            facts.members = int(info->members.size());
+                        // (Round I1b: the go-along view.)
+                        go_facts(facts, online->session(), steady_seconds());
                     }
                     facts.ghosts = ghosts.shown();
                     facts.figures = ghosts.staying();
                     const auto out = online_script.update(engine, facts);
                     if (!out.shot.empty() && !options.screenshot.empty()) ui_shot = out.shot;
+                    if (!out.op.empty() && online) {
+                        // remove NAME / report NAME REASON (round I1b): the player card's buttons through the session.
+                        std::istringstream words(out.op);
+                        std::string verb, name, why;
+                        words >> verb >> name >> why;
+                        auto& session = online->session();
+                        const auto member = session.member_by_name(name);
+                        static constexpr std::pair<const char*, dw4::game::online::wire::ReportReason> kWhy[] = {
+                            {"griefing", dw4::game::online::wire::ReportReason::griefing}, {"cheating", dw4::game::online::wire::ReportReason::cheating},
+                            {"name", dw4::game::online::wire::ReportReason::name}, {"other", dw4::game::online::wire::ReportReason::other}};
+                        auto reason = dw4::game::online::wire::ReportReason::other;
+                        for (const auto& [text, r] : kWhy)
+                            if (why == text) reason = r;
+                        const bool sent = verb == "remove" ? session.remove_member(member) : session.report(member, reason);
+                        std::printf("online-script: %s %s member %u %s (frame %d)\n", verb.c_str(), name.c_str(), member, sent ? "sent" : "refused", frame);
+                        std::fflush(stdout);
+                    }
+                    if (online && (out.go_along || out.go_cancel || out.go_close)) {
+                        auto& session = online->session();
+                        if (out.go_along && session.go_along(out.go_along)) std::cout << "online: go along (offer " << out.go_along << ") at frame " << frame << '\n';
+                        if (out.go_cancel && session.cancel_go_along()) std::cout << "online: go along cancelled at frame " << frame << '\n';
+                        if (out.go_close) session.close_go_notices(out.go_close);
+                    }
+                    if (online && out.go_along_raw && online->session().go_along_raw(out.go_along_raw))
+                        std::cout << "online: go along (closed offer " << out.go_along_raw << ") at frame " << frame << '\n';
+                    if (online && out.test_hook &&
+                        !online->session().test_hook_request(dw4::game::online::wire::TestHook(out.test_hook), out.test_value))
+                        std::cout << "online: the test hook could not be asked at frame " << frame << " (not sealed)\n";
+                    if (online && out.go_back && online->session().go_back_to_lobby())
+                        std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
                     input |= out.buttons;
@@ -4267,6 +4343,37 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (line.empty() && overlay.waiting_for_server) line = "Waiting for the server...";
                 if (line.empty()) line = overlay.status; // (19.5.5: "Kim lost the connection. Waiting for Kim... 52 s")
                 if (line.empty() && overlay.slow_uplink) line = "Your connection is slow; the others see you lag.";
+                // The online test driver while a barrier is held (no step runs, so the
+                // step loop's update does not come): its conditions, and goback.
+                if (online_script.active() && session.mode() == dw4::game::online::Mode::parked) {
+                    dw4::game::OnlineScriptFacts facts;
+                    facts.frame = frame;
+                    facts.parked = true;
+                    facts.own_slot = session.own_slot();
+                    facts.present = session.present();
+                    facts.mode = dw4::game::online::mode_name(session.mode());
+                    facts.tick = session.tick();
+                    go_facts(facts, session, online_now);
+                    facts.ghosts = ghosts.shown();
+                    facts.figures = ghosts.staying();
+                    if (online_script.update(engine, facts).go_back && session.go_back_to_lobby())
+                        std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
+                    if (online_script.finished()) running = false;
+                }
+                // Round I1b (19.30.7): a GO's barrier held over 10 s: B takes the member back to the lobby; the host's B asks
+                // "End the instance for everyone?" first (A: Yes, B: No), as the F1 menu's *Leave instance*.
+                if (overlay.go_back) {
+                    line += "   " + overlay.go_back_line;
+                    const bool a = (live[0].buttons & dw4::pad_button::a) != 0;
+                    const bool b = (live[0].buttons & dw4::pad_button::b) != 0;
+                    if (session.go_back_press(a && !go_back_a_held, b && !go_back_b_held))
+                        std::cout << "online: back to the lobby from a held go along at frame " << frame << '\n';
+                    go_back_a_held = a;
+                    go_back_b_held = b;
+                } else {
+                    go_back_a_held = go_back_b_held = false;
+                    session.go_back_press(false, false); // (the question ends with the hold)
+                }
                 if (online->leave_prompt) {
                     // After the loading or waiting line, never instead of it.
                     const std::string prompt = "Go offline?  F1 > Online > Go offline, or hold {B} + {X} + {START} again to stay.";
@@ -4678,6 +4785,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.wid = session.wid();
                     room_live.host = session.host();
                     room_live.is_host = session.is_host();
+                    room_live.may_remove = session.may_remove();
                     room_live.host_name = session.member_name(session.host());
                     if (const auto& info = session.instance(); info && info->wid == session.wid()) {
                         room_live.visibility = int(info->visibility);
@@ -4691,6 +4799,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.in_game = online->link().game_started();
                     if (auto* character = online->character()) room_live.character = character->status_text();
                     room_live.story = online->story_line();
+                    // Round I1b (19.30.6): the *Go along* box.
+                    for (const auto& offer : session.go_offers()) {
+                        dw4::game::RoomLive::GoRow row;
+                        row.id = offer.id;
+                        row.text = session.go_row_text(offer);
+                        row.grey = session.go_grey(offer);
+                        row.closing = !offer.open;
+                        row.own = session.go_offer_id() == offer.id && session.go_state() != dw4::game::online::GoState::none;
+                        {
+                            using dw4::game::online::GoState;
+                            const auto st = session.go_state();
+                            row.cancellable = row.own && (st == GoState::asked || st == GoState::waiting || st == GoState::boss);
+                        }
+                        room_live.go_rows.push_back(std::move(row));
+                    }
+                    room_live.go_line = session.go_line();
                     if (const auto& info = session.instance(); info && info->wid != 0)
                         for (const auto& e : info->members)
                             room_live.members.push_back({e.member, session.member_name(e.member), e.stage, 0, e.level, 0, 0,
@@ -4710,6 +4834,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     // (From the status window's line, "View: change": the
                     // Instance page with the visibility focused.)
                     online_ui.focus_visibility = instance_line_shown;
+                    // (Round I1b, 19.30.6: View while a go-along notice has been
+                    // up for half a second focuses its row; earlier the cursor
+                    // stays below the box, so a reflexive A starts nothing.)
+                    // While the own request waits ("... View: cancel") View
+                    // focuses its row, where A cancels.
+                    const auto& go_session = online->session();
+                    const auto notices = go_session.go_notices(steady_seconds());
+                    const auto go_state = go_session.go_state();
+                    const bool go_waiting = go_state == dw4::game::online::GoState::asked || go_state == dw4::game::online::GoState::waiting ||
+                                            go_state == dw4::game::online::GoState::boss;
+                    online_ui.focus_go_id = 0;
+                    online_ui.focus_go = false;
+                    if (go_waiting) {
+                        online_ui.focus_go = true;
+                        online_ui.focus_go_id = go_session.go_offer_id();
+                    } else if (!notices.empty() && steady_seconds() - notices.front()->notice_at >= 0.5) {
+                        online_ui.focus_go = true;
+                        online_ui.focus_go_id = notices.front()->id;
+                    }
+                    online_ui.focus_below_go = !online_ui.focus_go && !online_ui.focus_visibility && !go_session.go_offers().empty();
                 }
                 menu_shown_before = show_menu;
                 // The console menu: opened (the one-shots), closed (its modals
@@ -5417,16 +5561,51 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (online) online->session().set_visibility(dw4::game::online::wire::Visibility(online_ui.visibility_requested));
                     online_ui.visibility_requested = -1;
                 }
+                // The player card's *Remove* and *Report* (round I1b, 19.6.6, 19.16).
+                if (online_ui.remove_requested != 0) {
+                    if (online && online->session().remove_member(online_ui.remove_requested))
+                        std::cout << "online: remove member " << online_ui.remove_requested << " at frame " << frame << '\n';
+                    online_ui.remove_requested = 0;
+                }
+                if (online_ui.report_requested != 0) {
+                    if (online && online->session().report(online_ui.report_requested,
+                                                           dw4::game::online::wire::ReportReason(std::clamp(online_ui.report_reason_requested, 1, 4))))
+                        std::cout << "online: report member " << online_ui.report_requested << " at frame " << frame << '\n';
+                    online_ui.report_requested = 0;
+                    online_ui.report_reason_requested = 0;
+                }
                 if (online_ui.leave_instance_requested) {
                     online_ui.leave_instance_requested = false;
                     if (online && online->session().leave_instance())
                         std::cout << "online: leave instance at frame " << frame
                                   << (online->session().leave_pending() ? " (kept until the INTENT can go)" : "") << '\n';
                 }
+                // Round I1b (19.30.6): A on a *Go along* row (the menu closes:
+                // nothing has left yet), A on the own waiting row, B in the box.
+                if (online_ui.go_requested) {
+                    if (online && online->session().go_along(std::uint16_t(online_ui.go_requested))) {
+                        std::cout << "online: go along (offer " << online_ui.go_requested << ") at frame " << frame << '\n';
+                        online_ui.close_requested = true;
+                    }
+                    online_ui.go_requested = 0;
+                }
+                if (online_ui.go_cancel_requested) {
+                    online_ui.go_cancel_requested = false;
+                    if (online && online->session().cancel_go_along()) std::cout << "online: go along cancelled at frame " << frame << '\n';
+                }
+                if (online_ui.go_closed) {
+                    if (online) online->session().close_go_notices(std::uint16_t(online_ui.go_closed));
+                    online_ui.go_closed = 0;
+                }
                 if (online_ui.close_requested) {
-                    // ("Play" on the playing screen, here or in F1 Online.)
+                    // ("Play" on the playing screen, here or in F1 Online; A on a
+                    // Go along row; B in the box.) The game's pad waits until
+                    // every button is up: the A or B that closed the menu is
+                    // still held, and the game (a swing, a talk) or an open
+                    // arrival prompt took it as a press (round I1b's
+                    // integration review).
                     online_ui.close_requested = false;
-                    if (title_online.active) pad_latch = true;
+                    pad_latch = true;
                     title_online.active = false;
                     show_menu = false;
                 }
@@ -5529,6 +5708,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // Seamless co-op notices, bottom centre (presentation only):
                 // the defeated member's hint, the exit prompt's names.
+                // Round I1b: the arrival prompt (19.5.3), in the gate form over the frozen game or on the loading screen.
+                // (Its hint line: the keyboard's keys while the keyboard is the
+                // device in use, as every other hint of the port; the pad's
+                // pictures otherwise. Round I1b's integration review: it asked
+                // whether a pad was plugged in.)
+                if (online && online->session().prompt()) {
+                    const auto* prompts = dw4::game::ButtonPrompts::active_prompts();
+                    const bool keyboard = prompts ? prompts->family() == dw4::game::PadFamily::keyboard : gamepads.empty();
+                    dw4::game::draw_arrival_prompt(*online->session().prompt(), keyboard);
+                }
                 if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
                     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(24)), ImGuiCond_Always, ImVec2(0.5f, 1));
@@ -5576,6 +5765,41 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const char* entering = "Entering the server...";
                     const ImVec2 size = ImGui::CalcTextSize(entering);
                     backdrop->AddText(ImVec2((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f), IM_COL32(230, 230, 230, 255), entering);
+                }
+                // Round I1b (19.30.6): the go-along notices, top centre (they
+                // take no game button: View opens the F1 menu on the Instance
+                // page), a bar shrinking over their 20 s; the own request's line
+                // where the notice was. Also over the F1 menu.
+                if (online && online->session().in_instance()) {
+                    const auto& session = online->session();
+                    const double now_s = steady_seconds();
+                    const auto notices = session.go_notices(now_s);
+                    const std::string line = session.go_line();
+                    if (!notices.empty() || !line.empty()) {
+                        const ImVec2 display = ImGui::GetIO().DisplaySize;
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, 12), ImGuiCond_Always, ImVec2(0.5f, 0));
+                        ImGui::SetNextWindowBgAlpha(0.75f);
+                        ImGui::Begin("##go_along", nullptr,
+                                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                        if (!line.empty()) {
+                            const auto state = session.go_state();
+                            // (The boss fight's wait too: the box's row cancels it, 19.30.6.)
+                            const bool cancellable = state == dw4::game::online::GoState::asked || state == dw4::game::online::GoState::waiting ||
+                                                     state == dw4::game::online::GoState::boss;
+                            // ({MENU}: the F1 menu's button as player 1's device shows it: View / Back / Share / Minus, F1 on
+                            // the keyboard; round I1b's integration.)
+                            dw4::game::prompt_text(line + (cancellable ? "  {MENU} cancel" : ""));
+                        }
+                        for (const auto* notice : notices) {
+                            ImGui::TextUnformatted(session.go_notice_text(*notice).c_str());
+                            ImGui::SameLine(0, 24);
+                            dw4::game::prompt_text_disabled("{MENU} answer");
+                            const float left = float(std::clamp(1.0 - (now_s - notice->notice_at) / std::max(1.0, notice->notice_seconds), 0.0, 1.0));
+                            ImGui::ProgressBar(left, ImVec2(-1, 3), "");
+                        }
+                        ImGui::End();
+                    }
                 }
                 // Achievement notices, top right.
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();

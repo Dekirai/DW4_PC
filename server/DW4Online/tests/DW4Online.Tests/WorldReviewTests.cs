@@ -27,7 +27,7 @@ public partial class HubLogicTests
         h.Log("a", 0, 60);
         h.Joinable("a");
         h.Advance(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         return h;
     }
 
@@ -67,7 +67,7 @@ public partial class HubLogicTests
         g.Hub.Leave(host.AccountId, g.Now);
         var before = g.P("b").Frames.Count;
         g.Advance(2500);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.Equal(0, keeper.EarnedCount);
         var after = g.P("b").Frames.Skip(before).Where(f => f.Type == Msg.StoryAck).Select(f => StoryAckMsg.Parse(f.Payload)).ToList();
         Assert.NotEmpty(after);
@@ -117,7 +117,7 @@ public partial class HubLogicTests
         h.Send("c", new BarrierMsg(i.Id, i.Visit, 0, "stag0101", 0, i.PresentMask, i.PresentMask, 5, [(byte)'c'], 0, BarrierMsg.PlanNewInstance).Frame());
         Assert.Equal(WaitReason.CoArrival, h.P("c").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
         h.Advance(3_500);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var ok = h.Decision("c");
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance), (ok.Decision, ok.World.Arrival));
         Assert.NotSame(W(h, "a"), W(h, "c"));
@@ -143,7 +143,7 @@ public partial class HubLogicTests
         Assert.Empty(audits);
         Assert.Empty(remembered);
         h.Advance(RoomHub.VisibilitySettleMs + 100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(["instance_visibility"], audits.Select(x => x.Event));
         Assert.Equal([Visibility.Friends], remembered);
         // One a second after the burst.
@@ -232,7 +232,7 @@ public partial class HubLogicTests
         Assert.Equal(BarrierDecision.New, h.Decision("b").Decision);
         Assert.Same(w, W(h, "b"));
         // The housekeeping asks b's HOME again in the new stage group; it is stamped once that group seals.
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var next = h.I("b");
         var bit = (byte)(1 << h.Mem("b").Slot);
         Assert.Equal(bit, next.PendingHome?.Mask);
@@ -243,7 +243,7 @@ public partial class HubLogicTests
         Assert.Contains(h.P("a").Ticks().SelectMany(t => t.Rec.Events),
             e => e.Type == Ev.Home && e.HomeMask == bit && e.Payload[1] == (byte)HomeReason.Leave);
         // Asked once per stage group: the next passes add nothing.
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(1, h.Hub.Counters["home_asked_again"]);
     }
 
@@ -270,7 +270,7 @@ public partial class HubLogicTests
         h.Log("b", 0, 30);
         h.Send("b", new JoinAtMsg(g.Id, g.Visit, 40).Frame());
         Assert.Equal(1, g.PendingEvents.Values.SelectMany(l => l).Count(e => e.Type == Ev.Home));
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Single(h.P("b").All(Msg.JoinReq, JoinReqMsg.Parse), r => r.Kind == JoinReqKind.Home);
     }
 
@@ -285,12 +285,12 @@ public partial class HubLogicTests
         h.Snapshot("a");
         h.Log("a", 0, 60);
         h.Advance(6_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.NotEqual(0, W(h, "a").StartingUntil);
         h.Barrier("b", "stag0101");
         Assert.Same(W(h, "a"), W(h, "b"));
         h.Joinable("a");
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var ok = h.Decision("b");
         Assert.Equal((BarrierDecision.Join, ArrivalKind.Starting, StoryMode.Replace, h.Mem("a").Id),
             (ok.Decision, ok.World.Arrival, ok.World.StoryMode, ok.World.OwnerMember));
@@ -344,7 +344,7 @@ public partial class HubLogicTests
         h.Log("a", 0, 60);
         h.Joinable("a");
         h.Advance(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         h.Barrier("b", "stag0101");
         Assert.Equal(ArrivalKind.NewInstance, h.Decision("b").World.Arrival);
         Assert.NotSame(W(h, "a"), W(h, "b"));
@@ -358,7 +358,7 @@ public partial class HubLogicTests
         g.Barrier("a", "stag0101");
         g.Barrier("b", "stag0101");
         g.Advance(3_500);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.NotSame(W(g, "a"), W(g, "b"));
     }
 
@@ -382,7 +382,7 @@ public partial class HubLogicTests
         foreach (var (n, k) in names.Select((n, k) => (n, k))) h.Connect(n, k);
         for (var k = 0; k < names.Length; ++k) h.Send(names[k], Presence2("stagML11", x: k * 5).Frame());
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         h.Hub.WorldOptions.PresenceBytesPerSecond = 200; // (a few frames)
         foreach (var n in names.Skip(1)) h.Send(n, Presence2("stagML11", x: 1).Frame());
         var got = h.P("p0").All(Msg.Presence2Out, Presence2OutMsg.Parse).Count;
@@ -405,13 +405,13 @@ public partial class HubLogicTests
         h.Log("a", 0, 60);
         h.Joinable("a");
         h.Advance(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         h.Barrier("c", "stag0101");
         Assert.Same(W(h, "a"), W(h, "c"));
         var info = h.P("a").Last(Msg.MemberInfo, MemberInfoMsg.Parse);
         Assert.Equal(h.Mem("c").Id, info.Member);
         Assert.Equal(Relation.Staff | Relation.SameInstance, info.Flags);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var row = h.P("a").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Members.Single(x => x.Member == h.Mem("c").Id);
         Assert.NotEqual(0, row.Flags & InstanceInfoMember.Staff);
     }

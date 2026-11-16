@@ -1,6 +1,7 @@
 # W5, c (a moderator): in its lobby the API lists a's Private instance to it, marked Private (140 s); then c takes the gate
 # while a's instance still runs there (b home again): fix-019, a moderator who simply plays is never put into a Private
 # instance by the automatic join (the staff bypass is his own choice of the row, I1b's prompt, I3's browser): his own.
+# (Round I1b: c answers the prompt with its preselection, New instance: autochoice cursor in scenario.json.)
 campaign until stage=stagml11,control
 idle until epoch>=@150
 explore mate00 yes until stage=stag0101,control

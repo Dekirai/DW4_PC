@@ -2,6 +2,7 @@
 
 #include "dw4/engine/igb_view.hpp"
 #include "dw4/engine/online.hpp"
+#include "dw4/engine/online_departure.hpp"
 #include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/engine/tick_state.hpp"
@@ -314,6 +315,8 @@ public:
     void update(Engine& engine);
     void clear();
     std::size_t running() const { return running_.size(); }
+    // The running works, read only (round I1b's departure census, 19.7.4).
+    const std::vector<std::unique_ptr<DemoWork>>& works() const { return running_; }
     // Online (docs/SEAMLESS.md 5.3): the works that are no member's own
     // scene, and those plus the own scenes of `slot` (what DMgetCount counts
     // for a script run of that trigger; -1: the unscoped works alone).
@@ -453,6 +456,11 @@ struct StageSnapshot {
     std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
+    // ActionManager's minimum of the random WAITCHECKs (80535A60): a global
+    // of the original that a stage load keeps (WAITCHECK 'R' with 'S' sets
+    // it, a later 'R' reads it in any stage). Snapshot version 44 (round
+    // I1b's integration); a version 43 state loads it as 0.
+    float random_wait_min{};
     ConsoleReset console_reset;               // the reset button and the controller's combination
     // Online co-op (online.hpp): the rules of the visit and the present
     // slots' personal session values (all off / empty offline).
@@ -572,6 +580,32 @@ public:
     // instance holds it, nobody joins or logs it). False (nothing done) unless
     // online, solo and membership-safe.
     bool online_depart_home();
+    // Round I1b (docs/SEAMLESS.md 19.30.7): GO, before a step (stamped events
+    // at a membership-safe step, every GO of the step together): the slots of
+    // `mask` that are present, not leaving and alive go along to `stage` and
+    // `point` (the stage group they join is already there: the target is taken
+    // as named, the zone shuffle's remap is skipped). The leavers follow the
+    // exit's side rule (exit_leavers: the defeated go along when no living
+    // member stays); every present slot: the original group move; part of
+    // them: a fork of ForkKind::go. In the leavers' copy the exit port's
+    // departure runs (the controls off, the fade, SQ_EXIT, SETGENERATEPOS,
+    // NEXTSTAGE) with a HEADING. Returns whether this copy departs (false when
+    // the mask drops to nothing: the GO does nothing on every engine alike).
+    bool online_go(std::uint8_t mask, const std::string& stage, int point);
+    // Round I1b's scenario hooks (the client's development builds only, the
+    // TEST event of docs/ROUND_I1B_GO_NOTES.md), before a step at a tick
+    // every member applies: hook 1 defeats the slot's player (0 HP and
+    // SQ_DEAD, as poison's last tick does); hook 2 keeps the engine neither
+    // membership-safe nor joinable for `argument` steps (a shared scene's
+    // stand-in); hook 3 puts the slot's player onto the mat "mat" + letter
+    // (bits 8-15) + number (bits 0-7) (a walk through a floor the test
+    // characters do not survive; the mat's script runs as for a walk-on).
+    // Online only; nothing of hook 2 is in the snapshot or the fingerprint
+    // (it is never set offline, and no join or resync happens while it
+    // holds: joins wait for joinable()); hooks 1 and 3 change the world as a
+    // step would.
+    void online_test_hook(int slot, int hook, int argument);
+    int online_test_busy() const { return online_test_busy_; }
     // 19.8.3 (M2): a parked DISSOLVE redirected: the pending stage and the
     // generate point (PlayerPointManager's point) replaced, as a NEXTSTAGE to
     // that stage and point would have set them. Only between set_barrier
@@ -594,6 +628,13 @@ public:
     // members who take the same gate within seconds arrive together).
     // Observe-only (nothing of it is in the fingerprint or the snapshot).
     void note_departure(std::string_view stage, int point, std::int64_t delay);
+    // Round I1b (docs/SEAMLESS.md 19.7.4): in a hub stage, the stage and
+    // point the own player's next confirming press (A on the open cursor
+    // menu) would start, when that press leads out of the hub stages: the
+    // lobby gate's destination select and the return mat (the census in
+    // online_departure.hpp). Read-only; nothing while no such menu takes
+    // input. `own_slot` is the slot whose pad must be the menu's reader.
+    std::optional<DepartureChoice> pending_departure_choice(int own_slot) const;
     // The exit port's state for this machine's texts and draw filter.
     const ExitPromptView& exit_prompt() const { return exit_view_; }
     // The subtrees this machine's picture leaves out in a multi-member
@@ -1275,6 +1316,7 @@ private:
 
     // ---- Online co-op (online.cpp).
     OnlineRules online_;
+    int online_test_busy_ = 0; // (round I1b's busy test hook: steps left)
     std::array<std::optional<PersonalSession>, 4> personal_;
     // The pads of the barrier tick, which every transition step takes (6.7).
     std::optional<std::array<PadSample, 4>> barrier_pads_;

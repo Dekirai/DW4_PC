@@ -1,0 +1,14 @@
+# W31g (19.24): walking in and out within the reopen time makes one notice (silent reopens, no closing line as a notice).
+a: online-script: step .* log: a in dng204b1 the third time
+b: online-script: step .* log: b sees the notice
+b: online-script: step .* log: b closed the offer
+b: online-script: step .* log: b saw no further notice
+c: online-script: step .* log: c saw one notice only
+relay: offer_open .*stage=dng204b1
+relay: offer_close .*reason=left
+relay: offer_reopen
+relay: offer_close .*reason=left
+relay: offer_reopen
+!a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL

@@ -36,7 +36,9 @@
 //   DELAY 5     u8 slot | u8 delay
 //   HOME 6      u8 slot mask | u8 reason (1 leave, 2 ended, 3 removed, 4
 //               staff): exactly these slots take the home departure (19.6.5)
-//   GO 7        u8 slot | u8 point | str stage (round I1b; decoded, not applied)
+//   GO 7        u8 slot | u8 point | str stage (round I1b, 19.30.7: applied like
+//               INTENT at the first membership-safe step, every GO of that step
+//               together; it expires engine::kGoExpiryTicks after its tick)
 // Unknown event types are skipped (a newer server).
 #include "dw4/engine/online_story.hpp"
 #include "pad_wire.hpp"
@@ -108,8 +110,12 @@ enum class Type : std::uint8_t {
     statehash = 0x15,
     checkpoint = 0x16,
     checkpoint_bad = 0x17,
+    // protocol 50 (round I1b, 19.7.4): the gate form's plan and the prompt's answer (prompt_wire.hpp)
+    plan = 0x18,
+    choice = 0x19,
     // protocol 49 (round I1a, 19.18): the host's or staff's instance change
     instance_op = 0x1B,
+    report = 0x1E,      // round I1b (moderation): *Report player* from the player card
     // server -> client (0x80-0xBF)
     welcome = 0x80,
     sealed = 0x81,
@@ -128,11 +134,18 @@ enum class Type : std::uint8_t {
     reassign = 0x8E,
     netstat = 0x8F, // round 62: the member's link (older clients skip it)
     presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
+    // protocol 50 (round I1b, 19.7.3): the arrival prompt's rows (prompt_wire.hpp)
+    options = 0x91,
     checkpoint_ask = 0x92, // round J: upload the tick state at the next state-safe tick
     // protocol 49 (round I1a, 19.18)
     instance_info = 0x95,
     world_notice = 0x96,
     member_info = 0x97,
+    // round I1b's go along (19.30.5, 19.18): a go-along offer for this member
+    offer = 0x9B,
+    // protocol 50 (round I1b's integration, W7e): upload the visit's load
+    // snapshot now (its uploader left before it was complete)
+    snapshot_ask = 0x9C,
 };
 const char* type_name(Type type) noexcept;
 
@@ -212,8 +225,26 @@ private:
 
 // ---- enumerations
 enum class Mode : std::uint8_t { hub = 0, solo = 1, sealed = 2 }; // WELCOME, BARRIER_OK, REASSIGN
-enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from = 4, delay = 5, home = 6, go = 7 };
-enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, go_along = 4 };
+// test (0xF0): round I1b's scenario hooks (slot u8 | hook u8 | argument i32),
+// stamped only by a relay with World:TestHooks / World:TestGoHook on; only
+// development builds apply it (TestHook), every other build skips it like an
+// unknown event (the scenarios run development builds only).
+enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from = 4, delay = 5, home = 6, go = 7, test = 0xF0 };
+// test (0x7F, development builds): ask the relay for a TEST event in the own
+// stage group (argument = hook | value << 8; a relay without World:TestHooks
+// ignores it).
+enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, go_along = 4, test = 0x7F };
+// INTENT 4 go along's argument (round I1b): the offer id; 0 the player's
+// Cancel; kGoEndedArgument the client's report that its stamped GO ended
+// without a departure (it expired after 300 ticks, or did nothing at its step).
+constexpr std::int32_t kGoEndedArgument = -1;
+// The TEST event's hooks (development builds; docs/ROUND_I1B_GO_NOTES.md):
+// defeat: the slot's player falls (0 HP, SQ_DEAD, as poison's last tick);
+// busy: the stage group is neither membership-safe nor joinable for
+// `argument` ticks (a shared scene's stand-in); mat: the slot's player stands
+// on the mat "mat" + letter (bits 8-15) + two-digit number (bits 0-7) of
+// `argument` (a walk through a floor the test characters do not survive).
+enum class TestHook : std::uint8_t { defeat = 1, busy = 2, mat = 3 };
 // HOME's reason (19.6.5).
 enum class HomeReason : std::uint8_t { leave = 1, ended = 2, removed = 3, staff = 4 };
 // JOIN_REQ's kind (protocol 49): a JOIN, a HOME (`slot` holds the mask) or a GO (I1b).
@@ -228,7 +259,8 @@ enum class Choice : std::uint8_t { wait = 0, alone = 1 };
 // STATE reasons (why an instance is not joinable).
 enum class NotJoinable : std::uint8_t { none = 0, entry_scene = 1, scene = 2, menu = 3, loading = 4, boss = 5, fork = 6, hub = 7 };
 enum class Decision : std::uint8_t { new_instance = 1, join = 2, dissolve = 3, co_arrive = 4 };
-enum class WaitReason : std::uint8_t { co_arrival = 1, not_joinable = 2, boss_lock = 3, snapshot = 4 };
+// 5 choice (round I1b, 19.7.5): the relay holds a fresh arrival's barrier for the prompt; OPTIONS follows.
+enum class WaitReason : std::uint8_t { co_arrival = 1, not_joinable = 2, boss_lock = 3, snapshot = 4, choice = 5 };
 // Why a barrier ended in NEW next to an instance of the same stage.
 enum class Notice : std::uint8_t { none = 0, other_context = 1, full = 2, too_long = 3, hold_expired = 4, went_alone = 5, join_failed = 6 };
 enum class StatePurpose : std::uint8_t { join = 1, co_arrival = 2, resync = 3, resume = 4 };
@@ -242,6 +274,10 @@ namespace state_flag {
 // the relay takes the first such STATE's context as the visit's entry context
 // (docs/SEAMLESS.md 3.7), joinable or not.
 inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4, load_ended = 8;
+// Round I1b (19.18, 19.30.7): no present slot alive (the go-along wait and the
+// join holds read it: no rescue joins).
+inline constexpr std::uint8_t no_living = 16;
+inline constexpr std::uint8_t known = joinable | membership_safe | boss_lock | load_ended | no_living;
 }
 
 // The settings block of protocol 49 (11 bytes: BARRIER's own, BARRIER_OK's
@@ -265,12 +301,13 @@ struct Event {
     std::uint8_t point{};               // JOIN: the entrance point; GO: the point
     std::vector<std::uint8_t> carry;    // JOIN: the joiner's carry (engine bytes)
     std::uint8_t intent_kind{};         // INTENT
-    std::int32_t argument{};            // INTENT
+    std::int32_t argument{};            // INTENT, TEST
     std::uint32_t tick{};               // LEAD_FROM
     std::uint8_t delay{};               // DELAY
     std::uint8_t mask{};                // HOME: the slots that go home
     std::uint8_t reason{};              // HOME: HomeReason
     std::string stage;                  // GO: the target stage
+    std::uint8_t hook{};                // TEST: TestHook (argument: its value)
     bool operator==(const Event&) const = default;
 };
 struct TickBody {
@@ -291,11 +328,14 @@ struct Log {           // inst | visit | u32 first tick | u16 count (1-1200) | p
     std::uint32_t inst{}, visit{}, first{};
     std::vector<WirePad> pads;
 };
-struct Heading {       // inst | str stage | u8 point | u64 session context hash
+// Protocol 50 (round I1b, 19.30.5) appends u8 asked: the slots the exit port
+// asked on the mat for this departure that stay (no go-along notice for them).
+struct Heading {       // inst | str stage | u8 point | u64 session context hash | u8 asked
     std::uint32_t inst{};
     std::string stage;
     std::uint8_t point{};
     std::uint64_t context{};
+    std::uint8_t asked{};
 };
 // Protocol 49 appends u32 travel token (0 in I1a) | u16 plan id (0 in I1a;
 // 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, development builds) | the member's own
@@ -368,6 +408,10 @@ struct CheckpointAsk { // inst | visit | u32 tick (0: the next state-safe tick) 
     std::uint8_t flags{};
     static constexpr std::uint8_t periodic = 1;  // with the next STATEHASH
     static constexpr std::uint8_t diagnosis = 2;
+};
+struct SnapshotAsk {   // inst | visit (protocol 50: the relay asks this member for the visit's load snapshot)
+    std::uint32_t inst{}, visit{};
+    bool operator==(const SnapshotAsk&) const = default;
 };
 struct JoinAt {        // inst | visit | u32 tick J
     std::uint32_t inst{}, visit{}, tick{};
@@ -633,8 +677,12 @@ struct InstanceInfo {
 // WORLD_NOTICE: u8 kind | u32 member | str name | u32 argument | str text.
 enum class NoticeKind : std::uint8_t {
     joined = 1, left = 2, went_to = 3, visibility = 4, removed = 5, host_away = 6, host_back = 7, ended = 8,
-    lagging = 9, lag_over = 10, shared_progress = 11, restart_in = 12, go_refused = 13
+    lagging = 9, lag_over = 10, shared_progress = 11, restart_in = 12, go_refused = 13,
+    report = 14, // round I1b: the answer to REPORT (argument ReportResult; member and name: the reported player)
+    apart = 15   // round I1b's integration: a member left the own stage group but stays in the instance (lag, a split barrier)
 };
+// WORLD_NOTICE 14's argument (i1b-contract.md moderation 16:25).
+enum class ReportResult : std::uint32_t { sent = 0, limit = 1, not_available = 2, failed = 3 };
 // WORLD_NOTICE ended's argument (19.6.5's reasons).
 enum class EndReason : std::uint8_t { host_left = 1, host_defeated = 2, host_lost = 3, staff = 4, empty = 5, server_stop = 6 };
 struct WorldNotice {
@@ -643,6 +691,31 @@ struct WorldNotice {
     std::string name;
     std::uint32_t argument{};
     std::string text;
+};
+// WORLD_NOTICE go_refused's argument (round I1b, 19.30.6).
+enum class GoRefused : std::uint8_t { closed = 1, defeated = 2, busy = 3, moved = 4, ended = 5, not_offered = 6 };
+// OFFER (round I1b, 19.30.5): u16 offer id | u8 op (1 open, 2 changed, 3
+// closed) | u8 flags | u8 n + n x u32 entrant (the first entrant first) | str
+// stage (where the first entrant still in the dungeon is) | u8 notice seconds |
+// u8 close reason (0 none, 1 left, 2 defeated, 3 ended, 4 gone: over for
+// this receiver, no closing line).
+enum class OfferOp : std::uint8_t { open = 1, changed = 2, closed = 3 };
+enum class OfferClose : std::uint8_t { none = 0, left = 1, defeated = 2, ended = 3, gone = 4 };
+struct Offer {
+    std::uint16_t id{};
+    OfferOp op{};
+    std::uint8_t flags{};
+    std::vector<std::uint32_t> entrants;
+    std::string stage;
+    std::uint8_t notice_seconds{};
+    OfferClose close{};
+    // flags: show the notice now; a late notice (names where they are now);
+    // reserved (I2's blocks); the receiver's own request waits; its GO is
+    // stamped; the target is boss-locked; the receiver closed it with B; a
+    // silent reopen.
+    static constexpr std::uint8_t notice = 1, late = 2, unnamed = 4, waiting = 8, stamped = 16, boss = 32, closed_by_b = 64,
+                                  reopened = 128;
+    bool operator==(const Offer&) const = default;
 };
 // MEMBER_INFO: u32 member | str name | u16 level | u8 flags (1 friend, 2
 // party, 4 staff tag, 8 in the receiver's instance).
@@ -658,6 +731,14 @@ enum class InstanceOpKind : std::uint8_t { visibility = 1, remove = 2, end = 3 }
 struct InstanceOp {
     InstanceOpKind op{};
     std::uint32_t argument{};
+};
+// REPORT (client, round I1b): u32 member (the reported one) | u8 reason (1 griefing, 2 cheating, 3 name, 4 other) | u32 wid (the
+// instance both share, 0 none). The relay answers with WORLD_NOTICE 14.
+enum class ReportReason : std::uint8_t { griefing = 1, cheating = 2, name = 3, other = 4 };
+struct Report {
+    std::uint32_t member{};
+    ReportReason reason{ReportReason::other};
+    std::uint32_t wid{};
 };
 struct Ping {          // u32 nonce | u64 server time ms | i16 arrival margin ms (p0.1) | u8 suggested delay
     std::uint32_t nonce{};
@@ -727,6 +808,8 @@ std::vector<std::uint8_t> encode(const InstanceInfo&);
 std::vector<std::uint8_t> encode(const WorldNotice&);
 std::vector<std::uint8_t> encode(const MemberInfo&);
 std::vector<std::uint8_t> encode(const InstanceOp&);
+std::vector<std::uint8_t> encode(const Report&);
+std::vector<std::uint8_t> encode(const Offer&);
 std::vector<std::uint8_t> encode(const Ping&);
 std::vector<std::uint8_t> encode(const NetStat&);
 std::vector<std::uint8_t> encode(const Close&);
@@ -748,6 +831,8 @@ StateHash decode_statehash(std::span<const std::uint8_t>);
 Checkpoint decode_checkpoint(std::span<const std::uint8_t>);
 CheckpointBad decode_checkpoint_bad(std::span<const std::uint8_t>);
 CheckpointAsk decode_checkpoint_ask(std::span<const std::uint8_t>);
+std::vector<std::uint8_t> encode(const SnapshotAsk&);
+SnapshotAsk decode_snapshot_ask(std::span<const std::uint8_t>);
 State decode_state(std::span<const std::uint8_t>);
 Intent decode_intent(std::span<const std::uint8_t>);
 Presence decode_presence(std::span<const std::uint8_t>, bool with_member);
@@ -771,6 +856,8 @@ InstanceInfo decode_instance_info(std::span<const std::uint8_t>);
 WorldNotice decode_world_notice(std::span<const std::uint8_t>);
 MemberInfo decode_member_info(std::span<const std::uint8_t>);
 InstanceOp decode_instance_op(std::span<const std::uint8_t>);
+Report decode_report(std::span<const std::uint8_t>);
+Offer decode_offer(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
 NetStat decode_netstat(std::span<const std::uint8_t>);
 Close decode_close(std::span<const std::uint8_t>);

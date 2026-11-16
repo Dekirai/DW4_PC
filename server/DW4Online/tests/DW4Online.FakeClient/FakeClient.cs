@@ -19,7 +19,7 @@ public sealed class FakeClientOptions
     public string Host { get; set; } = "127.0.0.1";
     public int Port { get; set; }
     public required Func<CancellationToken, Task<string>> Ticket { get; init; }
-    /// <summary>The world relay speaks only protocol 49 (SEAMLESS.md 19.18).</summary>
+    /// <summary>The world relay speaks only its protocol (SEAMLESS.md 19.18: 49, 50 since round I1b).</summary>
     public int Protocol { get; set; } = Wire.WorldProtocol;
     public ulong DataHash { get; set; } = 1;
     public ulong SettingsHash { get; set; }
@@ -664,6 +664,18 @@ public sealed class FakeClient
                 Log("wait", ("reason", m.Reason.ToString()), ("names", m.Names), ("seconds", m.SecondsLeft));
                 if ((m.Flags & BarrierWaitMsg.ChoiceNeeded) != 0)
                     Send(new BarrierChoiceMsg(_inst, _choice == "alone" ? BarrierChoiceMsg.Alone : BarrierChoiceMsg.Wait).Frame());
+                break;
+            }
+            case Msg.Options:
+            {
+                // Round I1b: a held barrier's prompt (19.7.5) answered as DW4_ONLINE_AUTOCHOICE=first does: the first choosable row,
+                // else New instance. (The fake client makes no plans; a refresh after the answer needs none.)
+                var m = OptionsMsg.Parse(p);
+                if (m.Plan != 0 || (m.Flags & OptionsMsg.Refresh) != 0) break;
+                var row = m.Rows.FirstOrDefault(r => OptionStates.Choosable(r.State));
+                Log("prompt", ("rows", m.Rows.Count), ("chosen", row?.Wid ?? 0u));
+                Send(new ChoiceMsg(0, m.Inst, m.Visit, row is null ? ChoiceKind.New : ChoiceKind.Join, row?.Wid ?? 0, m.Visibility, 0,
+                    ChoiceMsg.DefaultBackPoint).Frame());
                 break;
             }
             case Msg.BarrierOk: OnBarrierOk(BarrierOkMsg.Parse(p)); break;

@@ -44,6 +44,38 @@ public sealed record TickEvent(byte Type, byte[] Payload)
     /// <summary>Protocol 49: exactly the slots of <paramref name="mask"/> take the home departure (19.6.5).</summary>
     public static TickEvent Home(byte mask, HomeReason reason) => new(Ev.Home, [(byte)(mask & Wire.SlotMask), (byte)reason]);
 
+    /// <summary>Round I1b's scenario hooks (test runs only, <see cref="Ev.Test"/>).</summary>
+    public static TickEvent Test(int slot, TestHook hook, int argument)
+    {
+        var p = new byte[6];
+        p[0] = (byte)slot;
+        p[1] = (byte)hook;
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(p.AsSpan(2), argument);
+        return new TickEvent(Ev.Test, p);
+    }
+
+    /// <summary>Protocol 50, round I1b (19.30.7): the slot goes along to <paramref name="stage"/> at <paramref name="point"/> (taken as named).
+    /// Applied like INTENT at the first membership-safe step; every GO of a step together; expires 300 ticks after its tick.</summary>
+    public static TickEvent Go(int slot, int point, string stage)
+    {
+        var w = new WireWriter(0);
+        w.U8((byte)slot).U8((byte)point).Str(stage);
+        return new TickEvent(Ev.Go, w.Payload());
+    }
+
+    /// <summary>GO's stage and point (null for other events).</summary>
+    public (string Stage, byte Point)? GoTarget
+    {
+        get
+        {
+            if (Type != Ev.Go || Payload.Length < 3) return null;
+            var r = new WireReader(Payload);
+            r.U8();
+            var point = r.U8();
+            return (StageNames.Read(ref r), point);
+        }
+    }
+
     /// <summary>HOME's slot mask (0 for other events).</summary>
     public byte HomeMask => Type == Ev.Home && Payload.Length > 0 ? Payload[0] : (byte)0;
 
@@ -53,8 +85,8 @@ public sealed record TickEvent(byte Type, byte[] Payload)
     /// <summary>An event's payload length is a u16.</summary>
     public const int MaxPayload = ushort.MaxValue;
 
-    /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY), or -1.</summary>
-    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay && Payload.Length > 0 ? Payload[0] : -1;
+    /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY, GO), or -1.</summary>
+    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay or Ev.Go or Ev.Test && Payload.Length > 0 ? Payload[0] : -1;
 }
 
 /// <summary>
@@ -177,17 +209,20 @@ public sealed record LogMsg(uint Inst, uint Visit, uint FirstTick, Pad[] Pads)
 /// HEADING: a member confirmed an exit or the gate disc (one to two seconds before its barrier), with the session context
 /// hash its engine will arrive with (co-arrivals need the same context).
 /// </summary>
-public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong ContextHash)
+/// <summary>HEADING: inst | stage | point | context u64 | asked u8 (protocol 50, round I1b: the slots the exit port asked on the mat
+/// for this departure that stay; no go-along notice for them, SEAMLESS.md 19.30.5).</summary>
+public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong ContextHash, byte Asked = 0)
 {
     public static HeadingMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
-        var m = new HeadingMsg(r.U32(), StageNames.Read(ref r), r.U8(), r.U64());
+        var m = new HeadingMsg(r.U32(), StageNames.Read(ref r), r.U8(), r.U64(), r.U8());
         r.End();
+        if ((m.Asked & ~Wire.SlotMask) != 0) throw new ProtocolException("asked mask beyond slot 3");
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.Heading).U32(Inst).Str(Stage).U8(Point).U64(ContextHash).Frame();
+    public byte[] Frame() => new WireWriter(Msg.Heading).U32(Inst).Str(Stage).U8(Point).U64(ContextHash).U8((byte)(Asked & Wire.SlotMask)).Frame();
 }
 
 /// <summary>BARRIER: after the barrier tick (the step that executed NEXTSTAGE); carry = the sender's own player carry. Protocol 49
@@ -389,6 +424,22 @@ public sealed record CheckpointAskMsg(uint Inst, uint Visit, uint Tick, byte Fla
     public byte[] Frame() => new WireWriter(Msg.CheckpointAsk).U32(Inst).U32(Visit).U32(Tick).U8(Flags).Frame();
 }
 
+/// <summary>SNAPSHOT_ASK (protocol 50, round I1b's integration, W7e): inst | visit. The receiver uploads its load snapshot of that visit
+/// (SNAPSHOT chunks) and is the visit's uploader from now on: the one the relay named (the lowest slot) left the visit, or its
+/// connection, before the upload was complete.</summary>
+public sealed record SnapshotAskMsg(uint Inst, uint Visit)
+{
+    public static SnapshotAskMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new SnapshotAskMsg(r.U32(), r.U32());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.SnapshotAsk).U32(Inst).U32(Visit).Frame();
+}
+
 /// <summary>JOIN_AT: the solo leader's answer to JOIN_REQ: from tick J the instance is sealed and the JOIN applies.</summary>
 public sealed record JoinAtMsg(uint Inst, uint Visit, uint Tick)
 {
@@ -428,7 +479,7 @@ public sealed record StateMsg(uint Inst, uint Visit, uint Tick, byte Flags, ulon
     /// <summary>Protocol 47 (round J's review): the visit reached its load end K; the first such STATE's context is the
     /// visit's entry context (SEAMLESS.md 3.7), joinable or not.</summary>
     public const byte LoadEnded = 8;
-    /// <summary>Protocol 49 (round I1b): no present slot is alive. Accepted (and ignored) by the I1a relay.</summary>
+    /// <summary>Protocol 50 (round I1b): no present slot is alive. Accepted (and ignored) by the I1a relay.</summary>
     public const byte NoLivingMember = 16;
 
     public static StateMsg Parse(ReadOnlySpan<byte> p)
@@ -451,7 +502,7 @@ public sealed record IntentMsg(uint Inst, uint Visit, IntentKind Kind, int Argum
         var r = new WireReader(p);
         var m = new IntentMsg(r.U32(), r.U32(), (IntentKind)r.U8(), r.I32());
         r.End();
-        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp or IntentKind.Leave or IntentKind.GoAlong)) throw new ProtocolException("unknown intent");
+        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp or IntentKind.Leave or IntentKind.GoAlong or IntentKind.Test)) throw new ProtocolException("unknown intent");
         return m;
     }
 

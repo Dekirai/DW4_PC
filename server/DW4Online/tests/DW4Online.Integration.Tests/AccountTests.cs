@@ -454,22 +454,22 @@ public class AccountTests
     [DbFact]
     public async Task Status_health_and_version_gate()
     {
-        // (Play:MinimumProtocol 41 configured: the world's floor in code, 49, is what counts and what /status announces.)
+        // (Play:MinimumProtocol 41 configured: the world's floor in code, 50, is what counts and what /status announces.)
         await using var host = await TestHost.StartAsync(new() { ["Play:MinimumProtocol"] = "41", ["Play:CurrentProtocol"] = "41", ["Service:Motd"] = "Hello" });
         var status = await (await host.Client().GetAsync("/api/v1/status")).Json();
         Assert.Equal("DW4Online", status.GetProperty("service").GetString());
         Assert.Equal(PropsVersion(), status.GetProperty("version").GetString()); // what the operator checks after an update
-        Assert.Equal(49, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
-        Assert.Equal(49, status.GetProperty("client").GetProperty("currentProtocol").GetInt32());
+        Assert.Equal(50, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
+        Assert.Equal(50, status.GetProperty("client").GetProperty("currentProtocol").GetInt32());
         Assert.Equal("Hello", status.GetProperty("motd").GetString());
         var health = await (await host.Client().GetAsync("/health")).Json();
         Assert.Equal(DW4Online.Data.Migrations.Migrator.LoadEmbedded()[^1].Version, health.GetProperty("schema").GetInt32());
 
         await host.RegisterAsync("Oldie");
-        var old = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 48 });
+        var old = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 49 });
         Assert.Equal(HttpStatusCode.UpgradeRequired, old.StatusCode);
         Assert.Equal("client_outdated", await old.ProblemCode());
-        var current = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 49 });
+        var current = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 50 });
         Assert.Equal(HttpStatusCode.OK, current.StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await host.Client().GetAsync("/")).StatusCode); // the website renders
     }

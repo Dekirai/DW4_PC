@@ -16,12 +16,18 @@ public enum RowState
     Waiting,
     /// <summary>Not choosable: the host reconnecting, story not here yet, too long to catch up.</summary>
     Greyed,
+    /// <summary>No stage group at the arrival stage, but one of the instance at a barrier heading there, or its players parked on their
+    /// way there (decision 46, round I1b's integration): *Arriving now*, choosable; the arrival waits for their stage group at the stage
+    /// (then a JOIN as for a loading one). Never preselected, never the automatic join.</summary>
+    Arriving,
 }
 
 /// <summary>One row of an arrival's candidates: the instance, its stage group at the arrival stage (null: none), the state, its players
-/// at the arrival stage, the friend relation and the worst round trip of its members.</summary>
+/// at the arrival stage, the friend relation and the worst round trip of its members. <see cref="StaffOnly"/>: a row only the staff
+/// bypass shows (a Private or Friends instance a moderator may choose himself in the prompt; fix-019, 19.7.2): never preselected, never
+/// an automatic join or co-arrival.</summary>
 public sealed record CandidateRow(WorldInstance World, HubInstance? Group, RowState State, int Here, bool HostFriend, int FriendsInside, double PingMs,
-    string Why = "")
+    string Why = "", bool StaffOnly = false)
 {
     public bool Choosable => State != RowState.Greyed;
     public bool JoinableNow => State is RowState.Joinable or RowState.GuestNew;
@@ -86,13 +92,19 @@ public static class Matching
     /// The order of 19.7.3 with decision 40: rows that can be entered now first (the waiting and the greyed after every joinable one);
     /// among them (1) the party's (round I4), (2) friends: the host a friend, then the most friends inside, (3) rows with players at
     /// the arrival stage before rows with none, (4) the lowest worst round trip (within 10 ms equal), (5) more free seats, (6) more
-    /// players at the arrival stage, (7) the same story point (round I2), (8) the older instance. Waiting rows before greyed ones.
+    /// players at the arrival stage, (7) the same story point (round I2), (8) the older instance. Boss fights before greyed rows.
+    /// A stage group at the arrival stage that is joinable in a moment (loading, a scene: 3.4's JOIN waits for it) ranks with the
+    /// joinable rows in steps 1-3 (19.7.3 puts only "boss fight, host reconnecting, full, story not here yet" after them; round I1b's
+    /// review: a friend's instance in a short scene fell behind a stranger's row, which took the cursor) and after the rows joinable
+    /// now in step 4 ("joinable now, by ping").
     /// </summary>
     public static List<CandidateRow> Order(IEnumerable<CandidateRow> rows) =>
-        rows.OrderBy(r => r.State switch { RowState.Joinable or RowState.GuestNew => 0, RowState.Waiting => 1, _ => 2 })
+        rows.OrderBy(r => r.StaffOnly ? 1 : 0) // (a moderator's prompt lists what a player would see first, then the staff-only rows)
+            .ThenBy(Rank)
             .ThenBy(r => r.HostFriend ? 0 : r.FriendsInside > 0 ? 1 : 2)
             .ThenByDescending(r => r.HostFriend ? 0 : r.FriendsInside)
             .ThenBy(r => r.Here > 0 ? 0 : 1)
+            .ThenBy(r => r.JoinableNow ? 0 : 1)
             .ThenBy(r => Math.Floor(r.PingMs / 10.0))
             .ThenByDescending(r => r.World.FreeSeats)
             .ThenByDescending(r => r.Here)
@@ -100,14 +112,28 @@ public static class Matching
             .ThenBy(r => r.World.Wid)
             .ToList();
 
-    /// <summary>The row I1a's automatic join takes (19.7.1, the I1a interim rule of fix-019): exactly the row I1b's prompt would
-    /// preselect (decision 40, <see cref="Preselected"/>): the first row when it is not greyed and is the party's or a friend's or has
-    /// players of its instance at the arrival stage; otherwise none (*New instance*). So a stranger's instance with nobody of it at
-    /// the arrival stage is never joined without a prompt. I1b's prompt replaces the automatic join.</summary>
+    /// <summary>The order's first key: joinable now or in a moment 0, a boss fight or players arriving at the stage 1 (choosing it waits
+    /// for its end or their arrival; decision 46), greyed 2.</summary>
+    private static int Rank(CandidateRow r) => r.State switch
+    {
+        RowState.Joinable or RowState.GuestNew => 0,
+        RowState.Waiting => r.Group is { BossLock: true } ? 1 : 0,
+        RowState.Arriving => 1,
+        _ => 2,
+    };
+
+    /// <summary>The row I1a's automatic join takes (19.7.1, the I1a interim rule of fix-019; with World:ArrivalPrompt off): exactly the
+    /// row I1b's prompt would preselect (decision 40, <see cref="Preselected"/>): the first row when it is not greyed and is the party's
+    /// or a friend's or has players of its instance at the arrival stage; otherwise none (*New instance*). So a stranger's instance
+    /// with nobody of it at the arrival stage is never joined without a prompt. The relay passes only the rows whose host the arrival's
+    /// remembered visibility lets in (decision 49, fix-d43: <c>RoomHub.AdmittedAutoJoin</c>).</summary>
     public static CandidateRow? AutoJoinRow(IReadOnlyList<CandidateRow> ordered) => Preselected(ordered);
 
     /// <summary>The row I1b's prompt preselects (19.7.3): the first row when it is not greyed and is the party's or a friend's or has
-    /// players at the arrival stage; otherwise none (*New instance*).</summary>
+    /// players at the arrival stage; otherwise none (*New instance*). A row only the staff bypass shows is never preselected nor counted
+    /// as the first (fix-019: a moderator who simply plays is a player; the row is his own choice only). An *Arriving now* row is never
+    /// preselected either (decision 46): as the first row it leaves the cursor on *New instance* (decision 40 unchanged).</summary>
     public static CandidateRow? Preselected(IReadOnlyList<CandidateRow> ordered) =>
-        ordered.Count > 0 && ordered[0].Choosable && (ordered[0].HostFriend || ordered[0].FriendsInside > 0 || ordered[0].Here > 0) ? ordered[0] : null;
+        ordered.FirstOrDefault(r => !r.StaffOnly) is { Choosable: true } first && first.State != RowState.Arriving &&
+        (first.HostFriend || first.FriendsInside > 0 || first.Here > 0) ? first : null;
 }

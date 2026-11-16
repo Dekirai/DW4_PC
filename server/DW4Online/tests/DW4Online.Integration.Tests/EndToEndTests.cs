@@ -173,7 +173,7 @@ public sealed class RealHost : IAsyncDisposable
 
 /// <summary>
 /// End to end on loopback against real Kestrel and the real relay: website registration, then the C++ WinHTTP client
-/// (login, cloud save up and down, online character, the world's entry and relay handshake at protocol 49, an achievement
+/// (login, cloud save up and down, online character, the world's entry and relay handshake at the world's protocol, an achievement
 /// while in the world, the 410 of the retired rooms), then the profile page; and the groundwork spike's Python test
 /// against the world (two strangers' co-arrival, the sealed stream, the host's leave ending the instance).
 /// </summary>

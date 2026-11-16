@@ -70,7 +70,8 @@ public class WireGoldenTests
             PayloadHex(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, NetStatMsg.InStream).Frame()));
         Assert.Equal(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1), NetStatMsg.Parse(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1).Frame().AsSpan(Wire.HeaderBytes)));
         Assert.Equal(0x8F, new NetStatMsg(0, 0, 0, 0, 0, 0, 0, 0).Frame()[0]);
-        Assert.Equal("0700000008737461673031303203cdab000000000000", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
+        // (Protocol 50, round I1b: + the exit port's asked mask.)
+        Assert.Equal("0700000008737461673031303203cdab000000000000" + "00", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
         // Protocol 49: + travel token u32, plan id u16 and the member's own settings (11 B; the defaults: light 1).
         Assert.Equal("0700000002000000f401000008646e67313031623101030388776655443322110200000009" + "09" + "00000000" + "0000" +
                      "0000010000000000000000",
@@ -107,8 +108,12 @@ public class WireGoldenTests
         {
             ["Input"] = 0x01, ["Log"] = 0x02, ["Heading"] = 0x03, ["Barrier"] = 0x04, ["BarrierChoice"] = 0x05, ["Split"] = 0x06,
             ["Snapshot"] = 0x07, ["SnapHash"] = 0x08, ["Ready"] = 0x09, ["JoinAt"] = 0x0A, ["NetFp"] = 0x0B, ["State"] = 0x0C,
-            // Round I1 (protocol 49, SEAMLESS.md 19.18): 0x18-0x1A, 0x1C-0x1E are I1b's / I3's / I4's (PLAN, CHOICE, GOTO, BROWSE, PARTY_OP, REPORT).
+            // Round I1 (protocol 49, SEAMLESS.md 19.18): 0x1A, 0x1C, 0x1D are I3's / I4's (GOTO, BROWSE, PARTY_OP).
             ["InstanceOp"] = 0x1B,
+            // Round I1b: the arrival prompt (PLAN, CHOICE; OPTIONS below).
+            ["Plan"] = 0x18, ["Choice"] = 0x19,
+            // Round I1b, moderation (i1b-contract.md 16:25): *Report player*.
+            ["Report"] = 0x1E,
             ["Intent"] = 0x0D, ["Story"] = 0x0E, ["Presence"] = 0x0F, ["Resume"] = 0x10, ["Rate"] = 0x11, ["Pong"] = 0x12, ["Bye"] = 0x13,
             // Round 60: PRESENCE2 to the relay.
             ["Presence2"] = 0x14,
@@ -123,14 +128,51 @@ public class WireGoldenTests
             ["Presence2Out"] = 0x90,
             // Round J (0x91 stays free; 0x93 is round R's EVENT_AHEAD).
             ["CheckpointAsk"] = 0x92,
-            // Round I1 (protocol 49): 0x91 OPTIONS, 0x94 INSTANCE_LIST and 0x98-0x9B are I1b's / I2's / I3's / I4's.
+            // Round I1 (protocol 49): 0x94 INSTANCE_LIST and 0x98-0x9B are I1b's / I2's / I3's / I4's.
             ["InstanceInfo"] = 0x95, ["WorldNotice"] = 0x96, ["MemberInfo"] = 0x97,
+            // Round I1b: the arrival prompt's rows.
+            ["Options"] = 0x91,
+            // Round I1b's go along (19.30.5).
+            ["Offer"] = 0x9B,
+            // Round I1b's integration (protocol 50, W7e): the visit's load snapshot asked of another member.
+            ["SnapshotAsk"] = 0x9C,
         };
         Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
         foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));
     }
 
     private static ReadOnlySpan<byte> Body(byte[] frame) => frame.AsSpan(Wire.HeaderBytes);
+
+    /// <summary>Round I1b's go along (i1b-contract.md "go 2026-11-07 16:15"): the bytes of tests/online_wire_tests.cpp go_messages.</summary>
+    [Fact]
+    public void Go_along_messages_equal_the_clients()
+    {
+        Assert.Equal("07000000" + "08" + "7374616730323031" + "00" + "1000000000000000" + "04", PayloadHex(new HeadingMsg(7, "stag0201", 0, 0x10, 0b0100).Frame()));
+        Assert.Throws<ProtocolException>(() => HeadingMsg.Parse(Convert.FromHexString("07000000" + "08" + "7374616730323031" + "00" + "1000000000000000" + "10")));
+        Assert.Equal("07000000" + "03000000" + "3d000000" + "12" + "0500000000000000" + "02",
+            PayloadHex(new StateMsg(7, 3, 61, StateMsg.NoLivingMember | StateMsg.MembershipSafe, 5, (StateReason)2).Frame()));
+        Assert.Equal("07000000" + "02000000" + "04" + "03000000", PayloadHex(new IntentMsg(7, 2, IntentKind.GoAlong, 3).Frame()));
+        Assert.Equal("07000000" + "02000000" + "01" + "03" + "03" + "08" + "646e673230346231" + "00",
+            PayloadHex(new JoinReqMsg(7, 2, 1, 3, JoinReqKind.Go, "dng204b1", 0).Frame()));
+        var rec = new TickRecord();
+        rec.Events.Add(TickEvent.Go(1, 2, "dng204b1"));
+        var w = new WireWriter(0);
+        rec.Write(w);
+        Assert.Equal("00" + "01" + "07" + "0b00" + "01" + "02" + "08" + "646e673230346231", Convert.ToHexString(w.Payload()).ToLowerInvariant());
+        // Round I1b's scenario hooks: the TEST event and INTENT kind test (tests/online_wire_tests.cpp holds the same bytes).
+        var testRec = new TickRecord();
+        testRec.Events.Add(TickEvent.Test(2, TestHook.Busy, 600));
+        var tw = new WireWriter(0);
+        testRec.Write(tw);
+        Assert.Equal("00" + "01" + "f0" + "0600" + "02" + "02" + "58020000", Convert.ToHexString(tw.Payload()).ToLowerInvariant());
+        Assert.Equal("07000000" + "02000000" + "7f" + "02580200", PayloadHex(new IntentMsg(7, 2, IntentKind.Test, 2 | (600 << 8)).Frame()));
+        Assert.Equal("0300" + "01" + "03" + "02" + "05000000" + "09000000" + "08" + "646e673230346231" + "14" + "00",
+            PayloadHex(new OfferMsg(3, OfferOp.Open, OfferMsg.Notice | OfferMsg.Late, [5, 9], "dng204b1", 20, OfferClose.None).Frame()));
+        Assert.Equal("0300" + "03" + "00" + "01" + "05000000" + "08" + "646e673230346232" + "14" + "01",
+            PayloadHex(new OfferMsg(3, OfferOp.Closed, 0, [5], "dng204b2", 20, OfferClose.Left).Frame()));
+        Assert.Equal("0d" + "05000000" + "03" + "6b696d" + "01000000" + "08" + "646e673230346231",
+            PayloadHex(new WorldNoticeMsg(WorldNoticeKind.GoRefused, 5, "kim", (uint)GoRefusal.Closed, "dng204b1").Frame()));
+    }
 
     /// <summary>The messages and changes of round I1 (protocol 49): the layouts of i1a-contract.md ("client 12:40", "relay 13:05");
     /// tests/online_wire_tests.cpp holds the same bytes.</summary>
@@ -156,6 +198,15 @@ public class WireGoldenTests
         Assert.Equal("09000000" + "036c6565" + "0c00" + "09", PayloadHex(new MemberInfoMsg(9, "lee", 12, Relation.Friend | Relation.SameInstance).Frame()));
         Assert.Equal("01" + "02000000", PayloadHex(new InstanceOpMsg(InstanceOpKind.Visibility, 2).Frame()));
         Assert.Throws<ProtocolException>(() => InstanceOpMsg.Parse(Body(new InstanceOpMsg(InstanceOpKind.Visibility, 3).Frame())));
+        // Round I1b, moderation (i1b-contract.md 16:25): INSTANCE_OP remove, REPORT and its answer (WORLD_NOTICE 14); the same
+        // bytes are in tests/online_wire_tests.cpp "moderation".
+        Assert.Equal("02" + "09000000", PayloadHex(new InstanceOpMsg(InstanceOpKind.Remove, 9).Frame()));
+        Assert.Equal("09000000" + "02" + "07000000", PayloadHex(new ReportMsg(9, 2, 7).Frame()));
+        Assert.Equal(new ReportMsg(9, 4, 0), ReportMsg.Parse(Body(new ReportMsg(9, 4, 0).Frame())));
+        Assert.Throws<ProtocolException>(() => ReportMsg.Parse(Body(new ReportMsg(9, 5, 0).Frame())));
+        Assert.Throws<ProtocolException>(() => ReportMsg.Parse(Body(new ReportMsg(9, 0, 0).Frame())));
+        Assert.Equal("0e" + "09000000" + "036c6565" + "01000000" + "00",
+            PayloadHex(new WorldNoticeMsg(WorldNoticeKind.Report, 9, "lee", (uint)ReportResult.Limit, "").Frame()));
         Assert.Equal("07000000" + "02000000" + "01" + "03" + "02", PayloadHex(new JoinReqMsg(7, 2, 1, 3, JoinReqKind.Home).Frame()));
         Assert.Equal("07000000" + "02000000" + "01" + "03" + "01", PayloadHex(new JoinReqMsg(7, 2, 1, 3).Frame()));
         var home = new TickRecord { Mask = 0 };
@@ -178,7 +229,7 @@ public class WireGoldenTests
         Assert.Equal(0x01020304u, BarrierOkMsg.Parse(Body(ok.Frame())).CoArrivals.Single().Member);
         var state = new StateMsg(1, 2, 3, StateMsg.Joinable | StateMsg.NoLivingMember, 5, StateReason.None);
         Assert.Equal(state, StateMsg.Parse(Body(state.Frame())));
-        Assert.Equal(49, Wire.WorldProtocol);
+        Assert.Equal(50, Wire.WorldProtocol);
     }
 
     [Fact]

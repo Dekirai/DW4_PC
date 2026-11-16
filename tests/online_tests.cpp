@@ -66,7 +66,7 @@ GameSystem::PlayerSlot sample_player(const char* digimon, int level) {
 }
 
 void snapshot_bytes() {
-    check(snapshot_version() == 43, "snapshot version 43");
+    check(snapshot_version() == 44, "snapshot version 44");
     StageSnapshot s;
     s.stage = "dng101b1";
     s.frame = 4711;
@@ -90,8 +90,10 @@ void snapshot_bytes() {
     personal.gate_stage_no = 2;
     personal.flags = {{572, 1}, {908, 0}};
     s.personal[2] = personal;
+    s.random_wait_min = 120.0f; // (version 44: the random WAITCHECKs' minimum, a global the stage load keeps)
     const auto bytes = encode_snapshot(s);
     const auto back = decode_snapshot(bytes);
+    check(back.random_wait_min == 120.0f, "the random WAITCHECK minimum survives the bytes");
     const auto* system = static_cast<const GameSystem*>(back.system.get());
     check(system && system->direct_start, "direct_start survives the bytes");
     check(system->text_call == 67, "text_call survives the bytes");
@@ -104,6 +106,23 @@ void snapshot_bytes() {
     check(online_hash(bytes) == online_hash(encode_snapshot(back)), "equal bytes, equal hash");
     // Without sound streams the canonical form is the raw form.
     check(encode_snapshot(s, SnapshotForm::canonical) == bytes, "no streams: canonical == raw");
+    // A version 43 state (before round I1b's integration: no minimum at the end) still loads, with the minimum 0.
+    auto v43 = bytes;
+    v43[0] = 43;
+    v43.resize(v43.size() - sizeof(float));
+    const auto from43 = decode_snapshot(v43);
+    check(from43.random_wait_min == 0.0f && from43.stage == "dng101b1" && from43.personal[2] == personal && from43.online == s.online,
+          "a version 43 snapshot loads, its minimum 0");
+    // A 44 state under the number 43 (four bytes left over) is refused, never half read.
+    auto relabelled = bytes;
+    relabelled[0] = 43;
+    bool refused43 = false;
+    try {
+        (void)decode_snapshot(relabelled);
+    } catch (const std::exception&) {
+        refused43 = true;
+    }
+    check(refused43, "bytes left over after a snapshot are refused");
     // A version 42 state no longer loads.
     auto old = bytes;
     old[0] = 42;

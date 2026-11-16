@@ -487,13 +487,16 @@ void test_fast_loading_snapshot() {
         check(back.cheats.fast_loading == fast && back.cheats.exp_rate == 150 && back.stage == "dng101b1",
               "A save state keeps the load timing it was made with");
     }
-    // A save state of the version before the option is refused.
+    // A save state of the version before the option is refused. (Since round
+    // I1b's integration version 44 still reads 43, which lacks only the random
+    // WAITCHECK minimum; 42 and older are refused.)
     dw4::engine::StageSnapshot snapshot;
     auto bytes = dw4::engine::encode_snapshot(snapshot);
     check(bytes.size() >= 4, "A snapshot starts with its version");
     std::uint32_t version = 0;
     std::memcpy(&version, bytes.data(), sizeof version);
-    --version;
+    check(version == dw4::engine::snapshot_version(), "A snapshot starts with its version number");
+    version -= 2;
     std::memcpy(bytes.data(), &version, sizeof version);
     bool refused = false;
     try {

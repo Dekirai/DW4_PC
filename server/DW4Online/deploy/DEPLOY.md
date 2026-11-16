@@ -327,10 +327,10 @@ if something is wrong, the reason and the way out on the screen (section 9), not
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online
-.\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # ... "Migrating database 'dw4online' done in N s: schema 10"
+.\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # ... "Migrating database 'dw4online' done in N s: schema 14"
 Start-Service DW4Online
 Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 30
-curl.exe http://127.0.0.1:5280/health          # {"status":"ok","schema":10}, on the server itself
+curl.exe http://127.0.0.1:5280/health          # {"status":"ok","schema":14}, on the server itself
 curl.exe -k https://88.198.52.221/health      # the same over HTTPS (:8443 in section 4.1); -k: the certificate is self-signed (section 6.1)
 .\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
 powershell -ExecutionPolicy Bypass -File app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate the HTTPS port really serves (-PinServedPort 8443 in section 4.1)
@@ -831,13 +831,14 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    same path, so nothing else changes. Settings that a release asks for go into `config\appsettings.Production.json`
    before the start: an update from release 0.1.0 (its example file had 43) sets `Play:MinimumProtocol` and
    `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core,
-   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since release 0.1.7, the online world, section 9.2:
-   the code refuses anything below 49 whatever the file says); the room story settings work with
+   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since release 0.1.7, the online world, section 9.2,
+   50 since release 0.2.0, round I1b, section 9.3: the code refuses anything below the current floor whatever the file says); the room story settings work with
    their defaults (section 10). A release that raises the protocol goes on the server first and the game client after
    it: an older relay (0.1.5, minimum 47) admits a 48 client but checks its READY at the check tick only when the
    donor's report happens to be there already; a relay with `Play:MinimumProtocol` 48 asks older clients to update.
    Release 0.1.7 (the world, protocol 49) is different: its relay speaks only 49, so a 48 client cannot play until the
-   players have the new game client (section 9.2: the server first, the client release right after it).
+   players have the new game client (section 9.2: the server first, the client release right after it). Release 0.2.0
+   (protocol 50, section 9.3) is the same: its relay speaks only 50.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
 way), restore the backup from step 2 into `dw4online` first (the old build refuses a database that is newer than
@@ -864,6 +865,14 @@ powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backu
 Start-Service DW4Online
 ```
 
+**A release that raised the protocol** (0.1.7: 49, 0.2.0: 50): before that `Start-Service`, set `Play:MinimumProtocol` and
+`Play:CurrentProtocol` in `config\appsettings.Production.json` back to the old release's protocol (49 for 0.1.9). The old
+release takes the larger of the file's value and its own, so with 50 left in the file it answers every 49 client
+`client_outdated` (426), and its relay speaks only 49: nobody could play. Then check `/api/v1/status` (`"minimumProtocol":49`).
+A client release of the new protocol that was published already cannot play on the old server either (`ERR protocol`):
+withdraw it with the rollback. That is why the client release follows the server only after the server runs and was
+checked (section 9.3).
+
 Database updates and restarts: DW4Online depends on the database service (`sc.exe config DW4Online depend= MariaDB`,
 or `mysql`), so `Stop-Service` and `Restart-Service` of that service refuse while DW4Online runs (without `-Force`,
 which stops DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Online first:
@@ -878,7 +887,7 @@ Every release carries its database migrations (`sql/NNNN_*.sql`, inside the exec
 - **in the console**, `DW4Online.Server.exe migrate --settings config\appsettings.Production.json`, which is the way
   this document uses before every start that brings new migrations (sections 5 and 8): it shows the database it
   talks to, each migration with its time (`Applied migration 0003 rooms in 0.01 s`) and the total
-  (`Migrating database 'dw4online' done in 0.25 s: schema 10`), and exits with 1 and a `FAIL:` message if it refuses or
+  (`Migrating database 'dw4online' done in 0.25 s: schema 14`), and exits with 1 and a `FAIL:` message if it refuses or
   fails;
 - **at the service start** (`Database:AutoMigrate`, on by default), so a start after a forgotten `migrate` still
   works. The service connects to the Service Control Manager first and reports "start pending" with a new checkpoint
@@ -1006,9 +1015,10 @@ with a later release that also grants `CREATE VIEW`; until then the queries abov
 ### 9.2 Migration 0013 `world` (round I1): the rooms give way to the online world
 
 Which releases carry which migration: 0.1.6 brought 0012 (section 9.1, schema 12), 0.1.7 brings 0013 (schema 13); 0.1.8
-and 0.1.9 add none. The project's server went 0.1.4 (schema 11) -> 0.1.6 (0012 applied at its start) -> 0.1.7 (0013)
--> 0.1.8 -> 0.1.9; a server that skips 0.1.6 applies 0012 and 0013 in one start of 0.1.7 or later (both with the same
-backup first, section 8, and the `CREATE VIEW` right below before it).
+and 0.1.9 add none; 0.2.0 brings 0014 (section 9.3, schema 14). The project's server went 0.1.4 (schema 11) -> 0.1.6
+(0012 applied at its start) -> 0.1.7 (0013) -> 0.1.8 -> 0.1.9 -> 0.2.0 (0014); a server that skips releases applies
+the missing migrations in one start (all with the same backup first, section 8, and the `CREATE VIEW` right below
+before it).
 
 The release with migration 0013 (DW4Online 0.1.7) replaces rooms by the online world (SEAMLESS.md 19): the game's *Play* enters the
 world, a player's lobby is always his own, and taking the gate to an area where a visible instance runs puts him into
@@ -1085,6 +1095,56 @@ website shows them. Editing `online_prefs` by hand is harmless (the next login r
 or between 1 and 4294967295 and `randomizer_modes` as the table comment says (the table refuses other values).
 A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; instances it hosted keep their row.
 
+### 9.3 Migration 0014 `reports` (round I1b, DW4Online 0.2.0): the arrival prompt, go along, removal and reports
+
+Release 0.2.0 carries round I1b of the online world (SEAMLESS.md 19.25): the arrival prompt at the gate and the return
+mat (choosing among the area's instances, *Arriving now* included), *Go along* into a dungeon, the host's *Remove* that
+binds at every decision, and *Report player*. Its relay speaks only protocol **50** (the client's stage snapshot keeps
+one more engine value, so 49 and 50 engines would play apart): **install the server first, then publish the client
+release of the same round**; until the players have it, their game says the client is outdated.
+
+What migration 0014 adds (it runs at the start, or with `migrate` in the console, section 8; well under a second):
+
+| Object | What |
+| --- | --- |
+| `player_reports` (new table) | *Report player*: who reported whom, the reason from a fixed list (griefing, cheating, name, other; no free text), from the game or the API (`source`), the instance both played in (NULL when none, or after the history was pruned), open or done and by which moderator and when; a comment on every column; a reporter's rows go with his account, rows about a deleted account keep its id |
+| view `v_player_reports` | the reports with user names for HeidiSQL |
+
+No new right: the view needs `CREATE VIEW`, which section 9.2 granted for 0013 (the migrator checks it first and changes
+nothing without it; then run section 9.2's two `GRANT` lines and `migrate` again). 0013 stays exactly as it went live
+with 0.1.7 (its checksum is unchanged), and `v_staff_audit` stays 0013's.
+
+**The settings.** In `config\appsettings.Production.json`, before the start: `Play:MinimumProtocol` to **50** and
+`Play:CurrentProtocol` to **50** (the server refuses anything below 50 anyway; set it so the file says what happens).
+The new relay options have code defaults and need no line: `World:ArrivalPrompt` (true), `World:OptionsRefreshMs`
+(1000), `World:OfferReopenSeconds` (120), `World:AnswerNoticeSeconds` (20), `World:GoAlongWaitSeconds` (60),
+`World:RemovedBarMinutes` (10), `Reports:PerDay` (10), `Reports:RepeatHours` (24), `Reports:SharedInstanceHours` (24),
+`Reports:DoneDays` (180: a handled report is deleted that long after it was handled, by the hourly housekeeping; the privacy
+page shows the configured period), `RateLimits:ReportsPerMinute` (10).
+Never set the test options (`World:TestHooks`, `World:TestGoHook*`, `World:TestGoBarrierHoldMs`, `World:TestJoinHoldMs`,
+`World:TestDropPlans`) on the live server.
+
+**The update** is section 8 with these steps in this order: (1) the backup (section 7; the migration's way back), (2)
+the settings above, (3) the server release 0.2.0 (`migrate`: "... done in N s: schema 14", `Start-Service`;
+`/api/v1/status` says `"version":"0.2.0"` and `"minimumProtocol":50`), (4) only then, with the server running and checked, the
+client release for the players. The way back is section 8's rollback with the backup of step 1 (0.1.9 refuses schema 14)
+**and the two settings back to 49** before the start (section 8, "A release that raised the protocol"); a client release of
+0.2.0 that went out already is withdrawn with it (it cannot play on 0.1.9).
+
+The check in HeidiSQL after the update (as root or `dw4backup`, database `dw4online`, a *Query* tab, F9):
+
+```sql
+-- 1. The migration is applied: the top row is 14 "reports".
+SELECT version, description, applied_at FROM schema_version ORDER BY version DESC LIMIT 3;
+
+-- 2. Later: the players' open reports, newest first (user names; handle them on the website, not here).
+SELECT * FROM v_player_reports WHERE state = 'open' ORDER BY created_at DESC;
+```
+
+Reports are handled on the website (*Admin > Reports*, *Done* / *Reopen*), not in HeidiSQL: the website writes the audit
+row (`report_handled`, `report_reopened`) and the handler's name with it. A report about a moderator's own account is
+shown to him without its reporter and instance, and only another moderator can close it.
+
 ## 10. Operating notes
 
 - The online world (section 9.2, SEAMLESS.md 19): `World:DataHashes` (empty: any game data plays), `World:RankedDataHashes`
@@ -1096,6 +1156,13 @@ A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; ins
   at every start): a page loaded before a server restart is refused ("The server restarted since this list was loaded";
   reload it), and `POST /api/v1/admin/instances/{wid}/end` and `.../remove` need the `run` of `GET /api/v1/admin/instances`
   as `?run=`. The hourly housekeeping deletes instances older than `World:HistoryDays`.
+- Removal and *Report player* (round I1b, SEAMLESS.md 19.6.6, 19.16): a host removes a guest from the game's *Instance*
+  page (the guest goes home and cannot see or join that instance for `World:RemovedBarMinutes`, 10; a host who blocks a
+  guest removes him the same way). Players report others from the game's player card or `POST /api/v1/reports`: at most
+  `Reports:PerDay` (10) a day each, a second report about the same player within `Reports:RepeatHours` (24) adds nothing.
+  The website's *Admin* page shows how many are open; *Admin > Reports* lists them with the reported player's account
+  page (his instances, story and achievements; lock or ban there) and *Done* / *Reopen* (audited `report_handled`,
+  `report_reopened`). An account's deletion removes its own reports; reports about it keep the anonymous account.
 - Until release 0.1.6 (rooms): the room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
   8.6): `drop` (the default: progress the guests make while the room's owner is away is not saved and leaves their
   games at the next stage change, with a notice), `hold` (kept on the server and merged when the owner returns) or

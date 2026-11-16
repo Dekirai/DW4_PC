@@ -70,8 +70,14 @@ public static class Msg
     public const byte Checkpoint = 0x16;
     /// <summary>Round J: a joiner's rebuild from a checkpoint failed.</summary>
     public const byte CheckpointBad = 0x17;
+    /// <summary>Round I1b (protocol 50, 19.7.4): the gate form's plan while the confirming press is held (PromptMessages.cs).</summary>
+    public const byte Plan = 0x18;
+    /// <summary>Round I1b (protocol 50): the prompt's answer (PromptMessages.cs).</summary>
+    public const byte Choice = 0x19;
     /// <summary>Round I1 (protocol 49): the host's or staff's instance operation (visibility, remove, end).</summary>
     public const byte InstanceOp = 0x1B;
+    /// <summary>Round I1b (protocol 50, i1b-contract.md moderation 16:25): *Report player* from the player card.</summary>
+    public const byte Report = 0x1E;
 
     // server -> client
     public const byte Welcome = 0x80;
@@ -91,7 +97,9 @@ public static class Msg
     public const byte Reassign = 0x8E;
     public const byte NetStat = 0x8F;
     public const byte Presence2Out = 0x90;
-    /// <summary>Round J: the donor uploads its tick state at its next state-safe tick (0x91 stays free).</summary>
+    /// <summary>Round I1b (protocol 50, 19.7.3): the arrival prompt's rows (PromptMessages.cs).</summary>
+    public const byte Options = 0x91;
+    /// <summary>Round J: the donor uploads its tick state at its next state-safe tick.</summary>
     public const byte CheckpointAsk = 0x92;
     /// <summary>Round I1 (protocol 49): the member's own instance (members, seats, the host's grace).</summary>
     public const byte InstanceInfo = 0x95;
@@ -99,6 +107,11 @@ public static class Msg
     public const byte WorldNotice = 0x96;
     /// <summary>Round I1 (protocol 49): a member's name, level and relation, before its first mention to a receiver.</summary>
     public const byte MemberInfo = 0x97;
+    /// <summary>Round I1b (protocol 50, 19.30.5): a go-along offer for the receiver (open, changed, closed).</summary>
+    public const byte Offer = 0x9B;
+    /// <summary>Protocol 50 (round I1b's integration, W7e): upload the visit's load snapshot now (its uploader left before the upload
+    /// was complete).</summary>
+    public const byte SnapshotAsk = 0x9C;
 
     public static string Name(byte type) => type switch
     {
@@ -110,8 +123,8 @@ public static class Msg
         Welcome => "WELCOME", Sealed => "SEALED", Live => "LIVE", JoinReq => "JOIN_REQ", BarrierOk => "BARRIER_OK",
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
-        Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
-        MemberInfo => "MEMBER_INFO",
+        Presence2Out => "PRESENCE2", InstanceOp => "INSTANCE_OP", Report => "REPORT", InstanceInfo => "INSTANCE_INFO", WorldNotice => "WORLD_NOTICE",
+        MemberInfo => "MEMBER_INFO", Plan => "PLAN", Choice => "CHOICE", Options => "OPTIONS", Offer => "OFFER", SnapshotAsk => "SNAPSHOT_ASK",
         _ => "0x" + type.ToString("X2"),
     };
 }
@@ -132,8 +145,22 @@ public static class Ev
     /// <summary>Protocol 49 (19.6.5): slot mask u8, reason u8 (<see cref="HomeReason"/>): exactly the masked slots take the home
     /// departure, defeated or not (ForkKind::home). At a fork the mask is split by side.</summary>
     public const byte Home = 6;
-    /// <summary>Reserved for round I1b's GO (slot u8, point u8, stage str).</summary>
+    /// <summary>Round I1b's GO (slot u8, point u8, stage str, 19.30.7): applied like INTENT at the first membership-safe step, every GO
+    /// of a step together (ForkKind::go); expires 300 ticks after its tick on every engine. At a fork it follows its slot.</summary>
     public const byte Go = 7;
+    /// <summary>Round I1b's scenario hooks (slot u8, hook u8, argument i32; <see cref="TestHook"/>): stamped only with
+    /// World:TestHooks or World:TestGoHook on (test runs); development clients apply them, every other build skips the type.</summary>
+    public const byte Test = 0xF0;
+}
+
+/// <summary>The TEST event's hooks (round I1b's scenarios): Defeat = the slot's player falls (0 HP, SQ_DEAD); Busy = the stage group
+/// is neither membership-safe nor joinable for the argument's ticks (a shared scene's stand-in); Mat = the slot's player stands on the
+/// mat "mat" + letter (argument bits 8-15) + two-digit number (bits 0-7), the stand-in for a walk the test characters do not survive.</summary>
+public enum TestHook : byte
+{
+    Defeat = 1,
+    Busy = 2,
+    Mat = 3,
 }
 
 /// <summary>Instance modes (WELCOME, BARRIER_OK).</summary>
@@ -161,6 +188,8 @@ public enum WaitReason : byte
     NotJoinable = 2,
     BossLock = 3,
     Snapshot = 4,
+    /// <summary>Round I1b (19.7.5): a fresh arrival's barrier held for the prompt (HoldKind.Prompt); OPTIONS follows.</summary>
+    Choice = 5,
 }
 
 public enum IntentKind : byte
@@ -169,8 +198,12 @@ public enum IntentKind : byte
     GiveUp = 2,
     /// <summary>Protocol 49: *Leave instance*: the own slot goes home (the relay stamps HOME).</summary>
     Leave = 3,
-    /// <summary>Protocol 49, round I1b: *Go along* (argument: the offer id, 0 withdraws). The I1a relay ignores it.</summary>
+    /// <summary>Protocol 50, round I1b: *Go along* (argument: the offer id; 0 the player's *Cancel*; -1 the client's report that its
+    /// stamped GO ended without a departure: expired after 300 ticks, or it did nothing at its step). The I1a relay ignores it.</summary>
     GoAlong = 4,
+    /// <summary>Development clients' scenario hook (argument: hook | value &lt;&lt; 8): a TEST event in the sender's sealed stage group,
+    /// stamped only with World:TestHooks on (else counted and ignored).</summary>
+    Test = 0x7F,
 }
 
 /// <summary>An instance's visibility (19.6.2): wire u8 and the text of online_prefs / instance_history.</summary>
@@ -265,7 +298,62 @@ public enum WorldNoticeKind : byte
     LagOver = 10,
     SharedProgress = 11,
     ServerRestart = 12,
+    /// <summary>Round I1b: a go-along request ended without a GO (argument: <see cref="GoRefusal"/>; text: the dungeon's stage).</summary>
     GoRefused = 13,
+    /// <summary>Round I1b: the answer to REPORT (argument <see cref="ReportResult"/>; member and name: the reported player).</summary>
+    Report = 14,
+    /// <summary>Round I1b's integration: a member left the receiver's stage group but stays in the instance (a lag LEAVE, a split
+    /// barrier, 6.9): "&lt;name&gt; plays apart for now." (the stage group's own LEAVE toast went, 19.5.6).</summary>
+    Apart = 15,
+}
+
+/// <summary>WORLD_NOTICE 14's argument: what became of a REPORT (i1b-contract.md moderation 16:25).</summary>
+public enum ReportResult : uint
+{
+    /// <summary>"Report sent. Thank you." (also a repeat about the same player, which adds nothing).</summary>
+    Sent = 0,
+    /// <summary>The reporter's daily limit (Reports:PerDay).</summary>
+    Limit = 1,
+    /// <summary>"&lt;name&gt; is not available.": an unknown member id, the own one, or an account that is gone.</summary>
+    NotAvailable = 2,
+    /// <summary>The report could not be stored (try later).</summary>
+    Failed = 3,
+}
+
+/// <summary>WORLD_NOTICE go refused's argument (round I1b, 19.30.6; i1b-contract.md "go 2026-11-07 16:15").</summary>
+public enum GoRefusal : uint
+{
+    /// <summary>The offer closed (the entrants left the dungeon) or is unknown: "Couldn't go along: Kim left Ancient Ruins."</summary>
+    Closed = 1,
+    /// <summary>"Couldn't go along: you were defeated."</summary>
+    Defeated = 2,
+    /// <summary>World:GoAlongWaitSeconds without a stamp (no boss fight): "Couldn't go along: Kim's floor stayed busy."</summary>
+    Busy = 3,
+    /// <summary>The sender's own stage group took a barrier into a dungeon or home (no text).</summary>
+    Moved = 4,
+    /// <summary>The instance ended (no text: the END's own notice).</summary>
+    Ended = 5,
+    /// <summary>Not offered, not allowed now, a second request: "Couldn't go along."</summary>
+    NotOffered = 6,
+}
+
+/// <summary>OFFER's op (round I1b).</summary>
+public enum OfferOp : byte
+{
+    Open = 1,
+    Changed = 2,
+    Closed = 3,
+}
+
+/// <summary>OFFER's close reason (round I1b): left (the last entrant left the dungeon), defeated (their game over), ended (the instance),
+/// gone (over for this receiver: it went along, entered a dungeon, left or was removed; no closing line).</summary>
+public enum OfferClose : byte
+{
+    None = 0,
+    Left = 1,
+    Defeated = 2,
+    Ended = 3,
+    Gone = 4,
 }
 
 /// <summary>JOIN_REQ kinds (protocol 49) for solo-led stage groups.</summary>
@@ -536,6 +624,9 @@ public sealed class WireWriter
         U32((uint)b.Length);
         return Bytes(b);
     }
+
+    /// <summary>The bytes written so far without the frame header (an event payload).</summary>
+    public byte[] Payload() => _buf.AsSpan(Wire.HeaderBytes, _len - Wire.HeaderBytes).ToArray();
 
     /// <summary>The finished frame with its header.</summary>
     public byte[] Frame()

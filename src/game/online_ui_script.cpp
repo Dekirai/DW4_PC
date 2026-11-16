@@ -340,12 +340,47 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
         const auto& want = arg(1);
         return want.starts_with("<=") ? members <= std::atoi(want.c_str() + 2) : members >= std::atoi(want.c_str());
     }
+    if (c == "wait-go") {
+        // (Round I1b's integration: until the Instance page's Go along box
+        // has a row A can take: another player's offer, not closing, not
+        // greyed. Its notice shows from the same OFFER.)
+        timed(1, 120);
+        if (!host.live) return false;
+        return std::any_of(host.live->go_rows.begin(), host.live->go_rows.end(),
+                           [](const RoomLive::GoRow& r) { return !r.own && !r.closing && r.grey.empty(); });
+    }
     if (c == "visibility") {
         host.state.visibility_requested = std::clamp(std::atoi(arg(1).c_str()), 0, 2);
         return true;
     }
     if (c == "leave-instance") {
         host.state.leave_instance_requested = true;
+        return true;
+    }
+    if (c == "card" || c == "remove" || c == "report") {
+        // card NAME: the player card of that member opens (a screenshot shows it);
+        // remove NAME / report NAME REASON: its buttons, confirmed (round I1b).
+        if (!host.live) fail("no world session");
+        const RoomLive::Member* who = nullptr;
+        for (const auto& m : host.live->members)
+            if (lower(m.name) == lower(arg(1))) who = &m;
+        if (!who) fail("no member " + arg(1) + " in the own instance");
+        if (c == "card") {
+            host.state.card_member = who->member;
+            host.state.card_remove_asked = host.state.card_report_open = false;
+            host.state.card_focus = true; // (as A on the row: the controller's focus on the card's first button)
+            host.state.card_cursor = true;
+        } else if (c == "remove") {
+            host.state.remove_requested = who->member;
+        } else {
+            static constexpr const char* reasons[] = {"griefing", "cheating", "name", "other"};
+            int reason = 0;
+            for (int r = 0; r < 4; ++r)
+                if (lower(arg(2)) == reasons[r]) reason = r + 1;
+            if (reason == 0) fail("unknown report reason " + arg(2));
+            host.state.report_requested = who->member;
+            host.state.report_reason_requested = reason;
+        }
         return true;
     }
     if (c == "wait-stage") {

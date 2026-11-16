@@ -1,0 +1,13 @@
+# W10d, guest b (k2): takes the gate to stag0101; its automatic join of a's instance waits (the relay's test hold, a
+# scene's stand-in) on the loading screen; a removes it there: "You were removed from a's instance." and the DISSOLVE
+# into the lobby on its own story at once (never a's story: key item 4 is a's, not b's). The explorer takes the gate again
+# (the script does not run on the loading screen, so one step covers both arrivals): a's instance is no candidate (the
+# removal bar), b's arrival makes an instance of its own.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control fail key:4=1,epoch>=@560
+log b in stag0101 in its own instance
+idle until frames>=240 fail key:4=1
+log b on its own story there
+disk 8 until stage=stagml11,control
+log b home again

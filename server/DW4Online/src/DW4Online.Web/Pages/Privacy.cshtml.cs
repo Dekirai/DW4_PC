@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace DW4Online.Web.Pages;
 
-public sealed class PrivacyModel(WebOptions web, ServiceOptions service) : PageModel
+public sealed class PrivacyModel(WebOptions web, ServiceOptions service, ReportOptions reports) : PageModel
 {
     public WebOptions Web => web;
+    /// <summary>How long a handled report stays (Reports:DoneDays, the hourly housekeeping).</summary>
+    public int ReportDoneDays => Math.Max(1, reports.DoneDays);
     public string ServiceName => service.Name;
     public bool HasOperator => web.OperatorName.Length > 0;
     /// <summary>Web:Processors without empty entries.</summary>

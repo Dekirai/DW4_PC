@@ -1,6 +1,8 @@
 // Translations (docs/L10N.md): the game.tsv catalog, its token form, the
 // compound rules, language.ini, textures.tsv and the font additions, all on
-// synthetic input (no game data).
+// synthetic input (no game data); the test runs' language switches.
+#include "../src/game/language_switches.hpp"
+
 #include "dw4/engine/managers.hpp"
 #include "dw4/i18n/game_text.hpp"
 #include "dw4/i18n/language_pack.hpp"
@@ -13,6 +15,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 int checks{};
@@ -389,6 +392,38 @@ void test_fonts() {
     check(white > 0 && black > 0, "Glyphs are drawn white with a black outline");
     check(std::abs((left + right_x) / 2 - 32) <= 1, "The text is centred on center_x");
 }
+
+// The test runs' language switches (DW4_L10N_SWITCH, DW4_L10N_SWITCH_EVERY):
+// a frame's changes come once, also when the host asks again at that frame
+// (online, a pass without a step waits for sealed ticks; before, S22b with
+// DW4_L10N_SWITCH_EVERY switched two or three times at one frame).
+void test_language_switches() {
+    using dw4::game::LanguageSwitches;
+    using Codes = std::vector<std::string>;
+    LanguageSwitches s;
+    std::string error;
+    check(s.parse("5:de,9:en,5:fr", &error), "A switch list parses: " + error);
+    s.every(4, "de");
+    check(s.other() == "de", "The alternation's other language is kept");
+    const auto at0 = s.due(0);
+    check(at0.codes.empty() && !at0.alternate, "Frame 0 switches nothing");
+    const auto at4 = s.due(4);
+    check(at4.codes.empty() && at4.alternate, "Every 4 frames the alternation switches");
+    for (int pass = 0; pass < 3; ++pass) {
+        const auto again = s.due(4);
+        check(again.codes.empty() && !again.alternate, "A pass without a step at the same frame switches nothing more");
+    }
+    const auto at5 = s.due(5);
+    check(at5.codes == Codes{"de", "fr"} && !at5.alternate, "A frame's listed changes come in their order");
+    check(s.due(5).codes.empty(), "A frame's listed changes come once");
+    check(s.due(8).alternate, "The alternation goes on after a repeated frame");
+    check(s.due(9).codes == Codes{"en"}, "Later listed changes come at their frame");
+    check(s.due(10).codes.empty() && !s.due(11).alternate, "Frames without a change switch nothing");
+    LanguageSwitches bad;
+    check(!bad.parse("12de", &error) && error.find("FRAME:CODE") != std::string::npos, "An item without a colon is refused");
+    check(!bad.parse("x2:de", &error) && error.find("a frame is a number") != std::string::npos, "A frame that is no number is refused");
+    check(!bad.parse("7:", &error), "An item without a code is refused");
+}
 } // namespace
 
 int main() {
@@ -402,6 +437,7 @@ int main() {
         test_texture_rules();
         test_sha256();
         test_fonts();
+        test_language_switches();
     } catch (const std::exception& error) {
         std::cerr << "i18n test failed after " << checks << " checks: " << error.what() << '\n';
         return 1;

@@ -37,7 +37,7 @@ public class WorldApiTests
         var body = await entered.Json();
         var ticket = body.GetProperty("relayTicket").GetString()!;
         Assert.Equal(ticket, body.GetProperty("ticket").GetString());
-        Assert.Equal(49, body.GetProperty("protocol").GetInt32());
+        Assert.Equal(50, body.GetProperty("protocol").GetInt32());
         Assert.Equal("player", body.GetProperty("role").GetString());
         Assert.Equal("member", body.GetProperty("relayRole").GetString());
         Assert.Equal(1, body.GetProperty("box").GetInt32());
@@ -160,17 +160,17 @@ public class WorldApiTests
         {
             var (token, _, _) = await host.RegisterAsync("Oldie");
             var client = host.Client(token);
-            // The floor in code: 46, 47 and 48 are refused although Play:MinimumProtocol says 46 (19.17.3, ProtocolFloor).
-            foreach (var old in new[] { 46, 47, 48 })
+            // The floor in code: 46 to 49 are refused although Play:MinimumProtocol says 46 (19.17.3, ProtocolFloor; 50 since round I1b).
+            foreach (var old in new[] { 46, 47, 48, 49 })
             {
                 var refused = await client.PostAsJsonAsync("/api/v1/world/enter", Enter(old));
                 Assert.Equal(HttpStatusCode.UpgradeRequired, refused.StatusCode);
-                Assert.Equal(49, (await refused.Json()).GetProperty("minimumProtocol").GetInt32());
+                Assert.Equal(50, (await refused.Json()).GetProperty("minimumProtocol").GetInt32());
                 Assert.Equal(HttpStatusCode.UpgradeRequired, (await host.Client().PostAsJsonAsync("/api/v1/auth/login",
                     new { username = "Oldie", password = "a decent password", protocol = old })).StatusCode);
             }
             var status = await (await host.Client().GetAsync("/api/v1/status")).Json();
-            Assert.Equal(49, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
+            Assert.Equal(50, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
             Assert.Equal("unsupported_data", await (await client.PostAsJsonAsync("/api/v1/world/enter", Enter())).ProblemCode()); // data hash 1, not 0x10
             Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/world/enter",
                 new { protocol = P, dataHash = 16UL, clientVersion = "0.60.0" })).StatusCode);
@@ -206,7 +206,7 @@ public class WorldApiTests
         using var json = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(example));
         var configured = json.RootElement.GetProperty("Play").GetProperty("MinimumProtocol").GetInt32();
         Assert.Equal(DW4Online.Domain.World.WorldProtocol.Version, configured);
-        Assert.Equal(49, json.RootElement.GetProperty("Play").GetProperty("CurrentProtocol").GetInt32());
+        Assert.Equal(50, json.RootElement.GetProperty("Play").GetProperty("CurrentProtocol").GetInt32());
         Assert.True(json.RootElement.GetProperty("Play").GetProperty("RequireWorld").GetBoolean());
         foreach (var minimum in new[] { configured, 48 })
         {

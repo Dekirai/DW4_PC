@@ -368,8 +368,8 @@ public sealed class WorldService
         return true;
     }
 
-    /// <summary>Staff removes a member (it goes home with the 10-minute bar): audit row staff_remove. The instance is named as for
-    /// <see cref="EndInstanceAsync"/> (its run and wid).</summary>
+    /// <summary>Staff removes a member (it goes home under the 10-minute removal bar, round I1b): audit row staff_remove. The
+    /// instance is named as for <see cref="EndInstanceAsync"/> (its run and wid).</summary>
     public async Task<Result<string>> RemoveMemberAsync(long actorId, uint wid, string? run, string? username, byte[]? ip, CancellationToken ct = default)
     {
         if (CheckRun(run) is { } refused) return refused;

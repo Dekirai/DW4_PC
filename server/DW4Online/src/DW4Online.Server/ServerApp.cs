@@ -61,6 +61,7 @@ public static class ServerApp
         if (worldWeb.RankedDataHashes.Count == 0 && config.GetSection("Rooms:RankedDataHashes").Get<List<string>>() is { Count: > 0 } ranked)
             worldWeb.RankedDataHashes = ranked;
         var friends = Bind<FriendsOptions>(config, "Friends");
+        var reports = Bind<ReportOptions>(config, "Reports");
         var service = Bind<ServiceOptions>(config, "Service");
         var proxy = ProxyHeaders.From(service); // (checks Service:PathBase and Service:TrustedProxyNetworks)
         var limits = Bind<RateLimitOptions>(config, "RateLimits");
@@ -79,7 +80,8 @@ public static class ServerApp
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
             .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database)
-            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends).AddSingleton(world);
+            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends).AddSingleton(world)
+            .AddSingleton(reports);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -90,6 +92,7 @@ public static class ServerApp
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<ISocialRepository, SocialRepository>();
+        services.AddSingleton<IReportRepository, ReportRepository>();
         // Round I1: the world relay is the domain's IWorldRelay and listens to its IWorldNotifier (one WorldGateway), registered
         // BEFORE the TryAdd lines (they then add nothing; without the relay lane's registration they keep the null objects).
         services.AddSingleton<WorldGateway>();
@@ -113,6 +116,7 @@ public static class ServerApp
         services.AddSingleton<OnlineCharacterService>();
         services.AddSingleton<CloudSaveService>();
         services.AddSingleton<SocialService>();
+        services.AddSingleton<ReportService>();
         services.AddHostedService<MaintenanceService>();
 
         // Relay:TicketKey signs relay tickets and (through HKDF) keys the security log's tags of unknown user names.
@@ -317,11 +321,11 @@ public static class ServerApp
 }
 
 /// <summary>
-/// Hourly housekeeping: audit retention (180 days), expired sessions, the history of reset online characters and expired
-/// friend requests (Friends:RequestDays).
+/// Hourly housekeeping: audit retention (180 days), expired sessions, the history of reset online characters, expired
+/// friend requests (Friends:RequestDays) and done reports (Reports:DoneDays).
 /// </summary>
-internal sealed class MaintenanceService(MaintenanceRepository repository, SocialService social, OnlineCharacterOptions characters,
-    TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
+internal sealed class MaintenanceService(MaintenanceRepository repository, SocialService social, ReportService reports,
+    OnlineCharacterOptions characters, TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -334,9 +338,10 @@ internal sealed class MaintenanceService(MaintenanceRepository repository, Socia
                 {
                     var (audit, sessions, revisions) = await repository.PruneAsync(Clock.Now(time), 180, characters.ResetHistoryDays, stop);
                     var requests = await social.PurgeExpiredAsync(stop);
-                    if (audit + sessions + revisions + requests > 0)
-                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions, {Revisions} revisions of reset characters and {Requests} expired friend requests",
-                            audit, sessions, revisions, requests);
+                    var done = await reports.PruneDoneAsync(stop);
+                    if (audit + sessions + revisions + requests + done > 0)
+                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions, {Revisions} revisions of reset characters, {Requests} expired friend requests and {Reports} done reports",
+                            audit, sessions, revisions, requests, done);
                 }
                 catch (MySqlConnector.MySqlException e)
                 {

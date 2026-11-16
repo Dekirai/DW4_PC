@@ -1,11 +1,11 @@
 // dw4online_client: an end-to-end test tool for the DW4Online API over WinHTTP (the HTTP stack the game client will
 // use; nothing here is part of the game yet). It logs in, uploads and downloads the cloud save, writes and reads the
 // online character, enters the online world (POST /world/enter, SEAMLESS.md 19.19) and checks the DW4R2 relay handshake
-// with the world ticket (protocol 49), unlocks an achievement while it is in the world, leaves the world and logs out.
+// with the world ticket (protocol 50 since round I1b), unlocks an achievement while it is in the world, leaves the world and logs out.
 // Every step prints one line; the exit code is 0 only when every step passed.
 //
 //   dw4online_client --base http://127.0.0.1:5280 --user NAME --password PW --save savedata.dat --record record.bin
-//                    [--stage stagD101] [--achievement first_defeat] [--protocol 49] [--data-hash 1] [--pin BASE64[,BASE64]]
+//                    [--stage stagD101] [--achievement first_defeat] [--protocol 50] [--data-hash 1] [--pin BASE64[,BASE64]]
 //
 // --base may carry a path (https://example.org/dw4online): every API path goes below it.
 // --pin: the server's certificate is self-signed (https://88.198.52.221): instead of the Windows root store, the
@@ -45,7 +45,7 @@ struct Options {
     std::string stage = "stagD101";
     // (online_join is "joined someone else's instance" since the world, 19.8.9: a client at home gets none.)
     std::string achievement = "first_defeat";
-    int protocol = 49;
+    int protocol = 50;
     unsigned long long data_hash = 1;
     std::string client_version = "0.48.0";
     std::string pin; // base64 SHA-256 SPKI of a pinned (self-signed) server certificate
@@ -318,7 +318,7 @@ private:
     std::string token_;
 };
 
-// The DW4R2 relay handshake of a world member (protocol 49, SEAMLESS.md 19.18): "DW4R2 <ticket> <protocol> <dataHash>
+// The DW4R2 relay handshake of a world member (protocol 50 since round I1b, SEAMLESS.md 19.18): "DW4R2 <ticket> <protocol> <dataHash>
 // 0000000000000000\n" -> "OK <member> <serverTimeMs>\n", then the first frame (type u8, length u32 LE) must be WELCOME
 // (0x80). The connection stays open (the caller closes it): the server counts a member as in the world while it is
 // connected (and for a minute after), which the achievement check asks for.

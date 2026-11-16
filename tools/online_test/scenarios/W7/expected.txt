@@ -1,6 +1,8 @@
 # W7 (19.24, 19.6.7): the proxy cuts a for 20 s: b sees the countdown, a's Digimon stands, a resumes, fingerprints equal
 b: online-script: step .* log: b waited out the grace
 a: online-script: step .* log: a played on as host
+relay: host_back
+!relay: lag_leave  # (back in time, a stays in its stage group: the lag rule counts from its return)
 shared: a b >= 3000
 !a: online-script: FAIL
 !b: online-script: FAIL

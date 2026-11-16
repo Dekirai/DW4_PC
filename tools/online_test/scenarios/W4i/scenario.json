@@ -1,0 +1,54 @@
+{
+  "desc": "decision 49 in round I1a's automatic join (fix-d43): World:ArrivalPrompt off, so an arrival takes the automatic join of the row the prompt would preselect (with the prompt on, the path of a fresh arrival from a field, which since fix-d43's review no known flow reaches); a hosts a Public instance in stag0101 and plays there; b, a stranger who remembers Private, takes the gate when a's instance runs (not starting) with a at the arrival stage: b's BARRIER refuses a's instance (auto_join_refused by=remembered) and makes b's own Private instance; before fix-d43 b joined a's instance as a guest",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "server": {
+    "World": {
+      "ArrivalPrompt": false
+    }
+  },
+  "db_checks": [
+    {
+      "name": "two instances: a's and b's",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^2$"
+    },
+    {
+      "name": "a's instance Public with a alone",
+      "sql": "SELECT h.visibility, COUNT(*) FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:a} GROUP BY h.id",
+      "expect": "^public\t1$"
+    },
+    {
+      "name": "b's instance Private with b alone",
+      "sql": "SELECT h.visibility, COUNT(*) FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:b} GROUP BY h.id",
+      "expect": "^private\t1$"
+    },
+    {
+      "name": "b was nobody's guest",
+      "sql": "SELECT COUNT(*) FROM instance_history_members WHERE account_id = {id:b} AND role <> 'host'",
+      "expect": "^0$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "prefs": {
+        "defaultVisibility": "private"
+      }
+    }
+  ]
+}

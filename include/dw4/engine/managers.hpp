@@ -1231,6 +1231,8 @@ public:
         std::string name;
         int index{}, cursor{}, items{};
         bool vertical{}, cancel{}, taking_input{};
+        int trigger = -1; // the trigger slot of the run that opened it (Engine::pad_reader_slot)
+        std::vector<std::uint8_t> enabled; // per line (empty: every line)
     };
     std::vector<OpenSelect> open_selects() const;
     // Seamless co-op (docs/SEAMLESS.md 5.3): a cursor of that name and RAM
@@ -1607,7 +1609,9 @@ public:
     };
     std::vector<MatBox> mat_boxes() const;
     // Seamless co-op (the funcStageChange port): the mat whose script runs
-    // now, its player bits of this update and the live players.
+    // now, its player bits of this update and the live players that were
+    // live in the previous update too (a player that appears on the mat has
+    // not stepped on).
     struct RunningMat {
         std::string name;
         std::uint32_t current{}, previous{}, live{};
@@ -1639,6 +1643,9 @@ private:
     // a RAM's first update (0x80303530). MATisAllPlayer and MATgetPlayerNo
     // only count these.
     std::uint32_t live_{};
+    // live_ at the start of this update (running_mat; derived from live_,
+    // which the tick state holds, so not saved itself).
+    std::uint32_t settled_{};
 };
 
 // SAVEUTILITY (beSaveUtil, commands 80323D20, update 80323538): the memory
@@ -2299,6 +2306,10 @@ public:
     // Whether the action whose model instance is `node` shows it (its switch
     // bit); true for a node no action owns.
     bool drawn(const Node* node) const;
+    // The random WAITCHECKs' minimum (80535A60): a global that survives the
+    // stage load (clear_stage keeps it), so the stage snapshot carries it.
+    float random_wait_min() const { return random_wait_min_; }
+    void set_random_wait_min(float value) { random_wait_min_ = value; }
     // The action switch whose bit mask is the one of `other` (an igSwitch):
     // the same mask object or the same mask words. A kind 0x400 HitLand check
     // switch shares the mask object of its model's action switch, so the

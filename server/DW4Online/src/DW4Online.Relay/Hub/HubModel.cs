@@ -63,6 +63,9 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>INSTANCE_OP's token bucket (<see cref="RoomHub.InstanceOpBurst"/>, refilled at one a second) and when it was refilled.</summary>
     public double InstanceOpTokens { get; set; } = double.NaN;
     public long InstanceOpTokensAt { get; set; }
+    /// <summary>REPORT's token bucket (<see cref="RoomHub.ReportBurst"/>, refilled at <see cref="RoomHub.ReportsPerMinute"/>; round I1b).</summary>
+    public double ReportTokens { get; set; } = double.NaN;
+    public long ReportTokensAt { get; set; }
     /// <summary>A HOME the relay owes this member (its *Leave instance* or its removal, 19.6.4 / 19.6.6), asked again in its next stage
     /// group of that instance when a barrier overtook it; gone at the member's DISSOLVE or the instance's end.</summary>
     public HomeWish? HomeWish { get; set; }
@@ -75,6 +78,10 @@ public sealed class HubMember(uint id, long accountId, string name)
     public long LastInputOrPong { get; set; }
     /// <summary>The members this receiver was told about by MEMBER_INFO, with the flags it was told.</summary>
     public Dictionary<uint, byte> Known { get; } = [];
+    /// <summary>The account and name of every member this receiver was told about by MEMBER_INFO since its connection (cleared with
+    /// <see cref="Known"/>): REPORT resolves only these (round I1b review: a member id the client never learnt is "not available",
+    /// whatever that member does now, so REPORT tells nobody's name or presence).</summary>
+    public Dictionary<uint, (long Account, string Name)> Introduced { get; } = [];
     /// <summary>The ghost figures this receiver draws (the presence selection, 19.13).</summary>
     public DW4Online.Relay.World.PresenceChoice Choice { get; set; } = DW4Online.Relay.World.PresenceChoice.Empty;
     /// <summary>The receivers that draw this sender, and whether as one of their nearest.</summary>
@@ -105,6 +112,8 @@ public sealed class HubMember(uint id, long accountId, string name)
     public JoinState? Joining { get; set; }
     /// <summary>Set while the member is part of a parked arrival group that waits for a decision.</summary>
     public ArrivalGroup? Arrival { get; set; }
+    /// <summary>Round I1b (19.7.4): the gate form's plan of this member (PLAN, its OPTIONS and CHOICE) and PLAN's throttle.</summary>
+    public DW4Online.Relay.World.PromptPlan Prompt { get; } = new();
 
     public uint Rate { get; set; }
     public Heading? Heading { get; set; }
@@ -164,6 +173,16 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>The visit key the member's lone play counts under (the instance visit it went on from alone; 0: from
     /// <see cref="LoneSince"/>), so a reconnect without resuming is no new visit for the per-visit rules.</summary>
     public ulong LoneKey { get; set; }
+    /// <summary>The instance whose story the member's engine plays on while it plays alone (<see cref="LoneStage"/>): the instance of
+    /// the stage group it went on from alone (taken out of it, its link lost there, its field filed after a reconnect; a detached
+    /// group's former instance), null when that was a hub stage group (its own story). Its next barrier, decided alone, is that
+    /// instance's: inside it while the member holds a seat there, else a DISSOLVE home with the replace (19.6.6; fix-d43's review:
+    /// a guest taken out for lag and removed meanwhile was a fresh arrival from its field, its own instance merging the host's story,
+    /// or the automatic join of a stranger's instance). Kept and cleared with <see cref="LoneStage"/>; a new session's engine starts
+    /// on its own story.</summary>
+    public DW4Online.Relay.World.WorldInstance? LoneWorld { get; set; }
+    /// <summary>The member went on alone from a stage group of nobody's instance (detached, 19.6.6): its next barrier goes home.</summary>
+    public bool LoneDetached { get; set; }
     /// <summary>When the housekeeping last saw the member in an instance of n players (index n, 1..4): the achievements'
     /// players claim is capped by it (<see cref="RoomHub.RecentInstancePlayers"/>).</summary>
     public long[] SeenInSize { get; } = new long[Wire.MaxSlots + 1];
@@ -180,6 +199,14 @@ public sealed class HubMember(uint id, long accountId, string name)
     /// <summary>The join that made the member one of its instance, until the instance's log reaches its JOIN (a gap before J
     /// that never closes sends it back to its own stage as NEW).</summary>
     public JoinState? JoinedVia { get; set; }
+    /// <summary>Round I1b (19.30.7): the member's go-along request (waiting or stamped), one at a time.</summary>
+    public DW4Online.Relay.World.GoRequest? Go { get; set; }
+    /// <summary>Round I1b (19.30.5): the members the exit port asked on the mat for the member's newest HEADING (no notice for them).</summary>
+    public List<HubMember> HeadingAsked { get; set; } = [];
+    /// <summary>The departure (stage, point) <see cref="HeadingAsked"/> was given for, until the member's next barrier: a HEADING of the
+    /// same departure again keeps them (the engine announces a copy's NEXTSTAGE once more when the port's fork left the member alone in it,
+    /// with no asked slots).</summary>
+    public (string Stage, byte Point)? HeadingAskedFor { get; set; }
 }
 
 public sealed record Heading(string Stage, byte Point, ulong Context, long At);
@@ -282,6 +309,13 @@ public enum HoldKind
     CoArrival,
     Join,
     Boss,
+    /// <summary>Round I1b (19.7.5): a fresh arrival's barrier held for the loading-screen form of the prompt, without a time limit.</summary>
+    Prompt,
+    /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs: a GO's barrier waits before its decision.</summary>
+    TestGo,
+    /// <summary>Decision 46 (round I1b's integration): a fresh arrival that chose an *Arriving now* row waits for that instance's stage
+    /// group at the stage (Instances:JoinHoldSeconds at most, as a JOIN's hold), then its choice is decided again.</summary>
+    Arriving,
 }
 
 /// <summary>
@@ -303,6 +337,19 @@ public sealed class ArrivalGroup
     public bool Fresh => World is null;
     /// <summary>The client chose *New instance* (BARRIER plan id 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, client 13:30): no automatic join.</summary>
     public bool PlanNew { get; init; }
+    /// <summary>Round I1b: the gate form's plan id the BARRIER named (0: none).</summary>
+    public ushort PlanId { get; init; }
+    /// <summary>Round I1b: the prompt's answer for this arrival (the gate form's CHOICE of the plan the BARRIER named, or the held
+    /// barrier's CHOICE); null: none (yet).</summary>
+    public DW4Online.Relay.Protocol.ChoiceMsg? PromptChoice { get; set; }
+    /// <summary>Round I1b: the last OPTIONS payload sent for the held prompt and when (the refresh compares it).</summary>
+    public byte[]? PromptOptions { get; set; }
+    public long PromptOptionsAt { get; set; }
+    /// <summary>Round I1b: the host names of the rows this arrival was offered (a refreshed prompt names a chosen instance that ended).</summary>
+    public Dictionary<uint, string> PromptHosts { get; } = [];
+    /// <summary>Round I1b: when the held prompt last took a CHOICE (at most one a second) and the newest one waiting for its turn.</summary>
+    public long LastChoiceAt { get; set; }
+    public DW4Online.Relay.Protocol.ChoiceMsg? PendingChoice { get; set; }
     /// <summary>The kind of arrival this decision is for its members (BARRIER_OK's arrival byte).</summary>
     public ArrivalKind Arrival { get; set; }
     /// <summary>The arriving members with their slot in the arriving engine and their carry.</summary>
@@ -315,7 +362,14 @@ public sealed class ArrivalGroup
     public List<HubMember> Awaited { get; } = [];
     public byte? Choice { get; set; }
     public long LastWaitSent { get; set; }
+    /// <summary>World:TestJoinHoldMs (test runs only): the JOIN waits until then whatever the target's state.</summary>
+    public long TestJoinHoldUntil { get; set; }
     public int Size => Members.Count + CoArrivals.Sum(c => c.Members.Count);
+    /// <summary>Round I1b (19.30.7): the barrier of a stamped GO: its offer's stage group first, a JOIN hold without
+    /// Instances:JoinHoldSeconds while that stage group exists, no *Go alone* at a boss lock, no rescue join.</summary>
+    public DW4Online.Relay.World.GoOffer? Go { get; set; }
+    /// <summary>Round I1b's scenario hook World:TestGoBarrierHoldMs held this GO barrier once already.</summary>
+    public bool TestHeld { get; set; }
 }
 
 public sealed record Arrival(HubMember Member, int Slot, byte[] Carry);
@@ -397,6 +451,17 @@ public sealed class SnapshotStore
     private SnapshotStore(Upload upload) => _u = upload;
 
     public HubMember? Uploader { get => _u.Uploader; set => _u.Uploader = value; }
+
+    /// <summary>Another member uploads (round I1b's integration, W7e: the named uploader left before the upload was complete): a part
+    /// the old one sent is dropped, the new one starts at offset 0.</summary>
+    public void Reassign(HubMember uploader)
+    {
+        if (Complete) return;
+        _u.Uploader = uploader;
+        _u.Buffer = null;
+        _u.Total = 0;
+        _u.Received = 0;
+    }
     public byte[]? Bytes => _u.Bytes;
     public bool Complete => _u.Bytes is not null;
     public Dictionary<int, ulong> Hashes { get; } = [];
@@ -488,6 +553,15 @@ public sealed class HubInstance(uint id)
     public bool Joinable { get; set; }
     public bool MembershipSafe { get; set; }
     public StateReason Reason { get; set; } = StateReason.Loading;
+    /// <summary>The newest STATE of each member of the visit (fix-d43, W7f's race): the flags above come from the reporter's alone
+    /// (<c>RoomHub.StateReporter</c>), the others' are kept so that a change of the reporter takes its newest one.</summary>
+    public Dictionary<HubMember, StateMsg> States { get; } = [];
+    /// <summary>The reporter the flags were last checked against (null: none yet this visit).</summary>
+    public HubMember? StateReporter { get; set; }
+    /// <summary>The member whose STATE is in effect and its tick (<see cref="StateApplied"/>: one is, this visit).</summary>
+    public HubMember? StateFrom { get; set; }
+    public uint StateTick { get; set; }
+    public bool StateApplied { get; set; }
     /// <summary>The user's instance this stage group belongs to (null: a member's home, a hub stage group, or a stage group of
     /// nobody's instance after a detach).</summary>
     public DW4Online.Relay.World.WorldInstance? World { get; set; }
@@ -505,6 +579,19 @@ public sealed class HubInstance(uint id)
     /// <summary>A detached stage group's former instance (fix-019's refix): its engines hold that instance's story and settings until
     /// their way home, the own story only for its former host. The STORY refusal and the achievements' play context read it.</summary>
     public DW4Online.Relay.World.WorldInstance? DetachedFrom { get; set; }
+    /// <summary>The stand-in of a member that goes its own way at a barrier (a BARRIER decided alone, a barrier apart, a split; fix-d43's
+    /// review): the instance whose story its engines played on (its stage group's instance, <see cref="HubMember.LoneWorld"/>). The
+    /// decision reads it as a stage group of that instance: inside it while its members hold a seat there, else a DISSOLVE home with the
+    /// redirect, like a stage group whose members hold no seat (19.6.6).</summary>
+    public DW4Online.Relay.World.WorldInstance? ApartFrom { get; set; }
+    /// <summary>The instance whose story this stage group's engines play on (its own, a stand-in's, a detached group's former one).</summary>
+    public DW4Online.Relay.World.WorldInstance? StoryWorld => World ?? ApartFrom ?? DetachedFrom;
+    /// <summary>Round I1b (19.18): STATE's flag 16, no present slot alive (the go-along wait and the GO's join hold read it).</summary>
+    public bool NoLiving { get; set; }
+    /// <summary>Round I1b (19.30.5): the point the visit's barrier entered the stage through (a go-along's target point).</summary>
+    public byte EntryPoint { get; set; }
+    /// <summary>Round I1b (19.30.7): JOIN_REQ kind go went to the solo leader: its JOIN_AT seals GO (slot, stage, point).</summary>
+    public (int Slot, string Stage, byte Point, long AskedAt)? AskedGo { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

@@ -1,0 +1,58 @@
+{
+  "desc": "decision 49 (19.7.6), the case that still lands: b remembers Friends and is a's friend; b takes the gate 6 s after a while a's Public instance is still starting: 'starting', b joins a's instance without a form (as W4b)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "api_checks": [
+    {
+      "at": 1,
+      "as": "b",
+      "method": "POST",
+      "path": "/api/v1/friends/requests",
+      "body": {
+        "username": "{user:a}"
+      },
+      "status": 200
+    },
+    {
+      "at": 2,
+      "as": "a",
+      "method": "POST",
+      "path": "/api/v1/friends/requests/{user:b}/accept",
+      "status": 200
+    }
+  ],
+  "db_checks": [
+    {
+      "name": "one instance",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^1$"
+    },
+    {
+      "name": "b a guest in a's Public instance",
+      "sql": "SELECT h.visibility, m.role FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:a} AND m.account_id = {id:b}",
+      "expect": "^public\tguest$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "prefs": {
+        "defaultVisibility": "friends"
+      }
+    }
+  ]
+}

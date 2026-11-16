@@ -19,7 +19,7 @@ public sealed record HubAdmission(long AccountId, string Role, string Nonce);
 
 /// <summary>
 /// The DW4R2 relay of the world (SEAMLESS.md 6, 19.17): one TCP connection per member, one hub for the whole server (the
-/// generalized room hub, 19.17.4). The first line is "DW4R2 &lt;ticket&gt; 49 &lt;dataHash&gt; &lt;ignored&gt;\n", answered with
+/// generalized room hub, 19.17.4). The first line is "DW4R2 &lt;ticket&gt; 50 &lt;dataHash&gt; &lt;ignored&gt;\n", answered with
 /// "OK &lt;memberId&gt; &lt;serverTimeMs&gt;\n" or "ERR protocol|data|ticket|full|busy\n"; then frames (type u8, length u32 LE,
 /// payload). A dedicated thread seals the ticks of every sealed stage group at 59.94 Hz; a housekeeping loop pings and enforces
 /// the holds, limits and the world's timers. The relay never simulates the game.

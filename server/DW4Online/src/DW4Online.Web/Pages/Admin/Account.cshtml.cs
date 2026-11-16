@@ -13,7 +13,7 @@ namespace DW4Online.Web.Pages.Admin;
 /// accounts. Every action is written to the audit log by the services.
 /// </summary>
 public sealed class AccountModel(AccountService accounts, OnlineCharacterService characters, AchievementService achievements,
-    WorldService world, WebOptions web) : PageModel
+    WorldService world, ReportService reports, WebOptions web) : PageModel
 {
     [BindProperty] public string? Status { get; set; }
     [BindProperty] public string? Reason { get; set; }
@@ -30,6 +30,8 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
     public IReadOnlyList<StoryHistoryEntry> Story { get; private set; } = [];
     /// <summary>The account's instances (hosted, joined, played as staff or watched), newest first (19.20).</summary>
     public IReadOnlyList<InstanceHistoryEntry> Instances { get; private set; } = [];
+    /// <summary>Reports about the account, newest first (round I1b, 19.20).</summary>
+    public IReadOnlyList<ReportRow> Reports { get; private set; } = [];
     public bool IsAdmin { get; private set; }
     public string? Message { get; private set; }
     public string? Error { get; private set; }
@@ -109,6 +111,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         Character = await characters.GetAsync(target.Id, ct);
         Story = await characters.StoryHistoryAsync(target.Id, ct);
         Instances = await world.HistoryAsync(target.Id, 50, withSpectating: true, ct);
+        Reports = await reports.AboutAsync(target.Id, HttpContext.WebSession()!.AccountId, ct); // (his own: without the reporters)
         Unlocks = (await achievements.ListAsync(target.Id, ct))
             .SelectMany(a => a.Unlocks.Select(u => (a, u)))
             .OrderByDescending(x => x.u.UnlockedAt)

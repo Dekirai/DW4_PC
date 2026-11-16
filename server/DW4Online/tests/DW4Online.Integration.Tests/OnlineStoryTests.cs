@@ -218,4 +218,34 @@ public class OnlineStoryTests
         Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/1", null)).StatusCode);
         Assert.Contains($"story {id}/1", host.World.Notes);
     }
+
+    /// <summary>
+    /// Round I1b's integration (W28 of the prompt lane's run r11): two accounts entering the world at once made
+    /// <c>KeepSessionStartAsync</c> a MariaDB deadlock victim (the history writes of two accounts: each one's DELETE of its
+    /// thinned-out rows scans the other's new row), nothing retried it, so the session start was never kept and a later
+    /// restore of that revision answered 404. A deadlock victim runs again now (as the online character's and the cloud
+    /// save's writes do). 24 accounts keep their session starts at once, four times, while half of them save a newer revision.
+    /// </summary>
+    [DbFact]
+    public async Task Session_starts_of_many_accounts_at_once_are_all_kept()
+    {
+        await using var host = await TestHost.StartAsync();
+        var stories = host.App.Services.GetRequiredService<OnlineStoryService>();
+        var ids = new List<long>();
+        for (var i = 0; i < 24; ++i) ids.Add((await host.RegisterAsync("Starter" + i)).Item3);
+        for (var round = 1; round <= 4; ++round)
+        {
+            foreach (var id in ids) Assert.True(await stories.SaveAsync(id, new RoomStoryData { Revision = (uint)(round * 1000) }));
+            // (Every session start at once, and beside them the next revision of every other account's story: rooms saving.)
+            await Task.WhenAll(ids.SelectMany((id, k) => new[]
+            {
+                Task.Run(() => stories.KeepSessionStartAsync(id)),
+                Task.Run(async () => { if (k % 2 == 1) await stories.SaveAsync(id, new RoomStoryData { Revision = (uint)(round * 1000 + 500) }); }),
+            }));
+        }
+        await using var sql = await host.SqlAsync();
+        foreach (var id in ids)
+            Assert.True(await sql.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM online_story_history WHERE account_id = @id AND reason = 'session'", new { id }) == 4);
+    }
 }

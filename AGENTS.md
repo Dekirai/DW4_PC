@@ -7,7 +7,7 @@ Do not use GitHub Actions. The owner disabled hosted workflows to avoid consumin
 the account's Actions minutes. Build, test and package locally. Do not add,
 restore, enable or dispatch hosted workflows unless the owner explicitly changes
 this instruction. Ordinary source commits and pushes remain authorized.
-Read README.md, docs/ARCHITECTURE.md and docs/ROADMAP.md before extending scope.
+Read README.md, docs/DEVELOPMENT.md, docs/ARCHITECTURE.md and docs/ROADMAP.md before extending scope.
 Keep the provisional walking preview distinct from the original game baseline;
 do not claim stored preferences implement gameplay. Continue toward the next
 acceptance gate in the roadmap.

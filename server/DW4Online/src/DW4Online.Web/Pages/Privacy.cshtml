@@ -107,6 +107,18 @@
                     your name)</td>
             </tr>
             <tr>
+                <td>Reports: who reported whom, the reason picked from a fixed list (griefing, cheating, name, other; no
+                    free text), whether it came from the game or the website, the instance both played in (when there was
+                    one), when it came, and which moderator or admin handled it and when. The relay's technical log notes
+                    each report from the game with both account numbers</td>
+                <td>Moderation: protecting players against abuse (Art. 6(1)(f), legitimate interest). Moderators and
+                    admins see the reports with the reporter's name; the reported player never sees who reported him
+                    (a staff member does not see the reporter of a report about himself either)</td>
+                <td>Until @Model.ReportDoneDays days after a moderator handled it; an open report until it is handled.
+                    Your own reports go with your account at once; reports about you keep only the anonymous placeholder
+                    of your account. The technical log's note: 30 days</td>
+            </tr>
+            <tr>
                 <td>Rooms (before the online world): room name, who was a member and when</td>
                 <td>The record of earlier achievements (Art. 6(1)(b))</td>
                 <td>The room record stays until a later update removes rooms; your membership rows go with your account</td>
@@ -148,7 +160,9 @@ else
     name. Signed-in players see the instances they may join: the host's user name, where the host is, how many play
     in it, its difficulty and settings. Private instances are listed to nobody, Friends-only ones only to the host's
     friends, and nothing at all is shown between two players when either blocks the other. In the game, players of the
-    same instance see each other's user names, and players nearby see your figure in the lobby.</p>
+    same instance see each other's user names, and players nearby see your figure in the lobby. When a player leaves
+    the lobby for an area, the game's list of that area's instances shows him, for every instance he may see by the
+    rules above, the host's user name and the user names, levels and Digimon of up to four players in it.</p>
 <p>Where you play: your friends see whether you are online, where you play (only "Playing" in a Private instance) and
     when you were last online, unless you set "who sees where you play" to nobody in your online preferences. Nobody
     else sees it. "Recently played with" shows you the players you shared an instance with in the last 30 days, and
@@ -178,9 +192,10 @@ else
 <p>You can delete your account at any time in your <a href="~/account">account settings</a>, or ask the operator to do
     it. Deleting removes your online character, your online story and its revisions, cloud save, achievements,
     statistics, best times, friendships, friend requests and blocks (yours and those about you), your online preferences,
-    your instance memberships, sessions and e-mail address at once, and ends an instance you host. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
+    your instance memberships, the reports you sent, sessions and e-mail address at once, and ends an instance you host.
+    Reports about you stay with the anonymous placeholder until their period above ends. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
     security log keeps its entries without your IP address until they expire after 180 days (failed logins typed with
     your user name lose its hash and their IP address too). Database backups roll over
     within about two months.</p>
 
-<p class="muted small">Last updated: 6 November 2026.</p>
+<p class="muted small">Last updated: 14 November 2026.</p>

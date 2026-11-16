@@ -1,0 +1,13 @@
+# W2, b (k2): onto the lobby gate's mat while a's instance runs in stag0101, A on the gate's first line (stag0101): the
+# gate form holds the press and opens the prompt (a's row); B (DW4_ONLINE_AUTOCHOICE=back) goes to the game, whose own
+# cancel closes the destination menu. b stands at the gate with control in its lobby: no BARRIER, nothing loaded.
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 until onme:mate00
+gate mate00 0 until frames>=150
+shot w2_gate_prompt
+idle until frames>=300
+log b answered the prompt
+idle until frames>=900 fail stage=stag0101
+idle until stage=stagml11,control
+log b stands at the gate

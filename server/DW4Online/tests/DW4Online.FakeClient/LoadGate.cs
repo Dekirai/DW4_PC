@@ -39,12 +39,24 @@ public static class LoadGate
     public static int Protocol { get; set; } = Wire.WorldProtocol;
     public const ulong Context = 5;
 
+    /// <summary>
+    /// Round I1b: the hubs run the arrival prompt as the relay ships it (World:ArrivalPrompt on, round I1b's review: the gate measured
+    /// I1a's automatic join only). A joiner goes the gate form's way (PLAN, OPTIONS, CHOICE, the BARRIER naming the plan) or, every
+    /// second join of the *prompt* cell, the loading-screen form's (the BARRIER held, OPTIONS, CHOICE). `loadgate --no-prompt` turns
+    /// it off (I1a's automatic join) for a comparison.
+    /// </summary>
+    public static bool ArrivalPrompt { get; set; } = true;
+
+    private static WorldHubOptions World() => new() { ArrivalPrompt = ArrivalPrompt };
+
     private sealed class Peer : IHubPeer
     {
         public long Frames, Bytes;
         public volatile bool StateDone;
         public volatile int JoinReqs;
         public volatile BarrierOkMsg? LastOk;
+        /// <summary>The last OPTIONS of a PLAN (plan != 0) and of a held barrier (plan 0).</summary>
+        public volatile OptionsMsg? LastPlanOptions, LastHeldOptions;
 
         public void Send(byte[] frame, bool bulk = false)
         {
@@ -57,6 +69,12 @@ public static class LoadGate
             }
             else if (frame[0] == Msg.JoinReq) Interlocked.Increment(ref JoinReqs);
             else if (frame[0] == Msg.BarrierOk) LastOk = BarrierOkMsg.Parse(frame.AsSpan(Wire.HeaderBytes));
+            else if (frame[0] == Msg.Options)
+            {
+                var o = OptionsMsg.Parse(frame.AsSpan(Wire.HeaderBytes));
+                if (o.Plan != 0) LastPlanOptions = o;
+                else LastHeldOptions = o;
+            }
         }
 
         public void Close(CloseReason reason, string text)
@@ -98,10 +116,15 @@ public static class LoadGate
     /// A cell of the gate. SealWaitMs above 0: the sealing thread waits that long for the lock instead of trying once and
     /// coming back a millisecond later (RelayHub.SealRoom's TryEnter). GroupsOfThree: that many of the sealed groups have
     /// three members (a free slot for the joins). JoinsPerMinute: joins of lobby members into those groups, each with its
-    /// state build, READY and JOIN, from the measured window's first second.
+    /// state build, READY and JOIN, from the measured window's first second (round I1b: through the gate form's PLAN and CHOICE).
+    /// PlansPerSecond (round I1b): lobby members at the gate's menu send PLAN for a field of the groups of three at that rate; each
+    /// overlay stays open PlanOpenSeconds (the relay refreshes it on a change, at most once a second) and is closed with CHOICE back.
+    /// HeldJoins: every second join goes the loading-screen form's way (a lost PLAN: the BARRIER held, OPTIONS, CHOICE after half a
+    /// second).
     /// </summary>
     public sealed record Cell(string Name, int Groups, int Solo, int Lobby, int PresenceStages, double BarriersPerSecond, double BrowsePerSecond,
-        bool Select, double StormSeconds, double SealWaitMs = 0, int GroupsOfThree = 0, double JoinsPerMinute = 0, double MinSeconds = 0)
+        bool Select, double StormSeconds, double SealWaitMs = 0, int GroupsOfThree = 0, double JoinsPerMinute = 0, double MinSeconds = 0,
+        double PlansPerSecond = 0, double PlanOpenSeconds = 0, bool HeldJoins = false)
     {
         public int Members => Groups * 4 - GroupsOfThree + Solo + Lobby;
     }
@@ -118,6 +141,9 @@ public static class LoadGate
         new("storm-wait", 30, 20, 60, 1, 1, 10, false, 10, 2),
         // 19.17.4's joins cell: the base load with 15 of the 30 groups at three, ten joins a minute into them (60 s: ten joins).
         new("joins", 30, 20, 75, 1, 1, 10, false, 0, 0, 15, 10, 60),
+        // Round I1b's prompt (19.7): the joins cell with five PLANs a second from the lobby's gate (each overlay open three seconds:
+        // about 15 open at once, refreshed by the housekeeping) and every second join through the loading-screen form.
+        new("prompt", 30, 20, 75, 1, 1, 10, false, 0, 0, 15, 10, 60, 5, 3, true),
     ];
 
     /// <summary>
@@ -188,7 +214,7 @@ public static class LoadGate
                     hub.FinishState(job);
                     lock (stateStats) stateStats.Add("finish_state", Stopwatch.GetTimestamp() - t1, t1 - t0);
                 }
-            }));
+            }), World()); // (round I1b: the prompt as shipped; the joiners answer it)
         using var wakeTimer = new HighResolutionTimer();
         hub.OnSealingStarted(wakeTimer.Wake);
         // The presence selection off the lock, as the relay runs it (M4 (c)).
@@ -464,9 +490,21 @@ public static class LoadGate
 
         // The joins (19.17.4's joins cell): a lobby member's BARRIER into a group of three's stage (the decision and the
         // state's capture under the lock), the state built off the lock and FinishState (the state thread above), READY
-        // (the JOIN stamped at a sealed tick); from then the member sends its INPUT as a sealed member.
+        // (the JOIN stamped at a sealed tick); from then the member sends its INPUT as a sealed member. Round I1b: the gate
+        // form first (PLAN, the first choosable row's CHOICE, the BARRIER naming the plan), or with HeldJoins every second join
+        // the loading-screen form (the BARRIER held for the prompt, OPTIONS, CHOICE half a second later).
         var joinStats = new Stats();
         var joins = new List<JoinRow>();
+        ushort nextPlan = 0;
+        ushort NewPlan()
+        {
+            lock (joins)
+            {
+                nextPlan = (ushort)(nextPlan >= 0xFFFE ? 1 : nextPlan + 1);
+                return nextPlan;
+            }
+        }
+        static OptionRow? FirstChoosable(OptionsMsg? o) => o?.Rows.FirstOrDefault(r => OptionStates.Choosable(r.State));
         var joiner = new Thread(() =>
         {
             if (cell.JoinsPerMinute <= 0 || threeGroups.Count == 0) return;
@@ -475,6 +513,7 @@ public static class LoadGate
             var period = (long)(60.0 / cell.JoinsPerMinute * Freq);
             var candidates = new Queue<Member>(lobbyMembers.Skip(lobbyMembers.Count / 2));
             var targets = new Queue<Member>(threeGroups);
+            var count = 0;
             while (!Volatile.Read(ref stop) && targets.Count > 0 && candidates.Count > 0)
             {
                 if (Stopwatch.GetTimestamp() < next)
@@ -485,19 +524,43 @@ public static class LoadGate
                 next += period;
                 var j = candidates.Dequeue();
                 var target = targets.Dequeue().Hub.Instance!;
+                var held = ArrivalPrompt && cell.HeldJoins && count++ % 2 == 1;
                 long t0;
                 lock (j)
                 {
                     j.Role = "joining";
                     var i = j.Hub.Instance!;
                     t0 = Stopwatch.GetTimestamp();
+                    ushort plan = 0;
+                    if (ArrivalPrompt && !held)
+                    {
+                        plan = NewPlan();
+                        Locked(j, new PlanMsg(plan, PlanPurpose.Gate, target.Stage, 0, Context, 1).Frame(), "join_plan", joinStats);
+                        if (j.Peer.LastPlanOptions is { } o && o.Plan == plan && FirstChoosable(o) is { } row)
+                            Locked(j, new ChoiceMsg(plan, 0, 0, ChoiceKind.Join, row.Wid, o.Visibility, 0, ChoiceMsg.DefaultBackPoint).Frame(), "join_choice",
+                                joinStats);
+                    }
                     lock (hub.Sync)
                     {
                         var t1 = Stopwatch.GetTimestamp();
-                        var f = new BarrierMsg(i.Id, i.Visit, 0, target.Stage, 0, i.PresentMask, i.PresentMask, Context, [2]).Frame();
+                        var f = new BarrierMsg(i.Id, i.Visit, 0, target.Stage, 0, i.PresentMask, i.PresentMask, Context, [2], 0, plan).Frame();
                         hub.Receive(j.Hub, f[0], f.AsSpan(Wire.HeaderBytes), t1);
                         joinStats.Add("join_barrier", Stopwatch.GetTimestamp() - t1, t1 - t0);
                     }
+                }
+                if (held)
+                {
+                    // The loading-screen form: the held barrier's OPTIONS, answered half a second later (a person reading it).
+                    var shown = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency;
+                    while (j.Peer.LastHeldOptions is null && Stopwatch.GetTimestamp() < shown && !Volatile.Read(ref stop)) Thread.Sleep(1);
+                    Thread.Sleep(500);
+                    if (j.Peer.LastHeldOptions is { } o)
+                        lock (j)
+                        {
+                            var row = FirstChoosable(o);
+                            Locked(j, new ChoiceMsg(0, o.Inst, o.Visit, row is null ? ChoiceKind.New : ChoiceKind.Join, row?.Wid ?? 0, o.Visibility, 0,
+                                ChoiceMsg.DefaultBackPoint).Frame(), "join_choice_held", joinStats);
+                        }
                 }
                 var deadline = Stopwatch.GetTimestamp() + 10 * Stopwatch.Frequency;
                 while (!j.Peer.StateDone && Stopwatch.GetTimestamp() < deadline && !Volatile.Read(ref stop)) Thread.Sleep(1);
@@ -535,6 +598,50 @@ public static class LoadGate
                 }
             }
         }) { IsBackground = true, Name = "joins" };
+
+        // Round I1b's gate form under load (cell "prompt"): lobby members at the gate's menu send PLAN for the fields of the groups
+        // of three at PlansPerSecond (the relay's candidates and OPTIONS under the lock); each overlay stays open PlanOpenSeconds,
+        // refreshed by the housekeeping's RefreshPlans, then CHOICE back closes it (the player's B). Never a member twice within
+        // the relay's throttle (the planners take turns).
+        var planStats = new Stats();
+        long plansSent = 0, plansWithRows = 0;
+        var planner = new Thread(() =>
+        {
+            if (!ArrivalPrompt || cell.PlansPerSecond <= 0 || threeGroups.Count == 0) return;
+            var planners = lobbyMembers.Take(lobbyMembers.Count / 2).ToList();
+            var stages = threeGroups.Select(m => m.Hub.Instance!.Stage).Distinct().ToList();
+            var open = new Queue<(Member M, ushort Plan, long CloseAt)>();
+            var next = Stopwatch.GetTimestamp();
+            var k = 0;
+            while (!Volatile.Read(ref stop))
+            {
+                var t = Stopwatch.GetTimestamp();
+                while (open.Count > 0 && open.Peek().CloseAt <= t)
+                {
+                    var (m, plan, _) = open.Dequeue();
+                    lock (m) Locked(m, new ChoiceMsg(plan, 0, 0, ChoiceKind.Back, 0, Visibility.Public, 0, ChoiceMsg.DefaultBackPoint).Frame(), "plan_back", planStats);
+                }
+                if (t >= next)
+                {
+                    next += (long)(Freq / cell.PlansPerSecond);
+                    var m = planners[k % planners.Count];
+                    var stage = stages[k % stages.Count];
+                    ++k;
+                    if (m.Hub.Instance is { Mode: InstanceMode.Hub })
+                    {
+                        var plan = NewPlan();
+                        lock (m) Locked(m, new PlanMsg(plan, PlanPurpose.Gate, stage, 0, Context, 1).Frame(), "plan", planStats);
+                        if (Measuring)
+                        {
+                            Interlocked.Increment(ref plansSent);
+                            if (m.Peer.LastPlanOptions is { } o && o.Plan == plan && o.Rows.Count > 0) Interlocked.Increment(ref plansWithRows);
+                        }
+                        open.Enqueue((m, plan, t + (long)(cell.PlanOpenSeconds * Freq)));
+                    }
+                }
+                Thread.Sleep(2);
+            }
+        }) { IsBackground = true, Name = "plans" };
 
         // The reconnect storm: every member once within StormSeconds (a router restart), from the run's third second.
         var stormStats = new Stats();
@@ -688,6 +795,7 @@ public static class LoadGate
         house.Start();
         barrierer.Start();
         joiner.Start();
+        planner.Start();
         storm.Start();
         foreach (var w in workers) w.Start();
         Thread.Sleep(TimeSpan.FromSeconds(WarmupSeconds));
@@ -715,6 +823,7 @@ public static class LoadGate
         house.Join();
         barrierer.Join();
         joiner.Join();
+        planner.Join();
         storm.Join();
         var wall = Ms(measuredTo - measuredFrom) / 1000.0;
         proc.Refresh();
@@ -740,6 +849,7 @@ public static class LoadGate
         Merge(houseStats);
         Merge(barrierStats);
         Merge(joinStats);
+        Merge(planStats);
         Merge(stormStats);
         lock (stateStats) Merge(stateStats);
         var every = all.Values.SelectMany(v => v).ToList();
@@ -791,6 +901,12 @@ public static class LoadGate
         {
             lock (joins) result["joins"] = joins.ToList();
             result["joins_done"] = joins.Count(x => x.Outcome == "joined");
+        }
+        result["arrival_prompt"] = ArrivalPrompt;
+        if (cell.PlansPerSecond > 0)
+        {
+            result["plans_sent"] = Interlocked.Read(ref plansSent);
+            result["plans_with_rows"] = Interlocked.Read(ref plansWithRows);
         }
         foreach (var (k, v) in all.OrderBy(kv => kv.Key)) result["hold_" + k] = Summary(v);
         lock (hub.Sync) hub.CloseAll(CloseReason.ServerStopping, "load gate done");
@@ -852,7 +968,7 @@ public static class LoadGate
             StateJob? job = null;
             var options = new InstanceOptions { CheckpointJoins = checkpoints, CheckpointWaitMs = 60000 };
             var hub = new RoomHub(new RoomInfo("WORLD1", Protocol, 1, 2, 4), new RelayOptions(), new SealingOptions(),
-                options, NullLogger.Instance, null, j => job = j);
+                options, NullLogger.Instance, null, j => job = j, World());
             var now = Stopwatch.GetTimestamp();
             var peers = new[] { new Peer(), new Peer() };
             var a = hub.Connect(0, 1000, "a", true, peers[0], now);
@@ -885,7 +1001,20 @@ public static class LoadGate
             Timed(a, new StateMsg(i.Id, i.Visit, ticks - 1, (byte)(StateMsg.Joinable | StateMsg.MembershipSafe | StateMsg.LoadEnded), Context, StateReason.None).Frame(), null);
             if (checkpoints) Timed(a, new StateHashMsg(i.Id, i.Visit, ticks / 2, 0xC0FFEE, 20, 1).Frame(), null);
             var bi = b.Instance!;
-            Timed(b, new BarrierMsg(bi.Id, bi.Visit, 0, "stag0101", 0, 1, 1, Context, [2]).Frame(), "barrier");
+            ushort plan = 0;
+            if (ArrivalPrompt)
+            {
+                // Round I1b: the gate form (PLAN, the CHOICE of a's row, the BARRIER naming the plan).
+                plan = 1;
+                Timed(b, new PlanMsg(plan, PlanPurpose.Gate, "stag0101", 0, Context, 1).Frame(), "plan");
+                var o = peers[1].LastPlanOptions;
+                holds["row"] = o is null || o.Rows.Count == 0 ? "none" : o.Rows[0].State.ToString();
+                // (A's row greyed, too long to catch up: New instance, as a person or AUTOCHOICE=first would answer.)
+                var row = o?.Rows.FirstOrDefault(r => OptionStates.Choosable(r.State));
+                Timed(b, new ChoiceMsg(plan, 0, 0, row is null ? ChoiceKind.New : ChoiceKind.Join, row?.Wid ?? 0, Visibility.Public, 0,
+                    ChoiceMsg.DefaultBackPoint).Frame(), "choice");
+            }
+            Timed(b, new BarrierMsg(bi.Id, bi.Visit, 0, "stag0101", 0, 1, 1, Context, [2], 0, plan).Frame(), "barrier");
             if (checkpoints)
             {
                 // The donor's answer to CHECKPOINT_ASK: 1.1 MB in 32 KB chunks.

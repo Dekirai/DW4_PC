@@ -1,5 +1,7 @@
 #include "session.hpp"
 
+#include "dw4/engine/online.hpp"
+
 #include "pad_wire.hpp"
 
 #include <algorithm>
@@ -14,6 +16,15 @@
 namespace dw4::game::online {
 
 namespace w = wire;
+
+namespace {
+// Stage folders compared as the game names them (any case).
+bool is_same_stage(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return (x >= 'A' && x <= 'Z' ? x + 32 : x) == (y >= 'A' && y <= 'Z' ? y + 32 : y);
+           });
+}
+} // namespace
 
 const char* mode_name(Mode mode) noexcept {
     switch (mode) {
@@ -240,6 +251,8 @@ void Session::lose_connection(double now) {
         close_reason_ = "The relay did not answer.";
         return;
     }
+    // (Round I1b: an open prompt answers nobody now, 19.7.4 / 19.7.5.)
+    prompt_lost(now);
     // A solo member plays on (its LOG waits); everyone else freezes.
     resume_after_lost_ = true;
     ++net_.reconnects;
@@ -369,9 +382,12 @@ void Session::poll(double now) {
     // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
     // for a co-arrival, a join or a boss choice) is an answer: the five
     // seconds count from the server's last word, and a boss choice waits.
-    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout)
+    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && !prompt_hold_ && now - parked_at_ > config_.barrier_timeout)
         barrier_fallback(now);
+    if (prompt_ && auto_answer_at_ >= 0 && now >= auto_answer_at_) auto_answer(now);
+    if (join_toast_due_ >= 0 && now >= join_toast_due_) join_toast(now);
     if (leave_wanted_) send_pending_leave();
+    tick_go(now);
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
         flush_log(now, false);
         if (state_pending_) report_state(now, false);
@@ -526,7 +542,7 @@ void Session::track_figure(double now) {
 
 bool Session::informational(w::Type type) noexcept {
     return type == w::Type::netstat || type == w::Type::presence_of || type == w::Type::presence2_of || type == w::Type::instance_info ||
-           type == w::Type::world_notice || type == w::Type::member_info ||
+           type == w::Type::world_notice || type == w::Type::member_info || type == w::Type::offer ||
            type == w::Type::room;
 }
 
@@ -543,8 +559,11 @@ void Session::handle(const w::Frame& frame, double now) {
     case w::Type::join_req: {
         const auto m = w::decode_join_req(p);
         // (Kind 2 home: the same JOIN_AT; SEALED(J) brings HOME, 19.6.5. Kind 3
-        // go is round I1b's.)
-        if (m.kind == w::JoinKind::go) break;
+        // go, round I1b: SEALED(J) brings GO, 19.30.7.)
+        if (m.kind == w::JoinKind::home && config_.test_ignore_home) {
+            trace("join_req home ignored (test hook) inst=%u visit=%u", m.inst, m.visit);
+            break;
+        }
         if (mode_ != Mode::solo || m.inst != inst_ || m.visit != visit_ || hub_ || join_at_) break;
         // 1 -> 2 (6.4): J = the current tick + d (the server suggests d);
         // delayed sampling at once, the last pad repeated for the ticks
@@ -557,9 +576,47 @@ void Session::handle(const w::Frame& frame, double now) {
         send(w::Type::join_at, w::encode(w::JoinAt{inst_, visit_, j}));
         break;
     }
-    case w::Type::barrier_ok: on_barrier_ok(w::decode_barrier_ok(p), now); break;
+    case w::Type::barrier_ok:
+#ifdef DW4_ONLINE_DEV
+        if (test_answer_cut_armed_ && mode_ == Mode::parked) {
+            // (DW4_ONLINE_TEST_CUT_AT_ANSWER: the answer is lost with the link.)
+            test_answer_cut_armed_ = false;
+            test_answer_cut_fired_ = true;
+            log("test: the link is cut as the barrier's answer comes; the answer is lost with it");
+            lose_connection(now);
+            break;
+        }
+#endif
+        on_barrier_ok(w::decode_barrier_ok(p), now);
+        break;
+    case w::Type::options: {
+        // (Round I1b, 19.18: an OPTIONS that does not decode means nothing to choose.)
+        std::optional<w::Options> m;
+        try {
+            m = w::decode_options(p);
+        } catch (const w::WireError& error) {
+            log("an OPTIONS frame did not decode (%s): nothing to choose", error.what());
+        }
+        if (!m) {
+            m.emplace();
+            m->flags = w::Options::nothing;
+            m->plan = gate_phase_ == GatePhase::waiting ? gate_plan_ : 0;
+            m->inst = inst_;
+            m->visit = visit_;
+        }
+        on_options(*m, now);
+        break;
+    }
     case w::Type::barrier_wait: {
         const auto m = w::decode_barrier_wait(p);
+        if (m.reason == w::WaitReason::choice) {
+            // (Round I1b, 19.7.5: the relay holds this barrier for the prompt; OPTIONS comes with it. The five-second rule waits.)
+            prompt_hold_ = true;
+            if (mode_ == Mode::parked) parked_at_ = now;
+            loading_.clear();
+            break;
+        }
+        prompt_hold_ = false;
         std::string names;
         for (std::size_t i = 0; i < m.names.size(); ++i) names += (i ? (i + 1 == m.names.size() ? " and " : ", ") : "") + m.names[i];
         if (names.empty()) names = "the others";
@@ -634,11 +691,15 @@ void Session::handle(const w::Frame& frame, double now) {
         for (const auto& x : m.members)
             if (x.flags & w::InstanceMember::lagging) lagging_members_.insert(x.member);
         if (m.wid != 0 && m.host) host_ = m.host;
+        // (A new instance: an earlier one's end says nothing about its members.)
+        if (!instance_ || instance_->wid != m.wid) ended_by_ = 0;
         instance_ = std::move(m);
         arrival_toast();
+        join_toast(now);
         break;
     }
     case w::Type::world_notice: on_world_notice(w::decode_world_notice(p)); break;
+    case w::Type::offer: on_offer(w::decode_offer(p), now); break;
     case w::Type::member_info: {
         const auto m = w::decode_member_info(p);
         if (!m.name.empty()) names_[m.member] = m.name;
@@ -661,6 +722,21 @@ void Session::handle(const w::Frame& frame, double now) {
         net_.suggested_delay = m.delay;
         const auto ms = std::uint64_t(clock_seconds() * 1000.0);
         send(w::Type::pong, w::encode(w::Pong{m.nonce, ms}));
+        break;
+    }
+    case w::Type::snapshot_ask: {
+        // Protocol 50 (round I1b's integration, W7e): the visit's load snapshot
+        // never came (its uploader, the lowest slot, dropped before its
+        // BARRIER_OK): this member uploads its own, the engine's stage
+        // snapshot of the same load (6.8), and is the visit's uploader now.
+        const auto m = w::decode_snapshot_ask(p);
+        if (m.inst == inst_ && m.visit == visit_ && !hub_ && inst_ != 0 && (mode_ == Mode::solo || mode_ == Mode::sealed)) {
+            uploader_slot_ = slot_;
+            const auto raw = engine_.snapshot_bytes(false);
+            for (const auto& c : w::make_chunks(inst_, visit_, raw)) send(w::Type::snapshot, w::encode(c));
+            trace("snapshot asked inst=%u visit=%u bytes=%zu", inst_, visit_, raw.size());
+            log("snapshot: the relay asked for the visit's load snapshot (its uploader left): %zu bytes sent", raw.size());
+        }
         break;
     }
     case w::Type::checkpoint_ask: {
@@ -913,14 +989,22 @@ void Session::take_decision(const w::BarrierOk& ok) {
     if (ok.notice != w::Notice::none) {
         std::string names;
         for (std::size_t i = 0; i < ok.names.size(); ++i) names += (i ? (i + 1 == ok.names.size() ? " and " : ", ") : "") + ok.names[i];
-        if (names.empty()) names = "Your friends";
+        // (Without names: "the group", never "Your friends is ..."; round I1b's
+        // integration review, W7e's fallback.)
+        const bool named = !names.empty();
+        const bool many = ok.names.size() > 1;
         switch (ok.notice) {
-        case w::Notice::other_context: notice(names + (ok.names.size() > 1 ? " are" : " is") + " on another quest; you play this stage on your own."); break;
-        case w::Notice::full: notice(names + "'s group is full; you play this stage on your own."); break;
-        case w::Notice::too_long: notice(names + (ok.names.size() > 1 ? " have" : " has") + " been there too long to catch up; you play this stage on your own."); break;
+        case w::Notice::other_context:
+            notice((named ? names + (many ? " are" : " is") : std::string("The group is")) + " on another quest; you play this stage on your own.");
+            break;
+        case w::Notice::full: notice((named ? names + "'s group" : std::string("The group")) + " is full; you play this stage on your own."); break;
+        case w::Notice::too_long:
+            notice((named ? names + (many ? " have" : " has") : std::string("The group has")) +
+                   " been there too long to catch up; you play this stage on your own.");
+            break;
         case w::Notice::hold_expired: notice("The scene did not end in time; you play this stage on your own."); break;
         case w::Notice::went_alone: notice("You went alone."); break;
-        case w::Notice::join_failed: notice("Joining " + names + " failed; you play this stage on your own."); break;
+        case w::Notice::join_failed: notice("Joining " + (named ? names : std::string("the group")) + " failed; you play this stage on your own."); break;
         default: break;
         }
     }
@@ -946,11 +1030,23 @@ void Session::arrival_toast() {
     for (const auto& m : instance_->members)
         if (m.member == host_) host_stage = m.stage;
     const std::string where = host_stage.empty() ? std::string() : " " + host + " is in " + stage_title(host_stage) + ".";
+    // (Round I1b, 19.5.3: a row the player chose in the prompt: the guest's
+    // toast, and where the host is when he is elsewhere; I1a's "You joined"
+    // stays for an arrival nobody asked, the relay's choice.)
+    const bool chosen = chosen_join_;
+    chosen_join_ = false;
+    // ({MENU}: the F1 menu's button as the device in use shows it, View /
+    // Back / Share / Minus or F1; round I1b's integration review.)
     switch (arrival) {
-    case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + "). View: Online menu"); break;
-    case w::Arrival::auto_join: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
+    case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + ").  {MENU} Online menu"); break;
+    case w::Arrival::auto_join:
+        if (!chosen) notice("You joined " + host + "'s instance." + where + "  Leave: {MENU} Online menu");
+        break;
     case w::Arrival::co_arrival: notice("You arrived together with " + host + ": you're a guest in " + host + "'s story."); break;
-    case w::Arrival::guest_new: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
+    case w::Arrival::guest_new:
+        if (!chosen) notice("You joined " + host + "'s instance." + where + "  Leave: {MENU} Online menu");
+        else if (!where.empty()) notice(where.substr(1));
+        break;
     default: return;
     }
     // (The co-arrival's toast names the guest's story already.)
@@ -967,18 +1063,30 @@ void Session::on_world_notice(const w::WorldNotice& m) {
         if (m.member != member_id_) notice(name + " joined.");
         break;
     case w::NoticeKind::left:
-        if (m.member != member_id_) notice(name + " left.");
+        // (The host's leave ended the instance: "Kim left. The instance ends."
+        // said it already; round I1b's integration review.)
+        if (m.member != member_id_ && m.member != ended_by_) notice(name + " left.");
         remote_.erase(m.member);
         tracks_.forget(m.member);
         lagging_members_.erase(m.member);
         break;
     case w::NoticeKind::went_to:
-        if (m.member != member_id_ && !m.text.empty()) notice(name + " went to " + stage_title(m.text) + ".");
+        // (With the floor, as the go-along texts: "Kim went to Sand Labyrinth
+        // B2."; round I1b's integration review.)
+        if (m.member != member_id_ && !m.text.empty()) notice(name + " went to " + (config_.floor_name ? config_.floor_name(m.text) : stage_title(m.text)) + ".");
+        break;
+    case w::NoticeKind::apart:
+        // (Round I1b's integration: the stage group's own LEAVE toast went;
+        // a member taken out by lag or a split barrier stays in the instance.)
+        if (m.member != member_id_) notice(name + " plays apart for now.");
         break;
     case w::NoticeKind::visibility:
         notice(name + " made the instance " + visibility_name(w::Visibility(std::min<std::uint32_t>(m.argument, 2))) + ".");
         break;
-    case w::NoticeKind::removed: notice("You were removed from " + host_name() + "'s instance."); break;
+    case w::NoticeKind::removed:
+        // (The notice names the host; it comes before INSTANCE_INFO's wid 0.)
+        notice("You were removed from " + (name.empty() ? host_name() : name) + "'s instance.");
+        break;
     case w::NoticeKind::host_away:
         // (A running line with its countdown, overlay().status; the relay
         // repeats the notice every few seconds with the seconds left.)
@@ -991,6 +1099,7 @@ void Session::on_world_notice(const w::WorldNotice& m) {
         break;
     case w::NoticeKind::ended:
         host_away_until_ = -1;
+        ended_by_ = m.member;
         // 19.6.10: an engine playing on apart from its instance after a
         // reconnect (no stage group of the instance holds it, so no HOME
         // comes for it) takes the home departure itself; its next barrier
@@ -1014,7 +1123,17 @@ void Session::on_world_notice(const w::WorldNotice& m) {
     case w::NoticeKind::lag_over: lagging_members_.erase(m.member); break;
     case w::NoticeKind::shared_progress: notice("Shared story progress saved to your story."); break;
     case w::NoticeKind::restart_in: notice("Server restart in " + std::to_string(m.argument) + " s."); break;
-    default: break; // kinds of later rounds (friends, party, go along)
+    case w::NoticeKind::report:
+        // (Round I1b: the answer to REPORT; 19.5.6's "Report sent. Thank you.")
+        switch (w::ReportResult(m.argument)) {
+        case w::ReportResult::sent: notice("Report sent. Thank you."); break;
+        case w::ReportResult::limit: notice("You can't send more reports today."); break;
+        case w::ReportResult::not_available: notice((name.empty() ? std::string("This player") : name) + " is not available."); break;
+        default: notice("Couldn't send the report. Try again later."); break;
+        }
+        break;
+    case w::NoticeKind::go_refused: on_go_refused(m); break;
+    default: break; // kinds of later rounds (friends, party)
     }
 }
 
@@ -1054,6 +1173,47 @@ void Session::forget_foreign_visit() {
 bool Session::set_visibility(w::Visibility visibility) {
     if (wid_ == 0 || !connected()) return false;
     send(w::Type::instance_op, w::encode(w::InstanceOp{w::InstanceOpKind::visibility, std::uint32_t(visibility)}));
+    return true;
+}
+
+std::uint32_t Session::member_by_name(std::string_view name) const {
+    auto lower = [](std::string_view s) {
+        std::string out(s);
+        for (auto& c : out) c = char(std::tolower(static_cast<unsigned char>(c)));
+        return out;
+    };
+    const auto wanted = lower(name);
+    for (const auto& [id, n] : names_)
+        if (lower(n) == wanted) return id;
+    return kNoMember;
+}
+
+bool Session::may_remove() const {
+    if (wid_ == 0 || !instance_ || instance_->wid != wid_) return false;
+    return host_ == member_id_ || instance_->role == w::Role::staff;
+}
+
+bool Session::remove_member(std::uint32_t member) {
+    if (!connected() || !may_remove() || member == member_id_ || member == host_ || member == kNoMember) return false;
+    // (Only a member the instance lists: an unknown id would reach the relay for nothing.)
+    if (std::none_of(instance_->members.begin(), instance_->members.end(), [&](const w::InstanceMember& m) { return m.member == member; }))
+        return false;
+    send(w::Type::instance_op, w::encode(w::InstanceOp{w::InstanceOpKind::remove, member}));
+    trace("remove member=%u wid=%u", member, wid_);
+    log("remove %s (%u) from instance %u", member_name(member).c_str(), member, wid_);
+    return true;
+}
+
+bool Session::report(std::uint32_t member, w::ReportReason reason) {
+    if (!connected() || member == member_id_ || member == kNoMember) return false;
+    // (The instance both share: this engine's when the reported member is in it now.)
+    std::uint32_t wid = 0;
+    if (instance_ && instance_->wid != 0)
+        for (const auto& m : instance_->members)
+            if (m.member == member) wid = instance_->wid;
+    send(w::Type::report, w::encode(w::Report{member, reason, wid}));
+    trace("report member=%u reason=%u wid=%u", member, unsigned(reason), wid);
+    log("report %s (%u), reason %u", member_name(member).c_str(), member, unsigned(reason));
     return true;
 }
 
@@ -1120,17 +1280,39 @@ bool Session::apply_events(bool replaying) {
     // let the remaining member lead alone at its tick, or nobody seals the
     // ticks it waits for; S19b on real game clients).
     bool held = false;
+    // Round I1b (19.30.7): the GO events of this step, applied together (one
+    // Engine::online_go per target) before the next membership event and at
+    // the end.
+    std::vector<w::Event> gos;
     for (auto it = events_.begin(); it != events_.end() && it->tick <= tick_;) {
         const auto& e = it->event;
         if (e.kind == w::EventKind::leave && e.slot == slot_ && !replaying && mode_ == Mode::sealed) {
             // The server took this member out (6.9, 6.10: lag, a resync too
             // long, too many resyncs, a missing hash): it plays on alone.
+            if (!gos.empty()) apply_gos(gos, replaying);
             go_alone();
             return true;
         }
-        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent || e.kind == w::EventKind::home) {
+        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent || e.kind == w::EventKind::home ||
+            e.kind == w::EventKind::go) {
             w::NotJoinable reason{};
+            // (The GOs before a membership event apply first, and the event is
+            // checked against the engine after them, 6.5: their fork and
+            // departure make the step unsafe, and the event waits; before, it
+            // was applied right after them, in the leavers' copy too.)
+            if (!held && e.kind != w::EventKind::go && !gos.empty()) apply_gos(gos, replaying);
             held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
+            if (held && e.kind == w::EventKind::go && tick_ >= it->tick + engine::kGoExpiryTicks) {
+                // A GO not applied within 300 ticks after its tick expires on
+                // every engine alike; the membership events behind it go on
+                // (they wait for their own step).
+                trace("go expired inst=%u visit=%u tick=%u slot=%d stamped=%u%s", inst_, visit_, tick_, int(e.slot), it->tick,
+                      replaying ? " (replay)" : "");
+                if (e.slot == slot_) go_expired(replaying);
+                it = events_.erase(it);
+                changed = true;
+                continue;
+            }
             if (held) {
                 // 6.5: a LEAVE whose tick came plays the neutral, connected
                 // pad from here, and the leader's pad answers its prompts
@@ -1160,15 +1342,19 @@ bool Session::apply_events(bool replaying) {
                   replaying ? " (replay)" : "");
             if (!replaying) log("join: slot %d joined at tick %u (present %x)", slot, tick_, unsigned(present_));
             if (!replaying) trace_dump_until_ = tick_ + 900; // (DW4_TRACE_TICKSTATE_EVERY, development builds)
-            if (!replaying && slot != slot_) notice(slot_name(slot) + " joined");
+            // (No toast: the relay's WORLD_NOTICE says "<name> joined." when a
+            // member takes a seat, "<name> went to <stage>." when one comes from
+            // another stage of the instance (19.5.6). The stage group's own
+            // "<name> joined" was a rooms leftover: the host got both, or "A
+            // player joined" for a member INSTANCE_INFO no longer listed; round
+            // I1b's integration.)
             if (slot == slot_ && mode_ == Mode::observing) become_member(now_);
             break;
         case w::EventKind::leave:
             trace("leave applied inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot);
             if (!replaying) log("leave: slot %d left at tick %u", slot, tick_);
-            // (Only for a member that was there: a joiner whose carry every
-            // engine dropped never was.)
-            if (!replaying && slot != slot_ && (present_ & (1u << slot))) notice(slot_name(slot) + " left");
+            // (No toast, as for a JOIN: WORLD_NOTICE's "<name> left." or
+            // "<name> went to <stage>." tells it, 19.5.6.)
             engine_.remove_player(slot);
             present_ = std::uint8_t(present_ & ~(1u << slot));
             slot_members_[std::size_t(slot)] = kNoMember;
@@ -1184,7 +1370,18 @@ bool Session::apply_events(bool replaying) {
             if (!replaying && own) log("home: this member takes the home departure at tick %u (reason %u)", tick_, unsigned(e.reason));
             break;
         }
-        case w::EventKind::go: break; // round I1b
+        case w::EventKind::go: gos.push_back(e); break;
+        case w::EventKind::test:
+            // Round I1b's scenario hooks: only development builds apply them
+            // (a relay stamps them only with its test options on), in their
+            // order with the GOs of the step.
+#ifdef DW4_ONLINE_DEV
+            if (!gos.empty()) apply_gos(gos, replaying);
+            trace("test hook applied inst=%u visit=%u tick=%u slot=%d hook=%u argument=%d%s", inst_, visit_, tick_, slot, unsigned(e.hook),
+                  int(e.argument), replaying ? " (replay)" : "");
+            engine_.test_hook(slot, w::TestHook(e.hook), e.argument);
+#endif
+            break;
         // LEAD_FROM and DELAY are for the member that plays now: never from a
         // replayed history or while observing (a joiner before its JOIN). A
         // resync replays the member's own instance: a LEAD_FROM there that
@@ -1211,6 +1408,7 @@ bool Session::apply_events(bool replaying) {
         it = events_.erase(it);
         changed = true;
     }
+    if (!gos.empty()) apply_gos(gos, replaying);
     return changed;
 }
 
@@ -1250,7 +1448,7 @@ void Session::start_sealed(const w::WirePad& pad) {
     last_tick_at_ = now_;
 }
 
-std::array<PadSample, 4> Session::before_step(const PadSample& local, double now) {
+std::array<PadSample, 4> Session::step_pads(const PadSample& local, double now) {
     now_ = now;
     const auto own = quantize_pad(local);
     std::array<PadSample, 4> pads{};
@@ -1263,7 +1461,7 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
             mode_ = Mode::solo;
             log_first_ = tick_;
             log_.clear();
-            return before_step(local, now);
+            return step_pads(local, now);
         }
         const auto it = ticks_.find(tick_);
         if (it == ticks_.end()) return last_pads_; // the host ran a step it was not given (should not happen)
@@ -1478,7 +1676,7 @@ void Session::after_step(double now) {
     // (Also from a hub instance: the lobby gate announces a field, 3.4.)
     if (const auto heading = engine_.take_heading(); heading && member) {
         send(w::Type::heading, w::encode(w::Heading{inst_, heading->stage, std::uint8_t(std::clamp(heading->point, 0, 255)),
-                                                    engine_.session_context_hash()}));
+                                                    engine_.session_context_hash(), heading->asked}));
         // (The scene and fade before its NEXTSTAGE show nowhere else: the
         // others' figure of this member does not come back at the gate.)
         depart(now);
@@ -1533,16 +1731,21 @@ void Session::report_state(double now, bool force) {
     // from the first joinable STATE, a visit that ran into a boss right after
     // its load took the boss kill's context as its entry, and an arrival with
     // the old context joined after the kill.)
+    // (Round I1b, 19.18: no present slot alive, from the engine's alive mask:
+    // the go-along wait and the join holds read it, no rescue joins.)
+    const std::uint8_t present = engine_.present_mask();
+    const bool nobody_alive = present != 0 && (engine_.alive_mask() & present) == 0;
     const std::uint8_t flags = std::uint8_t((joinable ? w::state_flag::joinable : 0) | (engine_.membership_safe() ? w::state_flag::membership_safe : 0) |
                                             (engine_.boss_lock() ? w::state_flag::boss_lock : 0) |
-                                            (load_end_ ? w::state_flag::load_ended : 0));
+                                            (load_end_ ? w::state_flag::load_ended : 0) | (nobody_alive ? w::state_flag::no_living : 0));
     const std::uint64_t context = engine_.session_context_hash();
     if (flags == state_flags_ && context == state_context_ && !force) {
         state_pending_ = false;
         return;
     }
     // The boss lock, the load end and the context at once, the rest at most once a second.
-    const bool urgent = force || context != state_context_ || ((flags ^ state_flags_) & (w::state_flag::boss_lock | w::state_flag::load_ended));
+    const bool urgent = force || context != state_context_ ||
+                        ((flags ^ state_flags_) & (w::state_flag::boss_lock | w::state_flag::load_ended | w::state_flag::no_living));
     if (!urgent && now - state_sent_at_ < 1.0) {
         state_pending_ = true;
         return;
@@ -1585,9 +1788,18 @@ void Session::park(double now) {
     b.context = engine_.session_context_hash();
     b.carry = own_carry_;
     b.own = config_.own_settings;
-    // DW4_ONLINE_AUTOCHOICE=new (development builds): a departure from home asks for a new instance.
-    if (config_.plan_new_instance && is_hub_stage(engine_.stage()) && !is_hub_stage(b.stage)) b.plan = w::Barrier::plan_new_instance;
+    // Round I1b: a departure from home names the gate form's plan (its CHOICE
+    // went before the press; 0: no answer came, the loading-screen form).
+    // DW4_ONLINE_AUTOCHOICE=new (development builds) without a plan: a
+    // departure from home asks for a new instance.
+    const bool from_home = is_hub_stage(engine_.stage()) && !is_hub_stage(b.stage);
+    if (from_home && departure_plan_ != 0) b.plan = departure_plan_;
+    else if (config_.plan_new_instance && from_home) b.plan = w::Barrier::plan_new_instance;
+    departure_plan_ = 0;
+    if (!from_home) chosen_join_ = false;
+    prompt_hold_ = false;
     send(w::Type::barrier, w::encode(b));
+    trace("barrier to=%s point=%u plan=%u inst=%u visit=%u tick=%u", b.stage.c_str(), unsigned(b.point), unsigned(b.plan), b.inst, b.visit, b.tick);
     ticks_.clear(); // ticks sealed after B are discarded
     events_.clear();
     join_at_.reset();
@@ -1596,6 +1808,14 @@ void Session::park(double now) {
     previous_inst_.reset();
     decision_.reset();
     loading_.clear();
+    // (19.5.3: "Joining Rin..." while the gate's departure to a chosen row with players here loads.)
+    if (from_home && chosen_join_ && chosen_here_ && !chosen_host_.empty()) loading_ = "Joining " + chosen_host_ + "...";
+    // (Round I1b: the GO's departure: "Joining Kim...", 19.30.6.)
+    go_parked_at_ = -1;
+    if (go_state_ == GoState::going) {
+        loading_ = "Joining " + go_first_name(find_go_offer(go_offer_)) + "...";
+        go_parked_at_ = now;
+    }
     boss_choice_ = false;
     parked_at_ = now;
     mode_ = Mode::parked;
@@ -1690,7 +1910,27 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
         take_decision(ok);
         loading_.clear();
         boss_choice_ = false;
+        prompt_hold_ = false;
+        if (prompt_ && prompt_->form == PromptForm::loading) close_prompt("answered");
         mode_ = Mode::transition;
+        if (go_state_ == GoState::going) {
+            // The GO's barrier is decided (a JOIN at the entrance, or a new
+            // stage group there when nobody of the instance is left: "Kim
+            // went on to B2." while the offer is still open deeper, else
+            // "Kim left B1 before you arrived."; a decision with its own
+            // notice, another quest there, says only that).
+            if (ok.decision == w::Decision::new_instance && ok.wid != 0 && ok.notice == w::Notice::none) {
+                const auto floor = [&](const std::string& stage) { return config_.floor_name ? config_.floor_name(stage) : stage_title(stage); };
+                const std::string name = go_first_name(find_go_offer(go_offer_));
+                if (!go_offer_stage_.empty() && go_offer_stage_ != ok.stage) notice(name + " went on to " + floor(go_offer_stage_) + ".");
+                else notice(name + " left " + floor(ok.stage) + " before you arrived.");
+            }
+            go_state_ = GoState::none;
+            go_offer_ = 0;
+            go_offer_stage_.clear();
+        }
+        go_parked_at_ = -1;
+        go_back_asked_ = false;
         return;
     }
     if (!engine_.supports_barriers() && mode_ == Mode::solo && ok.inst == inst_ && ok.visit + 1 == visit_) {
@@ -2076,19 +2316,38 @@ void Session::become_member(double now) {
     // off the raster: a report the relay never completes, 5-10 ms in the
     // moment of the join).
     next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
-    // Who is there: the own instance's members in this stage group
-    // (INSTANCE_INFO; a JOIN names no member), else the slots' known names.
+    // Who is there: the toast waits for INSTANCE_INFO to name this stage
+    // group (the relay sends it at the JOIN), two seconds at most.
+    join_toast_due_ = now + 2.0;
+    join_toast(now);
+}
+
+void Session::join_toast(double now) {
+    if (join_toast_due_ < 0) return;
+    // The own instance's members in this stage group (INSTANCE_INFO's flag
+    // 16; a JOIN names no member), once INSTANCE_INFO has this member at the
+    // engine's stage: before, it may still describe the stage group it came
+    // from.
     std::vector<std::string> names;
-    if (instance_)
+    bool current = false;
+    if (instance_) {
+        const std::string stage = engine_.stage();
         for (const auto& m : instance_->members)
-            if ((m.flags & w::InstanceMember::same_group) && m.member != member_id_) names.push_back(member_name(m.member));
+            if (m.member == member_id_ && is_same_stage(m.stage, stage)) current = true;
+        if (current)
+            for (const auto& m : instance_->members)
+                if ((m.flags & w::InstanceMember::same_group) && m.member != member_id_) names.push_back(member_name(m.member));
+    }
+    if (names.empty() && now < join_toast_due_) return;
+    join_toast_due_ = -1;
     if (names.empty()) {
-        const int other = lowest(std::uint8_t(present_ & ~(1u << slot_)));
-        if (other >= 0 && slot_members_[std::size_t(other)] != kNoMember) names.push_back(slot_name(other));
+        // (No INSTANCE_INFO in time: the slots' known names.)
+        for (int s = 0; s < 4; ++s)
+            if (s != slot_ && (present_ & (1u << s)) && slot_members_[std::size_t(s)] != kNoMember) names.push_back(slot_name(s));
     }
     std::string list;
     for (std::size_t i = 0; i < names.size(); ++i) list += (i ? (i + 1 == names.size() ? " and " : ", ") : "") + names[i];
-    notice(list.empty() ? std::string("You joined the group") : "You joined " + list);
+    notice(list.empty() ? std::string("You joined the group.") : "You joined " + list + ".");
 }
 
 // ---- choices and presentation
@@ -2274,6 +2533,14 @@ Overlay Session::overlay(double now) const {
         o.lagging[std::size_t(s)] = (present_ & (1u << s)) && slot_members_[std::size_t(s)] != kNoMember &&
                                     lagging_members_.contains(slot_members_[std::size_t(s)]);
     o.slow_uplink = lagging_members_.contains(member_id_);
+    // Round I1b (19.30.7): a GO's barrier the relay holds for the target's
+    // floor: after 10 s "Waiting for Kim's floor..." with B: Back to the lobby.
+    if (mode_ == Mode::parked && go_parked_at_ >= 0 && now - go_parked_at_ > 10.0) {
+        o.loading = "Waiting for " + go_first_name(nullptr) + "'s floor...";
+        o.go_back = true;
+        // (The game's A / B as the controller's pictures: the line goes through prompt_text; round I1b's integration.)
+        o.go_back_line = go_back_asked_ ? "End the instance for everyone?   {A} Yes   {B} No" : "{B} Back to the lobby";
+    }
     if (host_away_until_ >= 0 && wid_ != 0) {
         const int left = int(std::ceil(std::max(0.0, host_away_until_ - now)));
         o.status = host_away_name_ + " lost the connection. Waiting for " + host_away_name_ + "... " + std::to_string(left) + " s";

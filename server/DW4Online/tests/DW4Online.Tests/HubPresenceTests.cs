@@ -23,7 +23,7 @@ public partial class HubLogicTests
     {
         foreach (var n in names) h.Send(n, Presence2(stage).Frame());
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public partial class HubLogicTests
         h.Send("a", Presence2("stagML11").Frame());
         h.Send("b", Presence("stagml11").Frame());
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         h.Send("a", Presence2("stagML11", x: 12).Frame());
         var toB = h.P("b").All(Msg.PresenceOut, PresenceOutMsg.Parse);
         Assert.Equal(12f, toB.Last().Presence.X);
@@ -156,7 +156,7 @@ public partial class HubLogicTests
         h.Send("a", Presence("stagML11").Frame());
         h.Send("b", Presence2("stagML11").Frame());
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         void Try(PresenceMsg m)
         {
             h.Advance(200);
@@ -232,7 +232,7 @@ public partial class HubLogicTests
         g.Send("a", Presence("stagML11").Frame());
         g.Send("b", Presence("stagML11").Frame());
         g.Advance(1100);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         g.Advance(200);
         g.Send("a", Presence("stagML12").Frame());
         Assert.Equal("stagML12", g.P("b").Last(Msg.PresenceOut, PresenceOutMsg.Parse).Presence.Stage);
@@ -273,7 +273,7 @@ public partial class HubLogicTests
         foreach (var (n, k) in names.Select((n, k) => (n, k))) h.Connect(n, k);
         for (var k = 0; k < names.Length; ++k) h.Send(names[k], Presence2("stagML11", x: k * 5).Frame());
         h.Advance(1100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         // p0 is drawn by everyone; its nearest receivers (p1..p10) get every packet, the farther ones (p11..p13) every second one.
         for (var k = 0; k < 4; ++k)
         {

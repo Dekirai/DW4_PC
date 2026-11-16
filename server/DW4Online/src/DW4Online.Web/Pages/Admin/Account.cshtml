@@ -176,6 +176,43 @@ else
     </div>
 }
 
+<h2>Reports about this player (@Model.Reports.Count)</h2>
+<p class="muted small">What other players reported about this account (the last 50); handle them on <a href="~/admin/reports">Reports</a>.</p>
+@if (Model.Reports.Count == 0)
+{
+    <p class="muted">No reports.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>#</th><th>When</th><th>Reason</th><th>By</th><th>Instance</th><th>State</th></tr></thead>
+            <tbody>
+            @foreach (var r in Model.Reports)
+            {
+                <tr>
+                    <td>@r.Id</td>
+                    <td>@Format.Date(r.CreatedAt)</td>
+                    <td>@DW4Online.Domain.Abstractions.ReportReasons.Title(r.Reason)</td>
+                    <td>
+                        @if (r.ReporterHidden)
+                        {
+                            <span class="muted">a player</span>
+                        }
+                        else
+                        {
+                            <a href="~/admin/account/@r.Reporter">@r.Reporter</a>
+                        }
+                    </td>
+                    <td>@(r.InstanceId is { } h ? r.InstanceHost is { } ih ? $"#{h} ({ih}'s, {StageNames.Of(r.InstanceStage ?? "")})" : $"#{h}" : "-")</td>
+                    <td>@(r.State == "open" ? "open" : $"done ({r.HandledByName}, {Format.Date(r.HandledAt)})")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
 <h2>Achievements (@Model.Unlocks.Count)</h2>
 @if (Model.Unlocks.Count == 0)
 {

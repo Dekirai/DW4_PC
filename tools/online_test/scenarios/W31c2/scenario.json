@@ -1,0 +1,14 @@
+{
+  "desc": "go along, races (19.30.8, W31c's second part): b's GO is stamped while a is in dng204b1; the relay's test hook World:TestGoBarrierHoldMs holds b's GO barrier 40 s, a goes back to stag0201 meanwhile (the offer closes): b lands alone in dng204b1 in a new stage group of a's instance (\"Kim left Sand Labyrinth B1 before you arrived.\"), its seat kept",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 70000,
+  "timeout": 1200,
+  "min_shared_ticks": 1500,
+  "server": {"World": {"TestGoBarrierHoldMs": 40000}},
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "seed_story": true}
+  ]
+}

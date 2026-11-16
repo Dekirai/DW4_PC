@@ -1,6 +1,10 @@
-# W11 (19.24, decision 41).
+# W11 (19.24, decision 41). a's departure from home may get the gate form (c's instance plays in Death Valley; a answers New
+# instance); its move into dng101b1 inside its own instance is never prompted: no PLAN, no OPTIONS, no held barrier for it.
 a: online-script: step .* log: a alone in its instance
 c: online-script: step .* log: c never saw a
 !relay: instance_join .*how=join
+!a: online-trace: prompt (hold|open) .*stage=dng101b1
+!a: online-trace: prompt open form=loading
+!relay: ^(plan|options|prompt_hold) .*stage=dng101b1
 !a: online-script: FAIL
 !c: online-script: FAIL

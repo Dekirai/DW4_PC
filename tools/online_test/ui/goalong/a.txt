@@ -1,0 +1,10 @@
+# Go along (UI scenario), host a: plays until b and c went along, then goes offline.
+open
+login $UI_A_NAME $UI_A_PASSWORD
+play
+wait-session
+wait-members 3 900
+sleep 420
+leave
+wait-left 60
+end

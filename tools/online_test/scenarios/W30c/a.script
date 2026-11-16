@@ -1,0 +1,12 @@
+# W30c, host a (k10): its own Dry Land instance (New instance next to c's at stag0201), then on to stag0202 (Grief
+# Wasteland), where it stays: its row is one with nobody at stag0201. (stag0202 instead of the design's dng205b1: a k10
+# character in dng205b1 died within 60 s in round I1a's runs; W30 stays in stag0202 as well.)
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+explore matz00 yes until stage=stag0202,control
+log a in stag0202
+idle until epoch>=@460
+log a done

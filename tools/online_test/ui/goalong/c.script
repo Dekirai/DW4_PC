@@ -1,0 +1,15 @@
+# Go along (UI scenario), guest c (k10, switch_pro pictures): to a's row in stag0201 through the gate form (its pad line shot), then
+# waits for a's notice; its UI script answers it (the F1 menu, A). It arrives in dng204b1 by the GO.
+campaign until stage=stagml11,control
+idle until frames>=2700
+explore mate00 until onme:mate00
+gate mate00 1 until frames>=240
+shot c01_gate_prompt
+idle until stage=stag0201,control
+log c in stag0201
+idle until notices>=1 fail stagechange
+log c sees the notice
+shot c02_notice
+idle until stage=dng204b1,control
+log c went along into dng204b1
+idle until frames>=400000

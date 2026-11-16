@@ -519,6 +519,75 @@ void run_classic(const std::filesystem::path& data, const Scenario& sc, const St
     engine.set_online(OnlineRules{});
 }
 
+// Round I1b's integration (fix-019's S22b): what a stage load keeps must be in
+// the stage snapshot. An engine plays stag0101 with its random WAITCHECK
+// minimum set (stag0101's WAITCHECK 'R' with 'S' sets 120, the original's
+// global 80535A60) and changes to stag0102; a fresh engine restores the
+// change's snapshot and replays the steps since (a classic joiner, a save
+// state, a fallback): its canonical tick state equals the straight engine's at
+// state-safe frames after the load end. Before, its minimum was 0 there.
+void stage_change_restore(const std::filesystem::path& data) {
+    const auto t0 = std::chrono::steady_clock::now();
+    Scenario sc{"stag0101", 2, {"p_agumon", "p_dorumon"}};
+    std::unique_ptr<Engine> holder;
+    Engine& engine = start(holder, data, sc);
+    std::uint64_t steps = 0;
+    while (!engine.load_end_frame() && steps < 3000) {
+        host_step(engine, sc.pads(engine.frame()));
+        ++steps;
+    }
+    check(engine.load_end_frame() != 0, "stage change restore: stag0101 reached its load end");
+    for (int i = 0; i < 200; ++i) host_step(engine, sc.pads(engine.frame()));
+    auto* actions = engine.get<ActionManager>();
+    check(actions != nullptr, "stage change restore: the action manager");
+    actions->set_random_wait_min(120.0f);
+    const auto serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+    engine.request_stage("stag0102");
+    std::vector<std::uint8_t> snapshot;
+    std::vector<std::array<PadSample, 4>> visit;
+    std::map<std::uint64_t, std::vector<std::uint8_t>> canonical;
+    std::uint64_t load_end = 0;
+    for (steps = 0; steps < 4000 && canonical.size() < 3; ++steps) {
+        const auto pads = sc.pads(engine.frame());
+        host_step(engine, pads);
+        if (snapshot.empty()) {
+            if (const auto* s = engine.stage_snapshot(); s && s->serial != serial) snapshot = engine.snapshot_bytes(SnapshotForm::raw);
+            continue;
+        }
+        visit.push_back(pads);
+        if (!load_end && engine.load_end_frame()) load_end = engine.load_end_frame();
+        if (load_end && engine.frame() >= load_end + 60 && engine.frame() % 100 == 0 && engine.state_safe())
+            canonical[engine.frame()] = engine.save_tick_state(TickForm::canonical);
+    }
+    check(!snapshot.empty() && load_end != 0 && !canonical.empty(), "stage change restore: stag0102 loaded");
+    check(decode_snapshot(snapshot).random_wait_min == 120.0f, "stage change restore: the snapshot keeps the random WAITCHECK minimum");
+    const auto straight_min = actions->random_wait_min();
+    engine.set_online(OnlineRules{});
+    holder.reset();
+
+    Engine restored(data);
+    restored.set_card_root(std::filesystem::temp_directory_path() / "dw4_tick_state_tests_cards");
+    restored.restore(decode_snapshot(snapshot));
+    if (!restored.held()) restored.traverse_scene();
+    restored.set_split_identity(-1);
+    restored.set_replay(true);
+    int compared = 0;
+    for (std::size_t at = 0; at < visit.size() && restored.frame() < canonical.rbegin()->first; ++at) {
+        host_step(restored, visit[at]);
+        if (const auto it = canonical.find(restored.frame()); it != canonical.end()) {
+            ++compared;
+            const auto mine = restored.save_tick_state(TickForm::canonical);
+            soft(mine == it->second, "stage change restore: the restored engine's tick state at " + std::to_string(it->first) +
+                                         (mine == it->second ? std::string() : " differs in " + first_differing_section(it->second, mine)));
+        }
+    }
+    soft(compared == int(canonical.size()), "stage change restore: every kept state compared");
+    soft(restored.get<ActionManager>()->random_wait_min() == straight_min, "stage change restore: the restored minimum equals the straight one");
+    restored.set_online(OnlineRules{});
+    std::cout << "stage change restore (stag0101 -> stag0102, minimum 120): " << compared << " states compared; " << ms_since(t0) / 1000.0
+              << " s\n";
+}
+
 void run(const std::filesystem::path& data, Scenario sc) {
     const auto t0 = std::chrono::steady_clock::now();
     for (auto& c : sc.stage) c = char(std::tolower(static_cast<unsigned char>(c))); // the engine's stage names
@@ -578,6 +647,7 @@ int main(int argc, char** argv) {
                 set.push_back({"stagBS01", 2, {"p_dorumon", "p_girumon"}, 3000, 61});
                 set.push_back({"dngq1b2e", 2, {"p_agumon", "p_dorumon"}, 3000, 61});
             }
+            if (argc <= 5) stage_change_restore(data);
             for (const auto& sc : set) run(data, sc);
         } else {
             std::cout << "tick state scenarios skipped (no game data: DW4_TEST_DATA)\n";

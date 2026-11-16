@@ -12,5 +12,7 @@ mat matz02 yes 2 until stage=stag0102,control or epoch>=@330
 log a arrived in stag0102
 wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11
 log a joined b there, still host
-wander 330 140 15 until frames>=1500
+# (The int-i1b test matrix: b.script waits until @300 since 0cca6307, so a stays until @330 too; with frames>=1500
+# alone a quit 35 s after its join, at about @255, the instance ended and b, still in its @300 wait, went home.)
+wander 330 140 15 until frames>=1500,epoch>=@330
 log a stayed for b

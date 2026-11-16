@@ -1,0 +1,14 @@
+{
+  "desc": "Go along with the controller (round I1b's integration review; the go lane's open UI scenario): a hosts Dry Land, b and c join it in stag0201 through the gate form (its pad line with forced prompt families: b dualsense, c switch_pro); a walks into dng204b1 alone; b opens the F1 menu with View, c with the menu, once the notice is up, and each presses A once, no direction first: the focused row goes along (before, ImGui showed the hidden cursor on that A and nothing happened); the own line stands where the notice was; both arrive in dng204b1",
+  "timeout": 1500,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true, "card": "k10", "seed_story": true, "online_script": "a.script",
+     "env": {"DW4_PROMPTS": "xbox_one"}},
+    {"name": "b", "script": "b.txt", "registered": true, "card": "k10", "seed_story": true, "online_script": "b.script", "start": 3,
+     "env": {"DW4_PROMPTS": "dualsense", "DW4_ONLINE_AUTOCHOICE": "cursor", "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "8000"},
+     "log_expect": ["^online: go along [(]offer [0-9]+[)] at frame", "^online-script: step .* log: b went along into dng204b1"]},
+    {"name": "c", "script": "c.txt", "registered": true, "card": "k10", "seed_story": true, "online_script": "c.script", "start": 6,
+     "env": {"DW4_PROMPTS": "switch_pro", "DW4_ONLINE_AUTOCHOICE": "cursor", "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "8000"},
+     "log_expect": ["^online: go along [(]offer [0-9]+[)] at frame", "^online-script: step .* log: c went along into dng204b1"]}
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "desc": "go along (19.30.5-19.30.7): a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: b and c see the notice; b answers at once (its request waits while dng204b1 loads, then its GO departure and a join at the entrance); c lets the notice run out, the offer stays on its page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c goes along and joins at B2's entrance",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 130000,
+  "timeout": 2100,
+  "min_shared_ticks": 5000,
+  "server": {
+    "World": {
+      "TestHooks": true
+    }
+  },
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k10",
+      "start": 6,
+      "seed_story": true
+    }
+  ]
+}

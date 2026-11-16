@@ -63,6 +63,14 @@ int GameEngineLink::pending_point() const {
     return snapshot ? int(snapshot->point_no) : 0;
 }
 
+std::optional<engine::DepartureChoice> GameEngineLink::pending_departure_choice() const {
+#ifdef DW4_ONLINE_ENGINE_API
+    return e().pending_departure_choice(own_slot_);
+#else
+    return std::nullopt;
+#endif
+}
+
 bool GameEngineLink::supports_barriers() const {
 #ifdef DW4_ONLINE_ENGINE_API
     return true;
@@ -141,6 +149,11 @@ bool GameEngineLink::joinable(wire::NotJoinable& reason) const {
         reason = wire::NotJoinable::boss;
         return false;
     }
+    // (Round I1b's busy test hook stands in for a shared scene.)
+    if (e().online_test_busy() > 0) {
+        reason = wire::NotJoinable::scene;
+        return false;
+    }
     if (!e().joinable()) {
         reason = wire::NotJoinable::menu;
         return false;
@@ -204,7 +217,7 @@ std::optional<SplitInfo> GameEngineLink::take_split() {
 
 std::optional<HeadingInfo> GameEngineLink::take_heading() {
 #ifdef DW4_ONLINE_ENGINE_API
-    if (auto heading = e().take_heading()) return HeadingInfo{std::move(heading->stage), heading->point};
+    if (auto heading = e().take_heading()) return HeadingInfo{std::move(heading->stage), heading->point, heading->asked};
 #endif
     return std::nullopt;
 }
@@ -473,6 +486,18 @@ void GameEngineLink::intent(int slot, wire::IntentKind kind, int argument) {
 void GameEngineLink::home(std::uint8_t mask) { e().online_home(mask); }
 
 bool GameEngineLink::depart_home() { return e().online_depart_home(); }
+
+bool GameEngineLink::go(std::uint8_t mask, const std::string& stage, int point) { return e().online_go(mask, stage, point); }
+
+void GameEngineLink::test_hook(int slot, wire::TestHook hook, int argument) {
+#ifdef DW4_ONLINE_DEV
+    e().online_test_hook(slot, int(hook), argument);
+#else
+    (void)slot, (void)hook, (void)argument;
+#endif
+}
+
+bool GameEngineLink::own_scene(int slot) const { return e().own_scene_running(slot); }
 
 void GameEngineLink::set_view_slot(int slot) {
 #ifdef DW4_ONLINE_ENGINE_API

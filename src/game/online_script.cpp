@@ -76,7 +76,8 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 bool OnlineScript::known_action(std::string_view name) {
     static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
                                                  "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log",
-                                                 "menu",     "browse", "talkto", "shot", "depart"};
+                                                 "menu",     "browse", "talkto", "shot", "depart", "remove", "report",
+                                                 "setflag",  "goalong", "cancelgo", "closeoffer", "testhook", "goback"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
@@ -85,7 +86,7 @@ bool OnlineScript::known_condition(std::string_view key) {
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
                                                  "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts",
-                                                 "figures"};
+                                                 "figures", "members", "offers", "notices", "go", "offerstage", "goback", "waited"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
@@ -207,6 +208,11 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
             if (s != facts.own_slot && (facts.present & (1u << s))) each(s, models ? models->player(s) : nullptr);
     };
     if (c.key == "stage") return playing(engine, facts) && lower(engine.stage_name()) == lower(c.text);
+    if (c.key == "offers") return compare(facts.offers);
+    if (c.key == "notices") return compare(facts.notices);
+    if (c.key == "go") return facts.go == c.text;
+    if (c.key == "offerstage") return lower(facts.offer_stage) == lower(c.text);
+    if (c.key == "goback") return compare(facts.go_back ? 1 : 0);
     if (c.key == "stagechange") return lower(engine.stage_name()) != step_stage_;
     if (c.key.rfind("flag:", 0) == 0) {
         const auto found = engine.flags().find(std::atoi(c.key.c_str() + 5));
@@ -230,6 +236,7 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key == "present") return compare(std::popcount(unsigned(facts.present)));
     if (c.key == "ghosts") return compare(facts.ghosts);
     if (c.key == "figures") return compare(facts.figures);
+    if (c.key == "members") return compare(facts.members); // (W10d: the host sees a waiting arrival's seat)
     if (c.key == "frames") return compare(step_frames_);
     if (c.key == "dead") return playing(engine, facts) && defeated(engine, facts.own_slot);
     if (c.key == "alive") return playing(engine, facts) && !defeated(engine, facts.own_slot);
@@ -263,6 +270,7 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key == "slot") return compare(facts.own_slot);
     if (c.key == "sealed") return compare(sealed_ticks_);
     if (c.key == "time") return compare(std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count());
+    if (c.key == "waited") return compare(std::chrono::duration<double>(std::chrono::steady_clock::now() - step_wall_).count());
     if (c.key == "epoch")
         return compare(std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
     if (c.key == "answered") return compare(answers_);
@@ -395,6 +403,66 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         out.x = c.x;
         out.z = c.z;
         out.reach = c.reach;
+        return out;
+    }
+    if (step.action == "goback") {
+        // Round I1b (19.30.7 step 4): B on the held GO barrier, once its line offers it.
+        if (!departed_ && facts.go_back) {
+            out.go_back = true;
+            departed_ = true;
+            std::printf("online-script: goback (frame %d)\n", facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "testhook") {
+        // Round I1b's scenario hooks (development builds): once per step.
+        // "mat NAME": the value is the mat's letter << 8 | its number (matz02:
+        // 'z' << 8 | 2), asked only while this member's player has control.
+        const bool mat = step.args.size() > 1 && step.args[0] == "mat" && step.args[1].size() >= 5 && step.args[1].compare(0, 3, "mat") == 0;
+        if (!departed_ && !step.args.empty() && (step.args[0] == "defeat" || step.args[0] == "busy" || (mat && control))) {
+            out.test_hook = step.args[0] == "defeat" ? 1 : step.args[0] == "busy" ? 2 : 3;
+            out.test_value = mat ? (int(static_cast<unsigned char>(step.args[1][3])) << 8) | (std::atoi(step.args[1].c_str() + 4) & 0xFF)
+                                 : step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 0;
+            departed_ = true;
+            std::printf("online-script: testhook %s %d (frame %d)\n", step.args[0].c_str(), out.test_value, facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "goalong" && !step.args.empty() && step.args[0] == "closed") {
+        if (!departed_ && facts.closing_offer != 0 && facts.go == "none") {
+            out.go_along_raw = facts.closing_offer;
+            departed_ = true;
+            std::printf("online-script: goalong closed offer %u (frame %d)\n", unsigned(facts.closing_offer), facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "goalong" || step.action == "cancelgo" || step.action == "closeoffer") {
+        // Round I1b (19.30.6): the box's A / Cancel / B, once per step.
+        if (!departed_ && step.action == "goalong" && facts.newest_offer != 0 && facts.go == "none" && facts.go_ready) {
+            out.go_along = facts.newest_offer;
+            if (!step.args.empty()) {
+                out.go_along = 0;
+                for (const auto& [id, stage] : facts.open_offers)
+                    if (lower(stage) == lower(step.args[0])) {
+                        out.go_along = id;
+                        break;
+                    }
+            }
+            departed_ = out.go_along != 0;
+        } else if (!departed_ && step.action == "cancelgo" && facts.go != "none") {
+            out.go_cancel = true;
+            departed_ = true;
+        } else if (!departed_ && step.action == "closeoffer" && facts.newest_offer != 0) {
+            out.go_close = facts.newest_offer;
+            departed_ = true;
+        }
+        if (out.go_along || out.go_cancel || out.go_close) {
+            std::printf("online-script: %s offer %u (frame %d)\n", step.action.c_str(), unsigned(facts.newest_offer), facts.frame);
+            std::fflush(stdout);
+        }
         return out;
     }
     if (step.action == "idle" || !playing(engine, facts)) return out;
@@ -533,6 +601,31 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
             engine.messenger().post(engine.time() + engine::kFrameNs, "STAGECTL", std::nullopt, -1, "NEXTSTAGE", std::move(next));
             std::printf("online-script: depart %s point %s (frame %d)\n", step.args[0].c_str(), step.args.size() > 1 ? step.args[1].c_str() : "0",
                         facts.frame);
+            std::fflush(stdout);
+        }
+#endif
+        return out;
+    }
+    if (step.action == "remove" || step.action == "report") {
+        // remove NAME / report NAME REASON: the Instance page's buttons through the
+        // session (the host applies them); one request, then the step ends.
+        if (!op_sent_ && !step.args.empty()) {
+            op_sent_ = true;
+            out.op = step.action + " " + step.args[0] + (step.action == "report" && step.args.size() > 1 ? " " + step.args[1] : "");
+            std::printf("online-script: %s (frame %d)\n", out.op.c_str(), facts.frame);
+            std::fflush(stdout);
+        }
+        return out;
+    }
+    if (step.action == "setflag") {
+        // setflag N [V]: a story value set in the engine outside the pads (W10c:
+        // the removed member's engine makes a value its session then reports
+        // with the host's owner key). Development builds only, once.
+#ifdef DW4_ONLINE_DEV
+        if (!flag_set_ && !step.args.empty()) {
+            flag_set_ = true;
+            engine.flags()[std::atoi(step.args[0].c_str())] = std::uint8_t(step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 1);
+            std::printf("online-script: setflag %s (frame %d)\n", step.args[0].c_str(), facts.frame);
             std::fflush(stdout);
         }
 #endif
@@ -757,14 +850,15 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
         std::printf("online-script: stage %s (frame %d)\n", stage.c_str(), facts.frame);
         std::fflush(stdout);
     }
-    if (facts.mode == "sealed") ++sealed_ticks_;
-    trace_prompt(engine, facts);
+    if (facts.mode == "sealed" && !facts.parked) ++sealed_ticks_;
+    if (!facts.parked) trace_prompt(engine, facts);
     std::string shot; // (a "shot" step that ended in this update)
     for (int guard = 0; guard < 16 && cursor_ < steps_.size(); ++guard) {
         const auto& step = steps_[cursor_];
         if (!step_started_) {
             step_started_ = true;
             step_frames_ = 0;
+            step_wall_ = std::chrono::steady_clock::now();
             route_.clear();
             route_next_ = 0;
             explorer_.reset();
@@ -773,6 +867,8 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             answers_ = 0;
             waypoint_ = 0;
             departed_ = false;
+            op_sent_ = false;
+            flag_set_ = false;
             step_reached_ = false;
             step_stage_ = stage;
             failed_ = false;
@@ -802,6 +898,8 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             done = step_frames_ >= int(step.args.size() > 1 ? std::atoi(step.args[1].c_str()) : 6);
         } else if (step.action == "goto" || step.action == "route") {
             done = step_reached_;
+        } else if (step.action == "remove" || step.action == "report" || step.action == "setflag") {
+            done = step_frames_ >= 1; // (one update: the request or the flag, then the next step)
         }
         if (!done && !failed_)
             for (const auto& c : step.fail)
@@ -814,6 +912,14 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
                     std::fflush(stdout);
                     break;
                 }
+        if (!done && facts.parked) {
+            // A held barrier: no step runs, so only goback acts (B on the
+            // loading screen); every other action waits for the next step.
+            if (step.action == "goback") return act(engine, facts, step);
+            Output none;
+            none.shot = shot;
+            return none;
+        }
         if (!done) {
             ++step_frames_;
             // Where this member is, every five seconds (test traces;

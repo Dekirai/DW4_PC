@@ -1,0 +1,21 @@
+# W4e (19.24, 19.7.6, decision 48 of 2026-11-14): the other order of W4d. b's Private base holds for nobody; a's barrier comes
+# 1.5 s later and never sees b's starting instance (Private): two instances, as in W4d.
+k: online-script: step .* log: k hosts at stag0101
+a: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+a: online-trace: prompt answer choice=new wid=0 visibility=public
+b: online-trace: prompt answer choice=new wid=0 visibility=private
+a: online-script: step .* log: a alone
+b: online-script: step .* log: b alone
+relay: choice .*choice=new .*visibility=private
+relay: choice .*choice=new .*visibility=public
+relay: prompt_new .*visibility=private .*starting=0
+relay: prompt_new .*visibility=public .*starting=0
+!relay: hold_co_arrival
+!relay: starting_refused
+!a: online: You arrived together
+!b: online: You arrived together
+!a: online: You joined
+!a: online-script: FAIL
+!b: online-script: FAIL
+!k: online-script: FAIL

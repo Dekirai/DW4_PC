@@ -31,7 +31,7 @@ struct World {
     double now = 0;
     static constexpr double kPass = 1.0 / 240.0;
 
-    fake::Client& add(const std::string& name, std::uint32_t id) {
+    fake::Client& add(const std::string& name, std::uint32_t id, const std::function<void(SessionConfig&)>& tweak = {}) {
         auto c = std::make_unique<fake::Client>();
         c->name = name;
         SessionConfig config;
@@ -42,6 +42,7 @@ struct World {
         config.own_name = name;
         config.replay_budget = 0.004;
         config.trace = std::getenv("DW4_SESSION_TEST_TRACE") != nullptr; // (debugging a test: the client trace on stdout)
+        if (tweak) tweak(config);
         c->session = std::make_unique<Session>(c->engine, config);
         c->engine.take_load_snapshot();
         c->session->attach(hub.connect(id, name), now);
@@ -84,6 +85,28 @@ std::function<std::uint32_t(const fake::Client&)> press_in(std::map<std::string,
     };
 }
 
+// Round I1b's integration (W7e): SNAPSHOT_ASK for the current visit uploads the
+// engine's load snapshot again (the relay's named uploader dropped before its
+// upload); an ask for another visit uploads nothing.
+void snapshot_ask() {
+    World world;
+    auto& a = world.add("kim", 1);
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "snapshot ask: A reaches stag0101 solo");
+    world.run(1);
+    const auto inst = a.session->inst();
+    auto& hub_inst = world.hub.instances[inst];
+    check(!hub_inst.snapshot.empty(), "snapshot ask: A uploaded its load snapshot");
+    const auto size = hub_inst.snapshot.size();
+    hub_inst.snapshot.clear();
+    world.hub.send(1, w::Type::snapshot_ask, w::encode(w::SnapshotAsk{inst, a.session->visit() + 1}), world.now);
+    world.run(0.3);
+    check(hub_inst.snapshot.empty(), "snapshot ask: an ask for another visit uploads nothing");
+    world.hub.send(1, w::Type::snapshot_ask, w::encode(w::SnapshotAsk{inst, a.session->visit()}), world.now);
+    world.run(0.3);
+    check(hub_inst.snapshot.size() == size, "snapshot ask: the visit's load snapshot uploaded again (" + std::to_string(hub_inst.snapshot.size()) + " bytes)");
+}
+
 void print_log(const fake::Hub& hub) {
     for (const auto& line : hub.log_lines) std::cout << "  hub: " << line << '\n';
 }
@@ -123,10 +146,19 @@ void solo_join_fork() {
     check(a.engine.net_fingerprint() != 0 && a.session->tick() > 1500, "A played on");
     check(world.hub.late_pads == late_after_join, "with the delay from the round trip plus the playout tick no pad is late (" +
                                                       std::to_string(world.hub.late_pads - late_after_join) + ")");
+    // (Round I1b's integration: the stage group's JOIN says nothing; the relay's
+    // WORLD_NOTICE joined is the one "<name> joined." of 19.5.6, which this
+    // fake hub sends only below. Before, A got "lee joined" from the JOIN too.)
     const auto notices_a = a.session->take_notices();
     bool joined = false;
     for (const auto& n : notices_a) joined |= n.find("joined") != std::string::npos;
-    check(joined, "A is told about the joiner");
+    check(!joined, "no join toast from the stage group's JOIN");
+    world.hub.send(1, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::joined, 2, "lee", 0, {}}), world.now);
+    world.run(0.2);
+    const auto told = a.session->take_notices();
+    check(std::count(told.begin(), told.end(), std::string("lee joined.")) == 1 &&
+              std::none_of(told.begin(), told.end(), [](const std::string& n) { return n == "lee joined" || n == "A player joined"; }),
+          "A is told about the joiner once: \"lee joined.\"");
     // B forks away (an exit-type fork): both sides go on alone.
     // The fork executes on a multiple of 60 (a pad sampled at tick t runs at
     // t + d): the two sides' net fingerprints differ from the fork tick on,
@@ -1014,6 +1046,366 @@ bool has_notice(std::vector<std::string> notices, const std::string& part) {
     return false;
 }
 
+// Round I1b, the arrival prompt (docs/SEAMLESS.md 19.7.4-19.7.5): the gate
+// form holds the confirming press (the engine sees neutral pads), PLAN, and
+// releases it one round trip later when OPTIONS has nothing to choose; with
+// rows the overlay opens without a time limit, the cursor on the
+// preselection, kept on its instance through a refresh; A sends CHOICE
+// before the press and the BARRIER names the plan; B closes the gate's menu
+// by the game's own cancel, no BARRIER; no OPTIONS within World:PlanWaitMs:
+// the press goes out anyway and the BARRIER has plan 0; the connection lost
+// while it holds: the press is dropped and the menu closed. The
+// loading-screen form: BARRIER_WAIT choice + OPTIONS, no five-second
+// fallback, B *Back to the lobby* (the relay's redirect), A a new instance;
+// the automatic answer of test runs.
+w::Options prompt_rows() {
+    w::Options o;
+    o.preselected = 0;
+    o.rtt = 35;
+    w::OptionRow kim;
+    kim.wid = 7;
+    kim.host = 9;
+    kim.host_name = "Kim";
+    kim.host_stage = "stag0101";
+    kim.players = 1;
+    kim.here = 1;
+    kim.taken = 1;
+    kim.story_label = "Chapter 4, Hard";
+    kim.ping = 41;
+    w::OptionRow rin = kim;
+    rin.wid = 8;
+    rin.host = 10;
+    rin.host_name = "Rin";
+    rin.host_stage = "dng101b1";
+    rin.here = 0;
+    w::OptionRow mo = kim;
+    mo.wid = 11;
+    mo.host_name = "Mo";
+    mo.state = w::RowState::full;
+    mo.players = 4;
+    o.rows = {kim, rin, mo};
+    return o;
+}
+
+// To the lobby (stagml11) with its gate menu open.
+fake::Client& at_gate(World& world, const std::string& name, std::uint32_t id, const std::function<void(SessionConfig&)>& tweak = {}) {
+    auto& c = world.add(name, id, tweak);
+    c.input = press_in({{"stagis10", 20}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return c.engine.stage() == "stagml11" && c.session->mode() == Mode::solo && c.session->hub(); }),
+          name + " in its lobby");
+    c.engine.gate_menu = true;
+    return c;
+}
+
+// The own player presses A in the lobby for a few ticks from `tick` on.
+std::function<std::uint32_t(const fake::Client&)> press_a_at(std::uint32_t tick) {
+    return [tick](const fake::Client& c) -> std::uint32_t {
+        return c.engine.stage() == "stagml11" && c.session->tick() >= tick && c.session->tick() < tick + 8 ? dw4::pad_button::a : 0u;
+    };
+}
+
+void key(fake::Client& c, std::uint32_t button, double now) {
+    c.session->prompt_input(button, now);
+    c.session->prompt_input(0, now);
+}
+
+void prompt_gate_form() {
+    {
+        // Nothing to choose: the press goes out one round trip later; the BARRIER names the plan.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return !world.hub.plans.empty(); }), "PLAN sent at the press");
+        check(world.hub.plans[0].stage == "stag0101" && world.hub.plans[0].purpose == w::PlanPurpose::gate && world.hub.plans[0].plan != 0,
+              "PLAN names the gate's destination");
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "the held press confirmed the menu");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stag0101"; }), "departed");
+        check(world.hub.barrier_plans.size() == 1 && world.hub.barrier_plans[0] == world.hub.plans[0].plan, "the BARRIER names the plan");
+        check(!a.session->prompt(), "no overlay");
+    }
+    {
+        // Rows: the overlay opens and waits for the player; the game sees neutral pads (the menu stays open).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        {
+            const auto& p = *a.session->prompt();
+            check(p.form == PromptForm::gate && p.rows.size() == 3 && p.cursor == 0 && p.rtt_ms == 35 && p.stage == "stag0101",
+                  "rows in the relay's order, the cursor on the preselection");
+        }
+        world.run(20.0); // (no time limit)
+        check(a.session->prompt() && a.engine.gate_menu && a.engine.gate_confirms == 0 && a.session->holding_press(), "it waits for the player");
+        check(world.hub.barrier_plans.empty(), "nothing left");
+        // Decision 40 through a refresh (round I1b's second review): Kim's player left the arrival stage, so the relay preselects
+        // New instance; the cursor the player never moved follows it (a quick A never makes him a guest of a stranger elsewhere).
+        auto gone = prompt_rows();
+        gone.rows[0].here = 0;
+        gone.plan = world.hub.plans.back().plan;
+        gone.flags = w::Options::refresh;
+        gone.preselected = w::Options::kNewInstance;
+        gone.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(gone), world.now);
+        world.run(0.2);
+        check(a.session->prompt() && a.session->prompt()->new_instance() && !a.session->prompt()->moved,
+              "an unmoved cursor takes the refresh's preselection (New instance)");
+        // The player moves up to Kim's row himself: a refresh with Rin's row first keeps the cursor he moved on Kim's.
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        check(a.session->prompt()->cursor == 0 && a.session->prompt()->moved, "moved to Kim's row");
+        auto refresh = prompt_rows();
+        std::swap(refresh.rows[0], refresh.rows[1]);
+        refresh.plan = world.hub.plans.back().plan;
+        refresh.flags = w::Options::refresh;
+        refresh.preselected = w::Options::kNewInstance;
+        refresh.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(refresh), world.now);
+        world.run(0.2);
+        check(a.session->prompt() && a.session->prompt()->cursor == 1 && a.session->prompt()->rows[1].wid == 7, "the moved cursor stays on Kim's row");
+        // Down: Mo's full row, where A does nothing; down to New instance, right: Friends; up twice to Kim's row, A.
+        key(a, dw4::pad_button::down, world.now);
+        key(a, dw4::pad_button::a, world.now);
+        check(a.session->prompt() && a.session->prompt()->cursor == 2 && world.hub.choices.empty(), "a greyed row is not choosable");
+        key(a, dw4::pad_button::down, world.now);
+        key(a, dw4::pad_button::right, world.now);
+        check(a.session->prompt()->new_instance() && a.session->prompt()->visibility == w::Visibility::friends, "New instance, Friends");
+        key(a, dw4::pad_button::up, world.now);
+        key(a, dw4::pad_button::up, world.now);
+        world.run(0.1);
+        key(a, dw4::pad_button::a, world.now);
+        world.run(0.1);
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::join && world.hub.choices[0].wid == 7 &&
+                  world.hub.choices[0].plan == refresh.plan,
+              "A: CHOICE join Kim's instance for the plan");
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "then the held press");
+        check(world.run_until(5, [&] { return !world.hub.barrier_plans.empty(); }), "the departure's BARRIER");
+        check(world.hub.barrier_plans[0] == refresh.plan, "the BARRIER names the plan");
+    }
+    {
+        // An unmoved cursor follows a refresh's preselection back to a row (the row regained players at the arrival stage), and
+        // the notice line stays only while no row of the instance it names can be chosen (round I1b's second review).
+        World world;
+        auto first = prompt_rows();
+        first.rows[0].here = 0;
+        first.preselected = w::Options::kNewInstance;
+        world.hub.prompt = first;
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        check(a.session->prompt()->new_instance(), "New instance preselected");
+        const auto plan = world.hub.plans.back().plan;
+        auto back = prompt_rows();
+        back.plan = plan;
+        back.flags = w::Options::refresh;
+        back.stage = "stag0101";
+        world.hub.send(2, w::Type::options, w::encode(back), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->cursor == 0 && a.session->prompt()->rows[0].wid == 7, "the unmoved cursor on the refresh's preselection");
+        // Kim's instance full now (a refresh naming it), then a refresh without a line while it is still full, then one where it
+        // has a seat again.
+        auto full = prompt_rows();
+        full.plan = plan;
+        full.flags = w::Options::refresh;
+        full.stage = "stag0101";
+        full.rows[0].state = w::RowState::full;
+        full.preselected = 1;
+        full.notice = 1;
+        full.notice_name = "Kim";
+        world.hub.send(2, w::Type::options, w::encode(full), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice == "Kim's instance is full now.", "the notice line");
+        full.notice = 0;
+        full.notice_name.clear();
+        world.hub.send(2, w::Type::options, w::encode(full), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice == "Kim's instance is full now.", "kept while Kim's row is greyed");
+        world.hub.send(2, w::Type::options, w::encode(back), world.now);
+        world.run(0.2);
+        check(a.session->prompt()->notice.empty(), "gone once Kim's row can be chosen again");
+    }
+    {
+        // B: the game's own cancel closes the menu; no BARRIER, nothing loaded.
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        key(a, dw4::pad_button::b, world.now);
+        world.run(2.0);
+        check(a.engine.gate_cancels == 1 && a.engine.gate_confirms == 0 && a.engine.stage() == "stagml11" && !a.session->prompt() &&
+                  !a.session->holding_press() && world.hub.barrier_plans.empty(),
+              "B leaves the player standing at the gate");
+        check(!world.hub.choices.empty() && world.hub.choices.back().choice == w::ChoiceKind::back, "the relay is told (its plan closes)");
+    }
+    {
+        // PLAN's throttle: B, then the gate again within the second: the second PLAN waits until a second after the
+        // first, and World:PlanWaitMs counts from it (the press is not released early).
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        const double first_plan = world.now;
+        key(a, dw4::pad_button::b, world.now);
+        world.run(0.2);
+        check(a.engine.gate_cancels == 1, "B closed the menu");
+        a.engine.gate_menu = true; // (the player stands on the mat again: the menu opens again)
+        a.input = press_a_at(a.session->tick() + 2);
+        world.run(0.3);
+        check(world.hub.plans.size() == 1 && a.session->holding_press() && a.engine.gate_confirms == 0, "the second press waits for the throttle");
+        check(world.run_until(3, [&] { return world.hub.plans.size() == 2; }), "the second PLAN");
+        check(world.now - first_plan >= 0.95, "a second after the first");
+        check(world.run_until(3, [&] { return a.session->prompt().has_value(); }), "its prompt");
+        check(a.engine.gate_confirms == 0, "the press still held");
+    }
+    {
+        // W2b: the relay drops the PLAN: the press goes out after World:PlanWaitMs; the BARRIER has no plan.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.drop_plans = true;
+        auto& a = at_gate(world, "lee", 2);
+        const auto t = a.session->tick() + 30;
+        a.input = press_a_at(t);
+        check(world.run_until(5, [&] { return !world.hub.plans.empty(); }), "PLAN sent at the press");
+        const double pressed_at = world.now;
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "the press went out anyway");
+        check(world.now - pressed_at >= 0.95 && world.now - pressed_at < 1.3, "after about a second");
+        check(world.run_until(5, [&] { return !world.hub.barrier_plans.empty(); }) && world.hub.barrier_plans[0] == 0, "BARRIER plan 0");
+        check(!world.hub.choices.empty() && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == world.hub.plans[0].plan,
+              "the timed-out plan withdrawn (CHOICE back)");
+    }
+    {
+        // The menu closes otherwise while the overlay is open: the overlay closes and the plan is withdrawn (CHOICE back), so the
+        // relay sends no more refreshes for it (round I1b's review).
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        a.engine.gate_menu = false;
+        world.run(0.2);
+        check(!a.session->prompt() && !a.session->holding_press() && a.engine.gate_confirms == 0, "closed with the menu");
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == world.hub.plans[0].plan,
+              "the plan withdrawn");
+    }
+    {
+        // The connection lost while the overlay is open: closed, the press dropped, the menu closed, the notice.
+        World world;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2);
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the gate form opened");
+        world.hub.drop(2);
+        world.run(1.0);
+        check(!a.session->prompt() && a.engine.gate_cancels == 1 && a.engine.gate_confirms == 0 && a.engine.stage() == "stagml11",
+              "closed, the menu cancelled");
+        check(has_notice(a.session->take_notices(), "Connection lost. Try the gate again in a moment."), "the notice");
+    }
+    {
+        // DW4_ONLINE_AUTOCHOICE=first: the first choosable row, without a person.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        auto rows = prompt_rows();
+        rows.rows[0].state = w::RowState::story_not_here;
+        rows.preselected = w::Options::kNewInstance;
+        world.hub.prompt = rows;
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.auto_choice = AutoChoice::first; });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return !world.hub.choices.empty(); }), "answered");
+        check(world.hub.choices[0].choice == w::ChoiceKind::join && world.hub.choices[0].wid == 8, "the first choosable row (Rin's)");
+        check(world.run_until(5, [&] { return a.engine.gate_confirms == 1; }), "and the press");
+    }
+}
+
+void prompt_loading_form() {
+    {
+        // The gate form off: the relay holds the barrier for the prompt, the five-second rule waits; B: back to the lobby.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+        check(world.hub.plans.empty() && world.hub.barrier_plans.size() == 1 && world.hub.barrier_plans[0] == 0, "no PLAN, BARRIER plan 0");
+        check(a.session->prompt()->form == PromptForm::loading && a.session->mode() == Mode::parked, "parked, on its loading screen");
+        world.run(12.0);
+        check(a.session->prompt() && a.session->mode() == Mode::parked, "no five-second fallback while it prompts");
+        key(a, dw4::pad_button::b, world.now);
+        check(world.hub.choices.empty(), "(sent, on its way)");
+        world.run(0.1);
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].plan == 0,
+              "CHOICE back at the held barrier");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "back in the lobby");
+        check(world.hub.choices[0].back_point == 1 && a.engine.redirected_point && *a.engine.redirected_point == 1,
+              "next to the gate (the census's point, stagML11 point 1)");
+    }
+    {
+        // A departure the census names no point for: B leaves the point to the relay (stagML11 point 3).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) {
+            c.gate_form = false;
+            c.auto_choice = AutoChoice::back;
+        });
+        a.engine.gate_back_point = -1;
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(8, [&] { return !world.hub.choices.empty(); }), "B at the held barrier");
+        check(world.hub.choices[0].choice == w::ChoiceKind::back && world.hub.choices[0].back_point == 0xFF, "no back point named");
+        check(world.run_until(5, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "back in the lobby");
+        check(a.engine.redirected_point && *a.engine.redirected_point == 3, "at the relay's default (stagML11 point 3)");
+    }
+    {
+        // A on New instance at a held barrier: CHOICE new; the relay's NEW.
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) {
+            c.gate_form = false;
+            c.auto_choice = AutoChoice::new_instance;
+        });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(8, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "a new instance");
+        check(world.hub.choices.size() == 1 && world.hub.choices[0].choice == w::ChoiceKind::new_instance && world.hub.choices[0].plan == 0,
+              "CHOICE new at the held barrier");
+    }
+    {
+        // "Joining <host>..." only for a row with players at the arrival stage (19.5.3): Rin's row (nobody here) starts the stage as
+        // a guest, Kim's (here 1) joins.
+        for (const bool kim : {false, true}) {
+            World world;
+            world.hub.co_arrival_hold = 0.2;
+            world.hub.prompt = prompt_rows();
+            auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+            a.input = press_a_at(a.session->tick() + 30);
+            check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+            if (!kim) key(a, dw4::pad_button::down, world.now);
+            key(a, dw4::pad_button::a, world.now);
+            const auto loading = a.session->overlay(world.now).loading;
+            check(kim ? loading == "Joining Kim..." : loading.find("Joining") == std::string::npos,
+                  kim ? "Kim's row: Joining Kim..." : "Rin's row (nobody here): no Joining line");
+        }
+    }
+    {
+        // The connection lost at the held barrier closes the prompt (the relay forgot the hold).
+        World world;
+        world.hub.co_arrival_hold = 0.2;
+        world.hub.prompt = prompt_rows();
+        auto& a = at_gate(world, "lee", 2, [](SessionConfig& c) { c.gate_form = false; });
+        a.input = press_a_at(a.session->tick() + 30);
+        check(world.run_until(5, [&] { return a.session->prompt().has_value(); }), "the loading-screen form opened");
+        world.hub.drop(2);
+        world.run(0.5);
+        check(!a.session->prompt(), "closed at the loss");
+    }
+}
+
 void world_session() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -1048,7 +1440,7 @@ void world_session() {
     info.taken = 1;
     world.hub.send(1, w::Type::instance_info, w::encode(info), world.now);
     world.run(0.3);
-    check(has_notice(a.session->take_notices(), "New instance (Public). View: Online menu"), "A's toast: a new instance");
+    check(has_notice(a.session->take_notices(), "New instance (Public).  {MENU} Online menu"), "A's toast: a new instance");
     auto& b = world.add("lee", 2);
     b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
     check(world.run_until(30, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "B joined A");
@@ -1062,9 +1454,13 @@ void world_session() {
     world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
     world.run(0.3);
     const auto b_notices = b.session->take_notices();
-    check(has_notice(b_notices, "You joined kim's instance. kim is in stag0101. Leave: Online menu") &&
+    check(has_notice(b_notices, "You joined kim's instance. kim is in stag0101.  Leave: {MENU} Online menu") &&
               has_notice(b_notices, "You're a guest in kim's story. Your level, items and Digimon stay yours."),
           "B's toasts name the host and where he is");
+    // (Round I1b's integration review: the JOIN's toast names the stage group
+    // once INSTANCE_INFO has B in it, "You joined kim.", not the old one's or
+    // none's "You joined the group".)
+    check(has_notice(b_notices, "You joined kim."), "B's JOIN toast names the stage group from INSTANCE_INFO");
     // B's STORY goes to the host's keeper (the host's owner key).
     const auto stories = world.hub.stories;
     b.engine.story.flags[19] = 1;
@@ -1117,7 +1513,7 @@ int value(const std::map<std::int32_t, std::uint8_t>& values, std::int32_t key) 
 // automatic join into host 9's instance 7 as a guest (the replace brings the
 // host's story: flag 19, key 4); every barrier into a hub stage is a DISSOLVE
 // with B's own story (the hub's room story: flag 20, key 1) by the replace.
-fake::Client& guest_of_nine(World& world, std::uint32_t id = 2) {
+fake::Client& guest_of_nine(World& world, std::uint32_t id = 2, const std::function<void(SessionConfig&)>& tweak = {}) {
     dw4::engine::RoomStory host;
     host.flags[19] = 1;
     host.folder[4] = 1;
@@ -1141,7 +1537,7 @@ fake::Client& guest_of_nine(World& world, std::uint32_t id = 2) {
         ok.story = dw4::engine::story::encode_story(host);
         ok.story_revision = host.revision;
     };
-    auto& b = world.add("lee", id);
+    auto& b = world.add("lee", id, tweak);
     b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
     check(world.run_until(20, [&] { return b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo; }), "B in the field");
     check(b.session->wid() == 7 && b.session->host() == 9 && !b.session->is_host() && !b.session->holds_own_story() &&
@@ -1239,6 +1635,83 @@ void solo_leader_home() {
     check(world.run_until(20, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && !b.session->going_home(); }),
           "B took the home departure from the one sealed tick J");
     check(b.session->wid() == 0 && b.session->holds_own_story(), "B is home on its own story");
+}
+
+// Round I1b (moderation, 19.6.6, 19.16): the host's *Remove* and the player
+// card's *Report* go out as INSTANCE_OP remove and REPORT (only who may; never
+// about oneself); the relay's answers are 19.5.6's toasts; the removed guest
+// reads whose instance it was removed from. A guest may remove nobody; staff
+// playing in the instance may.
+void moderation_session() {
+    World world;
+    auto& b = guest_of_nine(world);
+    world.run(1.0);
+    w::InstanceInfo info;
+    info.wid = 7;
+    info.host = 9;
+    info.area = "death_valley";
+    info.members = {{9, "dng101b1", 5, 1 | 8}, {2, "stag0101", 3, 1 | 16}, {4, "dng101b1", 7, 1}};
+    info.taken = 3;
+    info.role = w::Role::guest;
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 5, w::MemberInfo::own_instance}), world.now);
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{4, "Ann", 7, w::MemberInfo::own_instance}), world.now);
+    world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
+    world.run(0.3);
+    check(b.session->member_by_name("ANN") == 4 && b.session->member_by_name("kim") == 9 && b.session->member_by_name("nobody") == 0xFFFFFFFFu,
+          "names resolve to member ids");
+    // A guest may not remove; he may report anyone but himself, with the instance they share.
+    check(!b.session->may_remove() && !b.session->remove_member(4), "a guest removes nobody");
+    check(b.session->report(4, w::ReportReason::griefing) && !b.session->report(2, w::ReportReason::name), "a report, never about oneself");
+    check(b.session->report(77, w::ReportReason::name), "a report about a member outside the instance");
+    world.run(0.3);
+    check(world.hub.instance_ops.empty() && world.hub.reports.size() == 2 && world.hub.reports[0].second.member == 4 &&
+              world.hub.reports[0].second.reason == w::ReportReason::griefing && world.hub.reports[0].second.wid == 7 &&
+              world.hub.reports[1].second.wid == 0,
+          "REPORT carries the member, the reason and the shared instance");
+    // The relay's answers (WORLD_NOTICE 14).
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::report, 4, "Ann", std::uint32_t(w::ReportResult::sent), ""}), world.now);
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::report, 4, "Ann", std::uint32_t(w::ReportResult::limit), ""}), world.now);
+    world.hub.send(2, w::Type::world_notice,
+                   w::encode(w::WorldNotice{w::NoticeKind::report, 77, "Zed", std::uint32_t(w::ReportResult::not_available), ""}), world.now);
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::report, 4, "Ann", std::uint32_t(w::ReportResult::failed), ""}), world.now);
+    world.run(0.3);
+    {
+        const auto notices = b.session->take_notices();
+        check(has_notice(notices, "Report sent. Thank you.") && has_notice(notices, "You can't send more reports today.") &&
+                  has_notice(notices, "Zed is not available.") && has_notice(notices, "Couldn't send the report. Try again later."),
+              "the report's answers as toasts");
+    }
+    // Staff playing in the instance may remove (not the host, not himself).
+    info.role = w::Role::staff;
+    world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
+    world.run(0.3);
+    check(b.session->may_remove() && b.session->remove_member(4) && !b.session->remove_member(9) && !b.session->remove_member(2) &&
+              !b.session->remove_member(77) && !b.session->remove_member(0xFFFFFFFFu),
+          "staff remove a guest, never the host, themselves or a member the instance does not list");
+    world.run(0.3);
+    check(world.hub.instance_ops.size() == 1 && world.hub.instance_ops[0].second.op == w::InstanceOpKind::remove &&
+              world.hub.instance_ops[0].second.argument == 4,
+          "INSTANCE_OP remove of member 4");
+    // Removed: the notice names the host (it comes before INSTANCE_INFO's wid 0).
+    world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::removed, 9, "kim", 0, ""}), world.now);
+    world.run(0.3);
+    check(has_notice(b.session->take_notices(), "You were removed from kim's instance."), "the removed guest's toast");
+}
+
+// Round I1b's W10c hook (DW4_ONLINE_TEST_IGNORE_HOME): a JOIN_REQ home goes
+// unanswered (no JOIN_AT), so the removed guest keeps playing apart, as a
+// modified client would; without the hook it is answered (solo_leader_home).
+void ignore_home_hook() {
+    World world;
+    world.hub.co_arrival_hold = 0.3;
+    world.hub.suggested_delay = 4;
+    auto& b = guest_of_nine(world, 2, [](SessionConfig& c) { c.test_ignore_home = true; });
+    world.run(2.0);
+    const auto join_ats = world.hub.join_ats;
+    world.hub.ask_home(2, std::uint8_t(1u << b.session->own_slot()), w::HomeReason::removed, world.now);
+    world.run(3.0);
+    check(world.hub.join_ats == join_ats && b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo,
+          "the hook leaves JOIN_REQ home unanswered: B plays on in the field");
 }
 
 // Round I1a's review: a restart while the member is at home. Its engine holds
@@ -1367,6 +1840,498 @@ void leave_and_end_in_world() {
         check(b.session->holds_own_story() && value(b.engine.story.flags, 19) == 0 && value(b.engine.story.flags, 20) == 1 && !b.session->leave_pending() &&
                   world.hub.leave_intents == 0,
               "home on the own story; the kept leave is done");
+    }
+}
+
+// Round I1b's go along (docs/SEAMLESS.md 19.30.7), the client side: a GO
+// stamped in a sealed group of two departs the going slot on both machines at
+// one tick (a fork; the other copy stays); two GOs of one step make one
+// Engine::online_go with their mask (applied one by one, the first fork left
+// the second slot behind); a GO held by an open prompt expires after 300
+// ticks on both machines and the goer withdraws; a solo leader's GO comes
+// through JOIN_REQ go; the offers, the notice's wait, INTENT 4 and its
+// withdraw, the refusals' texts; STATE's flag 16 (no living member).
+void go_along_session() {
+    {
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        const int bs = b.session->own_slot();
+        world.hub.stamp_go(2, "dng101b1", 0);
+        check(world.run_until(5, [&] { return !a.engine.go_calls.empty() && !b.engine.go_calls.empty(); }), "the GO reached both engines");
+        check(a.engine.go_calls.size() == 1 && b.engine.go_calls.size() == 1 && a.engine.go_calls[0].mask == (1u << bs) &&
+                  b.engine.go_calls[0].mask == (1u << bs) && a.engine.go_calls[0].frame == b.engine.go_calls[0].frame &&
+                  a.engine.go_calls[0].stage == "dng101b1",
+              "one call with B's slot, at the same frame on both");
+        check(b.engine.gos == 1 && a.engine.gos == 0, "B's copy departs, A's stays");
+        check(b.session->go_state() == GoState::going, "B is going along");
+        check(world.run_until(10, [&] { return b.engine.stage() == "dng101b1"; }), "B arrived at the GO's stage as named");
+        check(a.engine.stage() == "stag0101" && a.engine.present_ == (1u << a.session->own_slot()), "A plays on alone in stag0101");
+        check(b.session->go_state() == GoState::none, "B's request is done at its barrier");
+    }
+    {
+        // Two GOs of one step: one call with both slots (the group move, no fork).
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        auto& inst = world.hub.instances[world.hub.members[1].inst];
+        const std::uint32_t j = inst.next_seal + 8;
+        for (const std::uint32_t id : {1u, 2u}) {
+            w::Event go{w::EventKind::go};
+            go.slot = std::uint8_t(world.hub.members[id].slot);
+            go.stage = "dng101b1";
+            inst.events[j].push_back(go);
+        }
+        check(world.run_until(5, [&] { return !a.engine.go_calls.empty() && !b.engine.go_calls.empty(); }), "the GOs reached both engines");
+        check(a.engine.go_calls.size() == 1 && a.engine.go_calls[0].mask == 0b11 && b.engine.go_calls.size() == 1 && b.engine.go_calls[0].mask == 0b11,
+              "one Engine::online_go with both slots");
+        check(a.engine.gos == 1 && b.engine.gos == 1, "both copies depart together");
+    }
+    {
+        // A GO that waits 300 ticks for a membership-safe step expires on both machines.
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        const std::uint32_t at = a.session->tick() + 20;
+        a.input = [at](const fake::Client& c) -> std::uint32_t { return c.session->tick() == at ? fake::kPromptButton : 0u; };
+        check(world.run_until(5, [&] { return a.engine.prompt_owner_ >= 0 && b.engine.prompt_owner_ >= 0; }), "A's prompt is open on both");
+        b.session->take_notices();
+        const auto stamp = world.hub.stamp_go(2, "dng101b1", 0);
+        check(world.run_until(12, [&] { return b.session->tick() > stamp + dw4::engine::kGoExpiryTicks + 5 && a.session->tick() > stamp + dw4::engine::kGoExpiryTicks + 5; }),
+              "300 ticks past the stamp");
+        check(a.engine.go_calls.empty() && b.engine.go_calls.empty(), "the GO never applied");
+        check(has_notice(b.session->take_notices(), "Couldn't go along: a scene here took too long."), "B is told");
+        check(!world.hub.go_intents.empty() && world.hub.go_intents.back().first == "lee" &&
+                  world.hub.go_intents.back().second.argument == w::kGoEndedArgument,
+              "B reports its GO ended (INTENT 4, -1)");
+        a.input = [](const fake::Client&) -> std::uint32_t { return fake::kAnswerButton; };
+        world.run(1);
+        a.input = nullptr;
+        world.run(1);
+        check(a.engine.go_calls.empty() && b.engine.go_calls.empty() && a.engine.prompt_owner_ < 0, "the prompt closed; the expired GO stays gone");
+        check(a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed && a.engine.stage() == "stag0101", "both play on");
+    }
+    {
+        // A solo leader's GO through JOIN_REQ kind go.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = guest_of_nine(world);
+        world.run(2.0);
+        check(b.session->mode() == Mode::solo, "B leads its stage group alone");
+        world.hub.ask_go(2, "dng101b1", 0, world.now);
+        check(world.run_until(20, [&] { return b.engine.stage() == "dng101b1"; }), "B took the GO's departure from the one sealed tick J");
+        check(b.engine.go_calls.size() == 1 && b.engine.gos == 1, "one GO");
+    }
+    {
+        // The side rule (W31d): a defeated partner goes along with the last living member (the group move, no game over);
+        // a GO for a defeated slot does nothing on every machine ("Couldn't go along: you were defeated.", the withdraw).
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        const std::uint8_t abit = std::uint8_t(1u << a.session->own_slot()), bbit = std::uint8_t(1u << b.session->own_slot());
+        a.engine.dead = b.engine.dead = abit;
+        world.hub.stamp_go(2, "dng101b1", 0);
+        check(world.run_until(5, [&] { return a.engine.gos == 1 && b.engine.gos == 1; }), "both copies depart: the defeated partner is taken along");
+        check(a.engine.go_calls.size() == 1 && a.engine.go_calls[0].mask == bbit, "the GO named only the living member");
+        World other;
+        other.hub.co_arrival_hold = 3.0;
+        other.hub.suggested_delay = 6;
+        auto& c = other.add("kim", 1);
+        auto& d = other.add("lee", 2);
+        co_arrive(other, c, d);
+        other.run(3);
+        d.session->take_notices();
+        const std::uint8_t dbit = std::uint8_t(1u << d.session->own_slot());
+        c.engine.dead = d.engine.dead = dbit;
+        other.hub.stamp_go(2, "dng101b1", 0);
+        check(other.run_until(5, [&] { return !c.engine.go_calls.empty() && !d.engine.go_calls.empty(); }), "the GO reached both");
+        check(c.engine.gos == 0 && d.engine.gos == 0, "the GO did nothing on either machine");
+        other.run(0.3);
+        check(has_notice(d.session->take_notices(), "Couldn't go along: you were defeated."), "the defeated member is told");
+        check(!other.hub.go_intents.empty() && other.hub.go_intents.back().second.argument == w::kGoEndedArgument, "and reports it (-1)");
+    }
+    {
+        // Round I1b's scenario hooks (W31d, W31i): a TEST defeat right before a GO at its tick makes the GO do nothing on
+        // both machines; a TEST busy at the GO's tick holds it past its expiry. Development builds apply TEST events,
+        // the others skip them (the GO then runs).
+        for (const auto hook : {w::TestHook::defeat, w::TestHook::busy}) {
+            World world;
+            world.hub.co_arrival_hold = 3.0;
+            world.hub.suggested_delay = 6;
+            auto& a = world.add("kim", 1);
+            auto& b = world.add("lee", 2);
+            co_arrive(world, a, b);
+            world.run(3);
+            b.session->take_notices();
+            const auto test_at = world.hub.stamp_test(2, hook, hook == w::TestHook::busy ? 600 : 0);
+            const auto go_at = world.hub.stamp_go(2, "dng101b1", 0);
+            check(test_at == go_at, "the TEST event and the GO share their tick");
+            world.run(8);
+#ifdef DW4_ONLINE_DEV
+            check(a.engine.test_calls.size() == 1 && b.engine.test_calls.size() == 1 && a.engine.test_calls[0].frame == b.engine.test_calls[0].frame &&
+                      a.engine.test_calls[0].slot == b.session->own_slot(),
+                  "the TEST event applied once on both machines at the same frame");
+            check(a.engine.gos == 0 && b.engine.gos == 0, "the GO did nothing / never applied on either machine");
+            if (hook == w::TestHook::defeat)
+                check(has_notice(b.session->take_notices(), "Couldn't go along: you were defeated."), "the fallen member is told");
+            else
+                check(a.engine.go_calls.empty() && b.engine.go_calls.empty() &&
+                          has_notice(b.session->take_notices(), "Couldn't go along: a scene here took too long."),
+                      "the busy group let the GO expire on both machines");
+#else
+            check(a.engine.test_calls.empty() && b.engine.test_calls.empty(), "a release build skips the TEST event");
+            check(b.engine.gos == 1, "and the GO runs");
+#endif
+        }
+    }
+    {
+        // The offers, the notice, INTENT 4, the withdraw and the refusals.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = guest_of_nine(world);
+        world.run(2.0);
+        b.session->take_notices();
+        world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+        w::Offer offer{3, w::OfferOp::open, w::Offer::notice, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_offers().size() == 1 && b.session->go_offers()[0].id == 3, "the offer is kept");
+        const auto shown = b.session->go_notices(world.now);
+        check(shown.size() == 1 && b.session->go_notice_text(*shown[0]).find("kim went into dng101b1. Go along?") == 0,
+              "the notice shows: " + (shown.empty() ? std::string("none") : b.session->go_notice_text(*shown[0])));
+        check(b.session->go_row_text(b.session->go_offers()[0]) == "kim is in dng101b1.", "the row");
+        world.run(21);
+        check(b.session->go_notices(world.now).empty() && b.session->go_offers().size() == 1, "after 20 s the notice is gone, the offer stays");
+        check(b.session->go_along(3), "A goes along");
+        world.run(0.3);
+        check(!world.hub.go_intents.empty() && world.hub.go_intents.back().second.kind == w::IntentKind::go_along &&
+                  world.hub.go_intents.back().second.argument == 3,
+              "INTENT 4 with the offer id");
+        check(!b.session->go_along(3), "one request at a time");
+        offer.op = w::OfferOp::changed;
+        offer.flags = w::Offer::waiting;
+        offer.stage = "dng101b2";
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::waiting && b.session->go_line() == "Going along when kim's floor is ready...",
+              "the waiting line: " + b.session->go_line());
+        check(b.session->go_row_text(b.session->go_offers()[0]) == "kim is in dng101b2 now.", "the entrants moved deeper");
+        check(b.session->go_notices(world.now).empty(), "a change makes no notice");
+        offer.flags = w::Offer::waiting | w::Offer::boss;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_line() == "kim is in a boss fight. Going along when it ends.", "the boss line");
+        check(b.session->cancel_go_along(), "Cancel");
+        world.run(0.3);
+        check(world.hub.go_intents.back().second.argument == 0 && b.session->go_state() == GoState::none, "the withdraw");
+        check(b.session->go_along(3), "A again");
+        world.run(0.3);
+        world.hub.send(2, w::Type::world_notice,
+                       w::encode(w::WorldNotice{w::NoticeKind::go_refused, 9, "kim", std::uint32_t(w::GoRefused::busy), "dng101b2"}), world.now);
+        world.run(0.3);
+        check(has_notice(b.session->take_notices(), "Couldn't go along: kim's floor stayed busy.") && b.session->go_state() == GoState::none,
+              "the refusal's text, the request ends");
+        offer.op = w::OfferOp::closed;
+        offer.flags = 0;
+        offer.close = w::OfferClose::left;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_offers().size() == 1 && !b.session->go_offers()[0].open &&
+                  b.session->go_row_text(b.session->go_offers()[0]) == "kim left dng101b2.",
+              "the closing line in the box");
+        world.run(3.5);
+        check(b.session->go_offers().empty(), "gone after 3 s");
+        // A notice waits while the member is defeated; B closes another one with B.
+        b.engine.dead = std::uint8_t(1u << b.session->own_slot());
+        w::Offer second{4, w::OfferOp::open, w::Offer::notice, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(second), world.now);
+        world.run(1.0);
+        check(b.session->go_notices(world.now).empty() && b.session->go_grey(b.session->go_offers()[0]) == "(defeated)", "no notice while defeated");
+        const bool flagged = std::any_of(world.hub.states.begin(), world.hub.states.end(),
+                                         [](const auto& s) { return s.first == "lee" && (s.second.flags & w::state_flag::no_living); });
+        check(flagged, "STATE flag 16: no living member");
+        b.engine.dead = 0;
+        world.run(0.5);
+        check(b.session->go_notices(world.now).size() == 1, "the notice shows once B lives again");
+        b.session->close_go_notices(4);
+        check(b.session->go_notices(world.now).empty(), "B closed it");
+        offer.op = w::OfferOp::changed;
+        second.op = w::OfferOp::changed;
+        second.entrants = {9, 1};
+        world.hub.send(2, w::Type::offer, w::encode(second), world.now);
+        world.run(0.5);
+        check(b.session->go_notices(world.now).empty() && b.session->go_offers().size() == 1, "no further notice for it, new entrants included");
+    }
+}
+
+// A lone member in stag0101 of instance 7: its host (`host` 9: kim, a guest
+// then; or itself) is set by every BARRIER_OK, as guest_of_nine.
+fake::Client& lone_in_instance(World& world, std::uint32_t host) {
+    world.hub.shape_ok = [host](std::uint32_t member, w::BarrierOk& ok) {
+        if (ok.decision == w::Decision::dissolve) {
+            ok.owner = member;
+            ok.story_mode = w::StoryMode::replace;
+            return;
+        }
+        ok.wid = 7;
+        ok.host = host;
+        ok.owner = host;
+        ok.box = 1;
+    };
+    auto& b = world.add("lee", 2);
+    b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return b.engine.stage() == "stag0101" && b.session->mode() == Mode::solo; }), "B in the field");
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+    world.run(0.5);
+    return b;
+}
+
+// Round I1b's review (2026-11-12), the client's part: the host's question on
+// the held GO screen, a Cancel that crossed the stamp, the client's own
+// report of a GO that ended without a departure (-1), the membership events
+// behind a GO, "went on to" and the late form of a notice that waited.
+// Round I1b's integration review: the world's toasts (WORLD_NOTICE ended and
+// left of one member, went_to with the floor, apart), a BARRIER_OK notice
+// without names, and the go-along notice once answered.
+void review_toasts() {
+    {
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        auto& b = guest_of_nine(world, 2, [](SessionConfig& c) {
+            c.floor_name = [](std::string_view s) { return s == "dng101b2" ? std::string("Sand Labyrinth B2") : std::string(s); };
+        });
+        world.run(1.0);
+        b.session->take_notices();
+        world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::went_to, 9, "kim", 0, "dng101b2"}), world.now);
+        world.run(0.2);
+        auto told = b.session->take_notices();
+        check(has_notice(told, "kim went to Sand Labyrinth B2."), "went_to names the floor");
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::apart, 9, "kim", 0, {}}), world.now);
+        world.run(0.2);
+        told = b.session->take_notices();
+        check(has_notice(told, "kim plays apart for now."), "apart: the member left the stage group, not the instance");
+        // The host leaves: "kim left. The instance ends." once; the seat's
+        // "kim left." right after says nothing new.
+        world.hub.send(2, w::Type::world_notice,
+                       w::encode(w::WorldNotice{w::NoticeKind::ended, 9, "kim", std::uint32_t(w::EndReason::host_left), {}}), world.now);
+        world.hub.send(2, w::Type::world_notice, w::encode(w::WorldNotice{w::NoticeKind::left, 9, "kim", 0, {}}), world.now);
+        world.run(0.2);
+        told = b.session->take_notices();
+        check(has_notice(told, "kim left. The instance ends.") && std::count(told.begin(), told.end(), std::string("kim left.")) == 0,
+              "one toast for the host's leave");
+    }
+    {
+        // A notice without names (W7e's fallback): "the group", never "Your friends is ...".
+        World world;
+        world.hub.shape_ok = [](std::uint32_t, w::BarrierOk& ok) {
+            if (ok.decision != w::Decision::new_instance) return;
+            ok.notice = w::Notice::join_failed;
+            ok.names.clear();
+        };
+        auto& a = world.add("kim", 1);
+        a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+        std::vector<std::string> notices;
+        world.run_until(10, [&] {
+            for (auto& n : a.session->take_notices()) notices.push_back(n);
+            return has_notice(notices, "failed");
+        });
+        check(has_notice(notices, "Joining the group failed; you play this stage on your own.") && !has_notice(notices, "Your friends"),
+              "the fallback's notice without names");
+    }
+    {
+        // The notice goes once answered: the own request's line stands where it was.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        auto& b = guest_of_nine(world);
+        world.run(1.0);
+        world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{9, "kim", 12, 8}), world.now);
+        w::Offer offer{5, w::OfferOp::open, w::Offer::notice, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_notices(world.now).size() == 1, "the notice shows");
+        check(b.session->go_along(5), "A goes along");
+        check(b.session->go_notices(world.now).empty() && !b.session->go_line().empty(), "the notice gave way to the own request's line");
+        check(b.session->cancel_go_along() && b.session->go_notices(world.now).size() == 1, "after Cancel the notice runs on");
+    }
+}
+
+void go_along_review() {
+    for (const bool host : {false, true}) {
+        // A GO's barrier held over 10 s: the guest's B goes back to the lobby
+        // at once; the host's B asks "End the instance for everyone?" first.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, host ? 2 : 9);
+        check(b.session->is_host() == host, std::string("B is ") + (host ? "the host" : "a guest"));
+        w::Offer offer{3, w::OfferOp::open, 0, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_along(3), "A goes along");
+        world.run(0.3);
+        world.hub.wait_hold = 60; // (the GO's floor turns busy in the second of the departure)
+        world.hub.ask_go(2, "dng101b1", 0, world.now);
+        check(world.run_until(10, [&] { return b.session->mode() == Mode::parked; }), "B departed and waits at its barrier");
+        world.run(11);
+        const auto held = b.session->overlay(world.now);
+        check(held.go_back && held.loading == "Waiting for kim's floor..." && held.go_back_line == "{B} Back to the lobby",
+              "after 10 s: " + held.loading + " / " + held.go_back_line);
+        const int leaves = world.hub.leave_intents;
+        const bool sent = b.session->go_back_press(false, true);
+        world.run(0.3);
+        if (!host) {
+            check(sent && world.hub.leave_intents == leaves + 1, "the guest's B leaves at once");
+            continue;
+        }
+        check(!sent && world.hub.leave_intents == leaves, "the host's B only asks");
+        check(b.session->overlay(world.now).go_back_line == "End the instance for everyone?   {A} Yes   {B} No",
+              "the question: " + b.session->overlay(world.now).go_back_line);
+        check(!b.session->go_back_press(false, true) && b.session->overlay(world.now).go_back_line == "{B} Back to the lobby",
+              "B there keeps waiting");
+        check(!b.session->go_back_press(false, true), "B asks again");
+        check(!b.session->go_back_press(false, false), "nothing pressed: nothing");
+        check(b.session->go_back_press(true, false), "A ends the instance");
+        world.run(0.3);
+        check(world.hub.leave_intents == leaves + 1, "one leave");
+    }
+    {
+        // A Cancel that crossed the stamp: the relay's OFFER with flag 16
+        // says the GO runs ("Going along..."); one it answered without flags
+        // took the cancel. A GO whose step did nothing reports -1.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, 9);
+        w::Offer offer{3, w::OfferOp::open, 0, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_along(3) && b.session->cancel_go_along(), "A, then Cancel before the relay's answer");
+        offer.op = w::OfferOp::changed;
+        offer.flags = w::Offer::stamped;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::stamped && b.session->go_line() == "Going along...",
+              "the cancel crossed the stamp: " + b.session->go_line());
+        offer.flags = 0;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::none, "the relay holds no request any more");
+        check(b.session->go_along(3) && b.session->cancel_go_along(), "A and Cancel again");
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now); // (the withdraw's answer: no flags)
+        world.run(0.3);
+        offer.flags = w::Offer::stamped;
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_state() == GoState::none, "after the withdraw's answer no stale flag takes it back");
+    }
+    {
+        // The side rule's dropped own slot: the GO did nothing, the client
+        // reports -1 (not 0, the player's Cancel).
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        a.engine.dead = b.engine.dead = std::uint8_t(1u << b.session->own_slot());
+        world.hub.stamp_go(2, "dng101b1", 0);
+        check(world.run_until(5, [&] { return !b.engine.go_calls.empty(); }), "the GO reached B");
+        world.run(0.3);
+        check(!world.hub.go_intents.empty() && world.hub.go_intents.back().second.argument == w::kGoEndedArgument, "B reports -1");
+    }
+    {
+        // An INTENT behind a GO in the same step waits for a step its engine
+        // allows (6.5): never in the leavers' copy, a step later in the
+        // stayers'.
+        World world;
+        world.hub.co_arrival_hold = 3.0;
+        world.hub.suggested_delay = 6;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        co_arrive(world, a, b);
+        world.run(3);
+        auto& inst = world.hub.instances[world.hub.members[1].inst];
+        const std::uint32_t j = inst.next_seal + 8;
+        w::Event go{w::EventKind::go};
+        go.slot = std::uint8_t(world.hub.members[2].slot);
+        go.stage = "dng101b1";
+        w::Event intent{w::EventKind::intent};
+        intent.slot = std::uint8_t(world.hub.members[1].slot);
+        intent.intent_kind = std::uint8_t(w::IntentKind::go_without);
+        inst.events[j].push_back(go);
+        inst.events[j].push_back(intent);
+        check(world.run_until(5, [&] { return a.engine.gos + b.engine.gos > 0 || !a.engine.go_calls.empty(); }), "the GO applied");
+        world.run(1.0);
+        check(b.engine.gos == 1 && b.engine.intents == 0, "the leavers' copy never applies the INTENT behind the GO (" + std::to_string(b.engine.intents) + ")");
+        check(a.engine.intents == 1, "the stayers' copy applies it once its fork is reported (" + std::to_string(a.engine.intents) + ")");
+    }
+    for (const bool moved : {true, false}) {
+        // The GO's barrier becomes a new stage group: "kim went on to
+        // dng101b2." while the offer is open deeper; else "kim left dng101b1
+        // before you arrived.".
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, 9);
+        w::Offer offer{3, w::OfferOp::open, 0, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        check(b.session->go_along(3), "A goes along");
+        world.hub.ask_go(2, "dng101b1", 0, world.now);
+        offer.op = moved ? w::OfferOp::changed : w::OfferOp::closed;
+        offer.flags = moved ? w::Offer::stamped : 0;
+        offer.close = moved ? w::OfferClose::none : w::OfferClose::left;
+        offer.stage = moved ? "dng101b2" : "dng101b1";
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        b.session->take_notices();
+        check(world.run_until(15, [&] { return b.engine.stage() == "dng101b1" && b.session->mode() != Mode::parked; }), "B arrived");
+        world.run(0.5);
+        const auto notices = b.session->take_notices();
+        const std::string want = moved ? "kim went on to dng101b2." : "kim left dng101b1 before you arrived.";
+        check(has_notice(notices, want), "the arrival's line: " + want);
+    }
+    {
+        // A notice that waited (B defeated) while the entrants moved deeper
+        // shows the late form: where they are now.
+        World world;
+        world.hub.co_arrival_hold = 0.3;
+        world.hub.suggested_delay = 4;
+        auto& b = lone_in_instance(world, 9);
+        b.engine.dead = std::uint8_t(1u << b.session->own_slot());
+        w::Offer offer{3, w::OfferOp::open, w::Offer::notice, {9}, "dng101b1", 20, w::OfferClose::none};
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.5);
+        check(b.session->go_notices(world.now).empty(), "no notice while defeated");
+        offer.op = w::OfferOp::changed;
+        offer.flags = 0;
+        offer.stage = "dng101b2";
+        world.hub.send(2, w::Type::offer, w::encode(offer), world.now);
+        world.run(0.3);
+        b.engine.dead = 0;
+        world.run(0.5);
+        const auto shown = b.session->go_notices(world.now);
+        check(shown.size() == 1 && b.session->go_notice_text(*shown[0]) == "kim is in dng101b2. Go along?",
+              "the late form: " + (shown.empty() ? std::string("none") : b.session->go_notice_text(*shown[0])));
     }
 }
 
@@ -1590,6 +2555,7 @@ int main(int argc, char** argv) {
     try {
         std::cout << "solo, join, fork\n";
         solo_join_fork();
+        snapshot_ask();
         presence_tracks();
         presence2_tracks();
         presence2_session();
@@ -1622,18 +2588,31 @@ int main(int argc, char** argv) {
         room_story();
         std::cout << "world session\n";
         world_session();
+        std::cout << "world: the arrival prompt, gate form\n";
+        prompt_gate_form();
+        std::cout << "world: the arrival prompt, loading-screen form\n";
+        prompt_loading_form();
         std::cout << "world: a restart's story key\n";
         restart_story_key(9);
         restart_story_key(3);
         restart_at_home();
         std::cout << "world: HOME through JOIN_REQ home\n";
         solo_leader_home();
+        std::cout << "world: remove and report (round I1b)\n";
+        moderation_session();
+        ignore_home_hook();
         std::cout << "world: CLOSE stopping reconnects\n";
         close_stopping_reconnects();
         std::cout << "world: the barrier fallback\n";
         fallback_in_world();
         std::cout << "world: a kept leave, the host away, the end\n";
         leave_and_end_in_world();
+        std::cout << "world: go along\n";
+        go_along_session();
+        std::cout << "world: go along, the review's cases\n";
+        go_along_review();
+        std::cout << "world: the toasts, round I1b's integration review\n";
+        review_toasts();
         std::cout << "checkpoint reports\n";
         checkpoint_reports();
         std::cout << "READY after a refused READY\n";

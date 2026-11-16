@@ -1,0 +1,15 @@
+# W31d2 (19.24): no stamp while nobody lives in the target stage group; the entrants' game over closes the offer (defeated)
+# and ends the waiting request (go refused, closed); no rescue join.
+c: online-script: step .* log: c in dng204b1
+c: online-script: step .* log: c defeated
+b: online-script: step .* log: b asked to go along
+b: online-script: step .* log: the offer closed without a stamp
+c: online-script: step .* log: c home
+relay: offer_open .*stage=dng204b1
+relay: no_living
+relay: go_request
+relay: offer_close .*reason=defeated
+relay: go_end .*reason=closed
+!relay: go_stamped
+!b: online-script: FAIL
+!c: online-script: FAIL

@@ -859,7 +859,13 @@ players) and changes who is asked, who is frozen and who leaves:
   in this update (it stepped on). A run without such a member does nothing; the
   slot-0 fallback of MATgetPlayerNo (`mat_ctrl.cpp:164-167`) is never used.
   A member who stays on the mat after answering *No* is not asked again until
-  it steps off and on.
+  it steps off and on. A player that *appears* on the mat has not stepped on
+  (round I1b, go lane): its bit counts only when it was live in the previous
+  update too (`MatCtrlManager::running_mat`), so a stage start, a JOIN's spawn
+  at the slot's player point or a raise on a mat asks nobody (W31d: the fourth
+  member's point at dng204b1's entrance lies on matz01, the way back; its
+  prompt, left open, kept the stage group from the membership-safe step the
+  next JOIN waited for).
 - **Freeze and drawing.** Only the owner's player is off control; enemies run
   on. The prompt's half fade (`i_fadewn01 SQ_BHLFOUT30`) and window
   (`i_zzstchgwb`) are drawn only on the owner's machine (draw filter, round
@@ -2102,7 +2108,14 @@ A single BARRIER (a desync, or a forged one) therefore stops the sealing for
 every member of the instance until `Instances:BarrierReportSeconds` (5 s)
 ends the wait: their pictures freeze that long (measured in the round S1
 review: 5.17 s), then the reporters leave as a group of their own (NEW) and
-the others play on (LEAVE, LEAD_FROM). A BARRIER that names an instance the
+the others play on (LEAVE, LEAD_FROM). A BARRIER past every tick its sealed
+instance sealed (more than `StaleBarrierTicks`, 120, beyond the next one) is
+another timeline's: a member that resumed into a visit it never loaded,
+whose link went with the visit's BARRIER_OK (W7e, round I1b's integration);
+it never stops the sealing: the member leaves at once (LEAVE, the others'
+WORLD_NOTICE *apart*) and its barrier is decided alone. Every answer to a
+barrier decided alone names the instance and visit its BARRIER named (the
+parked client matches them; instance 0 went unheard). A BARRIER that names an instance the
 server does not have the member in (a straggler whose group was decided
 without it, a client whose own five-second timeout went on as NEW, a forged
 one) arrives alone and first takes the member out of the instance the server
@@ -2348,7 +2361,20 @@ the same 47549cdd for stag0102.) The server compares per tick:
   (`Instances:ForkConfirmMs`), then the tick is compared (a forged SPLIT every
   two seconds hid every comparison). The instance's flags and context (STATE)
   come from one member only, the connected one that has been in the instance
-  longest (then the lowest slot).
+  longest (then the lowest slot): the *reporter*. The others' STATEs are
+  kept, not applied (`HubInstance.States`, the newest per member of the
+  visit; fix-d43, W7f's race, 19.32): when the reporter changes (its LEAVE,
+  its link lost, a member back in its slot by a reconnect, any slot that
+  goes or comes; `RoomHub.SyncStateReporter` at those steps and in every
+  housekeeping pass), the new reporter's newest STATE takes effect when its
+  tick is newer than the one in effect, or when the member whose STATE is
+  in effect left the stage group, so no change of the reporter loses a
+  state (a client sends STATE only on a change). A reporter back from a lost
+  link never takes a newer state back with its older one; a member that
+  leaves the stage group keeps no STATE there (back in it later in the
+  visit, only what its engine reports from then on counts); a new visit
+  starts with none (world log `state_reporter`, counter
+  `state_reporter_changed`).
 - **One vote per tick.** Only sealed ticks count, every tick is voted on once,
   a member is resynced at most once at a time and once per
   `Instances:ResyncCooldownSeconds` (10 s; further lost votes meanwhile are
@@ -2496,6 +2522,18 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
   and fails for a variable that is neither on it nor marked presentation-only),
   and after every online engine construction and restore `cheats_` is set from
   the room settings. The settings hash (6.2) covers the rest.
+- **Presentation per machine** (main's display languages and texture pack
+  format 2, merged into round I1b's integration on 2026-11-14): the display
+  language ([L10N.md](L10N.md): the game text laid out again at display time,
+  the English text stays in the tick state, the snapshot and the wire), the
+  texture packs, their streaming thread and the Graphics options
+  ([TEXTURES.md](TEXTURES.md): the renderer's, outside the engine) are no
+  part of the simulation, the StageSnapshot, the data hash or the settings
+  hash: the members of one instance may differ in all of them. Their test
+  variables are on the presentation list (`DW4_LANGUAGE`, `DW4_LANG_DIR`,
+  `DW4_L10N_*` and the Graphics and streaming switches such as
+  `DW4_TEXTURE_QUALITY`, `DW4_LOD_BIAS`, `DW4_SHADOW_QUALITY`). The online UI
+  (19.5.6) stays English whatever the game text shows.
 - One deterministic engine per process (the system RNG is a static,
   `combat.cpp:36-39`, reseeded by every engine construction): a client never
   constructs a second while one runs (6.6). Moving the RNG into the engine
@@ -8853,7 +8891,9 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
   him standing at the gate; elsewhere it opens on
   his own loading screen, where B takes him back to where he left. Players
   who take the gate up to about ten seconds after each other land together
-  without a question while the first one's new instance is still starting.
+  without a question while the first one's new instance is still starting,
+  as far as each one's visibility (chosen, else remembered) lets the other
+  in (decisions 48 and 49: Private with nobody else, not even a friend).
   Choosing an instance whose players are elsewhere in the area puts him
   into it where he walked in, as a guest in the host's story (19.30.3).
 - **Go along.** When a member goes from a field into a dungeon, every
@@ -8938,6 +8978,13 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 | 39 (2026-11-06) | The Fortress (staggf01-04) counts as fields: walking into it from Goblin Pass makes no "Go along?" offer, members in it get the offers of others, and it ends no instance | 19.30.2, 19.30.5 |
 | 40 (2026-11-06) | Players at the arrival stage first: in the arrival prompt, after party and friends come the instances with players at the arrival stage, then the others, each by Q13's ping and free seats; a row with nobody of its instance at the arrival stage is never preselected unless it is the party's or a friend's (the host a friend or friends in it), *New instance* is then; *A* on the row of an instance elsewhere in the area still enters where the player walked in (not the travel to the host of option (c)) | 19.7.3, 19.30.3 |
 | 41 (2026-11-06) | A host alone in his instance is never prompted about another instance at a stage he walks to; round 67's lone-host prompt with *Continue alone* stays out | 19.7.1, 19.30.3 |
+| 43 (2026-11-11) | Two players who leave together and both choose *New instance* land together: a *New instance* chooser may be the co-arrival of another *New instance* base it may see (the same visibility rules as every co-arrival: Private, Friends, blocks, bars; staff are ordinary players here); players who chose a row still join the row they chose | 19.7.6, 19.32 |
+| 44 (2026-11-12) | Go along: the stamp to control takes 3.3-3.4 s (measured in W31, not 19.30.7's "under two seconds"): accepted as built; it may be shortened later | 19.30.7, 19.25 |
+| 45 (2026-11-12) | Go along: a context that changes on the target after the stamp is decided as built, as any arrival's decision (a stage group of its own there with the notice *other quest*), not a wait on the loading screen | 19.30.7, 19.25 |
+| 46 (2026-11-12) | *Arriving now*: a stage group of an instance at a barrier heading to the arrival stage (or its members parked on the way there) shows as a row *Arriving now* with its host's name; selectable (the arrival waits for their stage group at the stage, then joins it), never preselected (decision 40 unchanged), never the automatic join; built in round I1b's integration | 19.7.2, 19.7.3, 19.32 |
+| 47 (2026-11-12) | The prompt review's finding 8 (a fresh arrival without an answer becomes a co-arrival base before its own loading-screen prompt) is accepted as built: no extra handling | 19.7.6, 19.32 |
+| 48 (2026-11-14) | Private stays private: a player whose choice was *New instance* with Private is never the co-arrival of another player's base nor joins another's starting instance; with Friends only one whose host is his friend (no block either way); with Public as decision 43 says. A base whose chooser picked Private or Friends takes no co-arrival its visibility does not let in (as before). Both barrier orders give the same result; the members leaving through the same barrier (one stage group) stay together | 19.7.6, 19.7.7, 19.32 |
+| 49 (2026-11-14) | Decision 48 applies to an explicit *New instance* choice; without any choice the remembered default visibility (the one the player last chose) decides the same way: a player at the gate while a stranger's instance is starting lands in it automatically (no form, OPTIONS *starting*) only where his remembered visibility lets its host in (Public as before; Friends only a friend's, no block either way; Private nobody else's, not even a friend's, as decision 48), else that instance is as if it did not exist for him (the form for the other rows, else a new instance with his remembered visibility); an arrival with no answer at all (a plan never answered, a CHOICE the relay never got, a plan id unknown after a reconnect) is the co-arrival of a base or joins a starting instance only where its remembered visibility lets that host in, else a new instance with it. Unchanged: the members of one stage group passing the same barrier together, travel inside an instance, rows chosen explicitly, GO barriers. The same holds for round I1a's automatic join of a running instance without a prompt (a late-comer from a field, `World:ArrivalPrompt` off; built in fix-d43) | 19.7.1, 19.7.6, 19.7.7, 19.32 |
 
 **Standing decisions that stay:** at most four players per stage group (the
 engine's slots 0-3; staff bypass the visibility always, the blocks and the
@@ -9292,14 +9339,57 @@ will move.
 
 #### 19.5.6 Wording (English UI)
 
+A button in a hint is the controller's picture (the port UI's placeholders,
+`button_prompts.hpp`: `{A}`, `{B}`, `{X}` for the game's buttons the screen
+reads, `{OK}` / `{BACK}` for the F1 menu's, `{MENU}` for the F1 menu's own
+button: View / Back / Share / Minus, F1 on the keyboard), so the pictures
+follow player 1's controller; the table writes "A: Choose" for "`{A}`
+Choose". Round I1b's hints use them since the integration: the prompt's
+pad line "`{A}` Choose   Left/Right visibility   `{X}` Details   `{B}`
+Back", the go-along box's "`{OK}` Go along", "`{OK}` Cancel", "`{BACK}`
+Close", the go-along line's "`{MENU}` answer" / "`{MENU}` cancel" (one text
+for the pad and the keyboard: `{MENU}` shows F1 there), the held GO
+barrier's "`{B}` Back to the lobby" and "`{A}` Yes   `{B}` No". The prompt's
+keyboard line names its keys (Enter, Backspace), which are not the game's
+bindings; it shows while the keyboard is the device in use (player 1's
+prompt family, as every other hint; the integration's review: it showed
+whenever no pad was plugged in, and a plugged pad's player on the keyboard
+got the pad line). The arrival toasts name the menu's button too since the
+review: "New instance (<visibility>).  `{MENU}` Online menu", "...  Leave:
+`{MENU}` Online menu".
+
+Since the integration's review (2026-11-14) the instance's toasts are the
+world's notices alone, each once: the host's leave says "<host> left. The
+instance ends." (the seat's "<host> left." right after it is not shown); a
+member taken out of the receiver's stage group who keeps his seat (a lag
+LEAVE, a split barrier, 6.9) is "<name> plays apart for now." (WORLD_NOTICE
+15 *apart*: the stage group's own LEAVE toast went with the integration,
+which left that LEAVE without a word); "<name> went to <stage>." names the
+floor as the go-along texts ("Sand Labyrinth B2"); the JOIN's own toast
+"You joined <names>." waits for INSTANCE_INFO to name the stage group
+(two seconds at most, then the slots' known names, else "You joined the
+group."); a decision's notice without names says "the group" ("Joining the
+group failed; you play this stage on your own."), never "Your friends is
+...". The go-along notice goes once the player answered it: the own
+request's line stands where it was (a *Cancel* brings it back while its
+20 s run).
+
+These texts are the port UI's: they stay English when the game text shows
+another display language (main's F1 > Settings > Language, merged into the
+integration on 2026-11-14; [L10N.md](L10N.md) 4: a language pack's
+`[files] ui` is reserved for a later catalog of them). The area, stage and
+form names in them come from the port's own tables (`presence_data`), the
+story label and the names from the relay, never from the game text catalog.
+
 | Where | Text |
 | --- | --- |
 | Home screen | "Play: <form> Lv <n> (Box <b>)", "Choose character", "Friends (<n> online)", "Party", "Instances", "Settings", "Account", "Log out", "Online now: <n> players, <m> instances" |
-| Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Story not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
-| Loading | "Joining <host>...", "Joining <name>...", "Waiting for <name>'s floor...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
-| Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
+| Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Story not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; with the keyboard (19.5.7: arrows, Enter, Backspace; no key for X): "Enter: Choose   Left/Right: visibility   Backspace: Back" / "Backspace: Back to the lobby", round I1b's prompt lane, for the user's OK as the go-along line's "F1: answer"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
+| Loading | "Joining <host>...", "Joining <name>...", "Waiting for <name>'s floor...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "End the instance for everyone?   A: Yes   B: No" (the host's B on a held GO barrier, 19.30.7; added by the go lane's review fix of 2026-11-12, for the user's OK), "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
+| Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>).  View: Online menu" (`{MENU}`), "You arrived together with <host>: you're a guest in <host>'s story.", "You joined <name> and <name>." (a JOIN of a stage group; "You joined the group." without names) |
 | Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "<name> is in <stage>. Go along?" (a late notice), "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Close", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Going along when <name>'s floor is ready...", "<name> is in a boss fight. Going along when it ends.", "View: cancel", "A: Cancel", "Going along...", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "Couldn't go along: <name>'s floor stayed busy.", "Couldn't go along: a scene here took too long.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
-| In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>.", "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
+| In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>." (the floor in a dungeon), "<name> plays apart for now." (WORLD_NOTICE 15, the integration's review), "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
+| Player card (round I1b, the Instance page) | "Report", "Remove", "Report <name> for:", "Griefing", "Cheating", "Name", "Other", "Cancel", "Remove <name> from your instance? They can't rejoin it for a while." (the bar's length is the server's `World:RemovedBarMinutes`, so the question names no number), "You can't send more reports today.", "Couldn't send the report. Try again later.", "This player is not available." (REPORT's answer for a member the client knows no name of) |
 | End | "<host> left. The instance ends.", "<host> lost the connection. Waiting for <host>... <s> s", "<host> is back.", "<host> did not come back. The instance ends.", "<host> was defeated. Waiting for <host>... <s> s", "<host> was defeated. The instance ends.", "The instance has ended.", "A moderator ended this instance.", "You were removed from <host>'s instance.", "Back on your own story.", "The server restarted. Back on your own story.", "Server restart in <s> s." |
 | Leaving | "Leave <host>'s instance? You return to your lobby.", "End the instance for everyone?", "Your guests will return to their lobbies.", "Leave <host>'s instance and join <name>?" |
 | Social | "<name> wants to be your friend. View: Friends", "<n> new friend requests. View: Friends", "<name> accepted your friend request.", "<name> is online.", "<name> invites you to a party. View: answer", "<name> joined your party.", "<name> left the party.", "<name> leads the party now.", "Request sent.", "Invite sent.", "Report sent. Thank you.", "Connection lost. Try the gate again in a moment." |
@@ -9555,7 +9645,13 @@ writing the host's story; and takes it out of the instance's lists. If its stage
 is solo-led and its client does not answer the *home* JOIN_REQ within
 `Instances:JoinRequestTries`, the relay detaches that stage group from the
 instance (a stage group of nobody's instance: no joins, no story, its next
-barrier a DISSOLVE home with the redirect, 19.8.3).
+barrier a DISSOLVE home with the redirect, 19.8.3). A member removed while it
+waits at a barrier (gathering with its stage group, waiting for a JOIN or a
+boss fight, or as the co-arrival of a holding base) goes home from that
+barrier at once (a DISSOLVE redirected home, its own story) and never takes a
+seat in the instance again while the bar lasts; the others decide on, and the
+co-arrivals of a base left without members decide on their own (round I1b,
+19.25).
 
 Since fix-019 the relay also refuses (reason *owner*) every STORY from an
 engine on another's story whatever owner key it names: a stage group of
@@ -9591,6 +9687,26 @@ achievements' play context (19.8.9). W10s checks the fallback from
 nobody's instance with a real client (a staff removal during a classic
 catch-up whose target leaves the stage).
 
+fix-d43's review (2026-11-15): **a guest removed while it plays on alone
+goes home at its next barrier too.** A member that went its own way from a
+stage group of the instance (taken out for lag, a resync or a missing
+hash; its link timed out and it came back without its slot; its barrier
+split off or decided apart, 6.9) plays on alone on the host's story and
+keeps its seat. Removed meanwhile, its next barrier is a DISSOLVE
+redirected home with the replace, whatever stage it names, like a stage
+group whose members hold no seat. Before, the relay's stand-in for that
+barrier named no instance, so it was a fresh arrival from that field: its
+own new instance merging the former host's story into the own (the error
+type fix-019 closed for stage groups), or round I1a's automatic join of
+another player's instance at the arrival stage without the prompt, also
+with `World:ArrivalPrompt` on (after a reconnect without its slot: the
+prompt, with the host's story still in its engine). The stand-in now
+names the instance its engine played on (`HubInstance.ApartFrom`, from
+`HubMember.LoneWorld` set where the member goes on alone and cleared when
+it is placed again or starts a new session); with its seat the barrier is
+decided inside the instance as before. A member that went on alone from a
+detached stage group goes home the same way.
+
 #### 19.6.7 The host's connection loss (Q8)
 
 - **When it starts.** Today the relay notices a lost connection in two
@@ -9609,7 +9725,8 @@ catch-up whose target leaves the stage).
   the first missing tick on (not "last pad, then neutral" as for a guest, so
   his Digimon stands still; it can be hit) until `World:HostGraceSeconds`
   (60) after the start instead of `Relay:ReconnectSeconds` (10, which stays
-  for guests). The host's RESUME window is at least the grace:
+  for guests; less for a link that keeps dropping, below). The host's
+  RESUME window is at least the grace:
   `Instances:MaxResumeTicks` rises to 4,200 for a host (60 s at 59.94 Hz
   plus 600), or round J's checkpoint resume covers it. Guests see the
   countdown; rows read *Host reconnecting*; joins and travels wait; guests'
@@ -9619,7 +9736,82 @@ catch-up whose target leaves the stage).
   `World:MemberTimeoutMarginSeconds` (10).
 - **A solo-led host stage group** plays on in the host's client until its
   barrier (6.10); the relay counts the grace all the same.
-- **Back in time:** RESUME, "Kim is back."
+- **Back in time:** RESUME, "Kim is back." His slot's fill streak counts
+  for `lagOut` from his return, not from the grace's start: his client has
+  `Relay:LagLeaveSeconds` to catch up to the ticks sealed meanwhile and then
+  plays on in his stage group (round I1b's fix stage after the merge of main:
+  before, a host away longer than that was taken out by `lag_leave` a quarter
+  second after `host_back`). A return past the grace's deadline, before the
+  housekeeping's next pass ended the instance, is not in time.
+- **A link that keeps dropping** ("flapping": closes or silences again and
+  again; fix-flap) is bounded by the host's *absence debt*
+  (`WorldInstance.HostDebt`). From the start of a grace on, the time he
+  holds up the guests of his stage group counts up: away, or connected
+  with his slot filling (its last sealed tick had no pad of his in time;
+  not while every connected member lags, the whole group stalled). The
+  time he plays there with his pads in time, or connected outside a stage
+  group shared with a guest (lone after `lag_leave`, solo-led, the hub),
+  counts down, one for one, to 0, where the episode ends; the lag before
+  an episode's first grace does not count (the lag rule covers it). Its
+  limit is `World:HostGraceSeconds` + `Relay:LagLeaveSeconds` (70 s: a
+  whole grace and the time to catch up after it):
+  - *A grace* lasts what the debt leaves of that limit, at most
+    `World:HostGraceSeconds` (the guests' notice shows its seconds;
+    `host_grace_shortened`, `host_away ... debt_s=`); a debt already spent
+    ends the instance at the next housekeeping (`host_lost`). A host who
+    shares no stage group with a guest gets a fresh grace: his drops hold
+    nobody's play up (`lag_leave` took him out, or he leads alone).
+  - *The lag rule:* connected and lagging (outside `lagOut`'s exceptions:
+    everyone lags, a resync), a host whose debt reached the limit is out of
+    the stage group (`lag_leave`: he plays apart, still host, the instance
+    goes on), whatever his lag clock, which every return restarts as above.
+
+  **The bound:** from his slot's first fill he is out of the guests' stage
+  group or his instance has ended once the time his slot held them up
+  exceeds the time he played in time since by `Relay:LagLeaveSeconds`
+  (lagging before the episode) + the limit, 80 s with the defaults plus the
+  housekeeping's quarter seconds. So a stretch without play in time ends
+  within the worst case of one absence (lagging 9.9 s, closed, back after
+  59.9 s, 10 s to catch up): the guests never wait on his standing Digimon
+  longer at a stretch than one absence could make them; a host who holds
+  them up a share f of the time, more than half, is out within about
+  80 / (2f - 1) s (85 s at 97 %, 114 s at 85 %); a host who plays in time
+  at least as long as he holds them up (brief drops between stretches of
+  play: 1 s every 9 s, half-open stalls of 4.5 s with 5 s of play) plays
+  on with a fresh grace at every drop. A host back once after up to the
+  whole grace plays on; a drop before he has played in time as long as he
+  held his guests up gets the rest (59 s away, 9 s to catch up, 20 s in
+  time: a grace of 22 s). The debt takes the real client's bursts (its
+  pads are made on the wall clock, so after each return the pads of its
+  last ticks arrive in time and end its fill streak) for the little play in
+  time they are. A longer `Relay:LagLeaveSeconds` lengthens the limit:
+  more lenient, never stricter. No setting of its own (`WorldFlapTests`,
+  W7g).
+
+  Before, every return restarted the lag clock (2b009cee), every drop
+  started a fresh grace, and 4 s of silence start a grace before 10 s of
+  lag count: such a host stayed in his stage group for good. fix-flap's
+  first rule (54410943: a drop less than `Relay:LagLeaveSeconds` of wall
+  clock after a return kept the episode's first deadline, and the lag clock
+  restarted once per fill streak) left drops further apart unbounded (59 s
+  away, 10.5 s back: fresh graces for good), ended the instance for a host
+  who played in time between close drops (1 s every 9 s: `host_lost` after
+  63 s; also while he played apart after `lag_leave`), let a client stall
+  shorten a later absence or end the instance right after a long one,
+  brought back 2b009cee's `lag_leave` right after `host_back` through its
+  per-streak credit, and made a longer `Relay:LagLeaveSeconds` stricter
+  (its review, findings 1-5).
+
+  A flapping **guest** is not on this path: no grace, and his reconnects
+  never restart his slot's clock, so `lagOut` takes him out
+  `Relay:LagLeaveSeconds` after his streak's first fill however his link
+  comes and goes (`Relay:ReconnectSeconds` counts each drop on its own);
+  with his pads in time between the drops he plays on, as before. A burst
+  of pads in time ends any member's fill streak, though: a link whose
+  half-open drops each stay below `Relay:LagLeaveSeconds` (a guest's) or
+  below `World:HostSilenceSeconds` (a host's: no grace, no debt), with
+  such a burst between them, stays in his stage group (left for the lag
+  rule, which has the same gap without drops).
 - **A crash** (the engine lost): within the grace only with round I5 (a
   checkpoint rejoin of his own slot, 19.15); before I5 a crashed host ends
   his instance after 60 s.
@@ -9636,7 +9828,11 @@ catch-up whose target leaves the stage).
 - **Not back:** END `host_lost`, HOME for everyone.
 - **The test** W7 runs with a proxy that cuts by closing the connection and
   W7c with one that swallows packets without FIN or RST; W7d holds a
-  reconnect at 45 s to prove the member timeout does not end the grace.
+  reconnect at 45 s to prove the member timeout does not end the grace; W7g
+  swallows them for 7 s at a time, 0.2 s apart, eight times, then closes
+  the link for 30 s (a flapping link): the debt shortens the later graces
+  and leaves the close about 20 s, `host_lost` inside the cut, inside the
+  bound.
 
 #### 19.6.8 Desync
 
@@ -9696,7 +9892,10 @@ alone in his instance too, 19.30.3, decision 41), a party member arriving
 with its leader (I4), a travel, a seat rejoin.
 
 - A *starting* instance (19.3, 19.7.6) at that stage that the arrival may
-  see and that has seats for it: co-arrival without a prompt (answer 21).
+  see and that has seats for it: co-arrival without a prompt (answer 21),
+  where the arrival's own visibility lets its host in (its *New instance*
+  choice, decision 48; without a choice its remembered default, decision
+  49); one it does not let in is as if it did not exist for this arrival.
 - Else candidates exist in the stage's area (19.7.2, 19.30.3): the prompt,
   in the gate form (19.7.4) or the loading-screen form (19.7.5).
 - Nothing: NEW with the remembered visibility, the toast.
@@ -9721,6 +9920,22 @@ stays I1a's to test with a friend (W30, W30x, W6 make a and b friends;
 W29's fake guests befriend the host). Round I1b's prompt replaces the
 automatic join; staff pass the visibility only by their own choice of a
 row (19.7.2), never in the automatic join.
+
+**Decision 49 in the automatic join** (fix-d43, 2026-11-14): where the
+automatic join still runs (`World:ArrivalPrompt` off, I1a's configuration
+and the load gate's `--no-prompt`; with the prompt on, a fresh arrival
+whose departure stage is a field, 19.32), it takes only an instance whose
+host the arrival's remembered visibility lets in, as decision 48's *New
+instance* choice would (`ChoiceAdmits`, `Matching.MayEnter`): *Public* any,
+*Friends* only a friend's (the host's friendship counts, not a friend
+inside; no block either way), *Private* nobody else's, not even a
+friend's. A refused instance is as if it did not exist for the arrival:
+the preselection is made among the others, else a new instance with the
+remembered visibility (`RoomHub.AdmittedAutoJoin`; world log
+`auto_join_refused ... by=remembered`, counter
+`auto_join_refused_remembered`). Before, a late-comer who remembered
+*Private* became a guest in a stranger's running instance with players at
+the arrival point.
 
 (Before round 72 a host alone in his instance who moved on was a fresh
 arrival too, with *Join* ending his instance and *Continue alone* keeping
@@ -9773,7 +9988,12 @@ not ending, and listed with their state:
 - *Boss fight* (boss-locked): choosing it waits (19.7.7);
 - *Host reconnecting* (greyed, not choosable);
 - *Full* (greyed; for staff *Spectate*, I3);
-- *Arriving now*: a running instance's group at the barrier for S;
+- *Arriving now*: no stage group at S, but one of the instance at a barrier
+  for S, or its members parked on their way there (decision 46, built in
+  round I1b's integration): choosable, the arrival waits for their stage
+  group at S and joins it (`Instances:JoinHoldSeconds` at most, then a
+  NEW with 3.4's hold-expired notice, as a JOIN's hold); never
+  preselected, never the automatic join; its players are not *Here*;
 - before round J, beyond `Instances:MaxCatchUpSeconds`: "Too long to catch
   up" (greyed); after J the check goes;
 - *Other settings* (greyed) only for a setting I1a's first task finds
@@ -9820,7 +10040,11 @@ rows with nobody there (the grouping is step 3's, not the ping's).
 
 Greyed and waiting rows (boss fight, host reconnecting, full, story not here yet)
 come after all joinable ones, also after those with nobody at the arrival
-stage. The first row is preselected when it is not greyed and is the
+stage. A stage group at the arrival stage that is joinable in a moment (a
+scene, its loading: state *loading*, 3.4's JOIN waits for it) is no such
+row: it keeps its place in steps 1-3 and follows the rows joinable now
+within step 4 (round I1b's review: a friend's instance in a short scene
+fell behind a stranger's row, which took the cursor). The first row is preselected when it is not greyed and is the
 party's (step 1) or a friend's (step 2: the host a friend or friends in
 it) or has players of its instance at the arrival stage; otherwise *New
 instance* is (decision 40). Only the first row decides: the cursor never
@@ -9830,8 +10054,15 @@ quick A never makes a player a guest in a stranger's story elsewhere in
 the area. Such a row is still listed and chosen with A (the player enters
 where he walked in, 19.30.4; from round I3 its *Y: Join at <host>*
 travels next to the host). The relay sends
-OPTIONS again on a change, at most once a second, and the client keeps the
-cursor on the same instance (or on *New instance*).
+OPTIONS again on a change, at most once a second, with the preselection
+decided again. The client keeps the cursor the player moved on the same
+instance (or on *New instance*); a cursor he has not moved takes the
+refreshed preselection, so the rule above holds through a refresh too (round
+I1b's second review: a row whose players left the arrival stage lost its
+claim, and a quick A on the kept cursor made the player a guest of a
+stranger elsewhere). The prompt's line about a chosen instance ("Kim's
+instance is full now.") stays through refreshes while no row of that host
+can be chosen, and goes once one can.
 
 *Players of the instance at the arrival's stage* (steps 3 and 6, the
 preselection; fix-019's refix) are the members of its stage groups that
@@ -9842,7 +10073,10 @@ they counted while their group waited at the exit, so the row became a
 preselected guest's NEW and I1a's interim rule put a stranger alone into a
 new stage group of their instance), nor a member playing on alone at the
 stage (another engine: the arrival would not meet it either). A stage
-group at a barrier *for* the arrival's stage is I1b's *Arriving now*.
+group at a barrier *for* the arrival's stage is I1b's *Arriving now*
+(decision 46): it ranks with the boss fights, after every row that can be
+entered now or in a moment, and is never preselected, so decision 40's
+preselection of the other rows stays as it was.
 
 #### 19.7.4 The gate form (Q13: standing at the gate)
 
@@ -9856,6 +10090,39 @@ group at a barrier *for* the arrival's stage is I1b's *Arriving now*.
   start (for mate00: the SELECTCTRL cursor and its DMcase's NEXTSTAGE). The
   departures it can name get the gate form, the rest the loading-screen
   form.
+
+  *Measured (round I1b, prompt lane, 2026-11-07).* The census of the
+  decompiled scripts finds two such departures, and the accessor names
+  both: stagML11 `mate00` (the lobby gate, SELECTCTRL `i_zzstchgcur`, one
+  DMcase per area with SETGENERATEPOS and NEXTSTAGE) and stagML11 `mate02`
+  (the return mat, `i_zzstchgwn`, *Yes* = DMcase 0 to SYSgetGateStage's
+  stage and point). The quest boards (`quest01..04`) only set flags (409,
+  376-381 ...); the same gate menu then offers one line, stag0401 point 3,
+  so a quest's start is the gate's departure. The briefing room (stagML02:
+  its mat and gate disc lead to stagML11), the event console (stagML12 to
+  stagML02), the shops and the stagIS* stages lead only into hub or UI
+  stages: no arrival, no prompt. `data/online/stage_graph.json` has no
+  static edge from a hub stage into a field (`PromptTests`). `dw4_world_probe
+  DATA census` (headless, online rules, the player put onto the mat, the
+  menu opened by the stage's own script) read the accessor at every line of
+  the gate's menu (training, after the training, phases 5 and 6, a quest's
+  start) and of the return mat's (two Security Gate stages), then pressed
+  A: 12 of 12 named destinations equal the stage and point the press
+  started (224 frames from the press to NEXTSTAGE at the gate, 211 at the
+  mat), and the mat's *No* line names nothing and starts nothing; B on the
+  gate's menu starts nothing and the accessor names nothing afterwards.
+  So every hub departure into a field gets the gate form; the
+  loading-screen form serves a lost PLAN (no OPTIONS within
+  `World:PlanWaitMs`), a departure posted outside a menu (the development
+  build's `depart` action) and the test hook `DW4_ONLINE_TEST_GATE_FORM=0`
+  (W11b). Log: `build/i1bp/meas/census_r3.log` (worktree `i1b-prompt`).
+  The lobby's point next to each departure (19.7.5's *Back to the lobby*),
+  from `dw4_world_probe DATA mats stagml11` (the mats and the generate
+  points): the gate (mate00, x -5..15, z -105..-85) has point 1 at (0, -40)
+  nearest, the return mat (mate02, x 145..165, z 45..65) point 3 at
+  (210, 120) (points 2 (60, 20) and 4 (250, 70) are farther; point 0 and
+  every undefined one are (60, -30)); the accessor names them
+  (`DepartureChoice::back_point`).
 - **The hold.** When the own player's press would confirm such a choice,
   the client keeps that press out of the pad stream (the engine sees neutral
   pads), sends PLAN and waits for OPTIONS (one round trip, well under 100 ms
@@ -9869,7 +10136,10 @@ group at a barrier *for* the arrival's stage is I1b's *Arriving now*.
   overlay closes, the held press is dropped (the player stands at the gate
   as after B) and "Connection lost. Try the gate again in a moment." shows.
   PLAN is throttled like BROWSE: at most one a second per member; a second
-  confirm within that second waits for the first answer.
+  confirm within that second waits for the first answer. (The client spaces
+  its PLANs a second apart by its own clock; the relay takes them 900 ms
+  apart by their arrival, so the network's jitter never drops a regular
+  second try.)
 - **The answer.** *A* on an instance or *New instance*: the held press goes
   out in the next pad, and the CHOICE travels with the departure's HEADING
   and BARRIER. A travel row (the party's instance elsewhere): a B press goes
@@ -9920,8 +10190,90 @@ later groups spawned in the base's load step). In the world:
   instance is visible to them (staff without the bypass: a co-arrival is
   automatic, 19.7.2) and has seats for them. Toast: "You arrived
   together with Kim: you're a guest in Kim's story. Leave: Online menu."
-- A base holds only for announced groups that may see it and did not choose
-  otherwise in a prompt.
+- A base holds only for announced groups that may see it and did not
+  choose a row in a prompt. A member who chose *New instance* lands with
+  the others leaving with it (decision 43, 2026-11-11): it is the co-arrival
+  of a base it may see (the same rules: visibility, blocks, bars), a base
+  holds for it, and one a moment late joins the base's *starting* instance
+  like any arrival (below), unless that instance was a row of its own
+  prompt that it passed over (then it gets its own new instance). A member
+  who chose a row joins its row and is nobody's base or co-arrival.
+- **Private stays private** (decision 48, 2026-11-14): a *New instance*
+  chooser lands with another player's base or starting instance only where
+  its own chosen visibility would let that host in, just as the base's
+  visibility must let the chooser in: *Public* as above; *Friends* only
+  with a host who is his friend (no block either way); *Private* with
+  nobody's. Both checks together are symmetric, so the two barrier orders
+  give the same result for every pair of choices (before, a Private
+  chooser whose barrier came after a stranger's Public base became that
+  base's co-arrival, a guest on the stranger's story, and got an instance
+  of his own in the other order). A base holds for no announced member
+  whose choice would refuse it, and a base that held for a member who then
+  refused it stops waiting for him (world log `co_arrival_refused`,
+  `starting_refused`). Plan 0xFFFF counts as *New instance* with the
+  member's remembered default. An arrival without a choice keeps the
+  automatic co-arrival only where its remembered default lets the other
+  host in (decision 49, below); the members of one stage group leaving
+  through the same barrier are one arrival and stay together whatever the
+  visibility. The base's side asks the base's own *New instance* choice
+  (the visibility its instance gets), not the host's remembered default,
+  which a live re-check (19.14) could set back to the stored value
+  (decision 49's guard, below, keeps it now); a member whose barrier came
+  is awaited by no other base (also when another base took him); and when
+  a base's hold
+  ends its co-arrivals are checked again: one that a block or an
+  unfriending during the hold no longer lets in, or whose own choice no
+  longer lets the host in, decides on its own (`co_arrival_dropped`). A
+  gate-form answer outlasts a reconnect before its BARRIER (decision 48's
+  review, 19.32).
+- **The remembered visibility without an answer** (decision 49,
+  2026-11-14): decision 48 is about an explicit *New instance*; without
+  any choice the remembered default (the visibility the player last chose,
+  Q9; the one a new instance of his own gets) decides the same way.
+  (a) A player at the gate while a stranger's instance is starting gets
+  OPTIONS *starting* (no form, the automatic landing) only where his
+  remembered visibility lets its host in: *Public* as before, *Friends*
+  only a friend's (no block either way), *Private* nobody else's (not
+  even a friend's: decision 48's rule, as his own Private instance would
+  let nobody in, `Matching.MayEnter`).
+  Otherwise that starting instance is as if it did not exist for him while
+  it starts: it is no row (no form for it alone, and no preselected
+  stranger's row under a quick A, also not in the form's refresh), so he
+  gets the form for the other rows or, with none, nothing to choose and a
+  new instance with his remembered visibility; once that instance runs it
+  is a row like any other. (b) An arrival with no answer at all (a plan
+  never answered, a CHOICE the relay never got, a plan id unknown after a
+  reconnect, the loading-screen form not answered yet) is the co-arrival
+  of a base or joins a starting instance only where its remembered
+  visibility lets that host in; a base holds for no announced member
+  without an answer whose remembered visibility would refuse it; otherwise
+  the arrival decides on its own (a new instance with its remembered
+  visibility, or the loading-screen form for other rows). With the base's
+  visibility check this is symmetric again, so both barrier orders give
+  the same result. (c) The automatic join of a *running* instance without
+  a prompt (19.7.1: a late-comer from a field, or every arrival with
+  `World:ArrivalPrompt` off) takes only an instance whose host the
+  remembered visibility lets in; a refused one is as if it did not exist
+  (the preselection among the others, else a new instance with the
+  remembered visibility; fix-d43, the decision 49 builder had left this
+  path out). Unchanged: the members of one stage group passing the
+  same barrier (also one that reconnects while its group arrives: a
+  barrier inside the instance), travel inside an instance, rows chosen
+  explicitly, GO barriers, decision 48 for explicit choices. World log
+  `starting_refused ... by=remembered`, `auto_join_refused ...
+  by=remembered`, counters `starting_refused_remembered`,
+  `co_arrival_refused_remembered`, `auto_join_refused_remembered`. Every
+  path that lands an arrival without an explicit choice in another
+  player's instance asks the same `ChoiceAdmits` (19.32, fix-d43's list).
+  **The guard**: since the remembered value decides more, the relay keeps
+  its own newest remembered visibility (a *New instance* choice, a host's
+  change of his instance's visibility) against an admission (a reconnect's
+  handshake, a live re-check) that read the account before that value was
+  written through the history queue: until the write is done, and against
+  an admission that began to read before it was done, memory keeps the
+  relay's value (world log `admit_visibility_kept`); an admission that read
+  later brings the written value or a newer one (the website's setting) and
+  ends the guard; a written value is guarded at most a minute.
 - **The window is ten seconds, not one.** `Decide` (`RoomHub.cs`) holds a
   base only for groups whose HEADING was already there at its barrier, and
   HEADING is sent at the fade's start (`Engine::note_departure`), so the
@@ -9932,8 +10284,11 @@ later groups spawned in the base's load step). In the world:
   counts as *starting* (19.3) until its stage group is first joinable or
   `World:StartingSeconds` (10) after its NEW: a later fresh arrival that may
   see it and fits JOINs it without a prompt, at the entrance with 3.4's
-  hold, as a co-arrival does (the same toast). After that window the
-  prompt rules apply. W4b checks B 6 s after A.
+  hold, as a co-arrival does (the same toast), where its own choice or
+  remembered visibility lets the host in (decisions 48 and 49). After that
+  window the prompt rules apply. W4b checks B 6 s after A; W4f, W4g and W4h
+  the same with B's remembered Private (apart), Friends as A's friend
+  (together) and without any answer (apart).
 - The arriving group of a running instance (members moving inside it) is
   never an automatic base for others: it is a prompt row *Arriving now*
   (answer 21: a foreign instance already runs).
@@ -9957,8 +10312,18 @@ CHOICE is checked again at the decision:
 - **Full, ended, no longer visible meanwhile:** a refreshed prompt with the
   line "Kim's instance is full now." (gate form: before the departure;
   loading-screen form: the barrier keeps waiting).
-- **New:** NEW with the visibility; a base for automatic co-arrivals
-  (19.7.6).
+- **New:** NEW with the visibility; a base for automatic co-arrivals,
+  and itself the co-arrival of another base it may see or of a starting
+  instance it was not offered (decision 43, 19.7.6), where the chosen
+  visibility lets that host in (decision 48: Private nobody's, Friends a
+  friend's).
+- **No answer at all** (a plan never answered, a CHOICE lost on the way, a
+  plan id the relay no longer knows after a reconnect; decision 47's
+  cases): decided as an arrival without a choice, with the remembered
+  default visibility in the place of the chosen one (decision 49, 19.7.6):
+  a co-arrival or a starting instance only where it lets that host in, a
+  starting instance it refuses is no row of its loading-screen form while
+  it starts, and a new instance of its own gets that visibility.
 
 ### 19.8 Story only in the field
 
@@ -10927,11 +11292,11 @@ a hundred requests are one toast, not two hundred seconds of them).
 | Friend request spam | the limits of 19.11, the decline cooldown, blocks, exact names only |
 | Stalking through whereabouts | friends only, the `whereabouts` preference, Private shows "Playing", blocked players see nothing (figures, rows, lists), the website lists instances only to signed-in players |
 | Probing a block | requests and invites answer the same with or without a block; the incoming cap never answers a sender (a request beyond it waits, 19.11) |
-| Staff abuse | the role from the database, every action and look audited, playing staff tagged, blocks passed only by an audited moderation action |
+| Staff abuse | the role from the database, every action and look audited, playing staff tagged, blocks passed only by an audited moderation action; a report about a staff member is handled by another one and never shows him who reported him (19.25 "Round I1b") |
 | A modified host client writes into guests' stories through the mirror | the mirror copies only what the guest's own STORY of the same visit also reported (19.8.6) |
 | A removed guest's modified client keeps sending STORY | its owner switches at the removal, its stage group is detached (19.6.6) |
 | Cheated characters among strangers | the Cheats tab fix before round I1 (19.25); round D's server character later; *Report player* from round I1b |
-| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor in code equal to round I1's protocol (49 or the next free), 410 on `/rooms*` (19.18) |
+| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor in code equal to the newest released protocol (49 since 0.1.7, 50 since 0.2.0, round I1b), 410 on `/rooms*` (19.18) |
 | Free text | none anywhere; quick chat (I6) uses fixed phrases; reports pick a reason from a fixed list |
 
 ### 19.17 Server
@@ -11561,6 +11926,47 @@ the decision stays under the lock).
   spread by about a fifth). Open (19.31): the rerun on a quiet machine, and
   the cause of the first *storm* run's 1.34 s stall (not seen again in
   eleven *storm* runs over sockets, max 12.0-35.9 ms).
+
+  **Measured again with the arrival prompt (round I1b, the prompt lane's
+  review).** Until then the in-process gate built its hubs with
+  `World:ArrivalPrompt` off (I1a's automatic join), so PLAN, OPTIONS, the
+  held prompts and the refreshes under the lock went unmeasured. The hubs
+  now run the prompt as shipped (`LoadGate.ArrivalPrompt`; `--no-prompt`
+  for I1a's join); the joins take the gate form (PLAN, the first choosable
+  row's CHOICE, the BARRIER naming the plan); the new cell *prompt* is
+  *joins* plus five PLANs a second from the lobby's gate for the groups'
+  fields, each overlay open three seconds (about 15 open at once, looked at
+  by the housekeeping's `RefreshPlans`) and closed with CHOICE back, and
+  every second join through the loading-screen form (the barrier held,
+  OPTIONS, CHOICE half a second later). In-process, 30 s (60 s for the
+  joins cells), server GC, other lanes' work beside it; worktree
+  `i1b-prompt`, `build/i1bp/gate/loadgate_i1bp_r1.json`,
+  `loadgate_i1bp_noprompt_r1.json`, `joins_i1bp_r1.json` (+ `.log`), every
+  run valid:
+
+  | Cell | Prompt | Hold p50 / p99 / p99.9 / p99.99 / max | Housekeeping p50 / p99 / max | Joins |
+  | --- | --- | --- | --- | --- |
+  | base | on | 0.3 µs / 17.7 µs / 0.09 / **1.06** / 12.7 | 0.32 / 10.3 / 12.7 | - |
+  | joins | on | 0.3 µs / 21.3 µs / 0.09 / **0.87** / 15.1 | 0.29 / 3.8 / 10.5 | 10 of 10 |
+  | prompt | on | 0.3 µs / 21.1 µs / 0.10 / **0.70** / 5.1 | 0.37 / 2.1 / 3.4 | 10 of 10 (5 by each form) |
+  | joins | off | 0.4 µs / 22.8 µs / 0.17 / **1.61** / 13.4 | 0.36 / 9.4 / 13.4 | 10 of 10 |
+  | prompt | off | 0.3 µs / 21.3 µs / 0.09 / **0.66** / 3.6 | 0.28 / 0.9 / 2.1 | 10 of 10 |
+
+  The prompt's own holds (cell *prompt*): PLAN (the candidates and OPTIONS
+  under the lock) 86 µs p50, 0.19 ms p99, 0.27 ms max over 301 PLANs, each
+  with the groups' rows; CHOICE back 0.9 µs p50; the joiner's PLAN 79 µs
+  p50 (0.12 max), its CHOICE 15 µs, a held barrier's CHOICE 0.18 ms p50
+  (0.38 max; it decides the JOIN), the joiner's BARRIER 0.12 ms p50. In
+  *joins* single holds of 11.7 ms (a joiner's PLAN) and 15.1 ms (`Seal`),
+  the machine's pauses as before. The idle-hub joins at 1, 10 and 25
+  minutes of log: PLAN 0.05-0.07 ms (0.26 ms after 25 minutes), CHOICE
+  under 0.01 ms, the BARRIER 0.05-0.08 ms; after 25 minutes the classic
+  join's row is greyed *Too long to catch up* and the joiner answers *New
+  instance* (I1a: the NEW with the notice), the checkpoint join joins.
+  **Verdict: the prompt changes nothing measurable**: p99 17.7-21.3 µs,
+  p99.99 0.70-1.06 ms with it (0.66-1.61 without), within decision 42's
+  "p99 at most 0.5 ms and p99.99 at most 5 ms". Test:
+  `LoadGateTests.A_small_prompt_cell_joins_through_both_forms_and_measures_plan_and_choice`.
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
@@ -11649,7 +12055,7 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 | 0x91 | OPTIONS | plan id or (inst, visit), stage, remembered visibility, preselected row (or *New instance*, decision 40), rows: wid, host member and name, relation flags (party, friend host, friends inside), the host's stage (round 72), players, players at the arrival stage (round 72), seats (taken, held, reserved), story label, same story point, difficulty, settings flags (randomizer, other settings), state (joinable, boss fight, loading, host away, full, arriving now, other quest, story not here yet), visibility (staff only), worst round trip ms | the answer to PLAN; at a held barrier; again on change, at most once a second |
 | 0x94 | INSTANCE_LIST | page, total, rows as OPTIONS plus area, stage and age | the answer to BROWSE |
 | 0x95 | INSTANCE_INFO | wid, host member, visibility, settings, story label, members (member, slot, stage, level, flags connected / lagging / staff), seats, grace seconds left, own role (host, guest, staff, spectator) | on change (the Online menu, the status line, the lag icons) |
-| 0x96 | WORLD_NOTICE | kind, member, name, argument | joined, left, went to a stage, visibility changed, removed, host away (seconds), host back, ended (reason), lagging, lag over, shared progress saved, friend online / offline / request / accepted, invite, party joined / left / leader / heading, go refused (round 72: the reason, offer closed or the member moved) |
+| 0x96 | WORLD_NOTICE | kind, member, name, argument | joined, left, went to a stage, visibility changed, removed, host away (seconds), host back, ended (reason), lagging, lag over, shared progress saved, friend online / offline / request / accepted, invite, party joined / left / leader / heading, go refused (round 72: the reason, offer closed or the member moved), report (14, round I1b), apart (15, round I1b's integration: the member left the receiver's stage group but keeps its seat, a lag LEAVE or a split barrier) |
 | 0x97 | MEMBER_INFO | member, name, level, flags (friend, party, staff tag) | before a member's first mention to this receiver; on a relation change |
 | 0x98 | FRIENDS_STATE | online friends: member, name, area, stage, wid, flags (host, joinable for this viewer, private, hidden) | on change, at most once per 2 s per friend (I2) |
 | 0x99 | GOTO_RESULT | request id, result (ok, boss wait, full, not found, ended, removed, busy, other settings, too long), stage, token (0 for a GOTO inside the own instance, 19.9.6), seconds | the answer to GOTO |
@@ -11682,9 +12088,10 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 - JOIN_REQ 0x83: + kind (join, home, go) for solo-led stage groups
   (19.6.5); *go* (round 72) with the stage and point (19.30.7).
 - INTENT 0x0D: kind 3 *leave* (the own slot home; the relay stamps HOME);
-  kind 4 *go along* (round 72; argument: the offer id, or 0 to withdraw a
-  waiting request or report an expired GO; the relay holds it until the
-  target is ready, then stamps GO, 19.30.7).
+  kind 4 *go along* (round 72; argument: the offer id; 0 the player's
+  *Cancel*; -1 the client's report that its stamped GO ended without a
+  departure, expired or done nothing at its step; the relay holds it until
+  the target is ready, then stamps GO, 19.30.7).
 - STATE 0x0C (round 72, I1b): + flag 16 *no living member* (no present
   slot alive, from the engine's alive mask), sent at once like the boss
   lock: the go-along wait and every JOIN hold read it (no rescue joins,
@@ -12000,8 +12407,8 @@ the travel, HOME, the reconnect inside the instance, toasts; round 72: the
 go-along notice, its waits (an own scene, defeated, loading) and its
 *Instance* page box with *B: Close* and the half second before View
 focuses it, the waiting row and its *Cancel* (INTENT 4 with argument 0),
-INTENT 4 only while the own player can go, the withdraw after an expired
-GO, the join base marked in STORY (I2)); `online`
+INTENT 4 only while the own player can go, the report (-1) after an
+expired GO, the join base marked in STORY (I2)); `online`
 (the engine's new paths on two engines with equal fingerprints:
 `redirect_pending_stage` only for a solo parked engine, the replace at
 DISSOLVE, HOME for a mask, the spawn ring and the safe positions, the
@@ -12033,17 +12440,28 @@ means round I1a):
 | W3 | I1 | nothing running: no prompt, NEW with the remembered visibility, the toast |
 | W4 | I1 | a and b, strangers, take the gate 2 s apart with nothing running: co-arrival without a prompt, host a, b's toast |
 | W4b | I1 | b takes the gate 6 s after a, a's instance still *starting*: b joins it without a prompt (counter-proof: with `World:StartingSeconds` 0 b gets the prompt) |
+| W4c | I1b | (decision 43) k's instance plays at stag0101; a and b, strangers, take the gate there at the same moment, both get the gate form (k's row, *Here (1)*) and both choose *New instance* (autochoice new): one new instance with both (a co-arrival, or a join of its starting instance), two in the history with k's |
+| W4d | I1b | (decision 48) as W4c, but a chooses *New instance* Public at once and b, a stranger, *New instance* Private 1.5 s later (`DW4_ONLINE_AUTOCHOICE_DELAY_MS`: a's barrier comes first): a's base holds for nobody, b refuses a's starting instance (`starting_refused`): three instances, b's Private with b alone, b nobody's guest |
+| W4e | I1b | (decision 48) the other order of W4d: b's Private choice at once, a's Public 1.5 s later: b's base holds for nobody, a never sees b's instance: three instances, the same result as W4d |
+| W4f | I1b | (decision 49) as W4b, but b remembers Private (online_prefs): b's PLAN while a's instance is starting gets *nothing to choose* (flags 4, not *starting*), `starting_refused ... by=remembered`, b's own Private instance: two instances, b nobody's guest (counter-proof: without the change b's PLAN says *starting* and b is a's guest) |
+| W4g | I1b | (decision 49) as W4b, but b remembers Friends and is a's friend: *starting* (flags 2), b joins a's starting instance without a form, one instance |
+| W4h | I1b | (decision 49) as W4f without any answer: the relay drops every PLAN (`World:TestDropPlans`), both presses go out after 1 s with plan 0; b's BARRIER refuses a's starting instance (`starting_refused ... by=remembered`): two instances, b's Private (counter-proof: without the change b joins a) |
+| W4i | I1b | (decision 49 in I1a's automatic join, fix-d43) `World:ArrivalPrompt` off (the automatic join a late-comer from a field takes without a prompt): a's Public instance runs in stag0101 with a there; b, a stranger who remembers Private, takes the gate about 20 s later: `auto_join_refused ... by=remembered`, two instances, b's Private (counter-proof: without the change b joins a's running instance as a guest) |
 | W5 | I1 / I2 | a Private: b gets no prompt and a NEW; a moderator c sees a's row marked Private. a Friends: b not a friend, NEW; after the friendship (I2) listed |
+| W5s | I1b | (the integration's review) a Private; the moderator c chooses a's row himself in the gate form (the row only the staff bypass shows, never preselected): an audited staff join of a's instance (`instance_join role=staff how=join`, one `staff_join` in the audit) |
 | W6 | I1 | a's gate disc with b in another stage group: b sees the notice, takes the home departure 3 s later, is in its lobby on its own story within 5 s; `instance_history.end_reason` = host_left |
 | W7 | I1 | the proxy cuts a for 20 s: b sees the countdown, a's Digimon stands, a resumes, fingerprints equal. W7b: 70 s: the instance ends at 60 s, b goes home, a goes home after its reconnect |
 | W7c | I1 | a half-open cut: the proxy swallows a's packets for 20 s without closing (no FIN, no RST): the grace starts within 5 s, a is never taken out by `lagOut`, a resumes |
 | W7d | I1 | a reconnects after 45 s (beyond the member timeout of 35 s): still host, the instance never ended |
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
+| W7f | I1b | (the integration's fix stage) W7e's race on demand: a's link goes as the sealed NEW's BARRIER_OK comes (`DW4_ONLINE_TEST_CUT_AT_ANSWER`, development builds: the answer is lost with it); SNAPSHOT_ASK makes b the uploader; a resumes into the new visit and re-sends its old barrier, which lies past b's sealed ticks: decided apart at once (`barrier_apart`, no split, no stall for b), a JOIN under a's visit, READY, still host. (fix-d43) On a relay without 2b009cee a housekeeping pass in the ~20 ms between a's reconnect and its re-sent barrier took a out for lag first (`lag_leave`) and its barrier was a straggler's (`barrier_alone`), the same JOIN; since 2b009cee (19.6.7) the returned host is not taken out, so W7f expects `barrier_apart` and no `lag_leave` (the merge of fix-d43 into int-i1b); a JOIN held until `HoldExpired` (the STATE reporter race, 19.32) fails it |
+| W7g | I1b | (fix-flap) a flapping host link: from @200 the proxy swallows a's packets for 7 s at a time, 0.2 s apart (eight half-open cuts, a client's "cut" with "every" / "count"), then closes a's link for 30 s at @257.6: each half-open cut's silence starts a grace, each window is a return, and a's pads of the last ticks before it come in time (its fill streak ends every time); the host's absence debt (silences and graces, minus the windows) shortens the later graces (`host_away ... grace_s=` below 60) and leaves the close about 20 s of its 70 s, so the instance ends (`host_lost`) inside the cut, about 78 s after the first one, inside the bound of 19.6.7, instead of never; b goes home, a after its reconnect |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
-| W10 | I1b | a removes b: b goes home; b's prompt and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached |
+| W10 | I1b | a removes b: b goes home; b's prompt (its PLAN after the removal: no row, the cursor on *New instance*; the integration's check) and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
 | W10s | I1a | (fix-019's refix) staff remove b while it catches up (a classic JOIN, `Instances:CheckpointJoins` off, b replaying at 200 steps a second) to join a's stage group in stag0102; a leaves the stage during the catch-up: b's fallback is a stage group of nobody's instance (BARRIER_OK `wid` 0, no story, `fallback_home`), HOME at once (`home_req` *staff*), b answers it and goes home by a DISSOLVE with the replace; never `instance_join how=join` for b; the admin's call names the relay's run (run.py `{run}`) |
 | W11 | I1a / I1b | (changed in round 72; decision 41) a lone host moving inside his area: a (alone in its instance) takes stag0101's exit to dng101b1 where c's instance has a stage group: no prompt, a's instance goes on with a (a new stage group of it), a sees none of c's members. W11b (I1b): a quest board's start the census cannot name, with a running instance there: the loading-screen prompt; *B* takes a back into the lobby next to the board, on its own story |
+| W11r | I1b | (round I1b's integration) the lobby's return mat (stagML11 mate02) through the gate form with real clients: b powers stag0202's Security Gate (matx01) in its own instance and goes home by the gate disc (GATESTAGE stag0202 point 2); a's instance plays in stag0202; b's return mat's *Yes* is held for PLAN purpose return mat, OPTIONS list a's row with a here (preselected), and A joins a there |
 | W12 | I1 | settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, no randomizer) joins: in the instance b's engine is Hard / 1 / randomizer, at home Normal / 0 / none |
 | W13 | I3 | quest help: a on board quest 1 (stag0401 point 3); b without the quest travels to a: at the quest's end b is home with its own 409, 376-381 and COUNTER 2 and no reward; a gets the reward |
 | W14 | I3 | browser travel: b joins a in dng101b1 through the NPC; spawn within 3 units of a; a in a pit or mid-jump: b appears at a's last safe position without waiting; next to fighting enemies: recorded; every member of a's stage group defeated: the join waits (no rescue join); under 1.0 s at any visit length (J's measure); a failure after the restore (a test hook) puts b back in its lobby from the kept snapshot |
@@ -12064,13 +12482,13 @@ means round I1a):
 | W29 | I1 | achievements in the world: *Lone Tamer* alone, `online_host` with three guests (fake clients for two), a clear as the host |
 | W30 | I1a | (round 72) the area join: a hosts Dry Land and walks to dng205b1; b (another phase, other settings) takes the gate to stag0201: I1a enters b into a's instance as a guest in a new stage group at stag0201 (b's engine has a's phase, flags and settings, its own context), b's toast names a's stage; b walks to stag0202 and into dng205b1 and joins a's stage group there without a prompt; b's gate disc: home on its own story, `online_card.dat` and b's server revision unchanged (counter-proof: with the replace at the guest's NEW switched off, b's engine has its own phase in stag0201 and the test fails) |
 | W30b | I1a / I1b | (round 72) the visited rule: a's Dry Land instance has never been at dng205b2; b arrives by the return mat at dng205b2: I1a gives b a NEW of its own, I1b shows a's row greyed *Story not here yet*; after a walked to dng205b2, b's next arrival there joins a without leaving a's story |
-| W30c | I1b / I2 | (decision 40) the order and the cursor, three game processes: a's Dry Land instance plays in dng205b1, c's instance has c at stag0201; b, a stranger to both, takes the gate to stag0201: c's row first with *Here (1)*, then a's row ("Ancient Ruins B1"), the cursor on c's row; after c went home, b's next departure there lists a's row with the cursor on *New instance*, and A on a's row still enters b at stag0201 as a guest in a new stage group of a's instance; I2 adds: b a friend of a: a's row above c's and preselected |
-| W31 | I1b | (round 72) go along: a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: within 1 s of a's BARRIER_OK b and c show the notice; b answers at once (View after the half second, A): b's request waits while dng204b1 loads and its entry scene runs, b plays on in stag0201 ("Going along when Kim's floor is ready..."), then b's GO departure and b joins a's stage group at dng204b1's entrance from a checkpoint under 2 s after the stamp; c lets the notice run out: gone after 20 s, c plays on, the offer stays on c's *Instance* page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c answers: c joins at B2's entrance; equal NETFP and STATEHASH in every shared stage group; the times from the press to the stamp and from the stamp to control recorded (19.30.7's estimate) |
+| W30c | I1b / I2 | (decision 40) the order and the cursor, three game processes: a's Dry Land instance plays in stag0202 (built so in round I1b, 19.32: in dng205b1 a k10 character died within a minute), c's instance has c at stag0201; b, a stranger to both, takes the gate to stag0201: c's row first with *Here (1)*, then a's row ("Grief Wasteland"), the cursor on c's row; after c went home, b's next departure there lists a's row with the cursor on *New instance*, and A on a's row still enters b at stag0201 as a guest in a new stage group of a's instance; I2 adds: b a friend of a: a's row above c's and preselected |
+| W31 | I1b | (round 72) go along: a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: within 1 s of a's BARRIER_OK b and c show the notice; b answers at once (View after the half second, A): b's request waits while dng204b1 loads and its entry scene runs, b plays on in stag0201 ("Going along when Kim's floor is ready..."), then b's GO departure and b joins a's stage group at dng204b1's entrance from a checkpoint under 2 s after the stamp (measured 3.3-3.4 s; the target is open for the user, 19.25); c lets the notice run out: gone after 20 s, c plays on, the offer stays on c's *Instance* page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c answers: c joins at B2's entrance; equal NETFP and STATEHASH in every shared stage group; the times from the press to the stamp and from the stamp to control recorded (19.30.7's estimate) |
 | W31b | I1b | (round 72) the mat: a and b on stag0201's matz01; a confirms, b says No in its own prompt: b gets no notice (HEADING's asked mask) but the offer on its page; c, elsewhere in stag0201, gets the notice |
 | W31c | I1b | (round 72) races: a goes into dng204b1 and back to stag0201 before b answers: the offer closes ("Kim left Sand Labyrinth."), b's late A is refused (*go refused*); a test hook holds a's way back until b's GO is stamped: b lands alone in dng204b1 in a stage group of a's instance ("... before you arrived."), its seat kept |
 | W31d | I1b | (round 72) defeated: b defeated in stag0201 when a goes in: no notice while b is defeated (it shows when b lives again); c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between the stamp and the GO's step: the GO does nothing on every engine, "Couldn't go along: you were defeated."; W31d2: a test hook defeats every member of a's stage group in dng204b1 while b's request waits: no stamp while nobody lives there (STATE *no living member*); a's game over closes the offer and ends b's request, no rescue join |
 | W31e | I1b | (round 72) two dungeons: a goes into dng204b1 and c into dng205b1 within 2 s: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then |
-| W31f | I1b | (round 72) the host goes in: host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a test hook defeats dng204b2's boss and a takes matz02 into stagML11: a's prompt shows "Your guests will return to their lobbies.", b goes home 3 s later (`end_reason` host_left) |
+| W31f | I1b | (round 72) the host goes in: host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a test hook defeats dng204b2's boss and a takes matz02 into stagML11: a's prompt shows "Your guests will return to their lobbies.", b goes home 3 s later (`end_reason` host_left); I1b runs it with the host's other way home, the Gate Disk from dng204b1 (the same line, no boss kill needed) |
 | W31g | I1b | (round 72) noise: a walks into dng204b1 and out again three times within 2 minutes: b and c see one notice and no closing line as a notice; b closes the offer with B: no notice for b when c goes in, the row stays on b's page; I2 adds: b blocked a, so b gets no notice naming a |
 | W31h | I1b | (round 72) a busy target after the stamp: a test hook starts a scene in a's stage group right after b's GO is stamped and holds it 40 s: b's barrier waits past `JoinHoldSeconds` without a new stage group of the instance at dng204b1; *B: Back to the lobby* takes b home; a second run lets the scene end after 40 s: b joins a |
 | W31i | I1b | (round 72) expiry: b's GO is stamped and a test hook opens c's exit prompt in b's stage group at the same tick and leaves it open: b's GO expires after 300 ticks on every engine (equal fingerprints), "Couldn't go along: a scene here took too long.", the relay clears `GoAlong`; an INTENT 4 sent right after b's arrival in a field, before its stage group seals, waits and is stamped (no `intent_ignored`) |
@@ -12133,7 +12551,7 @@ deployed (after step 4) the user plays rooms as today. Elsewhere in this
 section *round I1* means I1a and I1b together.
 
 As it went: I1a went live alone, as DW4Online 0.1.7 and 0.1.8 (protocol
-49), before I1b. So round fix-019 (0.1.9, 19.32) gave I1a's automatic join
+49), before I1b. So round fix-019 (0.1.9, 19.33) gave I1a's automatic join
 the interim rule of 19.7.1 (only the row I1b's prompt would preselect,
 else *New instance*) until I1b's prompt replaces it.
 
@@ -12629,7 +13047,8 @@ pass, plus the I1a scenarios again (with `DW4_ONLINE_AUTOCHOICE=first`),
 the regression, ctest, the server's tests and online off; a DW4Online
 release with the migration and the new protocol exists.
 The user's steps (19.22 step 7): a fresh backup in HeidiSQL,
-`Play:MinimumProtocol` 49 (I1's protocol), the server release, the client release,
+`Play:MinimumProtocol` 50 (I1b's protocol; 49 was I1a's), the server release
+DW4Online 0.2.0 (migration 0014, DEPLOY.md 9.3), the client release,
 together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
@@ -12644,6 +13063,269 @@ criterion; (b) the prompt's candidates pass `staffChoice` for a staff
 member's rows (19.7.2), and `Preselected` never preselects a row that only
 the staff bypass shows; (c) *Arriving now* (19.7.2) for a stage group at a
 barrier for the arrival's stage, whose members are not *Here* (19.7.3).
+*Built, lane moderation (2026-11-07, branch `feat-i1b-mod` from `int-i1a` bfc3b0a5; progress note
+`docs/ROUND_I1B_MOD_NOTES.md`; the wire and REST decisions shared with the lanes prompt and go are in the round's contract
+file `DW4_PC-wt/i1b-contract.md`, "moderation 16:25").*
+
+- **What I1a had.** The relay lane of I1a built most of 19.6.6's server side: INSTANCE_OP *remove* from the host or seated
+  staff, the bar (`World:RemovedBarMinutes`, 10) in Visible(), WORLD_NOTICE 5 to the removed member, its HOME (owed until
+  its DISSOLVE), the seat and the story owner switched at once (a STORY with the host's key: refused *owner*), the
+  detachment of a solo-led stage group after `Instances:JoinRequestTries` unanswered JOIN_REQ home, and the admin REST's
+  Remove. This lane kept it and added the rest.
+- **Removal.** The audit rows name accounts by id only (web 18:15): `instance_remove` {wid, historyId, hostId, block},
+  `staff_remove` {wid, historyId, hostId, role}; the world log's `remove {wid, account, member, by, reason:
+  host|staff|block}`. A guest, or anyone about the host or about himself, removes nobody (counted). **The host's block
+  removes** (19.11): the relay's re-check after BlocksChanged removes a guest the host newly blocks (a block the host had
+  before, which a moderator passed by an audited override, removes nobody; a guest's block of the host removes nobody).
+  **The bar in the lists:** `WorldInstanceRow.Barred` (the accounts under a live bar) and `WorldVisibility.Visible` hide the
+  instance from a barred player on `/instances` and `GET /instances` (staff still see every row); the relay's prompt rows,
+  co-arrival and automatic join already refused it through Visible(). Expired bars go in the housekeeping.
+- **Report player.** REPORT 0x1E (member u32, reason u8 1 griefing / 2 cheating / 3 name / 4 other, wid u32) and its
+  answer WORLD_NOTICE 14 (argument 0 sent, 1 limit, 2 not available, 3 failed). The relay maps the member id to its account
+  only when the reporter's connection was told about that member (its MEMBER_INFO, `HubMember.Introduced`, cleared at a
+  reconnect), whatever the member does now (also long after it left the world); any other id, and the own one, answers
+  *not available* at once with an empty name, so REPORT is no name or presence oracle. It takes the shared instance's
+  history id (the reporter's own instance when the reported is or was seated in it, else the named wid's), throttles 3 at
+  once then `RoomHub.ReportsPerMinute` (10) a minute like the REST call, and hands the report to `ReportService` off the
+  lock. One service for the game and `POST /api/v1/reports {username, reason}`:
+  never oneself or a deleted account, `Reports:PerDay` (10 in 24 hours, counted in the table; 429 `report_limit`),
+  `Reports:RepeatHours` (24: a second report about the same player adds no row and answers "sent"), the shared instance
+  from `instance_history` within `Reports:SharedInstanceHours` (24) when the relay named none; a reporter at the daily limit
+  is answered *limit* without a query for `ReportService.LimitKnownMinutes` (10); `own_account` is 422;
+  `RateLimits:ReportsPerMinute` (10) on the REST call. **`player_reports`** went into the still unreleased `0013_world`
+  (19.17.1's columns plus `source` game / web; CHECKs: never oneself, *done* only with a time; `instance_id` ON DELETE SET
+  NULL, so the history's prune keeps the report; a COMMENT on every column) with the view `v_player_reports`;
+  `ScrubAsync` deletes an account's own reports, reports about it keep the anonymous id.
+- **Staff.** `GET /admin/reports?state=open|done|all`, `POST /admin/reports/{id}/done` (audited `report_handled`) and
+  `/reopen` (`report_reopened`, also in `v_staff_audit` and the audit list); the website's *Admin > Reports* (open first,
+  newest first, the reported player's open count and his live instance, links to both accounts' pages, *Done* /
+  *Reopen*), the admin index's open count and the account page's "Reports about this player". What staff do about a
+  player stays on his account page (lock, ban) and *Admin > Instances* (End, Remove). **A report about the staff member
+  himself** (19.16 "staff abuse"): Done and Reopen answer 403 `own_report` (nothing audited; the website shows "About you:
+  another moderator handles it." instead of the buttons), and he never learns who reported him: the API gives `reporter`,
+  `reporterId` and the instance fields null, the website's list and his own account page show "a player" without the
+  instance (its host may be the reporter; review 2026-11-12).
+- **Client.** The F1 Online tab's *Instance* page: A on another member's row opens its player card below the table with
+  *Report* (the four reasons, then the toast of the relay's answer) and, for the host and staff playing in the instance,
+  *Remove* with the question "Remove <name> from your instance? They can't rejoin it for a while." (no number: the bar is
+  the server's `World:RemovedBarMinutes`; the card's texts are in 19.5.6); the removed member's toast names the host from
+  the notice itself. Texts beyond 19.5.6: "You can't send more reports today.",
+  "Couldn't send the report. Try again later." Test drivers: the online script's `remove NAME`, `report NAME REASON`
+  and `setflag N` (development builds: a story value outside the pads, W10c), the condition `members=N` (INSTANCE_INFO's
+  members, oneself included; W10d), the UI script's `card`, `remove`, `report`, and `DW4_ONLINE_TEST_IGNORE_HOME=1`
+  (development builds; on the engine's allowed list): a JOIN_REQ home goes unanswered (W10c).
+- **The removal binds at every decision** (19.6.6 "binding on the server", 19.16; reviews 2026-11-11 and 2026-11-12).
+  `TakeSeat` refuses an account under a live bar of the instance or owing it a HOME (`Unseatable`; world log
+  `seat_refused`). `SendRemovedHome` sends the removed members of an arrival home at once (a DISSOLVE of the visit they
+  parked in, redirected to stagML11 point 3, on their own story; world log `removed_home {wid, account, member, stage, hold,
+  co_arrival}`), the rest decides on: at the removal of a waiting arrival, in `Decide`, at the top of every `CheckHolds`
+  pass, at the start of `Join` and before the places of a NEW inside an instance. It covers the co-arrivals of a holding
+  base too (a removed co-arrival never gets CO_ARRIVE into the instance), and a base left without members (removed, or gone
+  from the world: `DetachLocked`) lets its co-arrivals decide on their own (`RedecideCoArrivals`: each parks under its own
+  name again, so a removal or its own leave finds it). A joiner removed during its join gets no seat from its fallback and
+  is asked HOME at once. Relay test option `World:TestJoinHoldMs` (0 = off; never in appsettings): an arrival's JOIN
+  target counts as not joinable that long (W10d).
+- **Scenarios** W10 (the removal, the home departure on the own story, the bar: b's next arrival hosts its own instance,
+  b's `GET /instances` does not list a's while staff's does; run.py's `api_checks` learned `expect_not`), W10b (removed
+  while defeated: HOME's fork takes exactly b's slot, a's stage group plays on), W10c (the client that never answers: its
+  STORY with the host's key refused, the group detached, its gate disc a DISSOLVE home on its own story), and the UI
+  scenario `card` (the host works b's card with the controller: Report, the reasons, Griefing; Remove, the question), and
+  W10d (a removes b while b's JOIN waits: b goes home from the loading screen at once, never seated again).
+  *Admin > Reports* names the instance a report came from (its host, area and start; `GET /admin/reports` rows gain
+  `instanceHost`, `instanceStage`, `instanceStarted`). Results (978efd19): server unit 474/474, integration 143 passed /
+  3 skipped, ctest 57/57, online off (`det.sh` 4004f056 / 396cb219 twice), W10, W10b, W10c and `card` passed; after the
+  reviews (the progress note has the numbers of each round) also W10d.
+*Built, lane go along (2026-11-07, branch `feat-i1b-go` from `int-i1a`
+bfc3b0a5; notes `docs/ROUND_I1B_GO_NOTES.md`; wire layout in the lanes'
+contract; built for protocol 49, released with 50 since the integration).* The first task is measured in 19.30.7. Engine:
+`Engine::online_go`, `ForkKind::go`, the GO's departure (the half fade the
+prompt would start, the exit motion, NEXTSTAGE taken as named),
+`ExitHeading::asked`, the 300-tick expiry in the session. Relay
+(`World/GoAlong.cs`): the offers with their notices, late notices and
+silent reopens, INTENT 4's wait and stamp (sealed or JOIN_REQ kind *go*),
+the GO's barrier (the offer's stage group first, its hold without
+`JoinHoldSeconds`, *Leave* from it goes home), the backstop, HEADING's
+asked mask, STATE's *no living member*. Client: OFFER, the notice window,
+the *Instance* page's *Go along* box with *B: Close* and the half second,
+the waiting line, the held barrier's *B: Back to the lobby*. Two choices
+of the lane: *B: Close* is kept by the client (no message tells the relay;
+the relay's offer only knows the members the port asked), and A on a
+closing row goes nowhere (the box greys it; the relay's *go refused* for a
+closed offer answers a request that crossed the close).
+Scenarios: all of W31, W31b-W31i and W31d2 are written to run, with
+the lane's scenario hooks (development builds and test relays only; the
+contract's entry "go 2026-11-07 17:50"): the tick event TEST (a member's
+defeat, or a stage group neither membership-safe nor joinable for N ticks,
+the stand-in for a shared scene or an exit prompt left open), stamped by the
+relay's test options at a GO's stamp (`World:TestGoHook`), on a development
+client's request (`World:TestHooks`), and a GO barrier held for a time
+(`World:TestGoBarrierHoldMs`). W31c's hooked race runs as W31c2, W31h's
+second run as W31h2; W31d runs with four members (b falls by the hook, d's
+GO falls with it, c takes both along); W31f uses the Gate Disk (above).
+W31's host reaches dng204b1's matz02 by a fourth hook, TEST *mat* (the
+member's player put onto a named mat on every engine of its stage group;
+the online script's explore and the campaign bot's errand both fell in
+B1 at k10), and so do W31i's b and c onto stag0201's matz00; W31e's c goes
+into dng205b1 by the development step `depart` (stag0202's enemies felled
+it), and every other walk through stag0201 heals from the L panel.
+Measured in W31 (run r2): the press to the stamp 10.0 s
+(dng204b1's load and entry scene), the stamp to control 3.4 s (the GO's
+departure 2.8 s to the park, the barrier, the checkpoint join; run d1:
+10.9 s and 3.3 s). That is longer than 19.30.7's estimate ("under two
+seconds from the stamp to control", 19.30.6's "about two seconds", W31's
+"under 2 s"): the GO starts the half fade the prompt would start and the
+exit motion, 169 frames to the park where the port's own "run" departure
+takes 110. W31 does not check the time; whether the measured 3.3-3.4 s
+stand or the departure gets shorter is open for the user.
+*Runs of 2026-11-11 and 2026-11-12 (c1, d1, e1, f1, f2; the notes list each;
+every scenario of the lane passed at the final code).* Three findings
+fixed on the way, besides the scenario scripts: a player that *appears* on
+a mat has not stepped on (5.2: W31d's fourth member spawned on dng204b1's
+way back, and its prompt, left open, kept the next JOIN from applying); a
+HEADING of the same departure again keeps the asked members (the engine
+announces a departure once more when the port's fork leaves the member
+alone in its copy; W31b's b got the notice); the online script also runs
+while a barrier is held (its conditions and *goback*, with the wall-clock
+condition `waited`), and the test hold says BARRIER_WAIT every second.
+*Review of 2026-11-12 (go lane).* Fixed, with unit and session tests that
+fail without the fix: *B: Back to the lobby* on a held GO barrier takes
+only the member that pressed it home (before, a guest's B dissolved the
+whole arrival group, its host included, and so ended the instance); the
+host's B asks "End the instance for everyone?   A: Yes   B: No" first; a
+*Cancel* that crosses the stamp withdraws the GO only while nothing of it
+is sealed, else the request stays for its barrier ("Going along...",
+19.30.7 step 1), and the client's report of a GO that ended without a
+departure is INTENT 4's argument -1; the session context of a GO (3.7,
+19.30.7 step 2); the membership events behind a GO in one step are
+checked after it (6.5); "<name> went on to <stage>." and the late form of
+a notice that waited; a re-entry's 120 s from the member's own leave (and
+a member never named is news); *A: Cancel* only on a waiting row.
+The user's answers of 2026-11-12: (1) a context that changes on the
+target after the stamp, in the second of the departure: as built, as any
+arrival's decision (a stage group of its own there with the notice *other
+quest*; decision 45); (2) the stamp to control takes 3.3-3.4 s, not under
+two seconds (above): accepted (decision 44; it may be shortened later);
+(3) the host's question's hint "A: Yes   B: No" on the loading screen
+(19.5.6): with the controller's button pictures since the integration
+("{A} Yes   {B} No", the port UI's placeholders).
+A UI scenario of the *Go along* box came with the integration's fix stage
+(`tools/online_test/ui/goalong`: View or the menu once the notice is up,
+one A with the controller's family forced); the half second's cursor below
+the box, *B: Close* and *A: Cancel* by the controller still go through the
+online script.
+
+*Integrated (2026-11-12 / 13, branch `int-i1b` from main 463c7a5b; notes
+`docs/ROUND_INT_I1B_NOTES.md`): DW4Online 0.2.0, protocol 50, schema 14.*
+
+- **The merges** (moderation, prompt, go along, in that order) keep
+  fix-019's fixes and the lanes': `TakeSeat`'s bool with `Unseatable`,
+  `SendRemovedHome` and `RedecideCoArrivals`; `FallbackHome`;
+  `OnForeignStory` with `DetachedFrom`; *Here* only from the stage groups
+  that stay at the stage; `ContextOf` after `FallbackHome`; staff ordinary
+  players except their own prompt choice. A removed member's held arrival
+  goes home from its barrier, a fresh one waiting for its JOIN of that
+  instance too (the moderation lane's rule; fix-019's refix had let it
+  decide again alone; its invariants stay). The moderation lane's reports
+  are migration **0014** (0013 went live with 0.1.7 and keeps its
+  checksum).
+- **fix-019's part of I1b:** (a) the stage snapshot keeps
+  `ActionManager::random_wait_min_` (`kSnapshotVersion` 44, a 43 state
+  loads with 0); the same check over the tick state set five more values
+  a stage load left over to their defaults at the stage's start; protocol
+  50; (b) `staffChoice` in the prompt's candidates, never preselected nor
+  automatic; (c) *Arriving now* (decision 46, 19.7.2).
+- **Decisions 44-47** (19.1): the GO's 3.3-3.4 s accepted, a context change
+  after the stamp as built, *Arriving now* built, the prompt review's
+  finding 8 accepted.
+- **Fixed on the way:** `RoomHub.BecomeMember` stamps the hub's `now` (the
+  unit test that failed within 17 minutes of a reboot); a story write with
+  its history runs again as a MariaDB deadlock victim (W28's lost session
+  start); the stage group's own join / leave toasts are gone beside
+  WORLD_NOTICE's (19.5.6); every I1b hint shows the controller's button
+  pictures (19.5.6); the Switch 2 Pro reader matches replies by their
+  command (the owner's hardware test).
+- **W7e fixed:** a sealed NEW whose snapshot uploader (the lowest slot)
+  dropped before its BARRIER_OK stayed without the load snapshot for good,
+  so a later JOIN ended HoldExpired. Now the relay asks the connected member
+  in the lowest slot (SNAPSHOT_ASK 0x9C, protocol 50: inst | visit) once the
+  visit is 2 s old and the uploader left the visit or its connection; that
+  member uploads its own load snapshot of the visit and is the uploader;
+  chunks of anybody else are dropped (no longer a protocol error). Two
+  real runs that hit the race showed it working (b asked 2 s after a's
+  drop); they failed for a second reason, still open: a, whose link was cut
+  right after its BARRIER_OK, resumes into the new visit "playing apart",
+  sends its old barrier as one of it, and never answers the JOIN the relay
+  then decides with READY (its own instance after 60 s). W7e passes when
+  the cut comes before the BARRIER. (Fixed in the fix stage below.)
+- **Scenarios:** W10 checks the prompt after the removal; W11r (new) takes
+  the lobby's return mat through the gate form with real clients. On the
+  merged build S22b (no `statehash_mismatch` any more), W1, W2b, W4c, W7e,
+  W10, W10d, W11r and W31 passed; ctest 66/66, server unit 551 and
+  integration 150 (3 skipped), det.sh 4004f056 / 396cb219, r25c 10 of 10
+  (1,748,011 frames), the save state suite 17 of 17. The rest of the
+  round's and I1a's scenarios on the merged build are open (the notes).
+
+*Test matrix and fix stage (2026-11-14, `int-i1b`; notes
+`docs/ROUND_INT_I1B_NOTES.md`, "The test matrix" and "The fix stage").* The
+test matrix ran 91 scenarios, the UI set, `--fake`, the version gate and the
+upgrade from 0.1.9 on the merged build: W7e's race path the one real
+failure. The review of the integration (relay and story safety, client and
+UI, privacy and deployment) and the fix stage:
+
+- **W7e's race path:** the answers to a split barrier and to a straggler's
+  barrier named instance 0, which no parked client matches: a member that
+  resumed into the next visit after its link went with the visit's
+  BARRIER_OK, and re-sent its old barrier, dropped the JOIN's BARRIER_OK,
+  then the state, and never sent READY. They name the instance and visit
+  the BARRIER named now. A BARRIER past every tick a sealed stage group
+  sealed is another timeline's (a member of the group executes only sealed
+  ticks): it is decided apart at once (`barrier_apart`: the member leaves
+  by LEAVE, the others are told, its barrier decided alone), without the 5 s
+  stall of a barrier for the others and without a desync's split. W7f
+  makes the race (`DW4_ONLINE_TEST_CUT_AT_ANSWER`).
+- **Relay:** a GO's barrier waits while its floor lacks the slots (seatless
+  slot holders; it joined and threw under the hub's lock); one JOIN_REQ to
+  a solo leader at a time (a join's waits for a go's or a home's answer, a
+  home's for a go's; JOIN_AT names no kind); WORLD_NOTICE 15 *apart* for a
+  member that leaves the stage group but keeps its seat (19.5.6).
+- **Client and UI:** the first A on a focused Go along row (and on the
+  host's "View: change") acts (ImGui activates only with a visible cursor);
+  the notice gives way to the own request's line; the button that closed
+  the F1 menu never reaches the game or an open prompt (the pad waits for
+  released buttons); the prompt's hint follows the device in use; the boss
+  wait's line says "{MENU} cancel"; the toasts of 19.5.6.
+- **Reports and privacy (19.16):** the audit's `report_handled` has no
+  reporter (an admin read his reporter there); `retryAfterSeconds` is when
+  the oldest report of the 24 hours leaves them; `Reports:DoneDays` (180)
+  deletes handled reports; the privacy page has the reports and the
+  prompt's member names, levels and Digimon; DEPLOY.md's rollback sets the
+  protocol settings back.
+- **Runs:** ctest 66/66, server unit 560 and integration 152 (3 skipped),
+  det.sh 4004f056 / 396cb219, r25c 10 of 10 (1,748,011 frames), the save
+  state suite 17 of 17; W7f, W7e (the race and the straggler's path), W5s,
+  W5, `ui goalong`, the smoke set (W1, W4c, W10, W31, S22b, RGJ1, `ui home`),
+  W31b-W31i (W31h2 on its repeat: a bot's timing), W7-W7d, S11a, S11b,
+  W10b-W10d, W10s, the UI set, W2, W2b, W11, W11b, W11r, W30c (every one passed).
+- **Decision 43 and an explicit Private** (answered by the user on
+  2026-11-14, decision 48, "Private stays private"; built on `fix-d43`): a
+  player who chose *New instance* with *Private* became the co-arrival of a
+  stranger's Public base when the stranger's barrier came first (a guest
+  on the stranger's story) and got two instances in the other order. Now a
+  *New instance, Private* chooser is never a co-arrival of another's base
+  nor joins another's starting instance, a *Friends* chooser only a
+  friend's; both orders give the same result (19.7.6, 19.32; unit tests
+  `PromptPrivateTests`, scenarios W4d and W4e).
+- **The remembered visibility without a choice** (answered by the user on
+  2026-11-14, decision 49; built on `fix-d43`): decision 48 covered only an
+  explicit *New instance*. Now a player without any choice (OPTIONS
+  *starting* at the gate, a plan never answered, a CHOICE lost, a plan id
+  unknown after a reconnect) lands in another player's base or starting
+  instance only where his remembered visibility lets that host in; a
+  refused starting instance is no row for him while it starts. The guard
+  keeps the relay's newest remembered visibility against an admission that
+  read the account before it was written (decision 48's review's second
+  point left). 19.7.6, 19.32; unit tests `PromptRememberedTests`,
+  integration tests in `WorldPromptTests`, scenarios W4f, W4g, W4h.
 
 **Round I2-social** (step 2, beside J; S-M, one lane, server and web only):
 the friend service with its limits (the incoming cap, declined rows kept
@@ -13302,7 +13984,9 @@ offer:
   reopens it silently: open again on the *Instance* pages, with no notice
   and no closing line for anyone. One who walks in and out of B1 makes one
   notice, not one a minute; after 120 s without a re-entry the next entry
-  is new.
+  is new. A group with a member the offer never named is news as well (a
+  new offer with its notice); while the offer is open, an entrant's own
+  re-entry counts its 120 s from its own leave (review of 2026-11-12).
 
 **Who is offered.** Every member of the instance (a player with a seat;
 never a spectator) that is not one of the offer's entrants and at that
@@ -13338,10 +14022,11 @@ They all still find the offer on the *Instance* page. A member who goes
 into the same dungeon on his own (through a mat) joins the open offer's
 entrants and shows the notice again, with the new names, to the members
 that did not go along and did not close it (not for a re-entry within the
-120 s); one who arrives there by *Go along* joins the entrants silently
-(the others were offered that already). A late notice (at an arrival in a
-field, when a defeated member lives again, after a scene) names where the
-entrants are now: "Kim is in Ancient Ruins B2. Go along?".
+120 s of his own leave); one who arrives there by *Go along* joins the
+entrants silently (the others were offered that already). A late notice
+(at an arrival in a field, when a defeated member lives again, after a
+scene) names where the entrants are now: "Kim is in Ancient Ruins B2. Go
+along?".
 
 **Lifetime.** The offer is open while at least one of its entrants is in
 that dungeon (any of its stages), and it follows them inside it: its target
@@ -13415,7 +14100,8 @@ shrinks over the 20 s:
   leaves as through an exit (the fade, the exit motion), the loading
   screen reads "Joining Kim...", and he appears at the floor's entrance
   (from round I3 next to Kim, 19.30.7) about two seconds after the line
-  changed. The instance's members see "Lee went to Ancient Ruins B1.",
+  changed (measured in W31: 3.3-3.4 s, the departure alone 2.8 s, 19.30.7;
+  open for the user, 19.25). The instance's members see "Lee went to Ancient Ruins B1.",
   Kim's stage group "Lee joined.". A wait that ends without a departure
   says why: "Couldn't go along: Kim left Ancient Ruins.", "Couldn't go
   along: you were defeated.", "Couldn't go along: Kim's floor stayed busy."
@@ -13433,10 +14119,17 @@ story, toward a stage where the instance is right now, so it departs
 straight to its target:
 
 1. **INTENT** kind 4 *go along*, argument the offer id (19.18); kind 4 with
-   argument 0 withdraws (the player's *Cancel*, and the client's report
-   that its GO expired, step 3). The client sends it only while its own
-   player can go: in a field, alive, not at a barrier, no go-along of its
-   own waiting or stamped.
+   argument 0 is the player's *Cancel*, with argument -1 the client's
+   report that its stamped GO ended without a departure (it expired, step
+   3, or did nothing at its step: the member defeated there). The client
+   sends it only while its own player can go: in a field, alive, not at a
+   barrier, no go-along of its own waiting or stamped. A *Cancel* withdraws
+   a waiting request; one that crosses the stamp withdraws the GO only
+   while nothing of it is sealed (a JOIN_REQ *go* not answered yet: its
+   JOIN_AT then seals the lead alone; a GO whose tick is not sealed yet:
+   it leaves the pending events); a sealed GO runs on every engine, so the
+   relay keeps the request for its barrier and the row says "Going
+   along..." (review of 2026-11-12).
 2. **The relay holds the request** (`GoAlong`, *waiting*) and stamps
    nothing until the target is ready. It checks that the offer is open and
    the sender offered (19.30.5), then waits until (a) the target's stage
@@ -13450,7 +14143,12 @@ straight to its target:
    `intent_ignored`), or solo-led (JOIN_REQ kind *go*). While it waits the
    target follows the offer (the entrants moved deeper: the deeper floor).
    The wait ends without a stamp when the sender withdraws; when the offer
-   closes ("Couldn't go along: Kim left Ancient Ruins."); when the sender
+   closes ("Couldn't go along: Kim left Ancient Ruins."); when the play on
+   the entrants' floors changed the session context since they went in (a
+   quest step after a floor's load, on the target or on a floor they left:
+   3.7's rule for a GO, whose B2 arrived with B1's context, which a floor's
+   own load may change and the field never had; "Couldn't go along.",
+   review of 2026-11-12); when the sender
    is defeated ("Couldn't go along: you were defeated."); when the
    sender's own stage group takes a barrier and the sender arrives in a
    dungeon or at home (arriving in a field it waits on, in its new stage
@@ -13499,8 +14197,8 @@ straight to its target:
    `online_exits.cpp` 360-367, with no time limit), a long camera tour, a
    scene with PADINPUT DISABLE. The relay stamped it only while the group
    was membership-safe, so this is rare. The member's client shows
-   "Couldn't go along: a scene here took too long." and withdraws (INTENT
-   4, argument 0); the relay clears `GoAlong` then, or anyway once the
+   "Couldn't go along: a scene here took too long." and reports it (INTENT
+   4, argument -1); the relay clears `GoAlong` then, or anyway once the
    stage group's stream is sealed 5 s past the expiry tick without the
    member's barrier.
 4. **The barrier** is one inside the instance (19.6.3). The relay matches
@@ -13516,14 +14214,23 @@ straight to its target:
    while that stage group exists: the loading screen reads "Joining
    Kim..." and after 10 s "Waiting for Kim's floor..." with *B: Back to the
    lobby* (the member's *Leave instance*; for the host "End the instance
-   for everyone?"). There is no *Go alone* for a GO: a stage group of its
+   for everyone?   A: Yes   B: No" first). Only that member goes home: the
+   others of its barrier (stamped at the same tick, or a defeated partner
+   the side rule took along) wait on; the host's ends the instance, and
+   everyone at that barrier goes home with it. There is no *Go alone* for
+   a GO: a stage group of its
    own next to Kim's would be a second copy of the floor, on a boss floor a
    second copy of the host's boss fight. Only when nobody of the instance
    is at that stage any more does the barrier become a new stage group of
    the instance there ("Kim left Ancient Ruins B1 before you arrived."):
    never a second stage group of the instance next to a living one on the
    same stage, never home, never a new instance. The story: the host
-   keeper's merge, as at every barrier inside the instance.
+   keeper's merge, as at every barrier inside the instance. A context that
+   changed there after the stamp (a quest step in the second of the
+   departure) keeps the GO out of that stage group: the barrier is decided
+   as any arrival's (3.7: another stage group of the instance with its
+   context, else a new one with the notice *other quest*; provisional, the
+   user decides, 19.25's open points).
 5. **Timing** (estimate; I1b measures it in W31): the press, the relay's
    check and the stamp under 0.1 s when Kim's floor is joinable; the
    exit's fade and departure records about a second; the join 0.3-0.45 s
@@ -13550,6 +14257,57 @@ there, and it becomes a new stage group of the instance there only when
 nobody of it is left, never home. *Go to <member>* (I3, 19.9.6) uses the
 same request, wait and GO with the target member's stage and the spawn
 next to him.
+
+**Measured (round I1b, go lane, 2026-11-07; the lane's first task).**
+`dw4_world_probe DATA go` (`tools/world_probe.cpp`, headless, online
+rules, two members in stag0201: slot 0 walks, slot 1 walks until 600
+frames after the load and then stands). The exit port's own departure:
+slot 1 is put onto matz01 (`funcStageChange("dng204b1", 0, ...)`,
+`g_StChangeKind` "run") and answers its prompt Yes; the port forks it off
+(`ForkKind::exit`, inside the step) and its copy departs. The GO: slot 1
+is put 60 units beside the mat at the same frame and `Engine::online_go`
+(slot 1, the port's barrier target) runs before the step in which the
+port forked. Each in both copies of the fork (split identity 1 and 0) and
+replayed as an observer (identity -1) with the side from the fork list as
+the client builds it (`GameEngineLink::set_fork_sides`: the frame after
+the reported tick's step). Log `build/go/meas/go_r2.log` (worktree
+`i1b-go`).
+
+| | zone shuffle off | on, seed 4242, zones 1 | on, zones 2 |
+| --- | --- | --- | --- |
+| the port's barrier (matz01 names dng204b1 point 0) | dng204b1 point 0 | dng205b1 point 0 | dng205b1 point 0 |
+| the GO's barrier (that target as named) | the same | the same | the same |
+| the fork's recorded frame (port / GO) | 1143 / 1143 | the same | the same |
+| replay of the stayers' / leavers' side (GO) | equal over 2,642 / 1,334 frames, and 1,201 after the leavers' load | the same | the same |
+| counter-proof: the GO's side recorded with an exit's frame (one earlier) | the replay takes the stayers' side: differs from 1143 | the same | the same |
+| counter-proof: the GO's NEXTSTAGE with the remap, from stag0202 | - | dng204b1 (wrong) | dng204b1 (wrong) |
+| fork to park (the step that executed NEXTSTAGE): port / GO | 110 / 169 frames | the same | the same |
+| the leavers' load snapshot, GO against port | differs only in frame and time, the generator state, the sound state and the pads | the same | the same |
+
+What it means: GO's departure lands where the port's does, the
+entrants' remapped target taken as named (the remap is keyed by the
+field a departure leaves, so a GO from a field whose own entrance names
+the target would otherwise be sent on: from stag0202 dng205b1 becomes
+dng204b1). `ForkKind::go` records the frame after the step it came
+before, as the client's fork list names it; an exit's convention (the
+fork inside the step) would make every replay and resync take the
+stayers' side. The leavers' load equals the port's in every field but
+the departure's history (frame and time, the generator and sound state,
+the pads of the barrier tick), as at a guest's NEW (M6); the stayers' copy
+is untouched by the GO (a fork like any). The departure is longer than
+19.30.7's estimate: the GO starts the half fade the prompt would have
+started (the port's records wait for `i_fadewn01`) and uses the exit
+motion ("trans": SQ_EXIT before the full fade), 169 frames (2.8 s) from
+the GO's step to the park, then 22 to the load step; the port's own
+"run" departure of matz01 takes 110. From the stamp to control it is
+therefore about 3.5 s with a checkpoint join. W31 (real clients, run r2
+of the go lane): the press to the stamp 10.0 s (dng204b1's load and its
+entry scene: the request waited in the field), the stamp to control 3.4 s
+(JOIN_AT, the departure, 2.8 s to the park, the barrier, the join).
+Run d1 (2026-11-11, the passing W31): b's press 0.7 s after a's offer
+opened, its stamp 10.9 s later (B1's load and entry scene), the join 3.3 s
+after the stamp; c's press as a's offer moved to B2, its stamp 21.3 s later
+(B2's load and entry scene), the join 3.4 s after the stamp.
 
 #### 19.30.8 Edge cases
 
@@ -13610,7 +14368,7 @@ next to him.
   per instance and minute), so none of this moves the load gate's
   numbers.
 - **Protocol** (19.18): OFFER 0x9B; INTENT kind 4 *go along* (argument 0:
-  withdraw); HEADING with the mask of the members the port asked; JOIN_REQ
+  *Cancel*, -1: the own stamped GO ended without a departure); HEADING with the mask of the members the port asked; JOIN_REQ
   kind *go* with stage and point; the tick event GO (`ForkKind::go`, every
   GO of a step together, the 300-tick expiry, following its slot at a
   fork); STATE's flag 16 *no living member*; OPTIONS rows with the host's
@@ -13933,7 +14691,624 @@ harness's coincident timer wakes); with the waiting sealer under 0.6 ms. Over so
 one process stall over 20 ms (21 ms). The 1.34 s stall did not come back in five *storm* and five *storm-wait* runs
 over sockets; its cause stays unknown. Still open: the run on a quiet machine, in a window without the I1b workflow.
 
-### 19.32 Round fix-019: the review of 0.1.7 (DW4Online 0.1.9)
+### 19.32 Round I1b, the prompt lane: what was built and decided
+
+Branch `feat-i1b-prompt` from int-i1a bfc3b0a5 (the lane *prompt* of 19.25's
+round I1b; the lanes *moderation* and *go along* ran beside it and agreed
+the wire in `DW4_PC-wt/i1b-contract.md`). Notes:
+`docs/ROUND_I1B_PROMPT_NOTES.md`. The census is measured in 19.7.4.
+
+**Wire** (protocol 50 since round I1b's integration, the lanes built it as 49; golden vectors equal in `PromptTests` and
+`online_wire_tests.cpp`):
+
+- PLAN 0x18 (client): plan u16 (1..0xFFFE) | purpose u8 (1 gate, 2 return
+  mat, 3 other) | stage str | point u8 | context u64 | group u8.
+- OPTIONS 0x91 (server): plan u16 (0: a held barrier's) | inst u32 | visit
+  u32 | stage str | flags u8 (1 refresh, 2 starting: an automatic
+  co-arrival takes the arrival, since decision 49 only where the remembered
+  visibility lets its host in, 4 nothing to choose) | visibility u8 (the
+  remembered default) | preselected u8 (row, 0xFF *New instance*) | rtt u16
+  (the header's "Your ping") | notice u8 (1 full now, 2 ended, 3 no longer
+  open) | notice name str | up to eight rows: wid | host member and name |
+  relation (party, the host a friend, friends inside) | friends inside |
+  the host's stage | players | here | seats taken, held, reserved | story
+  label ("Chapter 4, Hard": the host keeper's phase and the instance's
+  difficulty) | same story point (0 until I2) | difficulty | settings
+  (randomizer, other settings) | state (0 joinable, 1 boss fight, 2
+  loading, 3 host reconnecting, 4 full, 5 arriving now, 6 other quest, 7
+  story not here yet, 8 too long to catch up; 0-2 and 5 choosable) |
+  visibility (staff only, else 0xFF) | the highest round-trip median of its
+  members | its members (name, level, form) for *X: Details*.
+- CHOICE 0x19 (client): plan u16 | inst u32 | visit u32 | choice u8 (1 join,
+  2 new, 3 back, 4 travel row, 5 return; 4 and 5 are refused until I3 /
+  I4) | wid u32 | visibility u8 | flags u8 | back point u8 (0xFF: stagML11
+  point 3).
+- BARRIER_WAIT reason 5 *choice*; BARRIER's plan field names the gate
+  form's plan (0: no answer came, 0xFFFF *New instance* as in I1a).
+
+**Decisions the design left open:**
+
+- **The CHOICE goes before the held press**, not with HEADING: the relay
+  keeps the member's plan and its answer until the BARRIER that names the
+  plan id (a new PLAN or the member's next BARRIER from home ends it; a
+  disconnect ends a plan without an answer, while an answered one outlasts
+  a reconnect, decision 48's review below).
+  So at HEADING the relay knows the choice: a member that chose a row is no
+  automatic co-arrival base for others and joins no foreign base; one that
+  chose *New instance* groups with the others leaving with it (decision 43,
+  below) where its chosen visibility lets them in (decision 48, below);
+  *New instance* sets the member's default visibility at once
+  (remembered off the lock, Q9). At its own BARRIER a member that chose a row holds for
+  nobody: its choice decides at once (round I1b's review: the base check
+  looked only at the others' choices, so a chosen row held for a stranger's
+  HEADING, and the stranger's co-arrival made it a NEW; a co-arrival's NEW
+  never replaces a chosen join now).
+- **The choice is checked again at the decision** (19.7.7): a row that is
+  still a choosable candidate is a JOIN (with 3.4's holds; a boss lock asks
+  *Wait* / *Go alone* as before, *Go alone* an own instance) or a guest's
+  NEW; a row gone full, ended or no longer open holds the barrier with a
+  refreshed prompt that names it ("Kim's instance is full now.", "Couldn't
+  join Kim: the instance has ended.", "Couldn't join Kim: it is not open to
+  you any more.": the last two are this lane's, in 19.5.6's form
+  "Couldn't join <host>: <reason>."). A row still listed but greyed for
+  another reason (host reconnecting, too long to catch up, story not here
+  yet) gets no line: its greyed word says why.
+- **CHOICE names only offered rows** (round I1b's review): a join of a wid
+  the plan or the held prompt never offered is counted (`choice_unoffered`)
+  and ignored, without OPTIONS and without a world log line, so no CHOICE
+  learns another instance's host or whether it lives (a private instance, a
+  blocker's: "a blocked player never learns of it"); the refreshed prompt's
+  line names only a host the member was offered. One answer per plan; a
+  held barrier takes one CHOICE a second (each re-checks the candidates
+  under the lock), the newest waits for its turn (never lost). Every row
+  ever offered to a held arrival stays answerable (a CHOICE that crossed a
+  refresh is decided and gets its line).
+- **The prompt hold** (the loading-screen form) is for fresh arrivals from
+  a hub stage with candidates and no answer; a group from a field without
+  an instance (a straggler that lost its instance) keeps I1a's automatic
+  join. A starting instance at the stage still takes the arrival without a
+  prompt (OPTIONS flag 2 for a PLAN), where the arrival's remembered
+  visibility lets its host in (decision 49, below).
+- ***Back to the lobby*'s point** (19.7.5): the client remembers the named
+  departure its own press last started (also with the gate form off) and
+  sends its census point in CHOICE *back* (1 next to the gate, 3 next to the
+  return mat); a departure the census does not name (the development
+  build's `depart`), or a press more than a minute before, leaves 0xFF, the
+  relay's stagML11 point 3. The relay takes only the lobby's points 0-4.
+- **Full instances are listed** (greyed *Full*), so a row that filled is
+  seen, after the context check (round I1b's review: a quest player saw
+  full story instances, 19.8.8); `World:ArrivalPrompt` false keeps I1a's
+  automatic join of the first row (the load gate's `--no-prompt` and I1a's
+  notice test; the hub tests run the prompt as shipped since the second
+  review, below; the load gate since the first, 19.17.4; the FakeClient
+  answers a held barrier's OPTIONS as `first` does).
+- **Refresh**: an open prompt (a gate form's plan or a held barrier) is
+  looked at once a second (`World:OptionsRefreshMs`) and OPTIONS goes again
+  only when its bytes differ (the refresh flag set, the notice line
+  dropped); the client keeps a cursor the player moved on the same wid or
+  on *New instance*, an unmoved one takes the refreshed preselection
+  (19.7.3), and the notice line stays only while no row of its host can be
+  chosen.
+- **The gate form in the client** holds the press in `Session::before_step`
+  (the engine gets neutral pads while it waits and while the overlay is
+  open); the press goes out as a rising A after the CHOICE (or at once when
+  OPTIONS says nothing / starting, or after `World:PlanWaitMs` 1 s without
+  OPTIONS, a client constant); B goes out as the gate's own cancel. A lost
+  connection drops the press, closes the menu by B and shows "Connection
+  lost. Try the gate again in a moment.". The game draws the overlay from
+  `Session::prompt()` and feeds it the own pad's and the keyboard's presses
+  (arrows, Enter, Backspace) every pass, so the press that opened it is no
+  answer. When the menu closes otherwise, or World:PlanWaitMs runs out, the
+  client withdraws the plan (CHOICE back), so the relay refreshes no
+  overlay that is gone. The keyboard's hint line has no "X: Details"
+  (19.5.7 gives the keyboard no key for it); state 6 *other quest* reads
+  "Other quest" until a quest's name is on the wire (19.5.6's "Quest:
+  <name>"; the I1b relay never sends it).
+- **"Full now" in the gate form** (19.7.7: "gate form: before the
+  departure") is shown at the BARRIER, as in the loading-screen form: the
+  gate form's press goes out with the CHOICE, so a row that fills between
+  the answer and the arrival holds the arrival's barrier with the line
+  "Kim's instance is full now." (the departure has run by then).
+- **Toasts**: a row chosen in the prompt shows 19.5.3's texts ("Joining
+  Kim..." on the loading screen, only for a row with players at the
+  arrival stage; "Kim is in <place>." when the host is
+  elsewhere; the guest's toast); I1a's "You joined Kim's instance. ... Leave:
+  Online menu" stays only for an arrival nobody asked (a straggler's).
+- **Test runs**: `DW4_ONLINE_AUTOCHOICE` takes `first`, `new`, `cursor` (the
+  preselection) and `back`, or a list (`back,first`: one answer per prompt,
+  the last one stays); `DW4_ONLINE_AUTOCHOICE_DELAY_MS`;
+  `DW4_ONLINE_TEST_GATE_FORM=0`; `World:TestDropPlans` (W2b). Trace lines
+  `online-trace: prompt ...` and `online-trace: barrier to=S point=P
+  plan=N`; the world log adds `plan`, `plan_dropped`, `options`, `choice`,
+  `choice_refused`, `prompt_hold`, `prompt_new`, `prompt_back`.
+- **W11b** uses the gate with `DW4_ONLINE_TEST_GATE_FORM=0` instead of a
+  quest board: the census names the quest starts (they are the gate), so a
+  departure the census cannot name exists only by the hook. **W30c** puts
+  a's instance in stag0202 (a field, as W30) instead of dng205b1, where a
+  k10 character died within a minute in round I1a's runs (19.24 says so).
+  No real-client scenario takes the return mat (mate02) through the gate
+  form: it needs a Security Gate that only an enemy wave powers (W30b posts
+  its departure by `depart`); the census measured its menu headless
+  (19.7.4). After the merge the go lane's `testhook mat` and the moderation
+  lane's `setflag` could drive it.
+- **Order** (19.7.3, round I1b's review): a stage group in a scene or
+  loading keeps its row's place in steps 1-3 (only boss fights and greyed
+  rows go last); `Matching.Order` is round I1a's code.
+- **Decision 43** (the user's answer of 2026-11-11 to decision 21's open
+  question): two players who leave together and both choose *New instance*
+  land together. Built in the lane after the second review: `Decide` takes
+  a *New instance* chooser (gate form, held prompt, or plan 0xFFFF) as the
+  co-arrival of a base it may see and lets a base hold for an announced
+  member that chose *New instance* (`PromptPlan.ChoseRow` keeps only row
+  choosers out); `FinishCoArrival` makes a *New instance* base's instance
+  with its chosen visibility (world log `prompt_new ... coarrivals=N`); a
+  *New instance* chooser whose base went a moment earlier (no hold: its
+  HEADING came after the base's barrier) joins the base's *starting*
+  instance as 19.7.6's later arrivals do (`candidates ... by=new_together`,
+  counter `new_choice_starting`), unless that instance was a row of its own
+  prompt (a refresh listed it) that it passed over. Unit tests
+  `PromptTogetherTests` (two choosers -> one NEW, a block or a Private
+  choice -> two, the starting window, plan 0xFFFF, a passed-over row);
+  scenario W4c.
+- **Decision 48** (the user's answer of 2026-11-14 to the fix stage's open
+  question, "Private stays private"; branch `fix-d43`, relay only, protocol
+  50 unchanged, no migration): the chooser's side of the co-arrival check.
+  `RoomHub.ChoiceAdmits` (WorldHub.cs) asks `Matching.MayEnter` with the
+  chooser's own *New instance* visibility and the other host
+  (`ChosenNew`: the gate form's or the held prompt's CHOICE, or plan
+  0xFFFF with the remembered default; null for an arrival without a choice
+  or a row): `Decide`'s holder filter takes a group only where both the
+  base's visibility (`MaySeeBase`) and the group's choice let the other in;
+  `announced` keeps out a member whose open plan's choice
+  (`PromptPlan.ChoseNew`) would refuse the base; `StartingNotOffered` joins
+  only a starting instance whose host the choice lets in. Since
+  `MayEnter(base's, host, chooser)` and `MayEnter(chooser's, chooser, host)`
+  together are symmetric, both barrier orders give the same result. A base
+  refused by an arriving group stops waiting for its members at once
+  (CheckHolds ends the hold at its next pass; before, it waited
+  `Instances:CoArrivalHoldMs`). World log `co_arrival_refused {members,
+  host, visibility}` and `starting_refused {members, wid, visibility}`;
+  counters `co_arrival_refused_choice`, `new_choice_starting_refused`. The
+  base's side seemed to need no change: a *New instance* sets the member's
+  default visibility at the CHOICE, so `MaySeeHost` / `MaySeeBase` asked
+  the base's chosen visibility (shown by a test that passes without the
+  change) as long as nothing set that default back (it can: the review
+  below, finding 1). Unit tests `PromptPrivateTests` (the full matrix Public /
+  Friends / Private x Public / Friends / Private x friends or not, both
+  orders, the co-arrival hold and the starting instance: 18 cases; the
+  review's case; a base that held for a member who then chose Private; plan
+  0xFFFF with a Private default; friends with a block; the base's side; a
+  Private instance's stage group crossing a barrier together). Without the
+  change 11 of them fail (the 8 asymmetric matrix cells and three cases).
+  Two earlier tests changed with the rule: `PromptTogetherTests`' first
+  (decision 43's case is two Public choosers now; its second chooser chose
+  Private) and `PromptReviewTests`' base test (its Friends chooser and the
+  base's host are friends now; a stranger's case added, which fails
+  without the change as well: 12 of 29). Scenarios W4d and
+  W4e (both orders with real clients; the second chooser's
+  `DW4_ONLINE_AUTOCHOICE_DELAY_MS` 1500 makes the order).
+- **Decision 48's review** (fix-d43, 2026-11-14; relay only, protocol 50,
+  no migration). Four findings, all fixed:
+  1. *The base's side did need a change.* `MaySeeHost` / `MaySeeBase` asked
+     the host's `DefaultVisibility`, which `Readmitted` (the live re-check
+     after FriendsChanged / BlocksChanged / PrefsChanged / AccountChanged,
+     run off the lock) sets to the stored value; the remembered choice is
+     written through the history queue, so a re-check that read the account
+     first put the old default back: a *New instance, Private* chooser's
+     base held for a stranger, and `FinishCoArrival` then made a Private
+     instance with the stranger as a guest. Both ask
+     `BaseVisibility` now (`ChosenNew(base) ?? host.DefaultVisibility`:
+     the visibility the base's instance gets).
+  2. *A reconnect dropped the answer.* `Disconnect` cleared the gate plan
+     with its CHOICE, so the BARRIER of a reconnected *New instance,
+     Private* chooser (the client keeps the plan id it answered) was
+     decided as one without an answer and joined a stranger's starting
+     instance; a chosen row got the loading-screen form again. An answered
+     plan stays now (only its overlay state goes); a plan without an answer
+     still ends at a disconnect, a new PLAN or any BARRIER from home ends
+     either.
+  3. *A refused base kept waiting.* The bases a group's choice refused
+     stopped waiting only when no base took the group; with another base
+     taking it, the refused one waited `Instances:CoArrivalHoldMs` (up to
+     3 s more on the loading screen), as did a base whose awaited member
+     chose a row after its hold began. A member whose barrier came is now
+     awaited by no other base (`Decide`; counter
+     `co_arrival_awaited_decided`; CheckHolds ends a hold left waiting for
+     nobody at its next pass).
+  4. *A block or an unfriending during a base's hold* (older than decision
+     48) was not checked again: `Readmitted` removes a blocked guest only
+     from an instance that exists, and a base has none while it holds.
+     `FinishCoArrival` checks each co-arrival again
+     (`DropUnfitCoArrivals`: the blocks with the base and the co-arrivals
+     it keeps, the base's visibility, the co-arrival's own choice); one
+     that no longer fits decides on its own after the base (world log
+     `co_arrival_dropped {members, host, visibility}`, counter
+     `co_arrival_dropped`; with none left the base decides as a hold
+     nobody joined).
+  Unit tests `PromptPrivateRefixTests` (8: the re-check with a Private and
+  with a Friends choice, an answered *New instance, Private* and an
+  answered row through a reconnect, a refused base when another base takes
+  the chooser, a base whose awaited member chose a row, a block and an
+  unfriending during a base's hold). Each fix taken back alone fails its
+  own tests (without the first, the block and unfriending tests fail as
+  well: their re-checks put the stored default back); without all four,
+  8 of 8 fail. Left: a CHOICE lost with the link itself (sent in the
+  moment the connection broke) is unknown to the relay, so that BARRIER is
+  still decided as one without an answer; and a re-check that read the
+  account before the remembered visibility was written still puts the old
+  default back in memory (the gate form's preselected visibility and plan
+  0xFFFF use it until the next admission). (Both met by decision 49, below:
+  such a BARRIER is decided by the remembered default, which the guard
+  keeps.)
+- **Decision 49** (the user's answer of 2026-11-14, after decision 48's
+  review; branch `fix-d43`; relay and its gateway only, protocol 50
+  unchanged, no migration): decision 48 is about an explicit *New
+  instance*; without any choice the remembered default visibility decides
+  the same way (19.7.6). Built:
+  - `RoomHub.LandingVisibility` (WorldHub.cs; it replaces decision 48's
+    `ChosenNew`): a *New instance* CHOICE's visibility, else (plan 0xFFFF
+    or no answer at all) the member's remembered default; null only for a
+    row. `ChoiceAdmits` asks it for the group and for each of its
+    co-arrivals, so `Decide`'s holder filter takes an arrival without an
+    answer only where its remembered default lets the base's host in
+    (counter `co_arrival_refused_remembered`), `announced` keeps out a
+    member without an answer whose default would refuse the base
+    (`PromptPlan.ChoseNew ?? DefaultVisibility`), and
+    `DropUnfitCoArrivals` checks the same at the hold's end.
+  - `RoomHub.AdmittedStarting` (WorldHub.cs): the starting instance an
+    arrival without an answer lands in is one whose host its remembered
+    default lets in; the ones it refuses leave the candidate rows while
+    they start. Used by `OnPlan` (OPTIONS *starting* only for an admitted
+    one; else the form for the other rows, else *nothing to choose*),
+    `FreshJoinOrNew` (the BARRIER without an answer: the join, the
+    loading-screen form's rows, I1a's automatic row), `HoldPrompt`,
+    `RefreshPrompt` and `RefreshPlans` (no refused starting row appears in
+    a refresh, where it would be the preselected first row). World log
+    `starting_refused {members, wid, visibility, by=remembered}` (at the
+    PLAN and at the BARRIER), counter `starting_refused_remembered`.
+  - The guard (19.7.6): `RoomHub.RememberedVisibility` per account (the
+    newest value the relay set, its writes queued and done, a host's
+    change not queued yet), `SetRemembered` / `PostRemembered`
+    (`RememberChoice`, `SetVisibility`, `FlushVisibility`),
+    `VisibilityWritten` (the gateway calls it under the lock when the
+    queued write is done or failed) and `AdmittedVisibility` in
+    `ApplyAdmit` (the handshake and the live re-check): a remembered value
+    not written yet, or written after the admission began to read
+    (`HubAdmit.ReadAt`, stamped by `WorldGateway.AdmitAsync` before the
+    read), stays in memory (world log and counter
+    `admit_visibility_kept`); an admission that read later ends the guard;
+    the housekeeping drops a written one after `RememberedGuardMs` (60 s).
+    An admission without a read time (the unit tests' direct re-checks) is
+    applied as it is, as before. Per account, so a player who left the
+    world and comes back finds it too.
+  Unit tests `PromptRememberedTests` (65): the matrix remembered Public /
+  Friends / Private x friends or not x no block / a block by either side
+  (18 cells) for (a) the gate's OPTIONS in both orders, (a) the form with
+  another row, and (b) without any answer on both paths (the co-arrival
+  hold and the starting instance) in both orders; a Private and a Friends
+  arrival without an answer with their bases; a plan never answered, a
+  CHOICE lost and a plan id unknown after a reconnect; the form's refresh;
+  the regression guards (two Public defaults still arrive together, plan
+  0xFFFF, a stage group of remembered Private players through one
+  barrier, a member that reconnects while its stage group arrives, W7e /
+  W7f's race); the guard (a re-check that read before the write and before
+  it was done, a reconnect and a return to the world, a host's change
+  before it settled, a stale re-check before a gate). Without the relay
+  change (stashed, with stubs for `HubAdmit.ReadAt`,
+  `RoomHub.VisibilityWritten` and `RememberedGuardMs` so the tests build)
+  17 of 65 fail (the nine refusing matrix cells and eight cases; the
+  others are the regression guards and the cells that land as before);
+  without the rule alone 14, without the guard alone 4. Integration tests
+  `WorldPromptTests` (2 more: a remembered Private through the real
+  admission gets no *starting*; the guard through the gateway with the
+  queued write held back): both fail without the change. Decision 48's
+  tests are unchanged and pass. Runs: unit 657/657, integration 154 (3
+  skipped); with real clients (the client of d80617ef, md5 71496d63; run
+  `run_20261114_165503`) W4f, W4g, W4h (new, 19.24), W4, W4b, W4c, W4d,
+  W4e, W7e and W7f pass; W4f and W4h fail without the relay change (b's
+  PLAN says *starting* and b is a's guest; run `run_20261114_173352`).
+- **Decision 49's review** (fix-d43, 2026-11-14; docs only). One finding,
+  fixed: the README and 19.1's row 49 and 19.7.6 said a remembered
+  *Private* never lands in a *stranger's* instance, which reads as if a
+  friend's were open to it (then Private would land as Friends does). The
+  code, as decision 48 and the `ChoiceAdmits` rule the user named, lets a
+  remembered (or chosen) Private land in nobody else's instance, not
+  even a friend's; the texts say so now (the user's "never a stranger's"
+  read as "never another player's", the case his question described).
+  No code changed: the matrix of `PromptRememberedTests` pins it (the
+  cells Private x friends x no block in all three theories: the friend's
+  starting instance or base refused, apart; they fail without decision
+  49's relay change, `build/d49/unit_counter_none.log`).
+  Runs on `ddfedaf0`: unit 657/657, integration 154 (3 skipped); real
+  clients W4, W4b-W4h and W7e pass, W7f failed once (run
+  `run_20261114_180539`) and passed again (`run_20261114_185917`). Left,
+  older than decisions 48 and 49 (`OnState`'s reporter rule, round S1):
+  the STATE flags of a stage group come from its connected member in it
+  longest, so b's joinable STATE, sent at b's entry scene's end in the
+  26 ms between a's reconnect (a holds slot 0 again, its engine still at
+  the old barrier) and a's LEAVE, was ignored (`state_ignored`); b sends
+  STATE only on a change, so the relay kept b's earlier *Scene*, a's JOIN
+  waited `Instances:JoinHoldSeconds` and became a stage group of its own
+  (`HoldExpired`). W7f's 20 s cut ends about when stag0102's entry scene
+  does, so the window is hit now and then. A fix (the relay asks the new
+  reporter for STATE when the reporter changes, or the client re-sends
+  its STATE at a LEAVE) belongs to its own change (built relay-only below:
+  "W7f's STATE reporter race, fixed").
+- **Decision 49 in round I1a's automatic join** (fix-d43, 2026-11-14,
+  relay only, protocol 50, no migration). The user's decision 49 (about
+  16:15): "the remembered New-instance visibility also governs arrivals
+  without a choice: whoever remembered Private never lands with someone
+  else (not even a friend), Friends only with friends (no block either
+  way); the own stage group stays together". Its builder had left one
+  path out: `FreshJoinOrNew`'s automatic join without a prompt
+  (`Matching.AutoJoinRow`, the I1a interim rule, 19.7.1), which a
+  late-comer from a field takes (with `World:ArrivalPrompt` on: a fresh
+  arrival whose departure stage is no hub stage) and every fresh arrival
+  with the prompt off: it joined a stranger's *running* instance with
+  players at the arrival point, or a friend's elsewhere in the area as a
+  guest's NEW, whatever the arrival remembered. Now
+  `RoomHub.AdmittedAutoJoin` gives `AutoJoinRow` only the rows whose host
+  `ChoiceAdmits` lets in (the remembered default, as decision 48's *New
+  instance* choice: Public any, Friends a friend host's, Private
+  nobody's); a refused instance is as if it did not exist (the
+  preselection among the others, else a new instance with the remembered
+  visibility; world log `auto_join_refused ... by=remembered chosen=`,
+  counter `auto_join_refused_remembered`). With the prompt on, this
+  builder found no flow that reaches this path (fix-019 detaches every
+  stage group of a removed instance, a DISSOLVE home; a lost instance's
+  client goes home by itself, 19.6.10; a reconnect's lone barrier comes
+  from the empty hub stage and gets the prompt). That was wrong: fix-d43's
+  review found one, a guest taken out of its stage group (lag, a resync, a
+  timed-out link, a split, a barrier apart) and removed while it played on
+  alone; its barrier was a fresh arrival from its field and took this
+  path (after a reconnect without its slot: the prompt), with the host's
+  story in its engine. That flow goes home now (19.6.6, "fix-d43's review"
+  below), and a barrier decided alone is decided inside the instance its
+  engine played on, so no flow of today's relay is known that reaches
+  this path with the prompt on; the check covers it wherever it is
+  reached. **Every path that lands an arrival in another
+  player's instance without an explicit choice**, and its check: (1) the
+  co-arrival with a holding base (`Decide`: `Fits` / `MaySeeBase` and
+  `ChoiceAdmits(g, host)`, decisions 48 and 49); (2) a base holding for
+  announced members (`Decide`'s announced list: `ChoiceAdmits` with the
+  plan's *New instance* or the remembered default); (3) the co-arrivals at
+  a base's hold end (`FinishCoArrival` / `DropUnfitCoArrivals`:
+  `MaySeeBase` and `ChoiceAdmits`); (4) a starting instance without an
+  answer (`AdmittedStarting` in `FreshJoinOrNew`, OPTIONS *starting* in
+  `OnPlan` and the forms' refreshes); (5) plan 0xFFFF and a *New
+  instance* choice joining a starting instance (`StartingNotOffered`:
+  `ChoiceAdmits`); (6) the automatic join of a running instance, a JOIN
+  or a guest's NEW (`AdmittedAutoJoin`: `ChoiceAdmits`, new); (7) the
+  redecisions, which go through (1) to (6) again: a JOIN or boss hold
+  whose target ended or changed (`Redecide`), a member that lost its seat
+  while it waited (`DecideAlone`), an *Arriving now* hold's end
+  (`CheckArriving`), a co-arrival hold nobody joined (`CheckHolds`), the
+  co-arrivals of a gone base or of a base that chose a row
+  (`RedecideGroups`, `Decide`). A barrier decided alone (the stand-in of
+  a member that went its own way from a stage group: a lone BARRIER, a
+  barrier apart, a split) is none of these since fix-d43's review: it is
+  the instance's its engine played on (inside it with a seat, home
+  without one). Not checked, by the decision: a row
+  chosen explicitly (`DecideChoice` *Join*, also a quick A on a
+  preselected row), travel inside an instance (`JoinOrNew` with its
+  instance, the go-along's GO), the members of one stage group through
+  one barrier, a seat rejoin after a reconnect, and a joiner's fallback
+  NEW inside the instance it already sits in (`FallbackNew`); round I3's
+  *Join at* and I4's parties are not built. Unit tests
+  `PromptAutoJoinTests` (21): the matrix remembered Public / Friends /
+  Private x friends or not x no block / a block by either side for a
+  late-comer at a running instance with its host at the arrival stage
+  (`World:ArrivalPrompt` off); a remembered Private friend refuses a
+  friend's instance elsewhere in the area (the guest's NEW) while Friends
+  and Public still enter it; a remembered Friends late-comer refuses a
+  stranger's instance a friend of his plays in; the prompt's explicit row
+  choice unchanged. Without the relay change 5 fail (the three refusing
+  matrix cells, the guest's NEW and the friend inside;
+  `build/d43/r3/unit_counter_task1.log`). Real clients: W4i (new, 19.24;
+  `World:ArrivalPrompt` off: the harness gets no late-comer from a field
+  with the prompt on, see above, so it takes the path with the prompt
+  off) passes (runs `run_20261114_193907`, `run_20261115_093006`) and
+  fails without the change (b joined a's running instance, "You joined
+  ...", one instance; runs `run_20261114_194221`, `run_20261115_120037`).
+  Unit tests of this change's tree 678/678 (`build/d43/r3/unit_c1.log`).
+- **W7f's STATE reporter race, fixed** (fix-d43, 2026-11-14/15, relay
+  only, protocol 50). The race left above: a STATE of a member that is not the
+  reporter was dropped, and a client sends STATE only on a change, so a
+  change of the reporter could leave the flags with a state no engine had
+  any more. Now `HubInstance.States` keeps every member's newest STATE of
+  the visit (cleared with the visit) and `RoomHub.SyncStateReporter` runs
+  wherever the reporter can change: a LEAVE (`StampLeave`), a slot
+  released (`DetachLocked`), a lost link (`Disconnect`), a resumed
+  connection (`Connect`), a member placed (`Place`), a STATE of a member
+  that is not the reporter, and every housekeeping pass (a fork, a lost
+  gap, a timeout). When the reporter changed, its newest STATE takes
+  effect if its tick is newer than the one in effect, or if the member
+  whose STATE is in effect left the stage group (its tick may be another
+  timeline's: W7e's straggler); a reporter back from a lost link never
+  takes a newer state back with its older one (nor with one it sent into
+  the lost link, which its client never sends again). A member that leaves
+  the stage group keeps no STATE there, whether the reporter changes or
+  not (`SyncStateReporter` drops it at every call, `Place` when the member
+  enters again): back in the stage group later in the visit, a STATE from
+  before is not its engine's. Only the flags
+  change there; the decision that follows reads them (in W7f: a's
+  re-sent barrier is decided apart, its LEAVE makes b the reporter, b's
+  joinable STATE takes effect and a's JOIN of b's stage group goes at
+  once), the holds see them at the latest in the next housekeeping pass.
+  World log `state_reporter` (member, tick, flags, the one before),
+  counter `state_reporter_changed`; 6.9 says so. Unit tests
+  `StateReporterTests` (5): W7f's exact interleaving (b's load and entry
+  scene reported while a is away, a back in slot 0, b's joinable STATE in
+  between, a's re-sent old barrier: the JOIN goes at once, no
+  BARRIER_WAIT), the same with a STATE of the old timeline from a, a
+  reporter's lost link handing the flags to the next member's newest
+  STATE at once, a member taken out for lag keeping no STATE while the
+  reporter stays, and the guard (a returning reporter's older STATE takes
+  nothing back; a new visit keeps nothing of the last). Without the
+  change 4 fail (`build/d43/r3/unit_counter_task2.log`: W7f's
+  interleaving ends with the flags still *Scene* after a's LEAVE; the
+  guard passes), without the left-member rule alone 1
+  (`unit_counter_leftrule.log`), without the drop at every call alone 1
+  (`unit_counter_refine.log`).
+  **W7f's expectation** (19.24): two of seven runs on 2026-11-14 evening
+  failed on `barrier_apart` without the race (runs `run_20261114_194513`,
+  `run_20261114_210120`): a housekeeping pass fell into the ~20 ms
+  between a's reconnect and its re-sent barrier, a (back from the host's
+  grace, its slot filled for 20 s) was taken out for lag first
+  (`lag_leave`, as in W7) and its barrier was a straggler's
+  (`barrier_alone`): the same JOIN of b's stage group (at once, or after
+  b's real entry scene, 0.6 s). W7f now passes either path and fails on a
+  JOIN held until `HoldExpired`, the race's visible end (the old failure,
+  `run_20261114_180539`, fails it). The race's window itself (b's STATE
+  in the ~20 ms between a's reconnect and its LEAVE) was hit by no run:
+  a came back 6.2 to 12.7 s after b's load end, and where b's entry scene
+  still ran (about 6.8 s) a's JOIN was held for it and went when b's
+  joinable STATE came (126 to 496 ms), as it should; the unit test makes
+  the window. Runs with both changes (`build/d43/r3/`): unit 683/683,
+  integration 154 (3 skipped, own mysqld); real clients (the client of
+  d80617ef, md5 71496d63, `--parallel 1`): W4, W4b, W4d-W4i, W7, W7c,
+  W7d, W7e and W7f pass (run `run_20261115_093006`), W4c failed there on
+  an 11 s stall of the whole machine (both clients' longest pass 11 s, b
+  then taken out for lag) and passes again (`run_20261115_113935`); W7f
+  passes 9 of 11 runs (`093006`, `105340`, `105926`, `110504`, `111044`,
+  `111629`, `114334`, `114911`, `115450`, every one `barrier_apart`);
+  the other two failed on the loaded machine, not on the relay:
+  `103637` (b's bot never reached the mat, no cut at all) and `112210`
+  (the relay's path as above, a's JOIN decided at once, but its catch-up
+  ran at 44 ticks a second and b's script ended before a's 600 sealed
+  ticks with it).
+- **fix-d43's review** (2026-11-15, relay only, protocol 50, no
+  migration). Finding 1 (pre-existing, before fix-d43): a guest taken out
+  of its stage group (lag, a resync, a missing hash, a timed-out link, a
+  split, a barrier apart) plays on alone on the host's story with its
+  seat; removed meanwhile, its next barrier did not go home as 19.6.6
+  says. The relay's stand-in for that barrier (`barrier_alone`,
+  `BarrierApart`, `SplitBarrier`) named no instance, so `Decide` took it
+  for a fresh arrival from that field, also with `World:ArrivalPrompt`
+  on: its own new instance with *merge*, the former host's story in the
+  own (the error type fix-019 closed for stage groups), or the automatic
+  join of a stranger's running instance at the arrival stage without
+  OPTIONS (decision 49's `AdmittedAutoJoin` refused it for a remembered
+  Private, which then made its own instance with the merge); after a
+  reconnect without its slot, the prompt from the empty hub stage. Now
+  the stand-in names the instance its engine played on
+  (`HubInstance.ApartFrom`; `HubMember.LoneWorld` / `LoneDetached`, set
+  where a member goes on alone: `StampLeave`, `MarkLone`, the field filed
+  after a reconnect; cleared by `Place` with `LoneStage` and by a new
+  session), and `Decide`'s seatless rule reads it: with a seat there the
+  barrier is decided inside the instance as before, without one a
+  DISSOLVE home with the replace and the redirect (19.6.6), a stand-in of
+  a detached stage group too. World log `barrier_alone ... wid= seat=`.
+  Finding 2: 19.32's "with the prompt on, no flow reaches this path"
+  (decision 49 in the automatic join, above) and W4i's rationale were
+  wrong, this flow reached it; corrected (no other flow is known since
+  this fix). Unit tests `RemovedAloneTests` (7): taken out for lag and
+  removed, its barrier to stag0202 alone, with a stranger's Public
+  instance running there, and with that and a remembered Private (all
+  three home on the own story, no OPTIONS, no instance of its own); its
+  link timed out, back without its slot, its field filed, removed; removed
+  while its stage group gathers, the barrier split off after
+  `Instances:BarrierReportSeconds`; removed, its barrier past every sealed
+  tick decided apart; the control (taken out for lag, not removed: a new
+  stage group of its instance as before). Without the relay change 6
+  fail (the control passes; `build/d43/r4/unit_counter_f1_before.log`:
+  New with *merge*, or a JOIN of the stranger's instance). Runs
+  (`build/d43/r4/`, commit dd2d1491): unit 690/690 (`unit_full.log`),
+  integration 154 (3 skipped, own mysqld on 3701, SQL SHUTDOWN;
+  `it_f1.log`); real clients (md5 71496d63, `--parallel 1`): W4, W4b,
+  W4c, W4d-W4i, W7, W7c, W7d, W7e, W7f pass (`run_20261115_123949`,
+  `scen_main.log`); W7f passes 8 of 9 runs (`123949`, `133309`,
+  `133847`, `134424`, `135540`, `140118`, `140656`, `141947`, every one
+  `barrier_apart` with the JOIN at once, no `HoldExpired`); `135002`
+  failed on the client: a's STATEHASH after its checkpoint rebuild
+  (1178) differed from b's at 1800, 2400 and 3000 (`statehash_mismatch`,
+  `checkpoint_suspect` why=statehash_rebuilt) and was equal again from
+  3600, every NETFP equal, the relay's path the same as in the passing
+  runs (left for the client: a rebuild gap as lane jready's review
+  found). The removal scenarios W10, W10b, W10c, W10d and W10s pass
+  (`run_20261115_142544`, `scen_w10_2.log`; their first run,
+  `scen_w10.log`, stopped in the harness: `upload_card` imports the
+  sibling `character_test`, which `python -I` does not find, so the
+  second ran `run.py` through `build/d43/r4/run_wrap.py`, still `-I`, with
+  `tools/online_test` on `sys.path`; W10s passed in both).
+
+**Round I1b's second review** (2026-11-12, the prompt lane):
+
+- **The cursor through a refresh** (decision 40): an unmoved cursor takes
+  the refreshed preselection; only a cursor the player moved (up / down, or
+  *New instance*'s visibility) stays on its wid (`PromptView::moved`,
+  session test `prompt_gate_form`).
+- **The notice line** goes once a row of the host it names can be chosen
+  again (`PromptView::notice_host`).
+- **The hub tests run the prompt as shipped**: `HubLogicTests.Harness`
+  without `world:` turns `World:ArrivalPrompt` on and answers every held
+  barrier's OPTIONS as the FakeClient and `DW4_ONLINE_AUTOCHOICE=first` do
+  (the first choosable row, else *New instance*; `Peer.AutoAnswer`,
+  `Harness.AnswerPrompts`, `Harness.Housekeep`): 43 of round I1a's and J's
+  world and join tests go through a held prompt and pass. Only I1a's notice
+  test keeps the automatic path explicitly; its prompt variant shows that
+  another context keeps the NEW's notice (no row, no prompt) and a long
+  catch-up is a greyed *Too long to catch up* row (its *New instance* needs
+  no notice). Decision 41's test checks that the lone host's move has no
+  prompt; the guest-NEW gate test checks the prompt's rows.
+- **Not built in the lane, built by the integration** (19.7.2's *Arriving
+  now*, state 5; decision 46, the user's answer of 2026-11-12): a running
+  instance's stage group at its barrier for the arrival stage (or its
+  members parked on the way there) is a row *Arriving now* with its host's
+  name (`RowState.Arriving`, OPTIONS state 5); A on it holds the barrier
+  (`HoldKind.Arriving`, BARRIER_WAIT not joinable naming them) until their
+  stage group stands at the stage, then the choice is decided again (a
+  JOIN with 3.4's holds); `Instances:JoinHoldSeconds` without them: a NEW
+  with the hold-expired notice. Never preselected, never I1a's automatic
+  join (`Matching.Preselected` / `AutoJoinRow`). Unit tests
+  `PromptArrivingTests.cs` (each fails without `ArrivingAt` or without the
+  preselection rule). Before, the instance showed as *Joinable* (a guest's
+  NEW) and A on it made a second stage group of that instance at the stage
+  next to the arriving one.
+- **Accepted as built** (decision 47, the user's answer of 2026-11-12;
+  finding 8 of the review): a fresh arrival with
+  candidates but without an answer (a lost PLAN, or a departure the census
+  cannot name) becomes a co-arrival base for announced members before its
+  own loading-screen prompt; after the hold the group lands in a new
+  instance without the base ever seeing the candidates (19.7.1 asks the
+  prompt first). Both PLANs have to fail for two strangers (with decision
+  43 a *New instance* chooser may join such a base, which is what he
+  chose). One way: such a base gets its loading-screen prompt first and
+  becomes a base only by the answer *New instance*.
+- **Kept, PLAN takes any field** (finding 9): a PLAN may name any stage
+  outside the hub with any purpose; the relay answers it with the rows of
+  that stage's area, *Here* counted per instance at that stage. A table of
+  the gate's targets would not bound it: the return mat leads to whatever
+  stage the player's gate disc set (`gatedisc.lua` in nearly every dungeon
+  and the Security Gate fields), so a PLAN of purpose 2 names any of them.
+  What bounds it: PLAN's throttle (one a second), the rows' Visible(), and
+  counts only (no names of members outside the receiver's view beyond X:
+  Details' member list, which the gate form shows anyway).
+- `Overlay::prompt` (unused) went; `Session::holding_press()` stays as the
+  session tests' observer.
+
+**Results** (2026-11-12, after the second review, on the final code: the
+client of 14f2c86a, the relay of 4cdb0f8a; runs r10-r13 in the notes): the
+lane's scenarios W1 (the prompt), W2, W2b, W11, W11b, W30b, W30c (without
+friends) and W4c (decision 43) pass; of round I1a's set with
+`DW4_ONLINE_AUTOCHOICE=first` A1, S14p, S14z, W1x, W3, W4, W4b, W4bx, W5,
+W5f, W6, W7, W7b, W7c, W7d, W8, W9, W12, W18, W19, W22, W24-W30, W30x and W32
+pass (S14p, W28 and W4bx on their second run: a story save faster than the
+harness's log poll, a MariaDB deadlock of two session-start keeps at the
+world entry, and b's PLAN a moment before a's instance started; W4bx now
+takes either form). **W7e fails twice**: a's BARRIER reached the relay
+before the test cut, so the sealed NEW kept a as its snapshot uploader
+(the lowest slot); a never uploaded, b's stage group stayed without a
+snapshot, and a's later JOIN waited 30 s and made its own instance
+(round I1a's / S1's rule: no other member uploads; in round I1a's runs the
+BARRIER went down with the cut; not this lane's code, for the integration).
+ctest 57/57; the relay's unit tests 499/499 (43 of them through a held
+prompt) and integration tests 142 (3 skipped); det.sh with online off
+4004f056 / 396cb219 twice. W29's fake guests answer the loading-screen form
+(the first a row with nobody at stag0101, the cursor on *New instance*, the
+second a's row with one there, preselected).
+
+### 19.33 Round fix-019: the review of 0.1.7 (DW4Online 0.1.9)
 
 The adversarial review of 0.1.7 (main 3ad4621e) found eleven points; branch
 `fix-019` (progress notes `docs/ROUND_FIX019_NOTES.md`) fixed them for

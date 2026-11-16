@@ -1,0 +1,35 @@
+{
+  "desc": "the host removes a defeated guest (19.6.6, 19.6.5): b still goes home by HOME's fork of exactly its slot (ForkKind::home), a's stage group plays on, the instance does not end",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "db_checks": [
+    {
+      "name": "b's seat left removed",
+      "sql": "SELECT leave_reason FROM instance_history_members WHERE role = 'guest'",
+      "expect": "^removed$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "upload_card": true
+    }
+  ]
+}

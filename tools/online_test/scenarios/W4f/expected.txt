@@ -1,0 +1,18 @@
+# W4f (19.24, 19.7.6, decision 49 of 2026-11-14): b remembers Private (online_prefs) and takes the gate 6 s after a, a
+# stranger whose Public instance is still starting. Before decision 49 b's PLAN got "starting" and b became a's guest without
+# a form (W4b's path). Now a's starting instance is none for b: nothing to choose (flags 4), b's own Private instance.
+a: online-script: step .* log: a alone
+b: online-trace: prompt none plan=\d+ flags=4
+b: online-script: step .* log: b alone
+relay: instance_start .*visibility=public
+relay: plan .*flags=4
+relay: starting_refused .*visibility=private .*by=remembered
+relay: instance_start .*visibility=private
+!b: online-trace: prompt none plan=\d+ flags=2
+!b: online-trace: prompt open
+!b: online: You arrived together
+!b: online: You joined
+!relay: instance_join .*role=guest
+!relay: hold_co_arrival
+!a: online-script: FAIL
+!b: online-script: FAIL

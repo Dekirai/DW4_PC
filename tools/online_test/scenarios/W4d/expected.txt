@@ -1,0 +1,22 @@
+# W4d (19.24, 19.7.6, decision 48 of 2026-11-14): a stranger's Public New instance first, then a Private New instance at
+# the same gate: two instances. a's base holds for nobody (b's choice would not let a in); b's barrier finds a's starting
+# instance and refuses it (starting_refused); b's own instance is Private.
+k: online-script: step .* log: k hosts at stag0101
+a: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+b: online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0
+a: online-trace: prompt answer choice=new wid=0 visibility=public
+b: online-trace: prompt answer choice=new wid=0 visibility=private
+a: online-script: step .* log: a alone
+b: online-script: step .* log: b alone
+relay: choice .*choice=new .*visibility=public
+relay: choice .*choice=new .*visibility=private
+relay: prompt_new .*visibility=public .*starting=0
+relay: starting_refused .*visibility=private
+relay: prompt_new .*visibility=private .*starting=0
+!relay: hold_co_arrival
+!a: online: You arrived together
+!b: online: You arrived together
+!b: online: You joined
+!a: online-script: FAIL
+!b: online-script: FAIL
+!k: online-script: FAIL

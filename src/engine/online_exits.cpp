@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdio>
 
 namespace dw4::engine {
 
@@ -112,10 +113,18 @@ static void prompt_records(DemoWork& work, int slot, const std::optional<std::st
 // The departure of the original (funcStageChange case 0, 212..447) for the
 // members this copy still has: the controls off, the half fade back, the
 // defeated players' models done, the exit sequences, the full fade and
-// NEXTSTAGE.
-static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::string& stage, int point, const std::string& kind) {
+// NEXTSTAGE. `as_named` (round I1b's GO, 19.30.7): the NEXTSTAGE carries
+// I<1> after the stage, which makes STAGECTL take the stage as named (the
+// zone shuffle's remap skipped: the GO's target is a stage group's barrier
+// target, remapped already). No script sends NEXTSTAGE with an int.
+static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::string& stage, int point, const std::string& kind,
+                                                bool as_named = false) {
     auto work = std::make_unique<DemoWork>();
     auto& r = work->records;
+    // (A GO has no prompt before it: the half fade the prompt's work starts,
+    // stage_change_port's first record, comes first, so the records below find
+    // i_fadewn01 running as after a Yes in the prompt.)
+    if (as_named) r.push_back(set_record("MODELCTRL", "i_fadewn01", 0, "GENERATE", "SQ_BHLFOUT30"));
     r.push_back(set_record("STAGECTL", std::nullopt, -1, "PADINPUT", "DISABLE"));
     r.push_back(set_record("MODELCTRL", "i_fadewn01", 0, "SQ_BHLFIN30", std::nullopt, 10));
     r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISRUN", std::nullopt, "==0"));
@@ -146,7 +155,7 @@ static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::strin
     r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISRUN", std::nullopt, "==0"));
     r.push_back(check_record("MODELCTRL", "i_fadewn01", 0, "ISSEQNAME", "SQ_STCHANGELP", "==0"));
     r.push_back(set_record("PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", "I<" + std::to_string(point) + ">", 10));
-    r.push_back(set_record("STAGECTL", std::nullopt, -1, "NEXTSTAGE", stage, 10));
+    r.push_back(set_record("STAGECTL", std::nullopt, -1, "NEXTSTAGE", as_named ? stage + "/I<1>" : stage, 10));
     return work;
 }
 
@@ -193,6 +202,81 @@ bool Engine::online_home(std::uint8_t mask) {
     heading_ = ExitHeading{frame_, "stagML11", 3, mask};
     demo_.start(home_departure_work(*this));
     return true;
+}
+
+bool Engine::online_go(std::uint8_t mask, const std::string& stage, int point) {
+    if (!online_.enabled || stage.empty()) return false;
+    std::uint8_t alive = 0;
+    if (const auto* models = get<ModelCtrlManager>())
+        for (int s = 0; s < 4; ++s)
+            if (const auto* player = models->player(s); player && player->generated && player->hp > 0) alive |= std::uint8_t(1u << s);
+    // (A slot that is not present, already leaving or defeated at this step
+    // drops out, on every engine alike.)
+    mask &= std::uint8_t(online_.present & ~online_.leaving & alive);
+    if (!mask) return false;
+    const detail::MxcsrGuard mxcsr;
+    // 6.7, the exit's side rule: the living of the mask go; the defeated stay
+    // with the living who stay, or all go when nobody living stays.
+    const std::uint8_t leavers = exit_leavers(online_.present, alive, mask);
+    if (!leavers) return false;
+    if (leavers != online_.present) {
+        const bool leaves = online_split(leavers, ForkKind::go);
+        apply_pending_fork();
+        if (!leaves) return false;
+    }
+    heading_ = ExitHeading{frame_, stage, point, leavers, 0};
+    // The exit motion and the fade, as through an exit (19.30.6).
+    demo_.start(departure_work(*this, stage, point, "trans", true));
+    return true;
+}
+
+void Engine::online_test_hook(int slot, int hook, int argument) {
+    if (!online_.enabled) return;
+    const detail::MxcsrGuard mxcsr;
+    if (hook == 1) {
+        // Defeat: the slot's player falls as on poison's last tick
+        // (ModelCtrlManager::update_status): 0 HP in the model and the
+        // player's record, the HP meter and number, SQ_DEAD.
+        auto* models = get<ModelCtrlManager>();
+        auto* sys = get<GameSystem>();
+        if (!models || !sys || slot < 0 || slot > 3 || !(online_.present & std::uint8_t(1u << slot))) return;
+        auto* ram = const_cast<ModelCtrlManager::ModelRam*>(models->player(slot));
+        if (!ram || !ram->generated || ram->hp <= 0) return;
+        ram->hp = 0;
+        sys->players[std::size_t(slot)].hp = 0;
+        Packet percent, value, none;
+        percent.floats.push_back(0.0f);
+        value.ints.push_back(0);
+        messenger().send(*this, "METERCTRL", "hpmt", ram->index, "SETPERCENT", percent);
+        messenger().send(*this, "NUMBERCTRL", "hpnm", ram->index, "SETVALUE", value);
+        models->command(*this, *ram, "SQ_DEAD", none);
+    } else if (hook == 2) {
+        online_test_busy_ = std::max(0, argument);
+    } else if (hook == 3) {
+        // Onto a mat: the slot's player stands at the centre of the mat
+        // "mat" + letter (bits 8-15) + two-digit number (bits 0-7), as the
+        // probe's teleport puts it (tools/world_probe.cpp): the stand-in for
+        // a walk through a floor the test characters do not survive. The
+        // mat's own script then runs as for a player that walked on.
+        auto* models = get<ModelCtrlManager>();
+        const auto* mats = get<MatCtrlManager>();
+        const auto* sys = get<GameSystem>();
+        if (!models || !mats || !sys || slot < 0 || slot > 3 || !(online_.present & std::uint8_t(1u << slot))) return;
+        const char letter = char((argument >> 8) & 0xFF);
+        if (!std::isalpha(static_cast<unsigned char>(letter))) return;
+        char name[16];
+        std::snprintf(name, sizeof name, "mat%c%02d", letter, argument & 0xFF);
+        const auto centre = mats->mat_centre(name);
+        const auto* ram = models->player(slot);
+        if (!centre || !ram || !ram->generated || !ram->node || ram->hp <= 0) return;
+        auto matrix = ram->node->matrix;
+        matrix(3, 0) = centre->x;
+        matrix(3, 1) = centre->y;
+        matrix(3, 2) = centre->z;
+        Packet packet;
+        packet.matrices.push_back(matrix);
+        messenger().send(*this, "PLAYER", std::string_view(sys->players[std::size_t(slot)].digimon), slot, "SETMATRIX", packet);
+    }
 }
 
 bool Engine::online_depart_home() {
@@ -350,7 +434,9 @@ struct ExitPortAccess {
                     finish_in(42);
                     continue;
                 }
-                engine.heading_ = ExitHeading{engine.frame(), exit.stage, exit.point, leavers};
+                // (The members it asked that stay get no go-along notice for
+                // this departure, 19.30.5.)
+                engine.heading_ = ExitHeading{engine.frame(), exit.stage, exit.point, leavers, std::uint8_t(exit.asked & ~leavers)};
                 view.sees_fade = engine.online().present;
                 engine.demo().start(departure_work(engine, exit.stage, exit.point, exit.kind));
                 exit.state = State::done;

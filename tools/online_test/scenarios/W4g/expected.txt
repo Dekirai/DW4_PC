@@ -1,0 +1,16 @@
+# W4g (19.24, 19.7.6, decision 49 of 2026-11-14): b remembers Friends and is a's friend (scenario.json's api_checks); it takes
+# the gate 6 s after a while a's Public instance is still starting: its remembered visibility lets a in, so the PLAN says
+# "starting" (flags 2) and b joins a's instance without a form, as W4b's stranger with the default Public does.
+a: online-script: step .* log: together
+b: online-trace: prompt none plan=\d+ flags=2
+b: online: You arrived together with .*: you're a guest in
+b: online-script: step .* log: together
+relay: instance_start .*stage=stag0101
+relay: plan .*flags=2
+relay: instance_join .*role=guest
+shared: a b >= 3000
+!relay: starting_refused
+!b: online-trace: prompt open
+!b: online: You joined .*'s instance
+!a: online-script: FAIL
+!b: online-script: FAIL

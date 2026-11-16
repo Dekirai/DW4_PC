@@ -9,10 +9,12 @@ every client's net fingerprints and membership log and the relay's world members
 every line), compares them per instance and checks each scenario's expected events. It stops only the processes it
 started (by their handles), never anything by name.
 
-World keys of scenario.json (round I1a): "autochoice" (first | new: DW4_ONLINE_AUTOCHOICE of every client, the development
-build's answer to the arrival prompt; default first; a client's own "autochoice" wins), a client's "box" (--online-play
+World keys of scenario.json (round I1a): "autochoice" (first | new | cursor | back, or a list "back,first" with one answer
+per prompt, round I1b: DW4_ONLINE_AUTOCHOICE of every client, the development build's answer to the arrival prompt; default
+first; a client's own "autochoice" wins), a client's "box" (--online-play
 BOX), a client's "cut" ({"at": S, "seconds": N, "mode": "close" | "half"}: its own proxy cuts its link at the scenario's
-start + S for N seconds; close drops the connection and refuses reconnects, half holds every byte back without a FIN),
+start + S for N seconds; close drops the connection and refuses reconnects, half holds every byte back without a FIN; a list
+of such cuts, or "every": E with "count": K in one of them for K cuts E seconds apart from S: a link that keeps dropping, W7g),
 "server_restart" ({"at": S, "kill": false, "down": N}: the scenario's server stops at start + S, gracefully (Ctrl+Break:
 the service's ordered stop) or killed, and starts again on the same ports N seconds later), "db_checks" ([{"sql": ...,
 "expect": REGEX, "after": true}]: a query of the scenario's database after the run whose tab-separated rows must match),
@@ -22,7 +24,8 @@ the service's ordered stop) or killed, and starts again on the same ports N seco
 starts), "api_steps" ([{"at": S, "as": CLIENT | "admin", "method", "path", "body"}]: timed API calls, e.g. a story reset or
 a staff restore; "admin" is an admin account the harness makes; {id:NAME}, {user:NAME} and {pw:NAME} name a client's
 account and password, {run} the relay's run as GET /admin/instances names it (the staff actions' ?run=, fix-019)),
-"api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX}]), a client's "crash"
+"api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX, "expect_not": REGEX}]: {user:NAME} and {id:NAME}
+expand in the regexes too), a client's "crash"
 ({"at": S, "restart": N, "script": FILE}: its process is killed at start + S and started again N seconds later with that
 script), "allow_close" (the world's CLOSEs of a server restart or an ended instance are expected), "counter_proof" (the
 scenario must FAIL: a client hook switches the checked behaviour off) with "expect_fail" ([REGEX ...]: the problem of the
@@ -34,7 +37,7 @@ reason, and a run with a SKIP exits with 3 unless --allow-skip), "fake_presence"
 world clients that go from the title to the hub stage S and send PRESENCE there, W19), "fake_guests" ({"count": N,
 "after": "CLIENT: REGEX", "stage": S, "friend_of": CLIENT}: N fake world clients that go home and then to S once CLIENT's log
 shows REGEX, W29; with "friend_of" each befriends that client first (fix-019: a guest's NEW is a friend's without the prompt);
-FakeClient's client mode after the relay lane: world tickets, protocol 49; their accounts are {id:fp1}, {id:fg1}, ...),
+FakeClient's client mode after the relay lane: world tickets, the world's protocol; their accounts are {id:fp1}, {id:fg1}, ...),
 "frame_times" (notes each client's pictures per second and longest passes), a client's "play_args" (instead of
 --online-play: W22's protocol 48 client opens a room the old way) and "refused": true (the client must be turned away
 at its start: its error exit is expected, running its script is a problem).
@@ -108,7 +111,7 @@ BELOW_NORMAL = 0x00004000
 NO_WINDOW = 0x08000000
 NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP: the server's own group (the harness never shares its console signals)
 PROTOCOL, DATA_HASH = 43, 1
-WORLD_PROTOCOL = 49  # the world's protocol (SEAMLESS.md 19.18): the fake world clients and the --fake scenarios speak it
+WORLD_PROTOCOL = 50  # the world's protocol (SEAMLESS.md 19.18; 50 since round I1b, 49 before): the fake world clients and the --fake scenarios speak it
 
 # The stand-in engine's timing for every client of a scenario (simulation: all must agree).
 ENTRY, DEPART = 120, 120
@@ -449,7 +452,7 @@ def stop_server(stack, base):
 
 def run_scenario(stack, sc, api, relay_port, pin, diag):
     """A --fake scenario in the world: its own server (a fresh process and database, as every game scenario), one account
-    per fake client, each enters the world with a ticket of POST /world/ticket (FakeClient's client mode, protocol 49) at
+    per fake client, each enters the world with a ticket of POST /world/ticket (FakeClient's client mode, the world's protocol) at
     the title (stage "") and plays its script's exits; the relay's matching makes the instances (a NEW, a co-arrival, the
     automatic join of I1a)."""
     tag = sc["name"].lower() + secrets.token_hex(2)
@@ -902,7 +905,7 @@ def is_seeded(sc, c):
 def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock, data_hash=DATA_HASH, context=None,
                             friend=None):
     """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
-    protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
+    the world's protocol, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
     fake's engine is the stand-in (FakeEngine), never a real game: it must never share a stage group with a game client
     (the fingerprints would differ), so W29's fake guests arrive where nobody of the host's instance is (a guest's NEW).
     friend: (username, token) of an account the fake befriends before it starts (its request, that account's accept): I1a's
@@ -1018,8 +1021,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         if check.get("status") and status != check["status"]:
             problems.append("api %s %s as %s: %s, expected %s (%s)" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), status,
                                                                        check["status"], text[:160]))
-        elif check.get("expect") and not re.search(check["expect"], text):
-            problems.append("api %s %s: %s does not match /%s/" % (check.get("method", "GET"), check["path"], text[:200], check["expect"]))
+        elif check.get("expect") and not re.search(expand(check["expect"]), text):
+            problems.append("api %s %s: %s does not match /%s/" % (check.get("method", "GET"), check["path"], text[:200], expand(check["expect"])))
+        elif check.get("expect_not") and re.search(expand(check["expect_not"]), text):
+            # (Round I1b's W10: what a list must not show, e.g. the instance a removed player is barred from.)
+            problems.append("api %s %s as %s: %s matches /%s/" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), text[:200],
+                                                                  expand(check["expect_not"])))
         else:
             notes.append("api %s %s as %s: %s" % (check.get("method", "GET"), check["path"], check.get("as", "admin"), status))
     t0 = time.time()
@@ -1029,6 +1036,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         # of several clients that must happen at set times, such as two departures two seconds apart).
         text = open(os.path.join(src, c["script"]), encoding="utf-8").read()
         text = re.sub(r"@(\d+(?:\.\d+)?)", lambda m: "%.1f" % (t0 + float(m.group(1))), text)
+        # {user:NAME} is that client's account name (round I1b's remove / report steps name the member by it).
+        text = re.sub(r"\{user:(\w+)\}", lambda m: tag + m.group(1), text)
 
         # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z,
         # {route:NAME>X,Z} the same from the waypoint X,Z on (S14: on along the route after a detour).
@@ -1068,6 +1077,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
         return folder
 
+    def link_cuts(cut):
+        """A client's "cut": one cut, a list of them, or one with "every" / "count" (that many, that far apart): (start, cut) pairs."""
+        for x in cut if isinstance(cut, list) else [cut]:
+            for k in range(int(x.get("count", 1))):
+                yield float(x["at"]) + k * float(x.get("every", 0)), x
+
     def start(c, play_args):
         card = os.path.join(out, "card_" + c["name"])
         for sub_dir in ("Card A", "Card B"):
@@ -1086,7 +1101,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         if link or cut:
             link = link or {"up": "0,0,0"}
             port = free_port(stack)
-            extra = ["--cut", "%.3f,%s,%s" % (t0 + float(cut["at"]), cut["seconds"], cut.get("mode", "close"))] if cut else []
+            extra = ["--cut", ";".join("%.3f,%s,%s" % (t0 + at, x["seconds"], x.get("mode", "close")) for at, x in link_cuts(cut))] if cut else []
             stack.spawn(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "proxy", "--listen", str(port), "--target",
                          str(relay_port), "--up", link.get("up", "0,0,0"), "--down", link.get("down", link.get("up", "0,0,0"))] + extra,
                         os.path.join(out, c["name"] + ".proxy.out"))
@@ -1828,6 +1843,12 @@ def run_ui(stack, sc, connection, servers):
             s, body = api.call("POST", "/api/v1/auth/register", {"username": env["UI_%s_NAME" % up], "password": env["UI_%s_PASSWORD" % up]})
             if s != 201:
                 raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
+            if c.get("seed_story"):
+                # (Round I1b: a client whose pad script plays from its card's story point, the player card scenario: the
+                # account's online story from its card, as the game scenarios' "seed_story".)
+                folder = c["card"] if os.path.isabs(c["card"]) else os.path.join(a.cards, c["card"])
+                ids = sql_rows(stack, connection, "SELECT id FROM accounts WHERE username = '%s'" % env["UI_%s_NAME" % up])
+                seed_story(stack, connection, int(ids[0]), folder)
     campaign = os.path.join(out, "campaign.txt")
     with open(campaign, "w") as f:
         f.write("0 SEEK 400000 campaign\n")

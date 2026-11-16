@@ -42,6 +42,37 @@ public sealed class WorldHubOptions
     public int HostAwayNoticeSeconds { get; set; } = 5;
     /// <summary>A story keeper nobody plays on any more (its owner left the world, no instance runs on it) is dropped after this.</summary>
     public int KeeperIdleMinutes { get; set; } = 5;
+    /// <summary>Test runs only (scenario W10d, never in appsettings): an arrival's JOIN target counts as not joinable for this long after
+    /// the arrival's first JOIN decision (HoldKind.Join, BARRIER_WAIT not joinable), as a scene would hold it. 0: off.</summary>
+    public int TestJoinHoldMs { get; set; }
+    /// <summary>Round I1b (19.7): the arrival prompt. False: round I1a's automatic join of the first row (the load gate's fake
+    /// clients, which answer no prompt).</summary>
+    public bool ArrivalPrompt { get; set; } = true;
+    /// <summary>OPTIONS goes again on a change at most this often (19.7.3: once a second).</summary>
+    public int OptionsRefreshMs { get; set; } = 1000;
+    /// <summary>A test hook (scenario W2b): the relay drops every PLAN unanswered, so the client's press goes out after
+    /// World:PlanWaitMs and the barrier is decided as a loading-screen arrival.</summary>
+    public bool TestDropPlans { get; set; }
+    /// <summary>Round I1b (19.30.5): a member who goes into the same dungeon again this soon after the offer that named him closed
+    /// reopens it silently (no notice, no closing line).</summary>
+    public int OfferReopenSeconds { get; set; } = 120;
+    /// <summary>Round I1b: how long a go-along notice is on screen (the party's *Follow* notice uses the same, 19.12).</summary>
+    public int AnswerNoticeSeconds { get; set; } = 20;
+    /// <summary>Round I1b (19.30.7): a go-along request waits this long for the target's floor (no limit while it is boss-locked).</summary>
+    public int GoAlongWaitSeconds { get; set; } = 60;
+
+    // Round I1b's scenario hooks (test runs only; off by default, never in a deployment). They stamp TEST events (Ev.Test) that
+    // only development clients apply.
+    /// <summary>INTENT kind test from a member of a sealed stage group stamps a TEST event there (the online script's testhook).</summary>
+    public bool TestHooks { get; set; }
+    /// <summary>At a GO's stamp: "defeat" (the going slot falls at the GO's tick, before it), "busy_sender:N" (the sender's stage group
+    /// busy for N ticks from the GO's tick, before it), "busy_target:N" (the target stage group busy for N ticks from its next stamp
+    /// tick; sealed targets only); empty: none.</summary>
+    public string TestGoHook { get; set; } = "";
+    /// <summary>How many GO stamps get <see cref="TestGoHook"/> (the first ones of the relay's run).</summary>
+    public int TestGoHookCount { get; set; } = 1;
+    /// <summary>A GO's barrier waits this long before its decision (W31c's race: the entrants leave meanwhile); 0: none.</summary>
+    public int TestGoBarrierHoldMs { get; set; }
 
     public bool AdmitsData(ulong dataHash) =>
         DataHashes.Count == 0 || DataHashes.Any(h => ulong.TryParse(h, out var v) && v == dataHash);
@@ -64,6 +95,10 @@ public sealed record HubAdmit(long AccountId, string Name)
     public bool NewSession { get; init; }
     /// <summary>The relay's handle to run the same admission again (the live re-check, 19.14).</summary>
     public object? Handle { get; init; }
+    /// <summary>When the admission began to read the account (the hub's clock, Stopwatch ticks; 0: unknown, applied as it is): a
+    /// <see cref="DefaultVisibility"/> read before the relay's newest remembered visibility was written is older than the relay's
+    /// (decision 49's staleness guard, <c>RoomHub.AdmittedVisibility</c>).</summary>
+    public long ReadAt { get; init; }
 }
 
 /// <summary>A place in an instance (19.3): taken while the member plays in it; held during the host's grace.</summary>
@@ -125,13 +160,29 @@ public sealed class WorldInstance(uint wid)
     public long HostAwaySince { get; set; }
     public long GraceUntil { get; set; }
     public long LastAwayNotice { get; set; }
+    /// <summary>
+    /// The host's absence debt (19.6.7, a link that keeps dropping; Stopwatch ticks) and when it was last brought up to date
+    /// (RoomHub.AccrueHostDebt). From the start of a grace on, the time he holds up the guests of his stage group counts up (he is
+    /// away, or his slot fills: no pad of his sealed in time for its last tick), the time he plays with his pads in time, or connected
+    /// outside a stage group shared with a guest, counts down, one for one; at 0 the episode is over. A grace lasts at most
+    /// World:HostGraceSeconds + Relay:LagLeaveSeconds minus the debt (World:HostGraceSeconds at most), and a lagging host whose debt
+    /// reached that sum is out of the stage group (lag_leave).
+    /// </summary>
+    public long HostDebt { get; set; }
+    public long HostDebtAt { get; set; }
     /// <summary>Removal bars: account until (relay clock).</summary>
     public Dictionary<long, long> Bars { get; } = [];
+    /// <summary>Every account that held a seat in the instance (a report names the instance both shared, round I1b).</summary>
+    public HashSet<long> EverSeated { get; } = [];
     public int PeakPlayers { get; set; }
     /// <summary>INSTANCE_INFO is sent in the next housekeeping pass.</summary>
     public bool InfoDirty { get; set; }
     /// <summary>The players of the last minute (achievements' play context): when the housekeeping last saw n seats taken.</summary>
     public long[] SeenWithPlayers { get; } = new long[Wire.MaxSlots + 1];
+    /// <summary>Round I1b (19.30.5): the go-along offers, open and recently closed (a re-entry within World:OfferReopenSeconds reopens
+    /// one); at most four open.</summary>
+    public List<GoOffer> Offers { get; } = [];
+    public ushort NextOfferId { get; set; } = 1;
 
     public bool HostAway => HostAwaySince != 0;
     public int Players => Seats.Count;

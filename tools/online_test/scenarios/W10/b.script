@@ -1,0 +1,19 @@
+# W10, guest b (k2): joins a's instance at the gate (the prompt, autochoice first: a's row with a here); a removes it: "You were removed from a's
+# instance." and the home departure (HOME removed), home on its own story (key item 4 is a's, not b's). At the gate again
+# a's instance is no candidate for 10 minutes (the removal bar): b's arrival makes an instance of its own.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+idle until frames>=120 fail key:4=0
+log b plays a's story
+follow 40 until stage=stagml11,control fail epoch>=@420
+log b home after the removal
+idle until frames>=120 fail key:4=1
+log own story at home
+explore mate00 yes until stage=stag0101,control fail epoch>=@560
+log b in stag0101 again
+idle until frames>=240 fail key:4=1
+log b on its own story there
+disk 8 until stage=stagml11,control
+log b home again

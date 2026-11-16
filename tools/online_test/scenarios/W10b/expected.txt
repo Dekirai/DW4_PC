@@ -1,0 +1,18 @@
+# W10b (19.24, 19.6.6): a removes b while b is defeated: b still goes home (HOME's fork takes exactly b's slot), a's stage
+# group plays on.
+a: online-script: step .* log: b is defeated
+a: online-script: remove \S+b member \d+ sent
+a: online-script: step .* log: b is gone
+a: online-script: step .* log: a plays on
+b: online-script: step .* log: b defeated
+b: online: .*You were removed from .*'s instance\.
+b: online-script: step .* log: b home while defeated
+b: online-script: step .* log: own story at home
+relay: instance_join .*how=join
+relay: remove .*reason=host
+relay: home .*reason=Removed
+relay: instance_leave .*reason=removed
+# (the instance ends only when a's script ends and its client leaves the world: host_left, after b is gone)
+relay: instance_end .*reason=host_left
+!a: online-script: FAIL
+!b: online-script: FAIL

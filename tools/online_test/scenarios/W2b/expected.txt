@@ -1,0 +1,18 @@
+# W2b (19.24): a PLAN without an answer: the press goes out after 1 s, the BARRIER carries no plan and the relay holds it
+# for the loading-screen form of the prompt; the answer (the first row) joins a's stage group.
+a: online-script: step .* log: a hosts in stag0101
+b: online-trace: prompt hold stage=stag0101
+b: online-trace: prompt plan-timeout
+b: online-trace: barrier to=stag0101 point=0 plan=0
+b: online-trace: prompt open form=loading stage=stag0101 rows=1
+b: online-trace: prompt answer choice=join .*form=loading
+b: online-script: step .* log: b plays a's story
+b: online-script: step .* log: own story again at home
+relay: instance_start .*stage=stag0101
+relay: plan_dropped .*stage=stag0101
+relay: prompt_hold .*stage=stag0101
+relay: choice .*choice=join
+relay: instance_join .*how=join
+!b: online-trace: prompt open form=gate
+!a: online-script: FAIL
+!b: online-script: FAIL

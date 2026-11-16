@@ -217,7 +217,7 @@ HP for Guilmon's Fang Thrust (one big target), then the kite bot's clear rate ag
 # at most 4 game processes at once (nice -n 10); files in build/f/runs_NAME/<kind>_<TAG>_<FORM>_<SEED>.txt.
 export PATH=/usr/bin:/mingw64/bin:/c/Windows/System32:/c/Windows:$PATH
 exe=$1 name=$2 jobs=$3
-R=/c/Users/shinz/source/repos/DW4_PC-wt/o1b-content/build/f/runs_$name
+R=~/source/repos/DW4_PC-wt/o1b-content/build/f/runs_$name
 mkdir -p $R/cards
 DATA="E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted"
 run() {

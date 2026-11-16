@@ -1,0 +1,62 @@
+{
+  "desc": "the host removes a guest (19.6.6): b goes home on its own story; the bar keeps a's instance out of b's arrivals and b's /instances list for 10 minutes, b's next arrival hosts its own; audit instance_remove, history leave_reason removed",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1100,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "db_checks": [
+    {
+      "name": "b's seat left removed",
+      "sql": "SELECT leave_reason FROM instance_history_members WHERE role = 'guest' ORDER BY joined_at LIMIT 1",
+      "expect": "^removed$"
+    },
+    {
+      "name": "the host's removal is audited",
+      "sql": "SELECT COUNT(*) FROM audit_log WHERE event = 'instance_remove'",
+      "expect": "^1$"
+    },
+    {
+      "name": "two instances: a's and b's own",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^2$"
+    }
+  ],
+  "api_checks": [
+    {
+      "at": 330,
+      "as": "admin",
+      "method": "GET",
+      "path": "/api/v1/instances",
+      "expect": "\"host\": \"{user:a}\""
+    },
+    {
+      "at": 330,
+      "as": "b",
+      "method": "GET",
+      "path": "/api/v1/instances",
+      "status": 200,
+      "expect_not": "\"host\": \"{user:a}\""
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "upload_card": true
+    }
+  ]
+}

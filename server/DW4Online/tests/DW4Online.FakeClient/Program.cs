@@ -13,17 +13,18 @@ using DW4Online.Relay.Protocol;
 //           [--protocol 43] [--data-hash 1] [--settings-hash HEX] [--name NAME] [--quest N] [--context HEX] [--seed N] [--script FILE]
 //           [--duration SECONDS] [--replay-rate N] [--entry-ticks 120] [--depart-ticks 120] [--log FILE] [--stats FILE]
 //   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P] [--up MS,JITTER,LOSS] [--down MS,JITTER,LOSS]
-//           [--cut EPOCH,SECONDS[,half|close]] (a scheduled cut of the link, the world's host grace scenarios)
+//           [--cut EPOCH,SECONDS[,half|close][;EPOCH,SECONDS[,half|close]...]] (scheduled cuts of the link, the world's host grace
+//           scenarios; several, ';'-separated: a link that keeps dropping, W7g)
 //           (--up / --down: an asymmetric link, client to server / server to client; each overrides the symmetric values)
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
-//   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm,joins] [--out FILE.json]
-//           [--sockets --port 56810] [--protocol 48]
+//   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm,joins,prompt] [--out FILE.json]
+//           [--sockets --port 56810] [--protocol 48] [--no-prompt]
 //           round I1a's load gate (SEAMLESS.md 19.17.4): on one in-process hub (LoadGate.cs), or with --sockets against a
 //           real relay in a child process on loopback, one port per cell from --port (LoadGateNet.cs; not the joins cell).
 //           Fails (exit 1) when a cell's run is invalid (frames the hub refused or dropped). Every cell reports gc_trace: the
 //           collections with their pauses and the process's stalls over 20 ms (GcTrace; over sockets the relay process's).
 //   loadgate-relay --port P --key HEX   the relay process of loadgate --sockets (commands on stdin)
-//   joins   [--minutes 1,10,25] [--out FILE.json] [--protocol 48]   the lock's holds of one classic join per log length, on an idle hub
+//   joins   [--minutes 1,10,25] [--out FILE.json] [--protocol 48] [--no-prompt]   the lock's holds of one classic join per log length, on an idle hub
 var args2 = args.Skip(1).ToArray();
 string Opt(string name, string fallback = "")
 {
@@ -124,7 +125,7 @@ switch (args.FirstOrDefault())
         await using var proxy = new ImpairmentProxy(new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--listen"), CultureInfo.InvariantCulture)),
             new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--target"), CultureInfo.InvariantCulture)), up, down, Environment.ProcessId)
         {
-            Cuts = Opt("--cut").Length > 0 ? [LinkCut.Parse(Opt("--cut"))] : [],
+            Cuts = LinkCut.ParseAll(Opt("--cut")),
         };
         Console.WriteLine($"proxy {proxy.Port} -> {Opt("--target")} (up {up}, down {down})");
         try
@@ -167,7 +168,8 @@ switch (args.FirstOrDefault())
         var sockets = args2.Contains("--sockets");
         var port = int.Parse(Opt("--port", "56810"), CultureInfo.InvariantCulture);
         LoadGate.Protocol = int.Parse(Opt("--protocol", LoadGate.Protocol.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture);
-        Console.WriteLine($"protocol {LoadGate.Protocol}");
+        LoadGate.ArrivalPrompt = !Flag("--no-prompt"); // (round I1b: the prompt as shipped; --no-prompt measures I1a's automatic join)
+        Console.WriteLine($"protocol {LoadGate.Protocol}, arrival prompt {(LoadGate.ArrivalPrompt ? "on" : "off")}");
         var results = new List<Dictionary<string, object>>();
         foreach (var cell in LoadGate.Cells())
         {
@@ -197,6 +199,7 @@ switch (args.FirstOrDefault())
         // Round I1a's load gate, the joins cell (SEAMLESS.md 19.17.4): the lock's holds of one classic join per log length.
         var minutes = Opt("--minutes", "1,10,25").Split(',').Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray();
         LoadGate.Protocol = int.Parse(Opt("--protocol", LoadGate.Protocol.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture);
+        LoadGate.ArrivalPrompt = !Flag("--no-prompt");
         LoadGate.Join(1, _ => { }); // (warm-up: the first join JIT-compiles the decision and the state paths)
         var results = minutes.Select(m => LoadGate.Join(m, Console.WriteLine)).ToList();
         Console.WriteLine(LoadGate.Json(results));

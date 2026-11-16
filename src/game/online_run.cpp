@@ -125,13 +125,73 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
         if (const auto* area = find_area(stage)) return std::string(area->place);
         return std::string(stage);
     };
+    // Round I1b's go along (19.30.6): a dungeon or boss stage, a stage with
+    // its floor ("Ancient Ruins B2": the dungeon key's suffix, b2 -> B2, f1 ->
+    // F1), a dungeon's name ("Ancient Ruins").
+    config.dungeon_stage = [](std::string_view stage) {
+        const auto* area = find_area(stage);
+        return area && (std::string_view(area->kind) == "dungeon" || std::string_view(area->kind) == "boss");
+    };
+    config.floor_name = [](std::string_view stage) {
+        const auto* area = find_area(stage);
+        if (!area) return std::string(stage);
+        std::string name = area->place;
+        if (area->dungeon && std::string_view(area->kind) == "dungeon") {
+            const std::string_view key = area->dungeon, folder = area->folder;
+            if (folder.size() >= key.size() + 2 && (folder[key.size()] == 'b' || folder[key.size()] == 'f') &&
+                folder[key.size() + 1] >= '0' && folder[key.size() + 1] <= '9')
+                name += std::string(" ") + char(folder[key.size()] - 'a' + 'A') + folder[key.size() + 1];
+        }
+        return name;
+    };
+    config.dungeon_name = [](std::string_view stage) {
+        if (const auto* area = find_area(stage)) return std::string(area->place);
+        return std::string(stage);
+    };
 #ifdef DW4_ONLINE_DEV
     if (room_.difficulty) link_.force_difficulty(room_.difficulty);
-    // DW4_ONLINE_AUTOCHOICE=first|new (development builds, 19.24): I1a has no
-    // prompt, so "first" is the relay's automatic join; "new" asks for a new
-    // instance at every departure from home.
-    if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE"); choice && std::string(choice) == "new") config.plan_new_instance = true;
+    // DW4_ONLINE_AUTOCHOICE=first|new|cursor|back (development builds, 19.24):
+    // the arrival prompt answered without a person (round I1b): first = the
+    // first choosable row by 19.7.3's order, new = New instance (also a
+    // departure without a plan asks for one, plan id 0xFFFF), cursor = the
+    // preselection, back = B. DW4_ONLINE_AUTOCHOICE_DELAY_MS waits before the
+    // answer (a picture of the prompt); DW4_ONLINE_TEST_GATE_FORM=0 turns the
+    // gate form off (every arrival gets the loading-screen form, W11b).
+    if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE")) {
+        // (A list "back,first": one answer per prompt, the last one stays.)
+        const auto parse = [](std::string_view c) {
+            return c == "first"    ? online::AutoChoice::first
+                   : c == "new"    ? online::AutoChoice::new_instance
+                   : c == "cursor" ? online::AutoChoice::cursor
+                   : c == "back"   ? online::AutoChoice::back
+                                   : online::AutoChoice::none;
+        };
+        std::string_view list(choice);
+        while (!list.empty()) {
+            const auto comma = list.find(',');
+            config.auto_sequence.push_back(parse(list.substr(0, comma)));
+            list = comma == std::string_view::npos ? std::string_view() : list.substr(comma + 1);
+        }
+        if (config.auto_sequence.size() == 1) {
+            config.auto_choice = config.auto_sequence.front();
+            config.auto_sequence.clear();
+        }
+        if (std::string_view(choice) == "new") config.plan_new_instance = true;
+    }
+    if (const char* delay = std::getenv("DW4_ONLINE_AUTOCHOICE_DELAY_MS"); delay && std::atoi(delay) > 0)
+        config.auto_choice_delay = std::atoi(delay) / 1000.0;
+    if (const char* gate = std::getenv("DW4_ONLINE_TEST_GATE_FORM"); gate && std::string(gate) == "0") config.gate_form = false;
     if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_PARK"); cut && std::atof(cut) > 0) test_cut_park_ = std::atof(cut);
+    // DW4_ONLINE_TEST_CUT_AT_ANSWER=SECONDS (round I1b's integration, W7f): as
+    // CUT_AT_PARK, but the link goes when the barrier's answer comes, and the
+    // answer with it (the relay decided the barrier with this member).
+    if (const char* cut = std::getenv("DW4_ONLINE_TEST_CUT_AT_ANSWER"); cut && std::atof(cut) > 0) {
+        test_cut_park_ = std::atof(cut);
+        test_cut_at_answer_ = true;
+    }
+    // DW4_ONLINE_TEST_IGNORE_HOME=1 (round I1b's W10c): a removed member's client
+    // that never answers its JOIN_REQ home.
+    if (const char* ignore = std::getenv("DW4_ONLINE_TEST_IGNORE_HOME"); ignore && std::string(ignore) == "1") config.test_ignore_home = true;
 #endif
     // Round I1a: the own settings go with every BARRIER (19.8.7).
     config.own_settings = online::to_wire(room_.settings);
@@ -198,9 +258,19 @@ void OnlineRun::test_cut_at_park(double now) {
     // may bring BARRIER_OK on loopback within the same frame.
     if (test_cut_park_ > 0 && !test_cut_done_ && session_->mode() == online::Mode::parked && std::popcount(unsigned(session_->present())) >= 2) {
         test_cut_done_ = true;
+        if (test_cut_at_answer_) {
+            session_->test_arm_answer_cut();
+            log_.line("test: the link will be cut when the barrier's answer comes (DW4_ONLINE_TEST_CUT_AT_ANSWER)");
+            return;
+        }
         std::cout << "online: test: the link is cut at the barrier for " << test_cut_park_ << " s" << std::endl;
         log_.line("test: the link is cut at the barrier for %.0f s (DW4_ONLINE_TEST_CUT_AT_PARK)", test_cut_park_);
         session_->test_cut(now);
+        next_reconnect_ = now + test_cut_park_;
+    }
+    if (session_->test_take_answer_cut()) {
+        std::cout << "online: test: the link is cut at the barrier's answer for " << test_cut_park_ << " s" << std::endl;
+        log_.line("test: the link is cut at the barrier's answer for %.0f s (DW4_ONLINE_TEST_CUT_AT_ANSWER)", test_cut_park_);
         next_reconnect_ = now + test_cut_park_;
     }
 #else
@@ -211,6 +281,7 @@ void OnlineRun::test_cut_at_park(double now) {
 void OnlineRun::pass(double now) {
     test_cut_at_park(now);
     session_->poll(now);
+    test_cut_at_park(now); // (a cut at the barrier's answer came with this poll: its reconnect waits)
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
     if (character_) {
         // Round I1a's review: the own story moves on at home and as a host; its

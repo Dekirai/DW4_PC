@@ -1,0 +1,16 @@
+# W11r, host a (k10): hosts Dry Land and goes on to stag0202 (Grief Wasteland, matz00), where it stays until b came back
+# there by the lobby's return mat and joined it. (It heals from the L panel at 350 HP on the way, as W31's walks do.)
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+explore matz00 yes until stage=stag0202,control or hp<=350 fail epoch>=@500
+disk 1 until hp>=700 or frames>=900
+explore matz00 yes until stage=stag0202,control or hp<=350 fail epoch>=@500
+disk 1 until hp>=700 or frames>=900
+explore matz00 yes until stage=stag0202,control fail epoch>=@500
+log a in stag0202
+idle until present=2,sealed>=300 fail epoch>=@1200
+log b joined a
+idle until frames>=300

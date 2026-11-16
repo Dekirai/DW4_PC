@@ -1,0 +1,21 @@
+# W31d2, guest c (k10): joins a in stag0201, goes into dng204b1 alone (matz01), walks into the enemies until defeated
+# (by @880) and lies there (no A: the game over's message waits for A) until @930, half of b's 60 s wait after its request
+# at @900 (run b1: at @960 the wait had ended as busy a second before the offer closed); then its game over takes it home.
+# (It heals from the L panel at 350 HP on the way to matz01: stag0201's mummies felled W31b's b in run d1.)
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log c in stag0201
+idle until frames>=600
+explore matz01 yes until stage=dng204b1,control or hp<=350 fail epoch>=@700
+disk 1 until hp>=700 or frames>=900
+explore matz01 yes until stage=dng204b1,control or hp<=350 fail epoch>=@700
+disk 1 until hp>=700 or frames>=900
+explore matz01 yes until stage=dng204b1,control fail epoch>=@700
+log c in dng204b1
+die until dead fail epoch>=@880
+log c defeated
+idle until epoch>=@930
+talk until stage=stagml11
+log c home

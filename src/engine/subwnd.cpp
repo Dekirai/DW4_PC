@@ -1027,6 +1027,7 @@ void SubWindowManager::fill_stocks(Engine& engine) {
 
 void SubWindowManager::clear_stage(Engine&) {
     for (auto& stock : stocks_) stock.clear();
+    junk_counter_ = 0; // (written with the junk shop's stock, which goes here; round I1b's integration, the tick state)
     rams_.clear();
     // (The original program's player and kept values outlive the stage.)
     main_.window.reset();

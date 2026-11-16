@@ -5,12 +5,10 @@ an individual file or the notices below identify an upstream adaptation. It does
 license Digimon World 4 or its game content. Users supply their own local data.
 Original executable and asset bytes are not distributed by this repository.
 
-Local Windows packages include compiler-matched x64 Microsoft Visual C++
-redistributable runtime DLLs. Their names, versions and hashes are recorded in
-the package manifest, and the installed redistribution notice is retained
-under `licenses/Microsoft-Visual-Cpp-Redist.txt` inside the package. These DLLs
-are Microsoft components, not covered by the project's MIT license, and are
-not committed to this repository.
+Windows packages link the Microsoft Visual C++ runtime statically
+(`DW4_STATIC_RUNTIME`, on by default in `CMakeLists.txt`), so they ship no
+Visual C++ redistributable DLLs. The runtime is a Microsoft component, not
+covered by the project's MIT license.
 
 The native application builds these pinned dependencies using CMake:
 
@@ -58,14 +56,15 @@ The bounded C++ chunk reader and interpreter are independently implemented;
 Lua C source is not linked or vendored. An unmodified official x86 interpreter
 was built only as an ignored local validation oracle for original boot chunks.
 The native runtime intentionally has no Lua file, OS or network libraries.
-See `docs/LUA4.md` and `docs/STARTUP_HOST_RESEARCH.md` for the supported profile
+See `docs/LUA4.md` and `docs/research/STARTUP_HOST_RESEARCH.md` for the supported profile
 and independent comparison evidence.
 
 Research reference: [ivanno4317/dw4-gc](https://github.com/ivanno4317/dw4-gc)
 at `794294e17fef0b3ab5eeb15fda9bd57b0dc98a2b`. Its root license is CC0-1.0;
 several bundled SDK and library files have their own notices. This milestone
 does not vendor its code. The DOL checksum is used to identify the supported
-build. See `docs/UPSTREAM_AUDIT.md` for findings and limitations.
+build. Its audit notes (`docs/UPSTREAM_AUDIT.md`) were removed from the tree
+and remain in Git history.
 
 Additional IGB format research reference:
 [mateon1's IGB exploration](https://gist.github.com/mateon1/b123a53d824305767989ebc2ba3e5814).

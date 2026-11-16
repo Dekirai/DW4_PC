@@ -9,6 +9,7 @@
 // Live steps run in the host loop (pictures, audio, achievements); the client
 // only runs replay steps itself (catch-up). Every call that changes the
 // simulation is made between steps, at a step every member makes it.
+#include "dw4/engine/online_departure.hpp"
 #include "dw4/engine/online_story.hpp"
 #include "dw4/pad.hpp"
 #include "wire.hpp"
@@ -35,6 +36,9 @@ struct SplitInfo {
 struct HeadingInfo {
     std::string stage;
     int point{};
+    // Round I1b (19.30.5): the slots the exit port asked on the mat for this
+    // departure that stay (HEADING's asked mask).
+    std::uint8_t asked{};
 };
 
 // What a member shows the others (PRESENCE, name tags; PRESENCE2, the ghost
@@ -90,6 +94,11 @@ public:
     // The engine's story values (FLAG, FLAGFOLDER, COUNTER; SEAMLESS.md 8.3):
     // the pending set against the confirmed room story comes from them.
     virtual engine::StoryValues story_values() const { return {}; }
+    // Round I1b (docs/SEAMLESS.md 19.7.4): in a hub stage, the destination
+    // the own player's next confirming press would start (the lobby gate's
+    // destination select, the return mat), for the gate form's input hold.
+    // The default: an engine without it (test fakes) names none.
+    virtual std::optional<engine::DepartureChoice> pending_departure_choice() const { return std::nullopt; }
 
     // ---- changes between steps
     // A replay step (catch-up): the step, the picture's traversal, the music
@@ -120,6 +129,25 @@ public:
     // The defaults: an engine without them (test fakes) does nothing.
     virtual void home(std::uint8_t mask) { (void)mask; }
     virtual bool depart_home() { return false; }
+    // Round I1b (docs/SEAMLESS.md 19.30.7): GO for a slot mask, every GO of a
+    // step together (Engine::online_go: the exit's departure to `stage` and
+    // `point` taken as named, a fork of ForkKind::go for part of the present
+    // slots). Returns whether this copy departs. The default: an engine
+    // without it (test fakes) does nothing.
+    virtual bool go(std::uint8_t mask, const std::string& stage, int point) {
+        (void)mask, (void)stage, (void)point;
+        return false;
+    }
+    // Round I1b's scenario hooks (development builds only, the TEST event,
+    // wire.hpp TestHook): before a step, at a tick every member applies. The
+    // default: an engine without them (test fakes) does nothing.
+    virtual void test_hook(int slot, wire::TestHook hook, int argument) { (void)slot, (void)hook, (void)argument; }
+    // Presentation (the go-along notice waits for it, 19.30.6): the slot's own
+    // scene (a talk, a map recorder) runs.
+    virtual bool own_scene(int slot) const {
+        (void)slot;
+        return false;
+    }
     // Presentation only: whose camera the picture uses (a defeated member
     // watches the nearest living member).
     virtual void set_view_slot(int slot) = 0;

@@ -1,0 +1,131 @@
+@page "/admin/reports"
+@model DW4Online.Web.Pages.Admin.ReportsModel
+@{
+    ViewData["Title"] = "Reports";
+    var pages = (Model.Reports.Total + Model.Reports.PageSize - 1) / Model.Reports.PageSize;
+}
+<h1>Reports</h1>
+<p class="muted">What players reported about others from the game's player card or the API, with a reason from a fixed list
+    (no free text). Look at the reported player's account page (his instances, his story, his achievements) and act there or
+    on <a href="~/admin/instances">Instances</a>; then mark the report <em>Done</em>. Both are written to the audit log with
+    your name.</p>
+<p>
+    <a href="?State=open" class="@(Model.State == "open" ? "badge" : "")">Open</a> &middot;
+    <a href="?State=done" class="@(Model.State == "done" ? "badge" : "")">Done</a> &middot;
+    <a href="?State=all" class="@(Model.State == "all" ? "badge" : "")">All</a>
+    <span class="muted small">(@Model.Reports.Total)</span>
+</p>
+@if (Model.Message is not null)
+{
+    <div class="notice ok">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+@if (Model.Reports.Reports.Count == 0)
+{
+    <p class="muted">@(Model.State == "open" ? "No open reports." : "No reports.")</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>#</th><th>When</th><th>Reported</th><th>Reason</th><th>By</th><th>Instance</th><th>State</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var r in Model.Reports.Reports)
+            {
+                <tr>
+                    <td>@r.Id</td>
+                    <td title="@Format.Date(r.CreatedAt)">@Format.Ago(r.CreatedAt, Model.Now)</td>
+                    <td>
+                        <a href="~/admin/account/@r.Reported">@r.Reported</a>
+                        @if (r.OpenAboutReported > 1)
+                        {
+                            <span class="badge warn">@r.OpenAboutReported open</span>
+                        }
+                        @if (Model.LiveInstance.TryGetValue(r.ReportedAccountId, out var wid))
+                        {
+                            <a class="small" href="~/admin/instances">in instance #@wid now</a>
+                        }
+                    </td>
+                    <td>@DW4Online.Domain.Abstractions.ReportReasons.Title(r.Reason)</td>
+                    <td>
+                        @if (r.ReporterHidden)
+                        {
+                            <span class="muted">a player</span>
+                        }
+                        else
+                        {
+                            <a href="~/admin/account/@r.Reporter">@r.Reporter</a>
+                        }
+                        <span class="muted small">(@r.Source)</span>
+                    </td>
+                    <td>
+                        @if (r.InstanceId is { } h)
+                        {
+                            <span>#@h</span>
+                            @if (r.InstanceHost is { } ih)
+                            {
+                                <span><a href="~/admin/account/@ih">@ih</a>'s, @StageNames.Of(r.InstanceStage ?? "")</span>
+                                <span class="muted small" title="@Format.Date(r.InstanceStarted)">started @Format.Ago(r.InstanceStarted ?? r.CreatedAt, Model.Now)</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="muted">-</span>
+                        }
+                    </td>
+                    <td>
+                        @if (r.State == "open")
+                        {
+                            <span class="badge warn">open</span>
+                        }
+                        else
+                        {
+                            <span class="badge ok">done</span>
+                            <span class="muted small">@r.HandledByName, @Format.Date(r.HandledAt)</span>
+                        }
+                    </td>
+                    <td>
+                        @if (r.ReportedAccountId == Model.Me)
+                        {
+                            <span class="muted small">About you: another moderator handles it.</span>
+                        }
+                        else if (r.State == "open")
+                        {
+                            <form method="post" asp-page-handler="Done" asp-route-State="@Model.State" asp-route-p="@Model.PageNumber" class="inline">
+                                <input type="hidden" name="Id" value="@r.Id" />
+                                <button type="submit" class="link">Done</button>
+                            </form>
+                        }
+                        else
+                        {
+                            <form method="post" asp-page-handler="Reopen" asp-route-State="@Model.State" asp-route-p="@Model.PageNumber" class="inline">
+                                <input type="hidden" name="Id" value="@r.Id" />
+                                <button type="submit" class="link">Reopen</button>
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    @if (pages > 1)
+    {
+        <p>
+            @for (var p = 1; p <= pages; ++p)
+            {
+                if (p == Model.Reports.Page)
+                {
+                    <span class="badge">@p</span>
+                }
+                else
+                {
+                    <a href="?State=@Model.State&amp;p=@p">@p</a>
+                }
+            }
+        </p>
+    }
+}

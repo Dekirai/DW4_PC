@@ -4,6 +4,11 @@ project(DW4_PC VERSION 0.46.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# No path of the build machine in the binaries: __FILE__ of every target from
+# here on, the fetched dependencies' included, is relative
+# (cmake/trim_build_paths.cmake).
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/trim_build_paths.cmake)
+dw4_trim_build_paths()
 option(DW4_BUILD_APP "Build the native game runtime (SDL3/OpenGL/ImGui)" ${WIN32})
 # One self-contained EXE: the C++ runtime linked in, so a clean Windows needs
 # no Visual C++ redistributable (applies to the dependencies built here too).
@@ -44,6 +49,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
   src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_scenes.cpp src/engine/online_story.cpp
+  src/engine/online_departure.cpp
   src/engine/tick_state.cpp src/engine/tick_state_managers.cpp)
 # Data Overflow, the survival mode's run engine rules (docs/SURVIVAL.md 13.4):
 # the hooks' values and the native run scripts; inert without OverflowRules.
@@ -70,8 +76,9 @@ add_library(dw4_online STATIC
   src/game/online/cpu_gate.cpp src/game/online/env_check.cpp src/game/online/pad_wire.cpp src/game/online/wire.cpp
   src/game/online/pacing.cpp src/game/online/net_stats.cpp src/game/online/net_log.cpp src/game/online/host_priority.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
-  src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
-  src/game/online/lobby.cpp src/game/online/achievement_api.cpp src/game/online/title_driver.cpp)
+  src/game/online/session.cpp src/game/online/session_go.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
+  src/game/online/lobby.cpp src/game/online/achievement_api.cpp src/game/online/title_driver.cpp
+  src/game/online/prompt_wire.cpp src/game/online/session_prompt.cpp)
 target_include_directories(dw4_online PUBLIC src/game)
 target_link_libraries(dw4_online PUBLIC dw4_engine)
 if(DW4_ONLINE_DEV)
@@ -331,6 +338,7 @@ if(DW4_BUILD_APP)
   # found elsewhere on the build machine either.
   set(SDL_HIDAPI_LIBUSB OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(SDL3 imgui_src pl_mpeg_src stb_src zstd_src)
+  dw4_check_trimmed_paths(SDL3 imgui_src pl_mpeg_src stb_src zstd_src)
   set(ZSTD_LIB ${zstd_src_SOURCE_DIR}/lib)
   add_library(zstd_decoder STATIC
     ${ZSTD_LIB}/common/debug.c ${ZSTD_LIB}/common/entropy_common.c ${ZSTD_LIB}/common/error_private.c
@@ -366,7 +374,8 @@ if(DW4_BUILD_APP)
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
     src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp
-    src/game/overflow_text.cpp src/game/sim_ui.cpp src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp)
+    src/game/overflow_text.cpp src/game/sim_ui.cpp src/game/presentation_actor.cpp src/game/overflow_lobby.cpp src/game/overflow_screens.cpp
+    src/game/online_prompt_ui.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)

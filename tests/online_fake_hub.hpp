@@ -13,6 +13,7 @@
 // after WELCOME and on every revision, the story and the dropped set in every
 // BARRIER_OK; owner away with the drop policy refuses and records). The real
 // hub is server/DW4Online/src/DW4Online.Relay/Hub.
+#include "dw4/engine/online.hpp"
 #include "online/engine_link.hpp"
 #include "online/pacing.hpp"
 #include "online/session.hpp"
@@ -84,6 +85,28 @@ public:
     }
     void take_load_snapshot() { load_snapshot_ = serialize(); }
 
+    // Round I1b: the lobby gate's destination menu (in stagml11 while set): A
+    // on it departs to gate_target (the press is a rising edge of the menu's
+    // reader, the own slot), B closes it. pending_departure_choice names it.
+    bool gate_menu = false;
+    std::string gate_target = "stag0101";
+    int gate_point = 0;
+    int gate_back_point = 1; // (the lobby's point next to the gate, as the engine's census names it; -1 none)
+    int gate_confirms = 0, gate_cancels = 0;
+    std::uint32_t gate_previous = 0;
+    std::optional<dw4::engine::DepartureChoice> pending_departure_choice() const override {
+        if (!gate_menu || stage_ != "stagml11" || pending_) return std::nullopt;
+        dw4::engine::DepartureChoice d;
+        d.stage = gate_target;
+        d.point = gate_point;
+        d.purpose = dw4::engine::DepartureChoice::Purpose::gate;
+        d.menu = "i_zzstchgcur";
+        d.items = 4;
+        d.reader = identity_;
+        d.back_point = gate_back_point;
+        return d;
+    }
+
     std::string stage() const override { return stage_; }
     std::optional<std::string> pending_stage() const override { return pending_; }
     int pending_point() const override { return 1; }
@@ -95,7 +118,10 @@ public:
         return bytes;
     }
     std::uint64_t net_fingerprint() override { return mix(mix(mix(state_, frame_), present_), std::hash<std::string>{}(stage_)); }
-    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0; }
+    // (A fork this step, not yet reported, and a GO's departure on its way are
+    // not safe, as Engine::membership_safe's pending fork and the departure's
+    // fade: the membership events behind a GO wait, 6.5.)
+    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0 && test_busy <= 0 && !split_ && go_at_ == 0; }
     bool joinable(w::NotJoinable& reason) const override {
         if (is_hub_stage(stage_)) {
             reason = w::NotJoinable::hub;
@@ -118,7 +144,7 @@ public:
     }
     bool boss_lock() const override { return false; }
     std::uint64_t session_context_hash() const override { return 0x1234; }
-    std::uint8_t alive_mask() const override { return present_; }
+    std::uint8_t alive_mask() const override { return std::uint8_t(present_ & ~dead); }
     std::uint8_t present_mask() const override { return present_; }
     std::vector<std::uint8_t> carry(int slot) const override { return {std::uint8_t(slot), 0xC0, 0xDE}; }
     std::optional<SplitInfo> take_split() override { return std::exchange(split_, std::nullopt); }
@@ -187,9 +213,17 @@ public:
 
     void step(const std::array<dw4::PadSample, 4>& pads) {
         ++frame_;
+        if (test_busy > 0) --test_busy;
         if (home_at_ && frame_ >= home_at_ && !pending_) {
             home_at_ = 0;
             pending_ = "stagml11";
+            transition_left_ = transition_steps;
+            return;
+        }
+        if (go_at_ && frame_ >= go_at_ && !pending_) {
+            // (Round I1b: the GO's departure ends with its NEXTSTAGE, the stage as named.)
+            go_at_ = 0;
+            pending_ = go_stage_;
             transition_left_ = transition_steps;
             return;
         }
@@ -226,6 +260,24 @@ public:
         auto masked = pads;
         for (int s = 0; s < 4; ++s)
             if (leaving_ & (1u << s)) masked[std::size_t(s)] = dw4::PadSample{true, {}, {}, 0}; // leaving: neutral and connected (6.5)
+        if (stage_ == "stagml11" && identity_ >= 0 && identity_ < 4) {
+            const std::uint32_t held = masked[std::size_t(identity_)].buttons;
+            const std::uint32_t pressed = held & ~gate_previous;
+            gate_previous = held;
+            if (gate_menu && (pressed & dw4::pad_button::a)) {
+                gate_menu = false;
+                ++gate_confirms;
+                state_ = mix(state_, 0x8000 + std::uint64_t(gate_point));
+                pending_ = gate_target;
+                transition_left_ = transition_steps;
+                return;
+            }
+            if (gate_menu && (pressed & dw4::pad_button::b)) {
+                gate_menu = false;
+                ++gate_cancels;
+                state_ = mix(state_, 0x8100);
+            }
+        }
         for (int s = 0; s < 4; ++s) {
             const auto& p = masked[std::size_t(s)];
             const bool here = (present_ & (1u << s)) != 0;
@@ -335,6 +387,56 @@ public:
     }
     std::uint64_t home_at_ = 0;
     int homes = 0;
+    // Round I1b (19.30.7): GO for a mask (the step's GOs together): the slots
+    // that are present, not leaving and alive (`dead` marks the fallen) go;
+    // the exit's side rule; part of the present slots: a fork, the leavers'
+    // copy departs to the stage as named.
+    struct GoCall {
+        std::uint8_t mask{};
+        std::string stage;
+        int point{};
+        std::uint64_t frame{};
+    };
+    std::vector<GoCall> go_calls;
+    std::uint8_t dead = 0;
+    bool go(std::uint8_t mask, const std::string& stage, int point) override {
+        go_calls.push_back({mask, stage, point, frame_});
+        const std::uint8_t alive = std::uint8_t(present_ & ~dead);
+        mask &= std::uint8_t(alive & ~leaving_);
+        if (!mask) return false;
+        const std::uint8_t leavers = dw4::engine::exit_leavers(present_, alive, mask);
+        if (!leavers) return false;
+        state_ = mix(state_, 0x9000 + leavers);
+        if (leavers != present_) {
+            SplitInfo split{leavers, false, (leavers & (1u << identity_)) != 0};
+            present_ = split.local_leaves ? leavers : std::uint8_t(present_ & ~leavers);
+            split_ = split;
+            if (!split.local_leaves) return false;
+        }
+        go_stage_ = stage;
+        go_at_ = frame_ + 30;
+        ++gos;
+        return true;
+    }
+    std::uint64_t go_at_ = 0;
+    std::string go_stage_;
+    int gos = 0;
+    // Round I1b's scenario hooks (the TEST event; the session applies them in
+    // development builds only): defeat marks the slot fallen, busy keeps the
+    // engine not membership-safe for that many steps.
+    struct TestCall {
+        int slot{};
+        w::TestHook hook{};
+        int argument{};
+        std::uint64_t frame{};
+    };
+    std::vector<TestCall> test_calls;
+    int test_busy = 0;
+    void test_hook(int slot, w::TestHook hook, int argument) override {
+        test_calls.push_back({slot, hook, argument, frame_});
+        if (hook == w::TestHook::defeat) dead = std::uint8_t(dead | (1u << (slot & 3)));
+        if (hook == w::TestHook::busy) test_busy = argument;
+    }
     std::optional<int> redirected_point;
     bool own_settings_set_back = false;
     std::optional<w::Settings> host_settings;
@@ -354,7 +456,11 @@ public:
         leaving_ |= std::uint8_t(1u << slot);
         state_ = mix(state_, 0x4000 + std::uint64_t(slot));
     }
-    void intent(int slot, w::IntentKind kind, int argument) override { state_ = mix(state_, 0x3000 + slot * 16 + int(kind) + argument); }
+    int intents = 0; // INTENT events applied
+    void intent(int slot, w::IntentKind kind, int argument) override {
+        ++intents;
+        state_ = mix(state_, 0x3000 + slot * 16 + int(kind) + argument);
+    }
     void set_view_slot(int) override {}
 };
 
@@ -437,6 +543,7 @@ public:
         std::set<std::uint32_t> observers;
         std::optional<std::uint32_t> pending_joiner;
         std::optional<std::pair<std::uint8_t, std::uint8_t>> pending_home; // JOIN_REQ home asked of the solo leader: mask, reason
+        std::optional<w::Event> pending_go;                               // round I1b: JOIN_REQ go asked of the solo leader
         std::map<std::uint32_t, std::map<std::uint32_t, std::uint64_t>> netfp; // tick -> member -> hash
         std::map<std::uint32_t, std::uint64_t> snaphash; // member -> hash
         std::set<std::uint32_t> splits;                  // fork ticks already processed
@@ -462,6 +569,16 @@ public:
     }
     int suggested_delay = 3;
     bool answer_barriers = true;
+    // Round I1b, the arrival prompt: the rows PLAN is answered with (none:
+    // nothing to choose) and a barrier from a hub stage without a plan is
+    // held for (BARRIER_WAIT choice + OPTIONS); PLANs dropped unanswered
+    // (W2b's hook); what came.
+    std::optional<w::Options> prompt;
+    bool drop_plans = false;
+    std::vector<w::Plan> plans;
+    std::vector<w::PromptChoice> choices;
+    std::vector<std::uint16_t> barrier_plans; // the plan id of every BARRIER from a hub stage into a field
+    std::set<std::uint32_t> prompt_held;
     double co_arrival_hold = 3.0;
     // Round 60: WELCOME announces PRESENCE2 (a hub of this round), and what came.
     bool presence_v2 = false;
@@ -541,6 +658,11 @@ public:
     std::uint32_t last_story_owner = 0;
     std::vector<w::Story> story_frames; // every STORY that came (its owner key and delta)
     int leave_intents = 0;
+    // Round I1b (moderation): the INSTANCE_OPs and REPORTs that came, and the
+    // JOIN_ATs (a JOIN_REQ home answered or not).
+    std::vector<std::pair<std::uint32_t, w::InstanceOp>> instance_ops;
+    std::vector<std::pair<std::uint32_t, w::Report>> reports;
+    int join_ats = 0;
     std::map<std::uint32_t, std::uint32_t> welcome_wid;
     std::set<std::uint32_t> wid_forgotten; // members whose next WELCOME is not resumable (the relay restarted)
     void on_story(Member& m, const w::Story& s, double now) {
@@ -709,7 +831,7 @@ public:
             }
         // Co-arrival holds that ran out: NEW.
         for (auto& [id, m] : members)
-            if (m.parked && answer_barriers && wait_hold <= 0 && now - m.parked_at > co_arrival_hold) decide(m, now);
+            if (m.parked && answer_barriers && wait_hold <= 0 && now - m.parked_at > co_arrival_hold && !prompt_held.contains(id)) decide(m, now);
     }
 
     void lag(std::uint32_t member, bool on, double now) {
@@ -948,6 +1070,53 @@ public:
         log_lines.push_back("join_req home " + m.name);
     }
 
+    // Round I1b (19.30.7): GO for a member: sealed, stamped at the next seal +
+    // `ahead` (the relay's stamp tick); solo-led: JOIN_REQ kind go to its
+    // leader, whose JOIN_AT(J) seals J alone with GO and LEAD_FROM(J + 1).
+    // Round I1b's scenario hook (World:TestGoHook / TestHooks): a TEST event in
+    // the member's stage group at `ahead` ticks (before a GO stamped there).
+    std::uint32_t stamp_test(std::uint32_t member, w::TestHook hook, int argument, std::uint32_t ahead = 8) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        w::Event test{w::EventKind::test};
+        test.slot = std::uint8_t(m.slot);
+        test.hook = std::uint8_t(hook);
+        test.argument = argument;
+        const std::uint32_t j = inst.next_seal + ahead;
+        inst.events[j].push_back(test);
+        return j;
+    }
+    std::uint32_t stamp_go(std::uint32_t member, const std::string& stage, std::uint8_t point, std::uint32_t ahead = 8) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        w::Event go{w::EventKind::go};
+        go.slot = std::uint8_t(m.slot);
+        go.point = point;
+        go.stage = stage;
+        const std::uint32_t j = inst.next_seal + ahead;
+        inst.events[j].push_back(go);
+        log_lines.push_back("go " + m.name + " at " + std::to_string(j));
+        return j;
+    }
+    void ask_go(std::uint32_t member, const std::string& stage, std::uint8_t point, double now) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        w::Event go{w::EventKind::go};
+        go.slot = std::uint8_t(m.slot);
+        go.point = point;
+        go.stage = stage;
+        inst.pending_go = go;
+        w::JoinReq req{inst.id, inst.visit, std::uint8_t(m.slot), std::uint8_t(suggested_delay)};
+        req.kind = w::JoinKind::go;
+        req.stage = stage;
+        req.point = point;
+        send(member, w::Type::join_req, w::encode(req), now);
+        log_lines.push_back("join_req go " + m.name);
+    }
+    std::vector<std::pair<std::string, w::Intent>> go_intents; // INTENT 4 as received (member name, message)
+    std::vector<std::pair<std::string, w::State>> states;     // STATE as received
+    std::vector<std::pair<std::string, w::Heading>> headings; // HEADING as received
+
     std::uint32_t stamp_leave(std::uint32_t member) {
         auto& m = members[member];
         auto& inst = instances[m.inst];
@@ -1061,9 +1230,70 @@ public:
             }
             break;
         }
+        case w::Type::plan: {
+            const auto plan = w::decode_plan(f.payload);
+            plans.push_back(plan);
+            if (drop_plans) break;
+            w::Options o = prompt.value_or(w::Options{});
+            o.plan = plan.plan;
+            o.inst = o.visit = 0;
+            o.stage = plan.stage;
+            if (!prompt) o.flags = w::Options::nothing;
+            send(id, w::Type::options, w::encode(o), now);
+            break;
+        }
+        case w::Type::choice: {
+            const auto c = w::decode_choice(f.payload);
+            choices.push_back(c);
+            if (c.plan != 0 || !m.parked || !prompt_held.contains(id)) break;
+            prompt_held.erase(id);
+            if (c.choice == w::ChoiceKind::back) {
+                // *Back to the lobby*: a DISSOLVE redirected to the lobby (19.7.5).
+                auto& hub = new_instance("stagml11", 1);
+                hub.hub = true;
+                hub.slots[0] = m.id;
+                w::BarrierOk ok;
+                ok.inst = m.parked->inst;
+                ok.visit = m.parked->visit;
+                ok.stage = m.parked->stage;
+                ok.point = m.parked->point;
+                ok.decision = w::Decision::dissolve;
+                ok.new_inst = hub.id;
+                ok.new_visit = 1;
+                ok.own_slot = 0;
+                ok.slot_map[std::size_t(m.slot)] = 0;
+                ok.mode = w::Mode::hub;
+                ok.redirect_stage = "stagml11";
+                ok.redirect_point = c.back_point == 0xFF ? 3 : c.back_point;
+                m.inst = hub.id;
+                m.slot = 0;
+                m.parked.reset();
+                send(m.id, w::Type::barrier_ok, w::encode(ok), now);
+                log_lines.push_back("prompt back: " + m.name);
+                break;
+            }
+            decide(m, now);
+            break;
+        }
         case w::Type::barrier: {
             const auto b = w::decode_barrier(f.payload);
             m.parked = b;
+            const bool from_hub = instances.contains(b.inst) && instances[b.inst].hub && !is_hub_stage(b.stage);
+            if (from_hub) barrier_plans.push_back(b.plan);
+            if (from_hub && prompt && b.plan == 0 && answer_barriers) {
+                // The loading-screen form: held without a time limit, OPTIONS with it.
+                m.parked_at = now;
+                prompt_held.insert(id);
+                send(id, w::Type::barrier_wait, w::encode(w::BarrierWait{b.inst, w::WaitReason::choice, 0, {}, 0}), now);
+                w::Options o = *prompt;
+                o.plan = 0;
+                o.inst = b.inst;
+                o.visit = b.visit;
+                o.stage = b.stage;
+                send(id, w::Type::options, w::encode(o), now);
+                log_lines.push_back("prompt hold: " + m.name);
+                break;
+            }
             // The instance leaves its stage while joiners still catch up on it:
             // they go back to their own fallback as NEW (6.6).
             if (auto it = instances.find(b.inst); it != instances.end()) {
@@ -1202,8 +1432,24 @@ public:
             break;
         }
         case w::Type::join_at: {
+            ++join_ats;
             const auto j = w::decode_join_at(f.payload);
             auto it = instances.find(j.inst);
+            if (it != instances.end() && it->second.pending_go) {
+                auto& inst = it->second;
+                inst.events[j.tick].push_back(*inst.pending_go);
+                inst.pending_go.reset();
+                w::Event lead{w::EventKind::lead_from};
+                lead.tick = j.tick + 1;
+                inst.events[j.tick].push_back(lead);
+                inst.lead_from = j.tick + 1;
+                inst.sealed = true;
+                inst.next_seal = j.tick;
+                const double logged = inst.log.empty() ? 0.0 : double(inst.log.rbegin()->first + 1);
+                inst.s0 = now - double(j.tick) * kFieldSeconds + std::max(0.0, double(j.tick) - logged) * kFieldSeconds + latency;
+                log_lines.push_back("go at " + std::to_string(j.tick));
+                break;
+            }
             if (it != instances.end() && it->second.pending_home) {
                 auto& inst = it->second;
                 w::Event home{w::EventKind::home};
@@ -1305,9 +1551,16 @@ public:
             break;
         }
         case w::Type::story: on_story(m, w::decode_story(f.payload), now); break;
-        case w::Type::intent:
-            if (w::decode_intent(f.payload).kind == w::IntentKind::leave) ++leave_intents;
+        case w::Type::state: states.emplace_back(m.name, w::decode_state(f.payload)); break;
+        case w::Type::heading: headings.emplace_back(m.name, w::decode_heading(f.payload)); break;
+        case w::Type::intent: {
+            const auto in = w::decode_intent(f.payload);
+            if (in.kind == w::IntentKind::leave) ++leave_intents;
+            if (in.kind == w::IntentKind::go_along) go_intents.emplace_back(m.name, in);
             break;
+        }
+        case w::Type::instance_op: instance_ops.emplace_back(id, w::decode_instance_op(f.payload)); break;
+        case w::Type::report: reports.emplace_back(id, w::decode_report(f.payload)); break;
         case w::Type::statehash: statehashes.emplace_back(m.name, w::decode_statehash(f.payload)); break;
         case w::Type::checkpoint: {
             const auto c = w::decode_checkpoint(f.payload);

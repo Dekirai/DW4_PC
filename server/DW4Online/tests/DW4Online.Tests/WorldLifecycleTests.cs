@@ -19,7 +19,7 @@ public partial class HubLogicTests
     /// <summary>A member with the given admission (staff, friends, blocks, story, default visibility).</summary>
     private static Peer Admit(Harness h, string name, HubAdmit admit)
     {
-        var peer = new Peer();
+        var peer = h.NewPeer();
         var m = h.Hub.Connect(admit, peer, h.Now);
         h.M[name] = (m, peer);
         return peer;
@@ -88,8 +88,9 @@ public partial class HubLogicTests
         Assert.NotSame(W(h, "a"), W(h, "b"));
         // fix-019: a moderator who simply plays is a player for the automatic join too: a's Private instance is not his to enter (the
         // staff bypass is for the staff member's own choice of the row, I1b's prompt and I3's browser, 19.14). Before, c joined a's
-        // instance at once (its story replaced by a stranger's).
-        var s = new Harness();
+        // instance at once (its story replaced by a stranger's). (The automatic path, World:ArrivalPrompt off; the prompt's staff-only
+        // rows: PromptVisibilityTests.)
+        var s = new Harness(world: new WorldHubOptions { ArrivalPrompt = false });
         var audits = new List<string>();
         s.Hub.Audit = (evt, _, _, _) => audits.Add(evt);
         Admit(s, "a", Player(100, "a") with { DefaultVisibility = Visibility.Private });
@@ -122,8 +123,8 @@ public partial class HubLogicTests
         Assert.Equal((BarrierDecision.Join, W(p, "a").Wid), (p.Decision("c").Decision, p.Decision("c").World.Wid));
         Assert.Contains("staff_join", pAudits);
         Assert.Equal(InstanceRole.Staff, p.P("c").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Role);
-        // Friends: a friend of the host joins, a stranger does not, nor a moderator who is no friend.
-        var g = new Harness();
+        // Friends: a friend of the host joins, a stranger does not, nor a moderator who is no friend (automatically).
+        var g = new Harness(world: new WorldHubOptions { ArrivalPrompt = false });
         Admit(g, "a", Player(100, "a") with { DefaultVisibility = Visibility.Friends });
         Admit(g, "f", Player(101, "f") with { Friends = [100] });
         Admit(g, "s", Player(102, "s"));
@@ -185,12 +186,17 @@ public partial class HubLogicTests
         // e, a stranger, takes the gate to stag0201: nobody of a's instance there and not a friend's: New instance (fix-019, the I1a
         // interim rule: the automatic join takes only the row I1b's prompt would preselect, decision 40). Before, e became a guest
         // in a stranger's story elsewhere in the area.
+        // (Round I1b: e's loading-screen prompt lists a's row with the cursor on New instance, decision 40; e takes the cursor.)
+        h.P("e").AutoAnswer = false;
         BarrierWith(h, "e", "stag0201", RoomSettings.Default);
+        var oe = h.P("e").Last(Msg.Options, OptionsMsg.Parse);
+        Assert.Equal((w.Wid, OptionsMsg.NewInstance), (Assert.Single(oe.Rows).Wid, oe.Preselected));
+        h.Send("e", new ChoiceMsg(0, oe.Inst, oe.Visit, ChoiceKind.New, 0, oe.Visibility, 0, ChoiceMsg.DefaultBackPoint).Frame());
         Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, StoryMode.Merge), (h.Decision("e").Decision, h.Decision("e").World.Arrival,
             h.Decision("e").World.StoryMode));
         Assert.NotSame(w, W(h, "e"));
         h.Advance(11_000); // (e's instance no longer *starting*)
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         // b, a's friend, takes the gate to stag0201: no stage group of a's there, a gate the host's story opened: a guest's NEW with
         // the host's story (the friend's row first, before e's with e at stag0201).
         BarrierWith(h, "b", "stag0201", RoomSettings.Default);
@@ -201,17 +207,25 @@ public partial class HubLogicTests
         Assert.Equal(1, RoomStoryData.FromBlob(ok.Story, ok.StoryRevision).Flags[4]); // the host's phase, not b's own
         Assert.Same(w, W(h, "b"));
         Assert.Equal(2, w.Groups.Count);
+        // (Round I1b: b's loading-screen prompt listed a's row joinable with nobody of it at stag0201 first, the host b's friend, so the
+        // cursor on it by decision 40, then e's instance loading with e there; the harness took the first choosable row.)
+        var ob = h.P("b").Last(Msg.Options, OptionsMsg.Parse);
+        Assert.Equal([w.Wid, W(h, "e").Wid], ob.Rows.Select(r => r.Wid));
+        Assert.Equal((OptionState.Joinable, (byte)0, (byte)0), (ob.Rows[0].State, ob.Rows[0].Here, ob.Preselected));
         // c arrives by the return mat on dng205b2: never visited, no gate: "Story not here yet", its own instance.
         h.Barrier("c", "dng205b2");
         Assert.NotSame(w, W(h, "c"));
         Assert.Equal(ArrivalKind.NewInstance, h.Decision("c").World.Arrival);
+        // (The greyed rows of the prompt, round I1b: a's, and e's own Dry Land instance.)
+        Assert.All(h.P("c").Last(Msg.Options, OptionsMsg.Parse).Rows, r => Assert.Equal(OptionState.StoryNotHere, r.State));
+        Assert.Contains(h.P("c").Last(Msg.Options, OptionsMsg.Parse).Rows, r => r.Wid == w.Wid);
         // After the instance has been at dng205b2, d's arrival there enters it.
         BarrierWith(h, "a", "dng205b2", hostSettings);
         h.Snapshot("a");
         h.Log("a", 0, 60);
         h.Joinable("a");
         h.Advance(11_000); // (c's own instance at dng205b2 is no longer *starting*)
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         h.Barrier("d", "dng205b2");
         Assert.Same(w, W(h, "d"));
     }
@@ -259,7 +273,7 @@ public partial class HubLogicTests
         h.Snapshot("x");
         Assert.Contains("stag0201", W(h, "x").Visited);
         h.Advance(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         // b, a stranger to both: y's row (players here) first, although x's instance is older.
         h.Barrier("b", "stag0201");
         Assert.Same(W(h, "y"), W(h, "b"));
@@ -286,11 +300,17 @@ public partial class HubLogicTests
         h.Barrier("a", "stag0101");
         h.Snapshot("a");
         var wa = W(h, "a");
+        // (Round I1b: a's arrival from home had a prompt, c's instance in the area; its move inside its own instance has none.)
+        var prompts = h.P("a").All(Msg.Options, OptionsMsg.Parse).Count;
+        Assert.Equal(1, prompts);
+        var waits = h.P("a").All(Msg.BarrierWait, BarrierWaitMsg.Parse).Count(x => x.Reason == WaitReason.Choice);
         h.Barrier("a", "dng101b1"); // where c's instance has a stage group
         var ok = h.Decision("a");
         Assert.Equal((BarrierDecision.New, ArrivalKind.None, wa.Wid), (ok.Decision, ok.World.Arrival, ok.World.Wid));
         Assert.Same(wa, W(h, "a"));
         Assert.NotSame(W(h, "c"), wa);
+        Assert.Equal(prompts, h.P("a").All(Msg.Options, OptionsMsg.Parse).Count); // decision 41: never prompted
+        Assert.Equal(waits, h.P("a").All(Msg.BarrierWait, BarrierWaitMsg.Parse).Count(x => x.Reason == WaitReason.Choice));
     }
 
     [Fact]
@@ -334,7 +354,7 @@ public partial class HubLogicTests
         Assert.Equal((StoryMode.Merge, ""), (h.Decision("a").World.StoryMode, h.Decision("a").World.RedirectStage)); // the host's story is his own
         Assert.DoesNotContain(h.P("b").Frames, f => f.Type == Msg.JoinReq && JoinReqMsg.Parse(f.Payload).Kind == JoinReqKind.Home);
         h.Advance(3100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var home = h.P("b").Last(Msg.JoinReq, JoinReqMsg.Parse);
         Assert.Equal((JoinReqKind.Home, (byte)(1 << h.Mem("b").Slot)), (home.Kind, home.Slot));
         h.Log("b", 0, 200); // (the leader logs the solo ticks up to J, as for a join)
@@ -491,7 +511,7 @@ public partial class HubLogicTests
         Assert.Contains(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.HostAway);
         // Past the reconnect window the host's slot stays (filled with neutral pads), no LEAVE.
         h.Seal(12_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Same(h.I("b"), h.Mem("a").Instance);
         Assert.True(h.I("b").Streams[h.Mem("a").Slot]!.NeutralFill);
         // A guest's value meanwhile is held, not merged.
@@ -511,10 +531,10 @@ public partial class HubLogicTests
         g.Seal(300);
         g.Hub.Disconnect(g.Mem("a"), g.P("a"), g.Now);
         g.Seal(59_000);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.False(wg.Ending);
         g.Seal(2_000);
-        g.Hub.Housekeep(g.Now);
+        g.Housekeep();
         Assert.Equal(EndReason.HostLost, wg.EndReason);
         Assert.Contains(g.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Ended && n.Argument == (uint)EndReason.HostLost);
     }
@@ -535,7 +555,7 @@ public partial class HubLogicTests
                 h.Send("b", new InputMsg(i.Id, i.Visit, next, [new Pad(1, 0, 0, 0, 0)]).Frame());
                 ++next;
                 h.Seal(16.7);
-                if (next % 15 == 0) h.Hub.Housekeep(h.Now);
+                if (next % 15 == 0) h.Housekeep();
             }
         }
         Pads(3000);
@@ -545,6 +565,68 @@ public partial class HubLogicTests
         Pads(12_000);
         Assert.Same(i, h.Mem("a").Instance); // no lagOut for a host in his grace
         Assert.False(h.Hub.Counters.ContainsKey("lag_leave"));
+    }
+
+    /// <summary>
+    /// Back in time, the host plays on (19.6.7) also after more than Relay:LagLeaveSeconds away: the lag rule counts his slot's fill
+    /// streak from his return, not from the grace's start. (Before, the housekeeping right after host_back took him out of his own
+    /// stage group by lag_leave: the merge of main's first W7f run, and a quarter second after host_back in every W7, W7c and W7d
+    /// run.) A returned host whose pads still come late LagLeaveSeconds after his return is taken out as any member.
+    /// </summary>
+    [Fact]
+    public void A_host_back_after_more_than_the_lag_limit_away_plays_on_and_the_lag_rule_counts_from_his_return()
+    {
+        foreach (var catchesUp in new[] { true, false })
+        {
+            var h = SealedPair(out _, relay: new RelayOptions { LagLeaveSeconds = 10 });
+            var w = W(h, "a");
+            var i = h.I("a");
+            var aPads = 2; // a's pads: 0 none (away), 1 late ones (its resumed client catches up), 2 in time
+            void Pads(double ms)
+            {
+                var end = h.Now + (long)(ms * System.Diagnostics.Stopwatch.Frequency / 1000);
+                for (var k = 0; h.Now < end; ++k)
+                {
+                    h.Send("b", new InputMsg(i.Id, i.Visit, i.NextSeal + 3, [new Pad(1, 0, 0, 0, 0), new Pad(1, 0, 0, 0, 0)]).Frame());
+                    if (aPads == 1) h.Send("a", new InputMsg(i.Id, i.Visit, i.NextSeal - 300, [new Pad(2, 0, 0, 0, 0)]).Frame());
+                    if (aPads == 2) h.Send("a", new InputMsg(i.Id, i.Visit, i.NextSeal + 3, [new Pad(2, 0, 0, 0, 0), new Pad(2, 0, 0, 0, 0)]).Frame());
+                    h.Seal(17);
+                    if (k % 15 == 0) h.Housekeep();
+                }
+            }
+            Pads(1000);
+            // a's connection goes for 15 s (inside his 60 s grace, past LagLeaveSeconds of neutral fills).
+            h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
+            aPads = 0;
+            Assert.True(w.HostAway);
+            Pads(15_000);
+            Assert.Same(i, h.Mem("a").Instance);
+            // Back (a reconnect, resumed): his client catches up, its pads still late for five seconds.
+            h.Connect("a", 0);
+            Assert.False(w.HostAway);
+            aPads = 1;
+            Pads(5000);
+            Assert.Same(i, h.Mem("a").Instance);
+            Assert.False(h.Hub.Counters.ContainsKey("lag_leave"));
+            Assert.DoesNotContain(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
+            if (catchesUp)
+            {
+                // Caught up: his pads come in time, he plays on as host of his stage group.
+                aPads = 2;
+                Pads(15_000);
+                Assert.Same(i, h.Mem("a").Instance);
+                Assert.False(h.Hub.Counters.ContainsKey("lag_leave"));
+                Assert.True(i.Streams[h.Mem("a").Slot]!.FillStreak < SlotStream.LagFills);
+            }
+            else
+            {
+                // Still late LagLeaveSeconds after his return: the lag rule takes him out as any member (b is told he plays apart).
+                Pads(6000);
+                Assert.NotSame(i, h.Mem("a").Instance);
+                Assert.Equal(1, h.Hub.Counters["lag_leave"]);
+                Assert.Contains(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.Apart);
+            }
+        }
     }
 
     [Fact]
@@ -559,12 +641,12 @@ public partial class HubLogicTests
         h.Send("a", new InstanceOpMsg(InstanceOpKind.Visibility, 1).Frame());
         Assert.Equal(Visibility.Friends, w.Visibility);
         Assert.Contains(h.P("b").All(Msg.WorldNotice, WorldNoticeMsg.Parse), n => n.Kind == WorldNoticeKind.VisibilityChanged && n.Argument == 1);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal(Visibility.Friends, h.P("b").Last(Msg.InstanceInfo, InstanceInfoMsg.Parse).Visibility);
         // (Remembered once the choice settled.)
         Assert.Empty(remembered);
         h.Advance(RoomHub.VisibilitySettleMs + 100);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         Assert.Equal([(h.Mem("a").AccountId, Visibility.Friends)], remembered);
     }
 
@@ -666,7 +748,7 @@ public partial class HubLogicTests
     {
         var h = SealedPair(out _);
         var w = W(h, "a");
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var row = h.Hub.CachedSnapshot.Instances.Single();
         Assert.Equal((w.Wid, h.Mem("a").AccountId, "death_valley".Length > 0 ? row.Area : "", "public", 2), (row.Wid, row.HostAccountId, row.Area, row.Visibility,
             row.Members.Count));
@@ -711,7 +793,7 @@ public partial class HubLogicTests
         // b's connection goes; past the reconnect window its slot leaves; it reconnects (not resumable) and names its stage.
         h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
         h.Seal(11_000);
-        h.Hub.Housekeep(h.Now);
+        h.Housekeep();
         var b2 = h.Connect("b", 1);
         var welcome = b2.Last(Msg.Welcome, WelcomeMsg.Parse);
         Assert.Equal((0, w.Wid), (welcome.Flags & WelcomeMsg.Resumable, welcome.Wid));

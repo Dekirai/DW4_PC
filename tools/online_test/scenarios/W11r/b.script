@@ -1,0 +1,28 @@
+# W11r, b (k10): its own Dry Land instance (New instance: a's plays elsewhere by then), on to stag0202 (matz00), onto the
+# Security Gate (matx01; b alone in its stage group powers it) and home by the gate disc, which sets GATESTAGE stag0202
+# point 2 (b hosts: its own personal value stays at its DISSOLVE). Then the lobby's return mat (mate02, "Yes"): the gate
+# form holds the press, PLAN purpose return mat, OPTIONS with a's row (a at stag0202: Here 1, preselected), autochoice
+# first joins a there at the Security Gate's point.
+campaign until stage=stagml11,control
+idle until epoch>=@150
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log b hosts its own Dry Land
+explore matz00 yes until stage=stag0202,control or hp<=350 fail epoch>=@650
+disk 1 until hp>=700 or frames>=900
+explore matz00 yes until stage=stag0202,control or hp<=350 fail epoch>=@650
+disk 1 until hp>=700 or frames>=900
+explore matz00 yes until stage=stag0202,control fail epoch>=@650
+log b in stag0202
+explore matx01 until onme:matx01 or hp<=350 fail epoch>=@850
+disk 1 until hp>=700 or frames>=900
+explore matx01 until onme:matx01 fail epoch>=@850
+idle until frames>=60
+disk 8 until stage=stagml11,control fail epoch>=@900
+log b home by the Security Gate
+idle until frames>=120
+explore mate02 yes until stage=stag0202,control fail epoch>=@1050
+log b back at stag0202
+idle until present=2,sealed>=300 fail epoch>=@1200
+log b joined a by the return mat
+idle until frames>=300

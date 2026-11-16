@@ -1,0 +1,16 @@
+# W10b, host a (k5): hosts in stag0101 near its entrance; once b, playing in a's stage group, is defeated, a removes it
+# (INSTANCE_OP remove) and plays on alone: its stage group neither ends nor follows b home.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts in stag0101
+wander -150 -60 20 until present=2,sealed>=600 fail stagechange
+log b joined a
+wander -150 -60 20 until partnerdead fail stagechange
+log b is defeated
+remove {user:b}
+log a removed b
+wander -150 -60 20 until present=1 fail stagechange
+log b is gone
+wander -150 -60 20 until frames>=1800 fail stagechange
+log a plays on

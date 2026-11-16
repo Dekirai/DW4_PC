@@ -1,0 +1,25 @@
+{
+  "desc": "the lobby's return mat (stagML11 mate02) through the gate form (19.7.4, round I1b's integration): b powers stag0202's Security Gate (matx01: every living player of the stage group on it, funcSecurityGate) in its own instance and goes home by the gate disc, which sets GATESTAGE stag0202 point 2; a's Dry Land instance plays in stag0202; b's return mat asks PLAN purpose return mat for stag0202 point 2, OPTIONS list a's row with a here, preselected, and A (autochoice first) joins a there",
+  "world": true,
+  "autochoice": "new",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1300,
+  "min_shared_ticks": 0,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true,
+      "autochoice": "new,first"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "desc": "decision 48 (19.7.6, Private stays private), the other order of W4d: b chooses New instance with Private at once, a (a stranger) with Public 1.5 s later (so b's barrier comes first): two instances (b's Private alone, a's Public), a never sees b's instance",
+  "world": true,
+  "autochoice": "new",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1100,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "three instances: k's, a's and b's",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^3$"
+    },
+    {
+      "name": "a's instance Public with a alone",
+      "sql": "SELECT h.visibility, COUNT(*) FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:a} GROUP BY h.id",
+      "expect": "^public\t1$"
+    },
+    {
+      "name": "b's instance Private with b alone",
+      "sql": "SELECT h.visibility, COUNT(*) FROM instance_history h JOIN instance_history_members m ON m.instance_id = h.id WHERE h.host_account_id = {id:b} GROUP BY h.id",
+      "expect": "^private\t1$"
+    },
+    {
+      "name": "b was nobody's guest",
+      "sql": "SELECT COUNT(*) FROM instance_history_members WHERE account_id = {id:b} AND role <> 'host'",
+      "expect": "^0$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "k",
+      "script": "k.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 3,
+      "prefs": {
+        "defaultVisibility": "public"
+      },
+      "env": {
+        "DW4_ONLINE_AUTOCHOICE_DELAY_MS": "1500"
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 6,
+      "seed_story": true,
+      "prefs": {
+        "defaultVisibility": "private"
+      }
+    }
+  ]
+}

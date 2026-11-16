@@ -1,0 +1,12 @@
+{
+  "desc": "the player card on the Instance page (round I1b): host a opens b's card and works it with the controller: Report, its reasons, Griefing (the relay's answer as a toast), then Remove with its question (b's toast, b goes home); screenshots of the card, the report's reasons, the question and the toasts (b answers its arrival prompt with the preselection, a's row: DW4_ONLINE_AUTOCHOICE cursor)",
+  "timeout": 900,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true, "card": "k5", "seed_story": true, "online_script": "a.script",
+     "log_expect": ["^online: Report sent\\. Thank you\\.", "^online: remove member \\d+ at frame", "^online: report member \\d+ at frame"]},
+    {"name": "b", "script": "b.txt", "registered": true, "card": "k2", "seed_story": true, "online_script": "b.script", "start": 3,
+     "env": {"DW4_ONLINE_AUTOCHOICE": "cursor"},
+     "log_expect": ["^online-trace: prompt open form=gate stage=stag0101 rows=1 cursor=0 preselected=[1-9]", "^online-trace: prompt answer choice=join",
+                    "^online: You were removed from .*'s instance\\."]}
+  ]
+}

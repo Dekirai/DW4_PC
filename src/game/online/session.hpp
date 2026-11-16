@@ -35,6 +35,7 @@
 #include "net_stats.hpp"
 #include "pacing.hpp"
 #include "presence.hpp"
+#include "prompt_wire.hpp"
 #include "transport.hpp"
 #include "wire.hpp"
 
@@ -49,9 +50,16 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dw4::game::online {
+
+// Round I1b (19.24): development builds answer the arrival prompt without a
+// person (DW4_ONLINE_AUTOCHOICE): first = the first choosable row by 19.7.3's
+// order (New instance when none), new = New instance, cursor = the
+// preselection, back = B.
+enum class AutoChoice : std::uint8_t { none, first, new_instance, cursor, back };
 
 struct SessionConfig {
     std::string ticket;
@@ -79,9 +87,33 @@ struct SessionConfig {
     // DW4_ONLINE_AUTOCHOICE=new (development builds, 19.24): a BARRIER that
     // leaves a hub stage asks for a new instance (plan id 0xFFFF).
     bool plan_new_instance = false;
+    // DW4_ONLINE_TEST_IGNORE_HOME=1 (development builds, round I1b's W10c): a
+    // JOIN_REQ kind home goes unanswered, as from a modified client that
+    // keeps playing after its removal; the relay then detaches the group.
+    bool test_ignore_home = false;
+    // Round I1b, the arrival prompt (19.7.4): the gate form holds the own
+    // player's confirming press while the engine names a departure from home
+    // (off: every arrival gets the loading-screen form, DW4_ONLINE_TEST_GATE_
+    // FORM=0, W11b); World:PlanWaitMs, after which a held press goes out
+    // without an answer; the development builds' automatic answer and its
+    // delay (a picture of the prompt in a test run).
+    bool gate_form = true;
+    double plan_wait = 1.0;
+    AutoChoice auto_choice = AutoChoice::none;
+    // A sequence instead (DW4_ONLINE_AUTOCHOICE=back,first): each prompt
+    // takes the next answer, the last one stays (W30c: B, then the first row).
+    std::vector<AutoChoice> auto_sequence;
+    double auto_choice_delay = 0;
     // A stage folder as the player reads it ("Dry Land: Mummy Desert"; the
     // game's area table). Unset: the folder.
     std::function<std::string(std::string_view)> stage_name;
+    // Round I1b's go along (19.30.5-19.30.7): a dungeon or boss stage (the
+    // area table's kind; unset: none), a stage with its floor as the go-along
+    // texts read it ("Ancient Ruins B2"; unset: stage_name), and a dungeon's
+    // name ("Ancient Ruins"; unset: stage_name).
+    std::function<bool(std::string_view)> dungeon_stage;
+    std::function<std::string(std::string_view)> floor_name;
+    std::function<std::string(std::string_view)> dungeon_name;
     // Round J (6.13): a checkpoint's compression (the app's zstd); unset:
     // the bytes go raw. A payload starts with its codec byte (0 raw, 1 this).
     std::function<std::vector<std::uint8_t>(std::span<const std::uint8_t>)> compress, decompress;
@@ -136,7 +168,63 @@ struct Overlay {
     // A running line while the game plays on (19.5.5: "Kim lost the
     // connection. Waiting for Kim... 52 s", counting down).
     std::string status;
+    // Round I1b (19.30.7): a GO's barrier held over 10 s ("Waiting for Kim's
+    // floor..."): B takes the member back to the lobby (its *Leave instance*;
+    // the host's ends the instance after his question). go_back_line is the
+    // control hint the screen adds: "B: Back to the lobby", for the host
+    // after his B "End the instance for everyone?   A: Yes   B: No".
+    bool go_back = false;
+    std::string go_back_line;
 };
+
+// Round I1b, the arrival prompt as the overlay draws it (19.5.3, 19.7.3-19.7.5):
+// the gate form over the frozen game where the gate's list was, or the
+// loading-screen form on the own loading screen of a held barrier. The rows
+// come in the relay's order (decision 40); `cursor` == rows.size() is *New
+// instance*.
+enum class PromptForm : std::uint8_t { gate, loading };
+struct PromptView {
+    PromptForm form = PromptForm::gate;
+    std::string stage;                  // the arrival stage (folder)
+    std::vector<wire::OptionRow> rows;
+    std::size_t cursor = 0;
+    // The player moved the cursor (up / down) or changed *New instance*'s
+    // visibility since the prompt opened: a refresh keeps the cursor he moved
+    // on its instance (or on *New instance*); an unmoved cursor takes the
+    // refresh's preselection (decision 40: a row that lost its claim to it is
+    // never kept preselected; round I1b's second review).
+    bool moved = false;
+    wire::Visibility visibility = wire::Visibility::public_; // *New instance*'s (Left / Right)
+    bool details = false;               // X
+    std::string notice;                 // "Kim's instance is full now."
+    std::string notice_host;            // the host the notice names: kept through refreshes while no row of his is choosable
+    int rtt_ms = -1;                    // the own round trip (the header's "Your ping"); -1 unknown
+    double opened_at = 0;
+    bool new_instance() const { return cursor >= rows.size(); }
+};
+// Round I1b (docs/SEAMLESS.md 19.30.5-19.30.6): a go-along offer as this
+// member sees it (OFFER), with its notice.
+struct GoOffer {
+    std::uint16_t id{};
+    std::vector<std::uint32_t> entrants;  // the first entrant first
+    std::string stage;                    // where the first entrant still in the dungeon is
+    std::string first_stage;              // the stage it opened with (a deeper floor reads "... now.")
+    std::uint8_t flags{};                 // the relay's last flags for this member (wire::Offer)
+    bool open = true;
+    std::string closing;                  // its closing line while it shows (3 s, greyed)
+    double closed_at = -1;
+    bool notice_due = false;              // a notice waits (the member's scene, a demo, defeated, a barrier)
+    bool late = false;                    // the notice names where the entrants are now
+    std::string notice_stage;             // the stage its notice came with (shown later after a move: the late form)
+    bool closed_by_b = false;             // B in the box: no further notice for this offer
+    double notice_at = -1;                // its notice shows since (-1: not shown)
+    double notice_seconds = 20;
+    double opened_at = 0;                 // (newest first)
+};
+// The member's own go-along request (19.30.7): sent (no answer yet), waiting
+// for the target (its floor loads or is busy), waiting for a boss fight's
+// end, stamped (the GO comes), going (the GO's departure ran).
+enum class GoState : std::uint8_t { none, asked, waiting, boss, stamped, going };
 
 class Session {
 public:
@@ -186,6 +274,9 @@ public:
     // The hub takes PRESENCE2 (its WELCOME said so): this member sends it.
     bool presence_v2() const { return presence_v2_; }
     std::string member_name(std::uint32_t member) const;
+    // The member id of a name this session heard (MEMBER_INFO, WORLD_NOTICE),
+    // case-insensitive; 0xFFFFFFFF when none (the test scripts' remove / report).
+    std::uint32_t member_by_name(std::string_view name) const;
     // The relation flags of a member's last PRESENCE / MEMBER_INFO (wire::
     // MemberInfo: 1 friend, 2 party, 4 staff tag, 8 in the own instance).
     std::uint8_t member_flags(std::uint32_t member) const;
@@ -255,6 +346,18 @@ public:
     // The host must supply a new connection (lost, reconnecting).
     bool wants_transport() const { return mode_ == Mode::lost || (resume_after_lost_ && !transport_); }
 
+    // Round I1b: the arrival prompt (19.7), open in either form; nothing while
+    // none is open. prompt_input takes the own pad's held buttons once per
+    // picture (its presses: D-pad / stick up and down the rows, left and
+    // right the visibility on *New instance*, A choose, B back, X details);
+    // the game gets neutral pads while the gate form holds its press.
+    const std::optional<PromptView>& prompt() const { return prompt_; }
+    void prompt_input(std::uint32_t buttons, double now);
+    // The gate form holds a press (waiting for OPTIONS, the overlay open, or
+    // its answer going out); before_step gives the engine neutral pads
+    // meanwhile. An observer (the session tests).
+    bool holding_press() const { return gate_phase_ != GatePhase::idle; }
+
     // The member's own choices.
     void choose_boss(wire::Choice choice);
     void send_intent(wire::IntentKind kind, int argument);
@@ -267,16 +370,118 @@ public:
     bool leave_instance();
     bool leave_pending() const { return leave_wanted_; }
     bool set_visibility(wire::Visibility visibility);
+    // Round I1b (moderation, 19.6.6): the host (or staff playing in the
+    // instance) removes a member (INSTANCE_OP 2): it goes home and cannot see
+    // or join the instance for World:RemovedBarMinutes (10). False when this
+    // member may not (not the host or staff, outside an instance, the own id,
+    // not connected).
+    bool remove_member(std::uint32_t member);
+    // Whether this member may remove others from its instance (the host, or
+    // staff playing in it as INSTANCE_INFO's own role says).
+    bool may_remove() const;
+    // *Report player* (19.16): REPORT about a member with a reason from the
+    // fixed list; the relay answers with WORLD_NOTICE 14 ("Report sent. Thank
+    // you."). The wid is the instance both share (0 when not). False when the
+    // world session is not connected or the member is the own.
+    bool report(std::uint32_t member, wire::ReportReason reason);
     // The own settings change (the Game Start's difficulty, Online > Settings).
     void set_own_settings(const wire::Settings& settings) { config_.own_settings = settings; }
     void send_heading(const std::string& stage, int point);
+
+    // ---- Round I1b: go along (docs/SEAMLESS.md 19.30.5-19.30.7).
+    // The open offers and the closing ones (their line 3 s), newest first.
+    const std::vector<GoOffer>& go_offers() const { return go_offers_; }
+    // "Kim is in Ancient Ruins B1." ("... B2 now." after the entrants moved
+    // deeper; the closing line once it closed).
+    std::string go_row_text(const GoOffer& offer) const;
+    // "Kim went into Ancient Ruins B1. Go along?" ("Kim and Lee ..."; a late
+    // notice: "Kim is in Ancient Ruins B2. Go along?").
+    std::string go_notice_text(const GoOffer& offer) const;
+    // Why A cannot go along now ("(defeated)", "(loading)", "(in a dungeon)",
+    // "(waiting)"); "" when it can.
+    std::string go_grey(const GoOffer& offer) const;
+    GoState go_state() const { return go_state_; }
+    std::uint16_t go_offer_id() const { return go_offer_; }
+    // The waiting row and the line where the notice was: "Going along when
+    // Kim's floor is ready..." (the screen's line adds "View: cancel"), "Kim
+    // is in a boss fight. Going along when it ends.", "Going along..."; ""
+    // without a request.
+    std::string go_line() const;
+    // A on a row: INTENT 4 (false when the member cannot go now); A on the
+    // own waiting row or Cancel: the withdraw (INTENT 4, 0; false when
+    // nothing waits or the GO is stamped already).
+    bool go_along(std::uint16_t offer);
+    bool cancel_go_along();
+    // B in the box: no further notice for that offer (its row stays).
+    void close_go_notices(std::uint16_t offer);
+    // B on the GO's held loading screen (Overlay::go_back): the member's
+    // *Leave instance* from its barrier (the host's ends the instance).
+    bool go_back_to_lobby();
+    // The held GO screen's buttons (presses, not holds): a guest's B goes
+    // back to the lobby; the host's B asks "End the instance for everyone?"
+    // first (Overlay::go_back_line), A there ends it, B keeps waiting
+    // (19.30.7 step 4). True when the leave was sent.
+    bool go_back_press(bool a, bool b);
+    // The notices on screen now (newest first, at most three) and how long
+    // the newest has been up (the half second before View focuses it).
+    std::vector<const GoOffer*> go_notices(double now) const;
     void set_rate(std::uint32_t steps_per_second);
     void leave(const std::string& reason = "left");
     // Development builds' scenario hook (DW4_ONLINE_TEST_CUT_AT_PARK, W7e): the
     // link is lost here and now, as a cut cable would lose it.
     void test_cut(double now) { lose_connection(now); }
+    // DW4_ONLINE_TEST_CUT_AT_ANSWER (development builds, W7f; round I1b's
+    // integration): armed, the link is lost when the next BARRIER_OK comes
+    // while parked, and that answer with it (W7e's race on demand: the relay
+    // decided the barrier with this member, which never learns it). The
+    // caller takes the fired cut to time its reconnect.
+    void test_arm_answer_cut() { test_answer_cut_armed_ = true; }
+    bool test_take_answer_cut() { return std::exchange(test_answer_cut_fired_, false); }
+    // Development builds' scenario hooks of round I1b (the online script's
+    // testhook, goalong closed): INTENT kind test asks a relay with
+    // World:TestHooks for a TEST event in the own sealed stage group (false
+    // when not sealed or not connected); go_along_raw sends INTENT 4 for an
+    // offer whatever the client thinks of it (a request that crossed the
+    // offer's close: the relay answers *go refused*).
+    bool test_hook_request(wire::TestHook hook, int value);
+    bool go_along_raw(std::uint16_t offer);
 
 private:
+    // Round I1b (session_prompt.cpp): the gate form's input hold of the own
+    // confirming press (19.7.4), PLAN / OPTIONS / CHOICE, the loading-screen
+    // form at a held barrier (19.7.5), the automatic answer of test runs.
+    enum class GatePhase : std::uint8_t { idle, waiting, open, release, cancel };
+    PadSample gate_filter(const PadSample& local, double now);
+    std::array<PadSample, 4> step_pads(const PadSample& local, double now);
+    void send_plan(double now);
+    void withdraw_plan(std::uint16_t plan, const char* why);
+    void on_options(const wire::Options& options, double now);
+    void open_prompt(PromptForm form, const wire::Options& options, double now);
+    void answer_prompt(bool back, double now);
+    void close_prompt(const char* why);
+    void auto_answer(double now);
+    void prompt_lost(double now);
+    std::string prompt_rows_text() const;
+    GatePhase gate_phase_ = GatePhase::idle;
+    std::uint16_t gate_plan_ = 0;       // the plan id of the held press (0 while its PLAN waits for the throttle)
+    double gate_since_ = 0;             // when the press was held
+    engine::DepartureChoice gate_target_;
+    std::optional<engine::DepartureChoice> last_departure_; // the named departure the own press last started (also without
+    double last_departure_at_ = 0;                           // the gate form): *Back to the lobby*'s point next to its mat
+    std::uint16_t next_plan_ = 1;
+    double plan_sent_at_ = -100;        // PLAN's throttle: one a second
+    std::uint16_t departure_plan_ = 0;  // the plan id the next BARRIER from home names
+    bool engine_a_ = false;             // the engine's last own pad had A held (a press is its rising edge)
+    std::optional<PromptView> prompt_;
+    std::uint16_t prompt_plan_ = 0;     // the open gate form's plan id
+    bool prompt_hold_ = false;          // BARRIER_WAIT choice: the relay holds the barrier for the prompt (no 5 s fallback)
+    std::uint32_t prompt_buttons_ = 0;  // prompt_input's last buttons (its presses are the new ones)
+    double auto_answer_at_ = -1;        // the automatic answer is due (test runs)
+    AutoChoice auto_now_ = AutoChoice::none; // and which one
+    bool chosen_join_ = false;          // the arrival came from a row the player chose (the toasts)
+    bool chosen_here_ = false;          // and that row had players at the arrival stage ("Joining <host>...", 19.5.3)
+    std::string chosen_host_;
+
     struct PendingEvent {
         std::uint32_t tick;
         wire::Event event;
@@ -299,6 +504,17 @@ private:
     // A kept *Leave instance* wish goes out once the INTENT can (leave_instance).
     void send_pending_leave();
     void on_world_notice(const wire::WorldNotice& notice);
+    // Round I1b (session_go.cpp): an OFFER; the notices' wait (each poll); a
+    // GO refused; the step's GO events (one Engine::online_go per target);
+    // a GO that expired; the own departure's barrier.
+    void on_offer(const wire::Offer& offer, double now);
+    void tick_go(double now);
+    bool go_notice_blocked() const;
+    void on_go_refused(const wire::WorldNotice& notice);
+    void apply_gos(std::vector<wire::Event>& gos, bool replaying);
+    void go_expired(bool replaying);
+    std::string go_first_name(const GoOffer* offer) const;
+    GoOffer* find_go_offer(std::uint16_t id);
     // The toast of an arrival into an instance (19.5.6), once BARRIER_OK and
     // the instance's INSTANCE_INFO are both there.
     void arrival_toast();
@@ -316,6 +532,12 @@ private:
     void park(double now);
     void report_state(double now, bool force);
     void become_member(double now);
+    // "You joined Kim and Lee." once INSTANCE_INFO names the stage group this
+    // member joined (its own entry at the engine's stage), at the latest
+    // after join_toast_due_ (round I1b's integration review: it named the
+    // group by whatever INSTANCE_INFO held at the JOIN, the old stage group's
+    // or none).
+    void join_toast(double now);
     void finish_resync(double now);
     void go_alone();
     std::uint32_t roster_member_for(int slot) const;
@@ -490,7 +712,20 @@ private:
     std::string gone_notice_;         // its text once the departure ran
     std::string host_away_name_;      // WORLD_NOTICE host_away: the running line's host and its end (-1: none)
     double host_away_until_ = -1;
+    std::uint32_t ended_by_ = 0;      // WORLD_NOTICE ended's member: its "left." right after says nothing new
+    double join_toast_due_ = -1;      // the JOIN's toast waits for INSTANCE_INFO until then (-1: none)
+    bool test_answer_cut_armed_ = false, test_answer_cut_fired_ = false; // (test_arm_answer_cut, development builds)
     std::uint8_t own_box_ = 1;
+    // Round I1b: go along (session_go.cpp).
+    std::vector<GoOffer> go_offers_;
+    GoState go_state_ = GoState::none;
+    std::uint16_t go_offer_ = 0;        // the offer of the own request
+    std::uint32_t go_target_ = 0;       // its first entrant when it was made (the texts)
+    std::string go_target_stage_;       // where they were (the loading line, the refusal)
+    double go_parked_at_ = -1;          // the GO's barrier parked since (-1: none)
+    bool go_back_asked_ = false;        // the host's "End the instance for everyone?" is up
+    std::uint16_t go_cancelled_offer_ = 0; // the own Cancel's offer until the relay answers it (a cancel may cross the stamp)
+    std::string go_offer_stage_;        // the own request's offer: its stage as last heard while open ("went on to")
     bool hello_seen_ = false;
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;

@@ -1,0 +1,14 @@
+# W7g (fix-flap, 19.6.7): a's link keeps dropping (eight half-open cuts of 7 s, 0.2 s apart, from @200), then closes for 30 s: the
+# host's absence debt (each cut's silence and grace, minus the windows in time) shortens the later graces and leaves the close about
+# 20 s, so the instance ends (host_lost) inside the cut; before, every drop started a fresh 60 s grace and a stayed in for good
+relay: host_away .*why=silence.*grace_s=60
+relay: host_back
+relay: host_away .*why=silence.*grace_s=[1-5][0-9] .*debt_s=
+relay: host_away .*why=closed.*grace_s=(1[0-9]|2[0-9]) .*debt_s=
+relay: instance_end .*reason=host_lost
+!relay: lag_leave  # (the debt is not spent while a lags: the cuts' silences end in graces)
+b: online-script: step .* log: b home after the episode
+a: online-script: step .* log: a home after the episode
+shared: a b >= 600
+!a: online-script: FAIL
+!b: online-script: FAIL
