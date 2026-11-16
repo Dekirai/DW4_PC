@@ -2096,10 +2096,10 @@ line's Android texts.
 Logs in the worktree's `build/sync020` (not committed).
 
 - **The PC**, Release builds with `DW4_ONLINE_DEV` off and on: ctest 81 of
-  81 in the development build; in the plain build 80 of 81 while two builds
-  ran beside it (switch2's slow restart came 865 ms after the stall's mark,
-  not 950 or more: main's timing test, unchanged here; alone 3 of 3
-  passed). `det.sh` twice on an exe copy: `4004f056` / `396cb219` in both
+  81 in both (the plain build's first run, while two builds ran beside it,
+  had switch2's slow restart at 865 ms after the stall's mark instead of
+  950 or more: main's timing test, unchanged here; alone 3 of 3 and the
+  whole run again 81 of 81). `det.sh` twice on an exe copy: `4004f056` / `396cb219` in both
   runs both times. The save state suite 17 of 17 in English and 17 of 17 in
   German (game.tsv, `DW4_LANGUAGE=de`).
 - **The PC's F1 menu** (P0 as for the earlier merges: the 8 tabs, and
