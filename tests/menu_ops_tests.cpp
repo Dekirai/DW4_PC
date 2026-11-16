@@ -94,7 +94,9 @@ void ops_match_direct_assignment() {
     same("screen2 mode", [](ops::Target t) { ops::set_screen2_mode(t, Screen2Mode::off); }, [](Settings& s) { s.screen2_mode = Screen2Mode::off; });
     same("screen2 overlay", [](ops::Target t) { ops::set_screen2_overlay(t, true); }, [](Settings& s) { s.screen2_overlay = true; });
     same("pause", [](ops::Target t) { ops::set_pause_in_menu(t, false); }, [](Settings& s) { s.pause_in_menu = false; });
-    same("pause unfocused", [](ops::Target t) { ops::set_pause_unfocused(t, false); }, [](Settings& s) { s.pause_unfocused = false; });
+    // (Away from this platform's default, so the key is written.)
+    same("pause unfocused", [](ops::Target t) { ops::set_pause_unfocused(t, !kPauseUnfocusedDefault); },
+         [](Settings& s) { s.pause_unfocused = !kPauseUnfocusedDefault; });
     same("skip intro", [](ops::Target t) { ops::set_skip_intro(t, true); }, [](Settings& s) { s.skip_intro = true; });
     same("mod off", [](ops::Target t) { ops::set_mod_enabled(t, "hd", false); }, [](Settings& s) { s.disabled_mods.insert("hd"); });
     same("mod on",

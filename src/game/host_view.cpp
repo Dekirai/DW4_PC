@@ -169,6 +169,21 @@ bool host_event(HostView& view, const SDL_Event& event) {
         view.picture.items_current = false;
         return false;
     }
+    // The game window's focus ([menu] pause_unfocused, both platforms: the
+    // loop pauses an offline game while another window has it). (Android: a
+    // touch on the second screen's panels takes no focus, their window is
+    // not focusable; should a device's focus rules move it all the same, the
+    // game does not pause for it: the player looks at the panels. The PC's
+    // panels are a window inside the game's.)
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        const double since = screen2_seconds_since_touch();
+        view.unfocused = since >= 1.0;
+        if (!view.unfocused) {
+            std::printf("focus: lost %.0f ms after a touch on the second screen (the game goes on)\n", since * 1000.0);
+            std::fflush(stdout);
+        }
+    }
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) view.unfocused = false;
 #ifdef SDL_PLATFORM_ANDROID
     // Android only (a PC's browser Back key stays a bindable key, a Windows
     // touch screen's tap stays a click): the Back key
@@ -182,18 +197,6 @@ bool host_event(HostView& view, const SDL_Event& event) {
         menu_back_key(view);
         return false;
     }
-    // (A touch on the second screen's panels takes no focus: its window is
-    // not focusable. Should a device's focus rules move it all the same, the
-    // game does not pause for it: the player looks at the panels.)
-    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
-        const double since = screen2_seconds_since_touch();
-        view.unfocused = since >= 1.0;
-        if (!view.unfocused) {
-            std::printf("focus: lost %.0f ms after a touch on the second screen (the game goes on)\n", since * 1000.0);
-            std::fflush(stdout);
-        }
-    }
-    if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) view.unfocused = false;
     if (event.type == SDL_EVENT_FINGER_DOWN) view.last_touch = std::chrono::steady_clock::now();
     if (event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN || event.type == SDL_EVENT_SCREEN_KEYBOARD_HIDDEN)
         note_screen_keyboard(event.type == SDL_EVENT_SCREEN_KEYBOARD_SHOWN);

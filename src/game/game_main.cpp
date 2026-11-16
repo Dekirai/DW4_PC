@@ -3440,11 +3440,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
             }
-            // Android: while another window has the focus (the notification
-            // shade, the quick settings) the game pauses and goes quiet: Android
-            // pauses the app only when it leaves the screen, and the
-            // controller's input goes to that window meanwhile. Never in a
-            // session (its steps are every member's) or a test run.
+            // While another window has the focus the game pauses and goes
+            // quiet when [menu] pause_unfocused says so (default on Android:
+            // the notification shade or the quick settings, Android pauses the
+            // app only when it leaves the screen and the controller's input
+            // goes to that window meanwhile; the PC's default is off: Alt+Tab,
+            // a minimized window). Never in a session (its steps are every
+            // member's) or a test run.
             const bool focus_paused =
                 view.unfocused && settings.pause_unfocused && !options.smoke_frames && !net.active() && !net.in_lobby() && !online;
             if (focus_paused != focus_paused_before) {
@@ -5081,11 +5083,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             bool pause = settings.pause_in_menu;
                             if (ImGui::Checkbox("Pause the game while this menu is open", &pause))
                                 dw4::game::ops::set_pause_in_menu(dw4::game::host_ops(view), pause);
-#ifdef SDL_PLATFORM_ANDROID
+                            // ([menu] pause_unfocused: default on Android, off on the PC.)
                             bool unfocused = settings.pause_unfocused;
-                            if (ImGui::Checkbox("Pause the game while another window is in front (notifications, quick settings)", &unfocused))
-                                dw4::game::ops::set_pause_unfocused(dw4::game::host_ops(view), unfocused);
+#ifdef SDL_PLATFORM_ANDROID
+                            const char* unfocused_label = "Pause the game while another window is in front (notifications, quick settings)";
+#else
+                            const char* unfocused_label = "Pause the game while another window is in front (Alt+Tab, minimized)";
 #endif
+                            if (ImGui::Checkbox(unfocused_label, &unfocused))
+                                dw4::game::ops::set_pause_unfocused(dw4::game::host_ops(view), unfocused);
                             bool skip = settings.skip_intro;
                             if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &skip))
                                 dw4::game::ops::set_skip_intro(dw4::game::host_ops(view), skip);

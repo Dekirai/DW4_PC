@@ -263,6 +263,31 @@ void second_screen() {
     s = parsed("[screen2]\nmode=sideways\ntab=map\n");
     check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status, "[screen2] unknown values stay the defaults");
 }
+// The pause while another window has the focus ([menu] pause_unfocused, the
+// owner's decision of 14.11.2026): on by default on Android, off on the PC,
+// switchable on both; not written while it is this platform's default.
+void focus_pause() {
+    check(pause_unfocused_default(true) && !pause_unfocused_default(false), "pause_unfocused: on by default on Android, off on the PC");
+#ifdef __ANDROID__
+    check(kPauseUnfocusedDefault, "this platform (Android): on by default");
+#else
+    check(!kPauseUnfocusedDefault, "this platform (the PC): off by default");
+#endif
+    Settings s = parsed("[window]\nwidth=1280\n");
+    check(s.pause_unfocused == kPauseUnfocusedDefault, "pause_unfocused: a file without it has the default");
+    const std::string before = (s.store(), s.ini().text());
+    check(!s.ini().get("menu", "pause_unfocused"), "pause_unfocused: the default is not written into a file without it");
+    s.pause_unfocused = !kPauseUnfocusedDefault;
+    s.store();
+    check(s.ini().get_or("menu", "pause_unfocused", "") == (kPauseUnfocusedDefault ? "false" : "true"), "pause_unfocused: a change is written");
+    s.pause_unfocused = kPauseUnfocusedDefault;
+    s.store();
+    check(s.ini().get_or("menu", "pause_unfocused", "") == (kPauseUnfocusedDefault ? "true" : "false"),
+          "pause_unfocused: once written it stays (back at the default)");
+    check(s.ini().text() != before, "pause_unfocused: the key stays in the file");
+    check(parsed("[menu]\npause_unfocused=true\n").pause_unfocused && !parsed("[menu]\npause_unfocused=false\n").pause_unfocused,
+          "pause_unfocused: read back on every platform");
+}
 } // namespace
 
 int main() {
@@ -272,6 +297,7 @@ int main() {
         migration();
         menu_size();
         second_screen();
+        focus_pause();
     } catch (const std::exception& error) {
         std::cerr << "controls tests failed: " << error.what() << '\n';
         return 1;

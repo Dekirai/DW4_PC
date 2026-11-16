@@ -202,10 +202,11 @@ struct HostView {
     std::uint32_t capture_cancels = 0;
     bool settings_changed = false;
     bool quit_requested = false; // the window was closed
-    // Android: another window has the focus (the notification shade, the
-    // quick settings, a dialog, the app switcher's live tile) while the game
-    // stays on the screen, so Android does not pause it; the loop pauses the
-    // game meanwhile ([menu] pause_unfocused).
+    // Another window has the focus: on Android the notification shade, the
+    // quick settings, a dialog or the app switcher's live tile while the game
+    // stays on the screen (so Android does not pause it), on the PC another
+    // program (Alt+Tab) or the game's window minimized; the loop pauses an
+    // offline game meanwhile when [menu] pause_unfocused says so.
     bool unfocused = false;
 
     // Pictures.

@@ -413,10 +413,12 @@ void general_root(Builder& b) {
     b.toggle("general.label_numbers", "HP / MP numbers", settings.label_numbers, [&view](bool on) { ops::set_label_numbers(host_ops(view), on); });
     b.section("Pause");
     b.toggle("general.pause", "Pause while the menu is open", settings.pause_in_menu, [&view](bool on) { ops::set_pause_in_menu(host_ops(view), on); });
-    if (st.platform == MenuPlatform::android) {
+    {
+        // ([menu] pause_unfocused on both platforms: default on Android, off on the PC.)
         Row& r = b.toggle("general.pause_unfocused", "Pause in the background", settings.pause_unfocused,
                           [&view](bool on) { ops::set_pause_unfocused(host_ops(view), on); });
-        r.desc = "While notifications, quick settings or another window are in front.";
+        r.desc = st.platform == MenuPlatform::android ? "While notifications, quick settings or another window are in front."
+                                                      : "While another window is in front (Alt+Tab) or the game is minimized.";
     }
     b.section("Start");
     b.toggle("general.skip_intro", "Skip intro", settings.skip_intro, [&view](bool on) { ops::set_skip_intro(host_ops(view), on); }).badge = "Next start";

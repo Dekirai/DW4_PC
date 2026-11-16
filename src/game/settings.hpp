@@ -88,6 +88,16 @@ enum class ThorStyle : std::uint8_t { automatic, standard, xbox };
 enum class Screen2Mode : std::uint8_t { automatic, off };
 // [screen2] tab: the panel the second screen shows (the last one chosen).
 enum class Screen2Tab : std::uint8_t { online, status, menu };
+// [menu] pause_unfocused's default (the owner's decision of 14.11.2026): on
+// Android, where the notification shade or the quick settings take the
+// controller while the game stays on the screen, the game pauses; on the PC
+// (Alt+Tab, a minimized window) it plays on unless the player turns it on.
+constexpr bool pause_unfocused_default(bool android) { return android; }
+#ifdef __ANDROID__
+inline constexpr bool kPauseUnfocusedDefault = pause_unfocused_default(true);
+#else
+inline constexpr bool kPauseUnfocusedDefault = pause_unfocused_default(false);
+#endif
 
 struct Settings {
     // [window]
@@ -112,10 +122,12 @@ struct Settings {
     int volume = 100;        // master volume in percent
     // [menu]
     bool pause_in_menu = true;
-    // [menu] pause_unfocused (Android): the game pauses while another window
-    // has the focus (the notification shade, the quick settings) and the
-    // game stays on the screen. Not written while it is the default.
-    bool pause_unfocused = true;
+    // [menu] pause_unfocused: the game pauses while another window has the
+    // focus (Android: the notification shade, the quick settings, while the
+    // game stays on the screen; the PC: Alt+Tab, a minimized window), offline
+    // only. Default on Android, off on the PC (kPauseUnfocusedDefault); not
+    // written while it is the default.
+    bool pause_unfocused = kPauseUnfocusedDefault;
     // [preferences]
     bool skip_intro = false;
     // [preferences] language: the game text's display language (docs/L10N.md):

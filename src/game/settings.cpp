@@ -414,7 +414,8 @@ void Settings::store() {
     else if (ini_.get("window", "ui_scale")) ini_.set("window", "ui_scale", "auto");
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
-    if (!pause_unfocused || ini_.get("menu", "pause_unfocused")) ini_.set_bool("menu", "pause_unfocused", pause_unfocused);
+    if (pause_unfocused != kPauseUnfocusedDefault || ini_.get("menu", "pause_unfocused"))
+        ini_.set_bool("menu", "pause_unfocused", pause_unfocused);
     ini_.set_bool("preferences", "skip_intro", skip_intro);
     ini_.set("preferences", "language", language);
     ini_.set_int("gameplay", "exp_rate", exp_rate);
