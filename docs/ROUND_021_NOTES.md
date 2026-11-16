@@ -40,6 +40,20 @@ Logs in `build/r021/logs/`.
 - **Save state suite** 17/17 English (`st_en.log`), 17/17 German (`st_de.log`; "game.tsv 4515 texts, 0 rejected").
 - **Server**: unit 703/703 (`unit.log`); the web page tests (`WebTests`, `FriendPageTests`) 10/10 with an own mysqld on
   3755, shut down by SQL (`it_web.log`).
+- **The package** (`pkg.cmd 0.2.1`, `pkg.log`, commit abf86e9e, the main checkout's two pins): a fresh Release build in
+  `build/r021/pkg`, every content rule held, `DW4_PC-0.2.1-windows-x64.zip` (4.8 MB, 15 files, `sha256sum -c` OK).
+  Its file list and order equal the hand-made 0.2.0 zip's (`unzip -Z1` of both). Sizes differ only in the changed
+  texts and in line endings: files without an eol rule in `.gitattributes` (LICENSE, `licenses/*-MIT.txt`, the
+  language pack) come from the checkout as it is (CRLF here, `core.autocrlf`), the 0.2.0 zip had them from `git show`
+  (LF); both read alike. No profile path in any file (also `grep -a` on each), `DW4_PC.exe` subsystem 2 and only
+  system DLLs. det.sh on a copy of the packaged `DW4_PC.exe` (md5 c6bf8cb2): 4004f056 / 396cb219 (`det_pkg.log`); the
+  unpacked zip's `DW4_PC.exe --smoke-test 1800` exit 0 (`smoke_pkg.log`), `--help` names `DW4_PC`.
+- **Scenarios** with the dev client `scen/dw4_r021_dev.exe` (md5 074337af, commit abf86e9e's code; `marathon.log`,
+  run.py under `python -I` without a wrapper): W4bs pass (b's 6.3 s stall, 5 holds dropped, b a's guest, 3960 shared
+  ticks), W4bsx pass as a counter-proof (b's FAIL at 59 s, "The server did not answer", no arrival toast; the relay's
+  `join_ready_timeout` and `fallback_new` as in W4b's failed run of 0.2.0), W1, W4, W10 (`upload_card` imports
+  `character_test`) pass, W4b three times pass. W4b's second run had a real machine-wide stall (both clients' longest
+  pass 6.5 s, in the lobby before the gate; the user played a game meanwhile) and passed.
 
 ## How to run
 
@@ -51,6 +65,9 @@ Logs in `build/r021/logs/`.
   save state suite (`build/r021/st`, a copy of r020's) on `off/dw4_r021_st.exe` in English and German (`build/r021/lang`:
   `data/lang/de` plus the main checkout's git-ignored `local/lang/de/game.tsv`).
 - Scenarios: `scen.sh LOG ARGS...` (run.py under `python -I` directly, mysqld 3756, ports 60750-60799; the client
-  `scen/dw4_r021_dev.exe`, a copy of `dev`'s game).
+  `scen/dw4_r021_dev.exe`, a copy of `dev`'s game); `marathon.sh [BATCH...]` (`m_stall` W4bs W4bsx, `m_base` W1 W4 W10,
+  `m_w4b_1..3` W4b; a batch whose log ends with EXIT is skipped).
+- The Windows program: `gui_test.py FOLDER EXE DATA` (with `no_console_child.py`, `attach_child.py`; no window, no
+  focus), `pe_subsystem.py EXE...`.
 - The package: `scripts/package_windows.ps1` with `-BuildDirectory build\r021\pkg -OutputDirectory build\r021\dist`, the
   main checkout's pins file and `-CMakeArgs` with the FetchContent source folders (`pkg.cmd`).

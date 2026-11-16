@@ -69,7 +69,7 @@ struct SessionConfig {
     std::uint32_t rate = 3000;          // replay steps per second until measured (RATE)
     double barrier_timeout = 5.0;       // a solo group goes on as NEW without an answer (3.4)
     double barrier_pass_limit = 0.5;    // of a longer pass of this machine only this much counts toward it (0.2.1)
-    double replay_budget = 0.05;       // seconds of catch-up per poll (0: until caught up); the loading screen
+    double replay_budget = 0.05;        // seconds of catch-up per poll (0: until caught up); the loading screen
                                         // still gets about 15 pictures a second
     double presence_interval = 0.2;     // PRESENCE five times per second
     double presence_moving_interval = 0.1; // PRESENCE2 ten times per second while the figure moves
