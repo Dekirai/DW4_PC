@@ -16,18 +16,34 @@ The task: the four relay findings of "Open after 0.2.0" (docs/ROUND_INT_I1B_NOTE
 | --- | --- | --- | --- |
 | 1 | `StateReporter` took the connected member longest: a host in a grace started by silence (half-open) stayed the reporter, the guests' STATEs were ignored, a held arrival was let in on his old flags or got a NEW (`HoldExpired`) | the reporter is the connected member longest that is not away: not a host in his grace, not resyncing, its slot not lagging, its engine not more than 180 ticks behind (its newest NETFP, `HubMember.ExecutedTick`); `StartGrace` and `HostBack` sync it | `A_host_silent_in_his_grace_hands_the_flags_...`, `A_guests_boss_fight_while_the_hosts_link_hangs_...`, `A_returned_host_who_still_lags_...`, `A_returned_host_whose_engine_still_catches_up_...`; W7h |
 | 2 | `OnState` applied the reporter's STATE without the newer-by-tick check: a host back from a drop overrode a guest's newer STATE with the ones of the ticks he caught up | `Supersedes`, one rule for `OnState` and `SyncStateReporter`: none in effect, its member left, or newer by tick; at the same tick only the member in effect's own; an older one is kept (`state_stale`) | `A_host_back_from_a_drop_never_overrides_...` |
-| 3 | `StartGrace` at a gate: the gathering stage group counted as shared with the guests, the absence debt shortened the grace although they went on at once | `SharedGroup`: a stage group at its barrier is shared with nobody (a fresh grace) | `A_host_who_drops_exactly_at_a_gate_...`; W7j |
+| 3 | `StartGrace` at a gate: the gathering stage group counted as shared with the guests, the absence debt shortened the grace although they went on at once | `SharedGroup`: a stage group at its barrier is shared with nobody (a fresh grace); and a grace the debt shortened is fresh again from its start once the host shares no stage group with a guest (`host_grace_fresh`: a link that closed a moment before his BARRIER came, his guests going on without him) | `A_host_who_drops_exactly_at_a_gate_...`, `A_host_whose_link_closes_a_moment_before_his_gate_...`; W7j |
 | 4 | the lag rule's gap: drops each below the limit with short bursts in time between them never reached it (guests; a host below `World:HostSilenceSeconds`) | `SlotStream.LagDebt`: filled ticks that held a connected member in time up, minus ticks in time, never below 0 (not while every connected member was filled, a host in his grace, a member resyncing); a lagging member is out at `Relay:LagLeaveSeconds` of it (`lag_leave why=lag_debt`); a host's return restarts it; the fill streak's rule stays | `A_guest_whose_link_hangs_open_again_and_again_...`, `A_host_whose_link_hangs_open_below_the_silence_...` (control: `Brief_hiccups_paid_back_...`); W7i |
 | 5 | `OnForeignStory` / `PlayContext` did not see a removed member playing alone (`HubMember.LoneWorld`): its own key reached its own keeper with the host's progress, the context said home | `OnForeignStory` reads `LoneWorld` for a member without a stage group (or in the empty hub one of a reconnect): foreign unless it holds its seat there or the story is its own | `A_guest_removed_while_it_plays_on_alone_is_on_...`, `A_guest_back_without_its_slot_and_removed_...` (control: `A_host_playing_apart_keeps_...`) |
 
 Counter-checks (`build/r021/counter.sh NAME FIX LOG FILTER`: a copy of HEAD's server tree in `build/r021/counter/NAME`
-with one fix taken out by `counter_patch.py`, or main's four relay sources): main's relay 9 of the 11 then-new tests fail
-(the two controls pass); without fix 1 the three reporter tests, without 2 its one, without 3 its one, without 4 its two,
-without 5 its two (`logs/counter_*.log`).
+with one fix taken out by `counter_patch.py`, or main's four relay sources; the 13 tests of `new_filter.txt`): on main's
+relay 11 of 13 fail, the two controls pass (`logs/counter_main_13.log`); without fix 1 (the whole away rule) the four
+reporter tests (`counter_f1_13.log`), without its NETFP part alone (f1b) the catching-up test, without 2 its one, without
+3's barrier rule (f3) the gate test, without the renewed grace (f3b) its one, without 4 its two, without 5 its two
+(`counter_f1b.log` ... `counter_f5.log`).
+
+**The test proxy** (tests/DW4Online.FakeClient `ImpairmentProxy`): it closed both sides a fixed 600 ms after one side's
+end, so W7j's first run (`run_20261116_161608`, on 85f2bdf1) had a's close reach the relay 612 ms after a's BARRIER,
+after b's (150 ms later) completed the barrier: the sealed NEW of both, a in it with b, an ordinary drop, 30 s of grace
+(debt 40.3 s) and `host_lost`, the path the fix leaves as it was (W7e's). Now it waits for that direction's latest delivery
+time (a half-open cut's end included), then 50 ms; `ProxyCutTests` pass.
 
 ## Checks
 
-(in progress)
+- **Unit tests** 716/716 (`logs/unit_4.log`, f6276ed4; 703 of 0.2.0 unchanged plus the 13 of `Fix021RelayTests`).
+- **Integration tests** 155 passed, 3 skipped (the opt-in end-to-end tests; `logs/it_1.log`, 29e95f20, own mysqld on 3750,
+  shut down by SQL).
+- **The dev client**: `build/r021/dev` (Release, DW4_ONLINE_DEV=ON, main's client code), copied to
+  `build/r021/scen/dw4_r021_dev.exe`, md5 b3fa754f.
+- **Scenarios, first runs** (`logs/scen_new1.log`, `run_20261116_161608`, relay of 85f2bdf1): W7h passed (c held for b's
+  scene at 196.3 s of the relay's clock, a's silence grace at 202.6 s, c's JOIN decided at 211.5 s when the scene ended, a
+  back at 248.5 s; no `HoldExpired`), W7i passed (`lag_leave why=lag_debt lag_debt_s=10` at 211.8 s, 11-12 s after the
+  first cut; a led on alone, b played apart), W7j failed on the proxy's late close (above).
 
 ## Left
 
