@@ -435,7 +435,8 @@ trap enable off, put back on exit. `Engine::mxcsr_repairs()` counts either;
 `tests/online_tests.cpp` checks FPCR on AArch64 the way it checks MXCSR on
 x86. Online play stays refused on Android (`online_cpu_refusal`) until the
 simulation math is the MSL routines everywhere (a later phase); since the
-main merge of 16.11.2026 LAN play with another machine too (`lan_refusal`,
+main merge of 16.11.2026 LAN play with another machine too (`lan_refusal`
+and, through an adb tunnel to loopback, the LAN hello's platform tag;
 "The main merge of 16.11.2026" below).
 
 ### Paths and logs
@@ -1053,7 +1054,7 @@ the printed letters' codes and Xbox = positions.
   saved`); the game loop stands in `SDL_PollEvent` (the game pauses: SDL
   blocks on pause) and SDL pauses the AAudio output. Coming back the loop
   starts its clock again (`lifecycle: the game goes on`; before, up to four
-  steps caught up). The PC does not pause on focus loss, nor does it now.
+  steps caught up).
 - Another window in front while the game stays on the screen (the
   notification shade, the quick settings with the Thor's "Controller style"
   tile, a dialog): SDLActivity pauses nothing then (Android 7+ multi-window:
@@ -1061,12 +1062,18 @@ the printed letters' codes and Xbox = positions.
   that window. The game pauses meanwhile like the F1 menu's pause and goes
   quiet (`focus: another window is in front: the game pauses` / `focus:
   back: the game goes on`), never in a LAN or online session (their steps
-  are every member's) or a test run. `[menu] pause_unfocused` (default
-  true, written only when false) and F1 > Settings "Pause the game while
-  another window is in front (notifications, quick settings)" (Android
-  only) switch it off. A touch on the second screen's panels takes no focus
-  (their window is not focusable) and never pauses the game ("Phase E:
-  the second screen"; AYN's Focus Mode on the Thor: its checklist).
+  are every member's) or a test run. `[menu] pause_unfocused` switches it,
+  on both platforms since the review fixes of 16.11.2026 (the owner's
+  decision of 14.11.2026: default on on Android, off on the PC, switchable
+  in F1 on both; written only once it differs from the platform's
+  default): F1 > Settings "Pause the game while another window is in
+  front (notifications, quick settings)" on Android, "... (Alt+Tab,
+  minimized)" on the PC, the console menu's General > "Pause in the
+  background" on both. On the PC the focus leaves the game window with
+  Alt+Tab or a minimized window. A touch on the second screen's panels
+  takes no focus (their window is not focusable) and never pauses the game
+  ("Phase E: the second screen"; AYN's Focus Mode on the Thor: its
+  checklist); the PC's panels are a window inside the game's.
 - `DW4Activity.onTrimMemory` passes only real memory warnings on, the
   `TRIM_MEMORY_RUNNING_*` levels (5, 10, 15: memory is short while the game
   runs). `TRIM_MEMORY_UI_HIDDEN` (20, every HOME) and the background levels
@@ -1190,7 +1197,7 @@ closes), with these differences:
 | `[window] fps_limit` | 0 (the default): 60 Hz asked of the display; above 60: that rate up to 120 |
 | `[window] msaa` | 4 (the PC's default; Adreno 740: 4x) |
 | `[gamepad] thor_style` | auto (the Thor's Controller style) |
-| `[menu] pause_unfocused` | true (written only when false): the game pauses while another window is in front |
+| `[menu] pause_unfocused` | true (written only once it differs from the platform's default; the PC's default is false): the game pauses while another window is in front |
 | `[gamepad] gc_adapter` | not used (WinUSB, the PC's GameCube adapter reader) |
 | `[screen2] mode` | auto (the default): the panels on a second display when there is one; off (phase E) |
 | `[screen2] tab`, `overlay` | the second screen's tab (status, the default; online; menu) and the overlay window (false), as on the PC |
@@ -2069,27 +2076,53 @@ binaries) in one merge commit, 172 commits of main.
 This line computes the simulation with the device's libm (the MSL routines
 are feat-android-cdet's, with their own protocol bump), but after the merge
 an Android build has the PC's protocol numbers and the same data hash: a
-session with a PC would part. Before, online play was refused only because
-the CPU gate found no FMA3 words (with the PC's text about the CPU), and LAN
-play (`--host` / `--join`, through a debug build's `dw4args`) was not
-refused at all. Now (`online/cpu_gate.hpp`):
+session with a PC would part. Online play itself never worked on Android:
+`HttpWorker` has a transport only on Windows (WinHTTP; `online/http.cpp`),
+so every request (the server's status, a login, a world's entry, the cloud
+backup) ends at once with "no HTTPS transport on this platform"; the CPU
+gate's refusal (no FMA3 words, with the PC's text about the CPU) was only
+the reason the screens named. LAN play (`--host` / `--join`, TCP, through
+a debug build's `dw4args`) has its own transport and was not refused at
+all. Now (`online/cpu_gate.hpp`):
 
 - `online_cpu_refusal()` refuses every Android build with "Online play on
   Android comes with a later update." (`kAndroidRefusal`): F1 > Online, the
   lower screen's Online panel (Android's refusal first, as before) and the
   console menu's Online page show it; *Play* in the online screens and a
-  room from the command line stop with it.
+  room from the command line stop with it. Since the review fixes the
+  online screens (over the title, F1 > Online) show only this refusal and
+  "Offline play is not affected." (`online_ui.cpp`), not the server's
+  state below it.
 - `NetSession::host` / `join` ask `lan_refusal(peer_is_loopback)`: on
   Android a host or guest on another machine is refused ("LAN play with
   another device on Android comes with a later update."); a loopback
   session (a test run's `DW4_MENU_HOST` / `DW4_MENU_JOIN`) passes. The PC's
   rules are unchanged.
+- The loopback rule cannot see a tunnel: `adb reverse` (the device's
+  loopback to the PC) or `adb forward` (the PC to the device's loopback)
+  reaches another machine through 127.0.0.1 (a debuggable build, files/
+  dw4args.allow and adb; checked on the emulator with a PC host and the
+  emulator's guest through `adb reverse`: the session started). Since the
+  review fixes the LAN hello carries the platform: its game tag is the
+  PC's `GDJEB2` as always and `GDJEB2/android` on Android
+  (`lan_game_for`), and the host refuses the other platform's tag
+  (`lan_game_problem`: "LAN play with an Android device comes with a later
+  update." on a PC host, the Android text above on an Android host; an
+  earlier PC release answers "Another game."), whichever side hosts.
+- The cloud backup (`cloud_refusal()`: Android, or a build without
+  `kHttpsTransport`): F1 > Saves > Cloud backup is locked with "Cloud
+  backup on Android comes with a later update." in the console menu (its
+  pages are not reachable) and the classic panel shows only that line; no
+  login is sent, no worker is made (`CloudBackupPanel::refusal`).
 - `tests/online_cpu_gate_tests.cpp` checks both platforms' rules through
-  the platform flag (`online_refusal_for`, `lan_refusal_for`) on the PC.
+  the platform flag (`online_refusal_for`, `lan_refusal_for`,
+  `lan_game_problem_for`, `cloud_refusal_for`) on the PC.
 
 feat-android-cdet has its own `lan_refusal` and `kAndroidRefusal` (the
 protocol bump's gate); its merge with this line takes cdet's gate and this
-line's Android texts.
+line's Android texts. With the protocol bump (the same math on both) the
+LAN tag goes back to one tag for both platforms; the cloud refusal stays
+until Android has an HTTPS transport.
 
 ### Checks (16.11.2026)
 
@@ -2112,6 +2145,10 @@ Logs in the worktree's `build/sync020` (not committed).
   *Menu size* row) and Controls (the Nintendo layout's "and the AYN Thor")
   differ exactly as cadef0f2 differs; at 231 % every tab differs because
   main has no `DW4_UI_SCALE` (its menu stays at 100 % in the window).
+  (Settings also has the section *Second screen* with *Panels over the
+  game*, new against main on the PC too; at 100 % it lies below the tab's
+  first picture, which only shows its scrollbar. The full list of the PC's
+  F1 differences against main: "The review fixes of 16.11.2026".)
 - **The console menu's scripts** (`tools/menu/run.sh d`, the PC with
   Android's rules): d1 to d8 without a failed expect.
 - **Online scenarios** with the merged development client

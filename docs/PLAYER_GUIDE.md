@@ -93,12 +93,16 @@ reason when something stops the game.
 **F1** (or a controller's View, Back, Share, Create or − button, unless a
 binding uses it) opens the menu over the game; settings are saved when it
 closes. While it is open the game pauses (*Pause the game while this menu is
-open*, `[menu] pause`; online nothing pauses).
+open*, `[menu] pause`; online nothing pauses). *Pause the game while another
+window is in front (Alt+Tab, minimized)* also pauses it, and mutes it, while
+another program has the focus or the window is minimized
+(`[menu] pause_unfocused`, off by default; offline only, never in a LAN or
+online session).
 
 | Tab | What is in it |
 | --- | --- |
-| **Settings** | Language, the *Original* / *Modernized* preset, loading speed (Original / Fast), display (fullscreen, widescreen, VSync, frame limit, smooth motion, anti-aliasing, window size), graphics, volume, name tags, Discord, achievements, the online status box, save states (four slots), mods, skip intro, and where the save and the settings file are |
-| **Controls** | The detected controllers, the button pictures, the Nintendo and GameCube layouts, keyboard and controller bindings |
+| **Settings** | Language, the *Original* / *Modernized* preset, loading speed (Original / Fast), display (fullscreen, menu size, widescreen, VSync, frame limit, smooth motion, anti-aliasing, window size), graphics, the second screen's panels over the game, volume, name tags, Discord, achievements, the online status box, save states (four slots), mods, the two pauses (menu open, another window in front), skip intro, and where the save and the settings file are |
+| **Controls** | The detected controllers, the button pictures, the Nintendo and GameCube layouts, the AYN Thor's controller style (with such a controller), keyboard and controller bindings |
 | **Gameplay** | *Show the simulator NPC* and *Data Overflow (test)* (see [Data Overflow](#data-overflow-survival-mode)) |
 | **Saves** | Where the save lives, the boxes of slots A and B, importing GameCube saves, the cloud backup |
 | **Online** | The online session: instance, host, members, *Leave instance* |
@@ -131,6 +135,10 @@ the list is greyed out. Details: [L10N.md](L10N.md).
 **Display** (F1 > Settings; `[window]` in settings.ini):
 
 - *Fullscreen* is borderless (also **F11**).
+- *Menu size*: the size of the port's menus (this menu, the first start's
+  screens, the controller pages, the notices; not the game's own pictures):
+  *Automatic* (100 % on the PC) or 100 % to 300 % (`ui_scale`, a percent;
+  `auto` is written only once a size was chosen).
 - *Widescreen*: the 3D view fills wide windows at the original vertical field
   of view while the 2D layers stay 4:3 and full-screen fades stretch.
 - *VSync*, *Frame limit* (presented frames per second, 0 = off; the game
@@ -147,6 +155,16 @@ the list is greyed out. Details: [L10N.md](L10N.md).
   driver refuses it, the window opens without it.
 - *Window size*: 1280x960, 1440x1080, 1920x1440, 1280x720, 1920x1080,
   2560x1440, or drag the window; the size is remembered.
+
+**Second screen** (F1 > Settings > *Second screen*; `[screen2]`): *Panels over
+the game (Status, Online)* opens a small window over the game with two tabs,
+as the Android version shows them on the AYN Thor's lower screen: *Status*
+(every joined player's form, level, HP, MP, EXP and Bits, and the area) and
+*Online* (the account's state, the world's counts, the friends online and the
+running instance). It is off by default; its close button turns it off too.
+It only reads the running game and changes nothing in it. `overlay` keeps it
+on, `tab` the last tab (`status`, `online`); both are written only while they
+are not their defaults.
 
 **Graphics options** (F1 > Settings > Graphics, `[graphics]`; every change
 applies at once and nothing reaches the game itself, so online partners may
@@ -336,6 +354,14 @@ A, L and R count at the trigger's click, the C-stick is the C-stick) and the
 game keeps its own GameCube pictures for it; F1 > Controls > *GameCube
 controller* can put it on the bindings instead.
 
+**AYN Thor.** The controller of the AYN Thor handheld (USB `2020:0111`,
+"Odin Controller"; the Android version's device) gets its own pictures and is
+read like the Nintendo pads (*Nintendo layout*). F1 > Controls > *AYN Thor
+controller style* shows while such a controller is connected or the style is
+set: *As the Thor's setting* (Standard on the PC, which cannot read the Thor's
+own setting), *Standard* (the A button sends A) or *Xbox* (the bottom button
+sends A).
+
 **Menu buttons.** The menus (F1, the online screens, the on-screen keyboard)
 take the controller's own buttons: A / Cross confirms, B / Circle goes back,
 whatever the game's bindings (a Nintendo pad as its Nintendo layout reads it);
@@ -345,12 +371,13 @@ settings.ini keeps the choices in `[gamepad]`:
 
 | Key | Values |
 | --- | --- |
-| `prompts` | `auto`, `dualsense`, `dualshock4`, `xbox360`, `xbox_one`, `switch_pro`, `switch2_pro`, `wiiu_pro`, `gamecube`, `keyboard` |
+| `prompts` | `auto`, `dualsense`, `dualshock4`, `xbox360`, `xbox_one`, `switch_pro`, `switch2_pro`, `wiiu_pro`, `gamecube`, `thor`, `keyboard` |
 | `nintendo_layout` | `label` / `position` (a file whose face buttons were rebound before keeps `position`, so those bindings play as before) |
 | `gamecube_layout` | `original` / `bindings` |
 | `wii_driver` | `auto` / `on` / `off` |
 | `menu_buttons` | `layout` / `bindings` |
 | `gc_adapter` | `true` / `false` |
+| `thor_style` | `auto` / `standard` / `xbox` (the AYN Thor's controller style) |
 
 ## Saves
 
@@ -827,6 +854,9 @@ DW4_PC.exe --join 192.168.1.20           rem or --join host:port
   leaves ends the session for the others (they play on alone).
 - The host needs the port open (router / firewall) for guests outside the
   local network.
+- The Android version cannot play a LAN session with a PC yet (its game math
+  is not the PC's yet): a PC host answers it "LAN play with an Android device
+  comes with a later update.".
 
 ## Data Overflow (survival mode)
 
@@ -944,9 +974,10 @@ the few keys without a menu entry. Close the game before editing it.
 
 | Section | Keys |
 | --- | --- |
-| `[window]` | `width`, `height` (default 1280 x 960), `fullscreen` (borderless, also F11), `widescreen`, `vsync`, `fps_limit` (0 = off), `smooth_motion`, `msaa` (2/4/8 samples, applied at start-up) |
+| `[window]` | `width`, `height` (default 1280 x 960), `fullscreen` (borderless, also F11), `widescreen`, `vsync`, `fps_limit` (0 = off), `smooth_motion`, `msaa` (2/4/8 samples, applied at start-up), `ui_scale` (the menus' size in percent, `auto`) |
 | `[audio]` | `volume` (percent) |
-| `[menu]` | `pause` (pause while the menu is open) |
+| `[menu]` | `pause` (pause while the menu is open), `pause_unfocused` (pause while another window is in front; default `false`) |
+| `[screen2]` | `overlay` (the second screen's panels over the game), `tab` (`status`, `online`); see [Display and graphics](#display-and-graphics) |
 | `[preferences]` | `skip_intro` (boot straight to the title), `language` (`en` or a language pack's code) |
 | `[gameplay]` | `exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original), `loading` (`original`, the default, or `fast`) |
 | `[randomizer]` | `seed` (0 = off), `drops`, `enemies` (`off`, `each`, `wave`), `zones` (`off`, `dungeons`); see [Randomizer](#randomizer-rebalancing-and-cheats) |
@@ -959,4 +990,4 @@ the few keys without a menu entry. Close the game before editing it.
 | `[mods]` | `textures` (texture pack folder), `dump_textures`, `disabled` (mod ids) |
 | `[data]` | `path` (the game data); `save` / `save_b` (the save files of memory card slots A and B, default `saves/savedata.dat` / `saves/savedata_b.dat`; relative paths are next to the program); `cards` (instead of the save files: a GCI folder root with `Card A` / `Card B`, e.g. Dolphin's `GC/USA` folder to play on its saves); `card_a` / `card_b` (what the slots hold: `none` for an empty slot, `unformatted`, `inserted`, and / or the card's blocks such as `251`; default a 2043-block card in slot A and one in slot B when its file or folder exists); `save_migrated` (set by the one-time copy of an older save) |
 | `[keyboard]` | Up to three key names per control; see [Controls](#controls) |
-| `[gamepad]` | Up to three controller inputs per control, plus `prompts`, `nintendo_layout`, `gamecube_layout`, `wii_driver`, `menu_buttons`, `gc_adapter`; see [Controllers](#controllers-and-button-pictures) |
+| `[gamepad]` | Up to three controller inputs per control, plus `prompts`, `nintendo_layout`, `gamecube_layout`, `wii_driver`, `menu_buttons`, `gc_adapter`, `thor_style`; see [Controllers](#controllers-and-button-pictures) |
