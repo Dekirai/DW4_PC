@@ -30,7 +30,11 @@ player's side with phase E goes to main before the determinism part. The
 owner's Thor ran it in the game on 14.11.2026; that check's review and its
 fixes (among them a crash of the scene traversal in a stage change's held
 fields, the judder at 60 Hz, the START / SELECT pictures, the keyboard):
-"The Thor check and its review fixes".
+"The Thor check and its review fixes". main d230037f (release 0.2.0,
+protocol 50) is merged into this branch (16.11.2026, "The main merge of
+16.11.2026"); since then an Android build refuses online play and LAN play
+with another machine with a message until the simulation math is the
+PC's (feat-android-cdet's protocol bump).
 
 ## Decisions this port follows
 
@@ -2037,6 +2041,96 @@ owner can check:
 11. F1 on the lower screen with `pause=false` while walking in a dungeon
     (no judder now), the opening movie (smooth now), and whether Gboard's
     hint banner at the first password field gets in the way.
+
+## The main merge of 16.11.2026 (main d230037f, release 0.2.0)
+
+feat-android-cux took main d230037f (release 0.2.0, protocol 50: round
+I1b's online world with *Go along*, the arrival prompt and the player card,
+the Switch 2 Pro reader's fixes, the player README with
+docs/PLAYER_GUIDE.md and docs/DEVELOPMENT.md, no build-machine path in the
+binaries) in one merge commit, 172 commits of main.
+
+- **Conflicts.** Only README.md: main's README is the player landing page
+  now and its repository layout table moved to docs/DEVELOPMENT.md, so the
+  Android rows (`cmake`, `android`, `src/android`, `tools/android`) stand in
+  DEVELOPMENT.md's layout table and ANDROID.md / CONSOLE_MENU.md in its
+  documentation list; the README keeps main's one line about the Android
+  version. The engine fixes both sides carried (cux 778eb680 + 42825960,
+  main 3973088b + 68bae4ee) merged into main's text without a conflict;
+  `online_presentation_env` keeps main's I1b test switches and this
+  branch's menu, screen and frame switches.
+- **`cmake/trim_build_paths.cmake` on Android:** the Gradle build's
+  `FETCHCONTENT_SOURCE_DIR_*` (the PC build's `_deps`) are trimmed through
+  their parent folder like the PC's, and the APK's `libmain.so` holds no
+  path of the build machine (searched for the profile folder's name).
+
+### Online and LAN play on Android until the protocol bump
+
+This line computes the simulation with the device's libm (the MSL routines
+are feat-android-cdet's, with their own protocol bump), but after the merge
+an Android build has the PC's protocol numbers and the same data hash: a
+session with a PC would part. Before, online play was refused only because
+the CPU gate found no FMA3 words (with the PC's text about the CPU), and LAN
+play (`--host` / `--join`, through a debug build's `dw4args`) was not
+refused at all. Now (`online/cpu_gate.hpp`):
+
+- `online_cpu_refusal()` refuses every Android build with "Online play on
+  Android comes with a later update." (`kAndroidRefusal`): F1 > Online, the
+  lower screen's Online panel (Android's refusal first, as before) and the
+  console menu's Online page show it; *Play* in the online screens and a
+  room from the command line stop with it.
+- `NetSession::host` / `join` ask `lan_refusal(peer_is_loopback)`: on
+  Android a host or guest on another machine is refused ("LAN play with
+  another device on Android comes with a later update."); a loopback
+  session (a test run's `DW4_MENU_HOST` / `DW4_MENU_JOIN`) passes. The PC's
+  rules are unchanged.
+- `tests/online_cpu_gate_tests.cpp` checks both platforms' rules through
+  the platform flag (`online_refusal_for`, `lan_refusal_for`) on the PC.
+
+feat-android-cdet has its own `lan_refusal` and `kAndroidRefusal` (the
+protocol bump's gate); its merge with this line takes cdet's gate and this
+line's Android texts.
+
+### Checks (16.11.2026)
+
+Logs in the worktree's `build/sync020` (not committed).
+
+- **The PC**, Release builds with `DW4_ONLINE_DEV` off and on: ctest 81 of
+  81 in the development build; in the plain build 80 of 81 while two builds
+  ran beside it (switch2's slow restart came 865 ms after the stall's mark,
+  not 950 or more: main's timing test, unchanged here; alone 3 of 3
+  passed). `det.sh` twice on an exe copy: `4004f056` / `396cb219` in both
+  runs both times. The save state suite 17 of 17 in English and 17 of 17 in
+  German (game.tsv, `DW4_LANGUAGE=de`).
+- **The PC's F1 menu** (P0 as for the earlier merges: the 8 tabs, and
+  Settings at Graphics and at Second screen, at 100 % 1280 x 960 with Xbox
+  prompts and 231 % 1920 x 1080 with the Thor's, the title at frame 240,
+  every exe run from the same folder): bytewise identical to
+  feat-android-cux cadef0f2's in 20 of 20 pictures with `DW4_MENU_STILL`
+  and 16 of 16 without (outside the live frame time box). Against main
+  d230037f's release build at 100 %: 6 of 8 tabs identical; Settings (the
+  *Menu size* row) and Controls (the Nintendo layout's "and the AYN Thor")
+  differ exactly as cadef0f2 differs; at 231 % every tab differs because
+  main has no `DW4_UI_SCALE` (its menu stays at 100 % in the window).
+- **The console menu's scripts** (`tools/menu/run.sh d`, the PC with
+  Android's rules): d1 to d8 without a failed expect.
+- **Online scenarios** with the merged development client
+  (`tools/online_test/run.py`, real hidden clients, a private MariaDB, the
+  server of this tree): W1, W4, W4i and W7 passed.
+- **APKs** (offline, idle priority, `-Pdw4.nativeJobs=6`): the debug APK
+  with both ABIs and the profile APK for arm64-v8a (`assembleProfile
+  -Pdw4.abis=arm64-v8a`), versionName 0.46.0.
+- **The emulator** (`dw4cux33`, headless, `-gpu host`, the debug APK
+  installed over the earlier one; this line has no math self-test line):
+  `--mute` start to the title (OpenGL ES 3.1, `data_hash
+  1c693d45198dd6c1`); the Back key opens the console F1 (`menu: open (the
+  Back key)`), its Online page shows "Online play on Android comes with a
+  later update.", Back closes it; `--mute --smoke-test 1500` with
+  `DW4_RENDER=1 DW4_GL_CHECK=1`: `GL error check: 0 errors in 1500
+  checks`; `--join 10.0.2.2:60850` stops before any connection with the
+  LAN refusal in a message box (`E/DW4 dw4_game: LAN play with another
+  device on Android comes with a later update.`); logcat without fatal
+  lines.
 
 ## The Thor
 
