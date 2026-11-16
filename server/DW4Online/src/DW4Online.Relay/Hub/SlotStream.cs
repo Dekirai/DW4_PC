@@ -86,6 +86,30 @@ public sealed class SlotStream
     public void RestartFillStreakClock(long now)
     {
         if (FillStreak > 0) FillStreakSince = now;
+        LagDebt = 0;
+    }
+
+    /// <summary>
+    /// The lag rule's debt (fix-021, SEAMLESS.md 6.4 and 19.6.7, "the flapping host" left by fix-flap): the sealed ticks this slot was
+    /// filled while another connected member's pad came in time (the slot held that member's play up), minus the ticks its own pad came
+    /// in time, one for one, never below 0 (<see cref="CountLag"/>; RoomHub.SealOne counts every sealed tick). The fill streak ends at
+    /// any pad in time, so a link whose drops each stay below Relay:LagLeaveSeconds, with a short burst of pads in time between them,
+    /// never reached the lag rule's limit; the debt reaches it once the time held up exceeds the time played in time by that limit. A
+    /// brief hiccup is paid back by as much play in time; a member who plays in time at least as long as it holds the others up never
+    /// gets there. Not counted: a host in his grace, a member resyncing, a tick at which no connected member's pad came in time (the
+    /// whole group, or this server, stalled). A host's return restarts it with the streak's clock.
+    /// </summary>
+    public int LagDebt { get; private set; }
+
+    /// <summary>One sealed tick of this slot for <see cref="LagDebt"/>: <paramref name="filled"/> (no pad of its own in time), and whether
+    /// that held another member up (<paramref name="heldUp"/>: another connected member's pad came in time, and this slot counts).</summary>
+    public void CountLag(bool filled, bool heldUp)
+    {
+        if (!filled)
+        {
+            if (LagDebt > 0) --LagDebt;
+        }
+        else if (heldUp) ++LagDebt;
     }
     /// <summary>The furthest tick this member submitted a pad for (its horizon).</summary>
     public uint Horizon { get; private set; }

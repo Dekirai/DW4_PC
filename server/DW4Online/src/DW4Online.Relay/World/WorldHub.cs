@@ -750,9 +750,13 @@ public sealed partial class RoomHub
         w.Host.Instance is { } g && w.Host.Slot >= 0 && w.Host.Slot < g.Streams.Length ? g.Streams[w.Host.Slot] : null;
 
     /// <summary>The host's sealed stage group when another member has a seat in it (whose play his absence or lag holds up), else null
-    /// (lone after a lag LEAVE, a solo-led group, the hub, between stage groups).</summary>
+    /// (lone after a lag LEAVE, a solo-led group, the hub, between stage groups, a group at its barrier). At a barrier the guests do not
+    /// wait for him (fix-021, 19.6.7 "At a barrier"): a closed link takes him out of it at once and it is decided without him, a silent
+    /// one is split off after Instances:BarrierReportSeconds; before, a host who dropped exactly at a gate still shared the parked group
+    /// with his guests when his grace was computed, so his absence debt shortened it although they went on at once, and the instance
+    /// ended for everyone before the usual minute.</summary>
     private static HubInstance? SharedGroup(WorldInstance w) =>
-        w.Host.Instance is { Mode: InstanceMode.Sealed, Ended: false } g && w.Host.Slot >= 0 && w.Host.Slot < g.Slots.Length &&
+        w.Host.Instance is { Mode: InstanceMode.Sealed, Ended: false, Barrier: null } g && w.Host.Slot >= 0 && w.Host.Slot < g.Slots.Length &&
         g.Slots[w.Host.Slot] == w.Host && g.Seats.Any(x => x.Member != w.Host) ? g : null;
 
     /// <summary>The absence debt at which a grace has no time left and a lagging host is out of the stage group: a whole grace and the
@@ -817,6 +821,8 @@ public sealed partial class RoomHub
         w.LastAwayNotice = now;
         w.Keeper.Hold();
         if (st is not null) st.NeutralFill = true;
+        // (Away in his grace, he reports no STATE for his stage group: a guest's newest takes effect, fix-021.)
+        if (w.Host.Instance is { } hg) SyncStateReporter(hg);
         Count("host_grace");
         if (length < fresh) Count("host_grace_shortened");
         var seconds = (uint)Math.Ceiling(Ms(length) / 1000.0);
@@ -841,6 +847,8 @@ public sealed partial class RoomHub
         }
         w.HostAwaySince = 0;
         w.GraceUntil = 0;
+        // (He may report again once he plays in time: his STATEs of the ticks he catches up never override a newer one, fix-021.)
+        if (w.Host.Instance is { } hg) SyncStateReporter(hg);
         Note("host_back", null, ("wid", w.Wid), ("debt_s", Math.Round(Ms(w.HostDebt) / 1000.0, 1)));
         foreach (var x in w.Members)
             if (x != w.Host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostBack, w.Host, 0, ""));
@@ -1677,6 +1685,18 @@ public sealed partial class RoomHub
             from = jw;
             return true;
         }
+        // fix-021 (fix-d43's review): a member that plays on alone from a stage group of an instance (taken out for lag, a resync or a
+        // missing hash; its link lost there or its field filed after a reconnect; its barrier split off or decided apart) is on that
+        // instance's story until its next barrier (HubMember.LoneWorld): foreign once it holds no seat there (removed meanwhile, the
+        // instance gone) unless the story is its own, and so from a detached group. Before, nothing named that story: a STORY with
+        // the member's own key reached its own keeper with the host's progress, and the achievements read it as at home.
+        if (m.Instance is null or { Mode: InstanceMode.Hub } && m.LoneStage is not null && m.LoneWorld is { } lw &&
+            (m.LoneDetached || lw != m.World) && !OwnsStory(lw, m))
+        {
+            from = lw;
+            return true;
+        }
+        if (m.Instance is null or { Mode: InstanceMode.Hub } && m.LoneStage is not null && m.LoneDetached && m.LoneWorld is null) return true;
         return false;
     }
 

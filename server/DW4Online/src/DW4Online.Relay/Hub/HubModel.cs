@@ -561,6 +561,8 @@ public sealed class HubInstance(uint id)
     /// <summary>The member whose STATE is in effect and its tick (<see cref="StateApplied"/>: one is, this visit).</summary>
     public HubMember? StateFrom { get; set; }
     public uint StateTick { get; set; }
+    /// <summary>The STATE in effect (fix-021: a change of the reporter that comes back to it changes nothing).</summary>
+    public StateMsg? StateInEffect { get; set; }
     public bool StateApplied { get; set; }
     /// <summary>The user's instance this stage group belongs to (null: a member's home, a hub stage group, or a stage group of
     /// nobody's instance after a detach).</summary>
