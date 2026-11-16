@@ -26,4 +26,13 @@ Worktree `DW4_PC-wt/r021client`; scripts, builds and logs in `build/r021/` (giti
 ## How to run
 
 - Builds: `build\r021\bld.cmd DIR TESTING [dev|nodev]` (Release, Ninja, the main checkout's FetchContent sources): `rel OFF
-  nodev` = the release game, `dev ON dev` = the development game with the tests.
+  nodev` = the release game, `dev ON dev` = the development game with the tests; `ctest.cmd dev`.
+- Server: `utest.sh LOG [filter]`; `itest.sh LOG [filter]` (own mysqld on 3755, data `build/r021/it-mysql`, test ports
+  60700-60749, SQL SHUTDOWN afterwards).
+- `checks.sh det st_en st_de`: det.sh (the main checkout's) twice on `off/dw4_r021_off.exe` (a copy of `rel`'s game), the
+  save state suite (`build/r021/st`, a copy of r020's) on `off/dw4_r021_st.exe` in English and German (`build/r021/lang`:
+  `data/lang/de` plus the main checkout's git-ignored `local/lang/de/game.tsv`).
+- Scenarios: `scen.sh LOG ARGS...` (run.py under `python -I` directly, mysqld 3756, ports 60750-60799; the client
+  `scen/dw4_r021_dev.exe`, a copy of `dev`'s game).
+- The package: `scripts/package_windows.ps1` with `-BuildDirectory build\r021\pkg -OutputDirectory build\r021\dist`, the
+  main checkout's pins file and `-CMakeArgs` with the FetchContent source folders (`pkg.cmd`).

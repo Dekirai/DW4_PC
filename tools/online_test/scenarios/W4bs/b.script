@@ -1,0 +1,10 @@
+# W4bs, b (k5, a stranger): W4b's b (takes the gate 6 s after a), whose pass stalls 6.3 s at the relay's first hold
+# (DW4_ONLINE_TEST_STALL). It must be a's guest within 60 s of its arrival; else (W4bsx) its script fails and ends.
+campaign until stage=stagml11,control
+idle until epoch>=@106
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+follow 40 until present=2 or waited>=60 fail waited>=59
+follow 40 until present=2,sealed>=4000 or present<=1 fail stagechange
+log together
+idle until frames>=60

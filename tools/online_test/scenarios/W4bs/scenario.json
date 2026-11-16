@@ -1,0 +1,34 @@
+{
+  "desc": "0.2.1: W4b with b's pass stalling 6.3 s at the relay's first hold and the holds of those seconds dropped (a machine-wide stall that stops the relay too): b still joins a's starting instance, no fallback after five seconds",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "one instance",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^1$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "env": {
+        "DW4_ONLINE_TEST_STALL": "6.3"
+      }
+    }
+  ]
+}
