@@ -1,8 +1,11 @@
 // The online CPU gate: the CRT's FMA3 choice computed from CPUID words, step
 // for step as __acrt_initialize_fma3 (docs/SEAMLESS.md 6.12), and on this
 // machine the same value the static CRT holds; Android's refusal of online
-// and LAN play with another machine (its simulation math is not the PC's yet).
+// and LAN play with another machine (its simulation math is not the PC's yet:
+// the loopback rule and the LAN hello's game tag) and of the cloud backup
+// (no HTTPS transport there).
 #include "online/cpu_gate.hpp"
+#include "online/http.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -74,6 +77,27 @@ void platform_rules() {
           "lan_refusal is this platform's rule");
     check(ipv4_loopback(0x7f000001u) && ipv4_loopback(0x7f0a0b0cu), "127.0.0.1 and 127.10.11.12 are loopback");
     check(!ipv4_loopback(0xc0a80105u) && !ipv4_loopback(0x0a000001u) && !ipv4_loopback(0u), "192.168.1.5, 10.0.0.1 and 0.0.0.0 are not");
+    // The LAN hello's game tag: a loopback tunnel (adb reverse / forward) to
+    // the other platform is refused by the host, whichever side hosts.
+    check(std::string(lan_game_for(false)) == "GDJEB2", "the PC's tag stays the one of every earlier release");
+    check(std::string(lan_game_for(true)) != lan_game_for(false), "Android sends its own tag");
+    check(std::string(kLanGameHere) == lan_game_for(kAndroidBuild), "this platform's tag");
+    check(!lan_game_problem_for(false, lan_game_for(false)).has_value() && !lan_game_problem_for(true, lan_game_for(true)).has_value(),
+          "a host takes a guest of its own platform");
+    check(lan_game_problem_for(false, lan_game_for(true)) == std::string(kPcLanAndroidRefusal), "a PC host refuses an Android guest");
+    check(lan_game_problem_for(true, lan_game_for(false)) == std::string(kAndroidLanRefusal), "an Android host refuses a PC guest");
+    check(lan_game_problem_for(false, "GZLE01") == std::string("Another game.") && lan_game_problem_for(true, "") == std::string("Another game."),
+          "another tag: \"Another game.\" as before");
+    check(lan_game_problem("GDJEB2/x") == lan_game_problem_for(kAndroidBuild, "GDJEB2/x"), "lan_game_problem is this platform's rule");
+    // The cloud backup: never offered where HttpWorker has no transport.
+    check(cloud_refusal_for(true, true) == std::string(kAndroidCloudRefusal) && cloud_refusal_for(true, false) == std::string(kAndroidCloudRefusal),
+          "Android: the cloud backup is refused");
+    check(!cloud_refusal_for(false, true).has_value(), "the PC with its transport: the cloud backup as before");
+    check(cloud_refusal_for(false, false) == std::string(kNoTransportCloudRefusal), "a build without a transport: refused");
+    check(cloud_refusal() == cloud_refusal_for(kAndroidBuild, kHttpsTransport), "cloud_refusal is this platform's rule");
+#ifdef _WIN32
+    check(kHttpsTransport && !cloud_refusal().has_value(), "Windows has the WinHTTP transport and the cloud backup");
+#endif
 }
 } // namespace
 

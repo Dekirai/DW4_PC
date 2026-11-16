@@ -71,9 +71,34 @@ std::optional<std::string> lan_refusal(bool peer_is_loopback);
 // An IPv4 address (host byte order) in 127.0.0.0/8.
 constexpr bool ipv4_loopback(std::uint32_t address) { return (address >> 24) == 127; }
 
+// The LAN hello's game tag (netplay.cpp): the PC's "GDJEB2" as always; an
+// Android build sends its own until its math is the PC's, so the host refuses
+// a member of the other platform by the hello itself, also where lan_refusal
+// cannot see the other machine: a tunnel of `adb reverse` / `adb forward`
+// ends on the device's loopback (a debuggable build with dw4args).
+inline constexpr const char* kLanGame = "GDJEB2";
+inline constexpr const char* kLanGameAndroid = "GDJEB2/android";
+constexpr const char* lan_game_for(bool android) { return android ? kLanGameAndroid : kLanGame; }
+inline constexpr const char* kLanGameHere = lan_game_for(kAndroidBuild);
+// The host's problem with a guest's tag (a host on Android or not), or
+// nothing: its own tag passes, the other platform's tag gets that platform's
+// text, anything else "Another game." as before.
+std::optional<std::string> lan_game_problem_for(bool android, const std::string& guest_game);
+std::optional<std::string> lan_game_problem(const std::string& guest_game);
+
+// F1 > Saves > Cloud backup's refusal, or nothing: the backup talks to the
+// server over HttpWorker, which has no transport on Android yet (online/
+// http.hpp kHttpsTransport), so a login could never answer there; a build
+// without a transport on another platform likewise.
+std::optional<std::string> cloud_refusal_for(bool android, bool https_transport);
+std::optional<std::string> cloud_refusal();
+
 // The texts the gate shows (also used by the tests).
 inline constexpr const char* kCpuRefusal = "Online play needs a CPU with FMA3 (Intel 2013 / AMD 2015 or later).";
 inline constexpr const char* kAndroidRefusal = "Online play on Android comes with a later update.";
 inline constexpr const char* kAndroidLanRefusal = "LAN play with another device on Android comes with a later update.";
+inline constexpr const char* kPcLanAndroidRefusal = "LAN play with an Android device comes with a later update.";
+inline constexpr const char* kAndroidCloudRefusal = "Cloud backup on Android comes with a later update.";
+inline constexpr const char* kNoTransportCloudRefusal = "Cloud backup is not available in this build.";
 
 } // namespace dw4::game::online

@@ -876,6 +876,13 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
         if (here) state.focus_pending = false;
     }
     banner(lobby);
+    // Android's refusal (online_refusal_first) is the whole screen: the
+    // device has no HTTPS transport (online/http.hpp), so no form below it
+    // could ever reach the server, and the server's state would only mislead.
+    if (online_refusal_first() && !lobby.refusal().empty() && !lobby.in_world()) {
+        wrapped_disabled("Offline play is not affected.");
+        return;
+    }
     using online::Gate;
     const Gate gate = lobby.gate();
     // A closed gate shows only its banner (and what to do), except while the

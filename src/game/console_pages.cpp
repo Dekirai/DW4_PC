@@ -177,14 +177,17 @@ void saves_root(Builder& b) {
         b.link("saves.card", "Where the save lives", "card", where);
     }
     {
-        std::string desc = "Not logged in";
-        if (a.cloud_panel) {
+        // (Android: only the refusal, online::cloud_refusal; nothing to log in to.)
+        const std::string refusal = a.cloud_panel ? a.cloud_panel->refusal() : std::string();
+        std::string desc = refusal.empty() ? "Not logged in" : "";
+        if (a.cloud_panel && refusal.empty()) {
             const auto v = a.cloud_panel->view();
             if (v.logged_in) desc = "Logged in as " + v.account;
         }
         Row& r = b.link("saves.cloud", "Cloud backup", "cloud", desc);
         if (a.cloud_available && !a.cloud_available())
             r.locked = "Not while you play online: the cloud backup is your local save's. Leave the room or session first.";
+        if (!refusal.empty()) r.locked = refusal;
         if (!a.cloud_panel) r.locked = "This run has no cloud backup.";
     }
 }
@@ -206,7 +209,7 @@ std::string when(const std::string& iso) { return iso.size() < 16 ? iso : iso.su
 void saves_cloud(Builder& b, bool revisions_page) {
     auto& a = b.a;
     State& st = b.st;
-    if (!a.cloud_panel || !a.card_store || (a.cloud_available && !a.cloud_available())) {
+    if (!a.cloud_panel || !a.card_store || !a.cloud_panel->refusal().empty() || (a.cloud_available && !a.cloud_available())) {
         b.page.valid = false;
         return;
     }

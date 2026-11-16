@@ -65,6 +65,10 @@ public:
     // The console menu's DW4_MENU_CLOUD: the test login at its first call,
     // the test action once the backup was read (draw() runs the same).
     void test_step(const save::CardStore& store);
+    // Why this build offers no cloud backup (online::cloud_refusal: Android,
+    // whose HttpWorker has no transport yet), or empty: both menus show only
+    // this sentence then, and nothing is ever sent.
+    const std::string& refusal() const { return refusal_; }
 
 private:
     void poll();
@@ -75,6 +79,7 @@ private:
     std::filesystem::path folder_;
     std::string version_;
     int protocol_ = 0;
+    std::string refusal_;
     std::unique_ptr<online::HttpWorker> http_;
     std::unique_ptr<online::cloud::CloudBackup> cloud_;
     char account_[64]{};

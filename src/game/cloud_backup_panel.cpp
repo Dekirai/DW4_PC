@@ -1,6 +1,7 @@
 #include "cloud_backup_panel.hpp"
 
 #include "online/api.hpp"
+#include "online/cpu_gate.hpp"
 #include "online/server_config.hpp"
 #include "online/token_store.hpp"
 
@@ -36,7 +37,8 @@ void wrapped_colored(const ImVec4& color, const std::string& text) {
 } // namespace
 
 CloudBackupPanel::CloudBackupPanel(std::filesystem::path online_folder, std::string client_version, int protocol)
-    : folder_(std::move(online_folder)), version_(std::move(client_version)), protocol_(protocol) {}
+    : folder_(std::move(online_folder)), version_(std::move(client_version)), protocol_(protocol),
+      refusal_(online::cloud_refusal().value_or(std::string())) {}
 
 CloudBackupPanel::~CloudBackupPanel() = default;
 
@@ -61,6 +63,11 @@ void CloudBackupPanel::ensure_worker() {
 }
 
 void CloudBackupPanel::log_in() {
+    // (No worker, no request where this build has no transport.)
+    if (!refusal_.empty()) {
+        login_message_ = refusal_;
+        return;
+    }
     ensure_worker();
     std::string account = account_;
     for (auto& c : account) c = c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c;
@@ -185,6 +192,7 @@ void CloudBackupPanel::request_restore(int revision) {
 }
 
 void CloudBackupPanel::test_step(const save::CardStore& store) {
+    if (!refusal_.empty()) return;
     poll();
     if (std::exchange(test_login_, false)) log_in();
     if (test_action_.empty() || !cloud_ || !cloud_->known() || cloud_->busy() != online::cloud::CloudBackup::Busy::none) return;
@@ -200,6 +208,10 @@ void CloudBackupPanel::test_step(const save::CardStore& store) {
 
 void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     ImGui::SeparatorText("Cloud backup (online account)");
+    if (!refusal_.empty()) {
+        ImGui::TextWrapped("%s", refusal_.c_str());
+        return;
+    }
     poll();
     if (!available) {
         ImGui::TextWrapped("Not while you play online: the cloud backup is your local save's. Leave the room or session first.");
