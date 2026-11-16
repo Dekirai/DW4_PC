@@ -153,6 +153,37 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_returned_host_whose_engine_still_catches_up_is_not_the_reporter_though_his_pads_come_in_time()
+    {
+        var r = new FlapRig();
+        var h = r.H;
+        r.Play(2000);
+        // a's engine reports the ticks it executed (NETFP, every 60th); he reports the stage group's STATE.
+        var before = (r.I.NextSeal - 1) / 60 * 60;
+        h.Send("a", new NetFpMsg(r.I.Id, r.I.Visit, before, 1).Frame());
+        StateAt(h, "a", r.I.NextSeal - 1, joinable: true);
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(10_000);
+        // Back: his client's pads follow the wall clock and come in time at once, while his engine replays the ten seconds sealed
+        // meanwhile (its NETFP still from before the drop). Before, he was the reporter again a housekeeping pass after his return, and
+        // the stage group's flags followed his replay, seconds behind b's play.
+        r.Back("a");
+        r.Mode["a"] = 2;
+        r.Play(1000);
+        Assert.False(r.W.HostAway);
+        Assert.True(r.I.Streams[h.Mem("a").Slot]!.FillStreak < SlotStream.LagFills);
+        Assert.Same(h.Mem("b"), r.I.StateReporter);
+        h.Send("b", new StateMsg(r.I.Id, r.I.Visit, r.I.NextSeal - 1, StateMsg.LoadEnded | StateMsg.BossLock, 5, StateReason.Boss).Frame());
+        Assert.True(r.I.BossLock);
+        // His engine at the ticks a second ago: caught up, the reporter again (b's STATE stays in effect: his newest is older).
+        h.Send("a", new NetFpMsg(r.I.Id, r.I.Visit, (r.I.NextSeal - 1) / 60 * 60, 1).Frame());
+        r.Play(300);
+        Assert.Same(h.Mem("a"), r.I.StateReporter);
+        Assert.True(r.I.BossLock);
+    }
+
+    [Fact]
     public void A_host_who_drops_exactly_at_a_gate_gets_a_fresh_grace_while_his_guest_goes_on()
     {
         var r = new FlapRig();

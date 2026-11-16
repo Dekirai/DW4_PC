@@ -11,7 +11,7 @@ route {route:stag0101_west}
 idle until epoch>=@292
 mat matz02 yes 2 until stage=stag0102,control or epoch>=@420
 log a arrived in stag0102
-wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11 or epoch>=@420
+wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11,epoch>=@420
 log a joined b there, still host
 wander 330 140 15 until epoch>=@420 fail stage=stagml11
 log a stayed for b

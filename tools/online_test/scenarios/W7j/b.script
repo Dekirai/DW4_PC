@@ -9,7 +9,7 @@ route {route:stag0101_west}
 idle until epoch>=@292
 mat matz02 yes 2 until stage=stag0102,control
 log b in stag0102
-wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11 or epoch>=@400
+wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11,epoch>=@400
 log a is back with b
 wander 330 140 15 until epoch>=@410 fail stage=stagml11
 log b stayed

@@ -105,6 +105,10 @@ public sealed class HubMember(uint id, long accountId, string name)
     public int PreferredSlot { get; set; } = -1;
     /// <summary>When the member entered its current instance (the longer member wins a two-member vote).</summary>
     public long InstanceSince { get; set; }
+    /// <summary>fix-021: the newest tick its engine reported executed (NETFP) and the stage group visit it was in: an engine far behind the
+    /// sealed ticks still catches up and is no STATE reporter (<c>RoomHub.AwayForState</c>).</summary>
+    public uint ExecutedTick { get; set; }
+    public (uint Inst, uint Visit) ExecutedIn { get; set; }
 
     /// <summary>The next tick of its instance's stream this member has not been sent yet.</summary>
     public uint Cursor { get; set; }

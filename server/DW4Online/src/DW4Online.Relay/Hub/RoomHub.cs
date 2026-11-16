@@ -853,6 +853,12 @@ public sealed partial class RoomHub
             Count("netfp_ahead");
             return;
         }
+        // (fix-021: how far its engine got, for the STATE reporter: one still catching up reports ticks the others played long ago.)
+        if (m.ExecutedIn != (i.Id, i.Visit) || msg.Tick > m.ExecutedTick)
+        {
+            m.ExecutedIn = (i.Id, i.Visit);
+            m.ExecutedTick = msg.Tick;
+        }
         if (Info.Protocol >= Wire.ReadyCheckProtocol)
         {
             // Protocol 48: the donor's fingerprint of its checkpoint's check tick (Wire.ReadyCheckTicks after the checkpoint
@@ -1081,10 +1087,18 @@ public sealed partial class RoomHub
         return best;
     }
 
-    /// <summary>The member in slot <paramref name="s"/> does not play in time in <paramref name="i"/> (<see cref="StateReporter"/>).</summary>
+    /// <summary>The member in slot <paramref name="s"/> does not play in time in <paramref name="i"/> (<see cref="StateReporter"/>): a host
+    /// in his grace, resyncing, its slot lagging, or its engine more than <see cref="ReporterBehindTicks"/> behind the sealed ticks (its
+    /// newest NETFP of the visit: a client back from a drop sends its pads in time at once, they follow the wall clock, while its engine
+    /// still catches up for seconds).</summary>
     private static bool AwayForState(HubInstance i, int s, HubMember x) =>
         (x.World is { HostAway: true } w && w.Host == x) || x.Resyncing ||
-        (i.Mode == InstanceMode.Sealed && i.Sealing && i.Streams[s] is { FillStreak: >= SlotStream.LagFills });
+        (i.Mode == InstanceMode.Sealed && i.Sealing && (i.Streams[s] is { FillStreak: >= SlotStream.LagFills } ||
+                                                        (x.ExecutedIn == (i.Id, i.Visit) && i.NextSeal > x.ExecutedTick + ReporterBehindTicks)));
+
+    /// <summary>An engine whose newest NETFP is this far behind the next sealed tick still catches up (three seconds: an engine in time
+    /// reports every 60th tick it executed, a one-way time after it was sealed).</summary>
+    public const uint ReporterBehindTicks = 180;
 
     /// <summary>
     /// A STATE of <paramref name="from"/> takes the place of the one in effect (fix-021, one rule for <see cref="OnState"/> and

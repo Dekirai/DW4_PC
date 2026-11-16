@@ -7,6 +7,11 @@
   "timeout": 1000,
   "min_shared_ticks": 0,
   "allow_close": true,
+  "server": {
+    "World": {
+      "TestHooks": true
+    }
+  },
   "db_checks": [
     {
       "name": "one instance, not lost",
