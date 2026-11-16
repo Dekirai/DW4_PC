@@ -62,7 +62,7 @@ $vsRoot = & $vswherePath -latest -prerelease -products '*' -requires Microsoft.V
 if (-not $vsRoot) { throw 'Visual Studio C++ tools were not found.' }
 New-Item -ItemType Directory -Force $buildDirectory | Out-Null
 $environmentScript = Join-Path $buildDirectory 'compiler-env.cmd'
-@('@echo off', "call `"$(Join-Path $vsRoot 'VC\Auxiliary\Build\vcvars64.bat')`" >nul", 'if errorlevel 1 exit /b %errorlevel%', 'set') |
+@('@echo off', "call `"$(Join-Path $vsRoot 'VC\Auxiliary\Build\vcvars64.bat')`" >nul 2>nul", 'if errorlevel 1 exit /b %errorlevel%', 'set') |
     Set-Content -LiteralPath $environmentScript -Encoding ascii
 $compilerEnvironment = & $env:ComSpec /d /c $environmentScript
 if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the Visual Studio compiler environment.' }
@@ -82,7 +82,8 @@ $configureOutput = & $cmakeExe @configure
 $configureExit = $LASTEXITCODE
 $configureOutput | ForEach-Object { Write-Host $_ }
 if ($configureExit -ne 0) { throw 'CMake configuration failed.' }
-$pins = @($configureOutput | Where-Object { $_ -match 'DW4Online server pins' })
+# (The summary names the pins' count only; the configure output above names the pins file.)
+$pins = @($configureOutput | ForEach-Object { if ($_ -match 'DW4Online server pins: (\S+)') { "server pins: $($Matches[1])" } })
 & $cmakeExe --build $buildDirectory --parallel $Jobs --target dw4_game dw4_catalog
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 

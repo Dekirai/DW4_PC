@@ -21,7 +21,25 @@ Worktree `DW4_PC-wt/r021client`; scripts, builds and logs in `build/r021/` (giti
 
 ## Checks
 
-(Filled in as they run.)
+Logs in `build/r021/logs/`.
+
+- **Builds** `rel` (Release, DEV=OFF, the options of the main checkout's `build/Game`; `dw4_game.exe` PE subsystem 2,
+  `dw4_catalog.exe` 3) and `dev` (DEV=ON, tests; `dw4_game.exe` subsystem 3); 139 compiler warnings in `rel` as in
+  0.2.0, none in the changed files.
+- **ctest** dev: the first run 76/78 (`online`, `online_env`: the new hook names were on neither list of
+  `src/engine/online.cpp`; the first name, `DW4_ONLINE_TEST_STALL`, was round 62's host-loop throttle of L2 and is
+  `DW4_ONLINE_TEST_BARRIER_STALL` now); after the fix the online tests 13/13. `dw4_online_session_tests` 590 checks
+  (`barrier_stall` with its counter-proof).
+- **The Windows program** (`gui_test.py` on a copy as `DW4_PC.exe`): `--help` into a pipe; started by a launcher
+  without a console and without handles (as Explorer), `--help` and a hidden `--smoke-test 300` into `saves/game.log`
+  (the start before in `game.previous.log`); from a process with a console (one without a window), `--help` into that
+  console; an unknown option's stderr line in both. The first try found a real bug: the log was opened twice with
+  `freopen_s` (exclusive sharing), stderr was left without a handle and `Engine::log`'s first `std::cerr` line ended
+  the game (0xC0000409); stderr now shares stdout's handle (`_dup2`).
+- **det.sh** twice on `off/dw4_r021_off.exe` (md5 24baae29): all four runs 4004f056 / audio 396cb219 (`det.log`).
+- **Save state suite** 17/17 English (`st_en.log`), 17/17 German (`st_de.log`; "game.tsv 4515 texts, 0 rejected").
+- **Server**: unit 703/703 (`unit.log`); the web page tests (`WebTests`, `FriendPageTests`) 10/10 with an own mysqld on
+  3755, shut down by SQL (`it_web.log`).
 
 ## How to run
 
