@@ -1,5 +1,5 @@
 {
-  "desc": "counter-proof of W4bs: the stall counted in full as before 0.2.1 (DW4_ONLINE_TEST_PASS_LIMIT=1000): b's client goes on alone five seconds after the relay's last hold, W4bs's checks must fail",
+  "desc": "counter-proof of W4bs: the stall counted in full as before 0.2.1 (DW4_ONLINE_TEST_BARRIER_LIMIT=1000): b's client goes on alone five seconds after the relay's last hold, W4bs's checks must fail",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -25,8 +25,8 @@
       "start": 3,
       "seed_story": true,
       "env": {
-        "DW4_ONLINE_TEST_STALL": "6.3",
-        "DW4_ONLINE_TEST_PASS_LIMIT": "1000"
+        "DW4_ONLINE_TEST_BARRIER_STALL": "6.3",
+        "DW4_ONLINE_TEST_BARRIER_LIMIT": "1000"
       }
     }
   ]

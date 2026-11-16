@@ -92,7 +92,7 @@ struct SessionConfig {
     // JOIN_REQ kind home goes unanswered, as from a modified client that
     // keeps playing after its removal; the relay then detaches the group.
     bool test_ignore_home = false;
-    // DW4_ONLINE_TEST_STALL=SECONDS (development builds, 0.2.1's W4bs): at the
+    // DW4_ONLINE_TEST_BARRIER_STALL=SECONDS (development builds, 0.2.1's W4bs): at the
     // first barrier the relay holds, the client's pass stalls this long and
     // the relay's holds that came meanwhile are dropped, as from a relay that
     // stalled with it (W4b's machine-wide stall of 0.2.0).

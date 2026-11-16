@@ -1,5 +1,5 @@
 # W4bs (0.2.1, 19.24): W4b with b's pass stalling 6.3 s at the relay's first hold of its barrier, the holds of those
-# seconds dropped (DW4_ONLINE_TEST_STALL: the machine-wide stall of W4b's failed run of 0.2.0, which stopped the relay
+# seconds dropped (DW4_ONLINE_TEST_BARRIER_STALL: the machine-wide stall of W4b's failed run of 0.2.0, which stopped the relay
 # too). The client's five seconds without the relay's word count only half a second of its own long pass: b waits on
 # and joins a's starting instance. W4bsx is the counter-proof (the stall counted in full: b goes on alone).
 b: online: test: the pass stalls 6\.3 s at the held barrier

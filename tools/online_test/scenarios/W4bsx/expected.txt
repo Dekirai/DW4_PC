@@ -1,5 +1,5 @@
 # W4bsx, the counter-proof of W4bs (0.2.1): W4bs's scripts (copies) and stall, but the stall counts in full toward the
-# client's five seconds at the barrier (DW4_ONLINE_TEST_PASS_LIMIT=1000, the client before 0.2.1): b goes on alone as
+# client's five seconds at the barrier (DW4_ONLINE_TEST_BARRIER_LIMIT=1000, the client before 0.2.1): b goes on alone as
 # in W4b's failed run of 0.2.0, so these checks of W4bs must fail (counter_proof). (W4bs's other checks are left out:
 # a's and the shared ones would fail as well, outside b's failed check.)
 b: online: test: the pass stalls 6\.3 s at the held barrier

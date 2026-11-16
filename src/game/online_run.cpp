@@ -192,12 +192,13 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     // DW4_ONLINE_TEST_IGNORE_HOME=1 (round I1b's W10c): a removed member's client
     // that never answers its JOIN_REQ home.
     if (const char* ignore = std::getenv("DW4_ONLINE_TEST_IGNORE_HOME"); ignore && std::string(ignore) == "1") config.test_ignore_home = true;
-    // DW4_ONLINE_TEST_STALL=SECONDS (0.2.1, W4bs): a stall of this client and of
-    // the relay's holds at the first held barrier (SessionConfig::test_stall);
-    // DW4_ONLINE_TEST_PASS_LIMIT=SECONDS (W4bsx, the counter-proof: 1000) the
+    // DW4_ONLINE_TEST_BARRIER_STALL=SECONDS (0.2.1, W4bs): a stall of this client
+    // and of the relay's holds at the first held barrier (SessionConfig::
+    // test_stall; not round 62's host-loop throttle DW4_ONLINE_TEST_STALL);
+    // DW4_ONLINE_TEST_BARRIER_LIMIT=SECONDS (W4bsx, the counter-proof: 1000) the
     // part of a long pass that counts as the relay's silence at a barrier.
-    if (const char* stall = std::getenv("DW4_ONLINE_TEST_STALL"); stall && std::atof(stall) > 0) config.test_stall = std::atof(stall);
-    if (const char* limit = std::getenv("DW4_ONLINE_TEST_PASS_LIMIT"); limit && std::atof(limit) > 0) config.barrier_pass_limit = std::atof(limit);
+    if (const char* stall = std::getenv("DW4_ONLINE_TEST_BARRIER_STALL"); stall && std::atof(stall) > 0) config.test_stall = std::atof(stall);
+    if (const char* limit = std::getenv("DW4_ONLINE_TEST_BARRIER_LIMIT"); limit && std::atof(limit) > 0) config.barrier_pass_limit = std::atof(limit);
 #endif
     // Round I1a: the own settings go with every BARRIER (19.8.7).
     config.own_settings = online::to_wire(room_.settings);

@@ -414,10 +414,10 @@ void Session::poll(double now) {
         send_presence(now);
     }
     if (test_stall_phase_ == 1) {
-        // DW4_ONLINE_TEST_STALL (development builds, W4bs): the whole pass stalls
+        // DW4_ONLINE_TEST_BARRIER_STALL (development builds, W4bs): the whole pass stalls
         // here; the next poll drops the holds that came meanwhile.
         test_stall_phase_ = 2;
-        log("test: the pass stalls %.1f s at the held barrier (DW4_ONLINE_TEST_STALL)", config_.test_stall);
+        log("test: the pass stalls %.1f s at the held barrier (DW4_ONLINE_TEST_BARRIER_STALL)", config_.test_stall);
         std::printf("online: test: the pass stalls %.1f s at the held barrier\n", config_.test_stall);
         std::fflush(stdout);
         std::this_thread::sleep_for(std::chrono::duration<double>(config_.test_stall));
@@ -642,7 +642,7 @@ void Session::handle(const w::Frame& frame, double now) {
             break;
         }
         if (test_stall_phase_ == 2) {
-            ++test_stall_dropped_; // (DW4_ONLINE_TEST_STALL: a hold of the relay that "stalled" with this client)
+            ++test_stall_dropped_; // (DW4_ONLINE_TEST_BARRIER_STALL: a hold of the relay that "stalled" with this client)
             break;
         }
         if (config_.test_stall > 0 && test_stall_phase_ == 0 && mode_ == Mode::parked) test_stall_phase_ = 1;

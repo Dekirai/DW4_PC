@@ -27,7 +27,7 @@
       "start": 3,
       "seed_story": true,
       "env": {
-        "DW4_ONLINE_TEST_STALL": "6.3"
+        "DW4_ONLINE_TEST_BARRIER_STALL": "6.3"
       }
     }
   ]
