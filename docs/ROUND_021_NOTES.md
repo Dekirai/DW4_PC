@@ -44,6 +44,12 @@ time (a half-open cut's end included), then 50 ms; `ProxyCutTests` pass.
   scene at 196.3 s of the relay's clock, a's silence grace at 202.6 s, c's JOIN decided at 211.5 s when the scene ended, a
   back at 248.5 s; no `HoldExpired`), W7i passed (`lag_leave why=lag_debt lag_debt_s=10` at 211.8 s, 11-12 s after the
   first cut; a led on alone, b played apart), W7j failed on the proxy's late close (above).
+- **Scenarios, the final code** (`marathon.sh`, `logs/marathon.log`, relay and proxy of f6276ed4, mysqld 3751, ports
+  60650-60699, run.py `--parallel 1`): batch `m_new` (`scen_m_new.log`, `run_20261116_164553`) W7h, W7i, W7j passed.
+  W7h: c held for b's scene at 197.4 s, a's silence grace at 203.4 s, c's JOIN decided at 212.5 s, `host_back` at 249.3 s.
+  W7i: `lag_leave why=lag_debt lag_debt_s=10.1` at 211.6 s. W7j: the barrier-set path (a's BARRIER at 298.09 s, his close
+  56 ms later: `host_away why=closed grace_s=60 debt_s=37.7`, b's BARRIER at 298.24 s, b on into stag0102; a back at
+  338.1 s, `join_decided` of b's stage group, one instance, `host_left` at the scripts' end).
 
 ## Left
 
