@@ -430,7 +430,9 @@ AArch64 FPCR with RMode round to nearest, FZ, FIZ, DN, AH, NEP and every
 trap enable off, put back on exit. `Engine::mxcsr_repairs()` counts either;
 `tests/online_tests.cpp` checks FPCR on AArch64 the way it checks MXCSR on
 x86. Online play stays refused on Android (`online_cpu_refusal`) until the
-simulation math is the MSL routines everywhere (a later phase).
+simulation math is the MSL routines everywhere (a later phase); since the
+main merge of 16.11.2026 LAN play with another machine too (`lan_refusal`,
+"The main merge of 16.11.2026" below).
 
 ### Paths and logs
 

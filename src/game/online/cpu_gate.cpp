@@ -55,9 +55,19 @@ int crt_math_path() noexcept {
 #endif
 }
 
-std::optional<std::string> online_cpu_refusal() {
-    if (crt_math_path() != 3) return std::string(kCpuRefusal);
+std::optional<std::string> online_refusal_for(bool android, int crt_path) {
+    if (android) return std::string(kAndroidRefusal);
+    if (crt_path != 3) return std::string(kCpuRefusal);
     return std::nullopt;
 }
+
+std::optional<std::string> online_cpu_refusal() { return online_refusal_for(kAndroidBuild, kAndroidBuild ? 0 : crt_math_path()); }
+
+std::optional<std::string> lan_refusal_for(bool android, bool peer_is_loopback) {
+    if (android && !peer_is_loopback) return std::string(kAndroidLanRefusal);
+    return std::nullopt;
+}
+
+std::optional<std::string> lan_refusal(bool peer_is_loopback) { return lan_refusal_for(kAndroidBuild, peer_is_loopback); }
 
 } // namespace dw4::game::online

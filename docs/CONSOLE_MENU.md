@@ -58,7 +58,7 @@ menu* shows the PC's F1 menu for one opening.
 | Controls | The players' controllers, Button prompts with a preview (each GameCube control with its picture: "L {L2}"), AYN Thor controller style (as on the PC: with a Thor's pad or a chosen style), Nintendo layout, Menu buttons (the menus' Confirm / Back pictures below), GameCube controller (with a GameCube pad), *Buttons / Main stick / D-pad / C-stick ›* (three slots per input: A or a tap captures, X ({DEL}) or a long press clears), Default controller layout (confirm) |
 | Cheats | God mode, Infinite MP, One-hit defeats (this session), EXP / damage rates (steppers 10 .. 1000 %), *Randomizer ›* (Seed on the number keyboard, New seed, Item drops, Enemies, Loading zones, the save's bond: locked online, as the PC's buttons are disabled), *Player N ›* (refill, levels, bits) |
 | Achievements | Achievements, Unlock notices, the count and play time, *About achievements*, one link per category (entries with the date or the progress) |
-| Online | Network indicator, the direct session's or room's lines (*Leave the session*, *Go offline* ask first; a room comes before the lobby's line), "Online play on Android comes in a later version." while only the lobby exists, *Connection ›* |
+| Online | Network indicator, the direct session's or room's lines (*Leave the session*, *Go offline* ask first; a room comes before the lobby's line), "Online play on Android comes with a later update." (the online gate's text, `kAndroidRefusal`) while only the lobby exists, *Connection ›* |
 
 ## Controls
 

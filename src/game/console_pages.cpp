@@ -11,6 +11,7 @@
 #include "language.hpp"
 #include "menu_choices.hpp"
 #include "mods.hpp"
+#include "online/cpu_gate.hpp"
 #include "screen2.hpp"
 #include "texture_pack.hpp"
 
@@ -1011,7 +1012,7 @@ void online_root(Builder& b) {
         Row& off = b.action("online.go_offline", "Go offline", {});
         off.confirm = confirm("Go offline?", "You leave the world session.", {"Go offline", "Stay"}, {[&a] { a.leave_room(); }, {}}, 1);
     } else if (a.has_lobby && a.has_lobby()) {
-        b.info("Online play on Android comes in a later version.", InfoTone::warn);
+        b.info(online::kAndroidRefusal, InfoTone::warn);
     } else {
         b.info("This run has no online screens.");
     }

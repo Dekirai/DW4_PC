@@ -47,7 +47,33 @@ int crt_math_path() noexcept;
 // machine may play online.
 std::optional<std::string> online_cpu_refusal();
 
-// The text the gate shows (also used by the tests).
+// Android: the simulation computes with the device's own libm, whose results
+// differ from the PC's CRT (docs/ANDROID.md "Floating-point environment").
+// The original's MSL routines on every platform come with their own protocol
+// bump (feat-android-cdet); until then an Android build plays neither online
+// nor LAN with another machine, where the session would part. The PC's rules
+// stay as they were.
+#ifdef __ANDROID__
+inline constexpr bool kAndroidBuild = true;
+#else
+inline constexpr bool kAndroidBuild = false;
+#endif
+
+// online_cpu_refusal's rule for a platform and the CRT's math path (testable
+// on every platform): Android always refused, the PC unless the path is 3.
+std::optional<std::string> online_refusal_for(bool android, int crt_path);
+
+// The LAN session's refusal for a peer (the joined host, or a host's guests:
+// loopback when the host listens on loopback only), or nothing: Android only
+// on this device (a test run's loopback session), the PC always.
+std::optional<std::string> lan_refusal_for(bool android, bool peer_is_loopback);
+std::optional<std::string> lan_refusal(bool peer_is_loopback);
+// An IPv4 address (host byte order) in 127.0.0.0/8.
+constexpr bool ipv4_loopback(std::uint32_t address) { return (address >> 24) == 127; }
+
+// The texts the gate shows (also used by the tests).
 inline constexpr const char* kCpuRefusal = "Online play needs a CPU with FMA3 (Intel 2013 / AMD 2015 or later).";
+inline constexpr const char* kAndroidRefusal = "Online play on Android comes with a later update.";
+inline constexpr const char* kAndroidLanRefusal = "LAN play with another device on Android comes with a later update.";
 
 } // namespace dw4::game::online

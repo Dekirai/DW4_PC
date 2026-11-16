@@ -1,5 +1,7 @@
 #include "netplay.hpp"
 
+#include "online/cpu_gate.hpp"
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -187,6 +189,12 @@ NetSession::~NetSession() {
 }
 
 bool NetSession::host(int port, int players, int delay, std::uint64_t data_hash, std::string& error, bool loopback) {
+    // (Android: guests from this device only until the simulation math is the
+    // same as the PC's, online/cpu_gate.hpp.)
+    if (const auto refusal = online::lan_refusal(loopback)) {
+        error = *refusal;
+        return false;
+    }
     const socket_handle s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == DW4_INVALID_SOCKET) {
         error = "cannot create a socket";
@@ -223,6 +231,15 @@ bool NetSession::join(const std::string& host_name, int port, std::uint64_t data
     addrinfo* found = nullptr;
     if (getaddrinfo(host_name.c_str(), std::to_string(port).c_str(), &hints, &found) != 0 || !found) {
         error = "cannot find host " + host_name;
+        return false;
+    }
+    // (Android: a host on this device only until the simulation math is the
+    // same as the PC's, online/cpu_gate.hpp.)
+    const bool loopback = found->ai_family == AF_INET &&
+                          online::ipv4_loopback(ntohl(reinterpret_cast<const sockaddr_in*>(found->ai_addr)->sin_addr.s_addr));
+    if (const auto refusal = online::lan_refusal(loopback)) {
+        freeaddrinfo(found);
+        error = *refusal;
         return false;
     }
     const socket_handle s = socket(found->ai_family, found->ai_socktype, found->ai_protocol);
