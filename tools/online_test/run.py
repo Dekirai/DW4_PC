@@ -103,6 +103,9 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# (Under python -I the script's own folder is not on sys.path; upload_card (W10-W10d) imports the neighbour character_test.)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 SERVER = os.path.join(REPO, "server", "DW4Online")
 WORK = os.path.join(HERE, ".work")

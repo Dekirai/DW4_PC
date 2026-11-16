@@ -395,6 +395,20 @@ if(DW4_BUILD_APP)
     VERBATIM)
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
+  # The release game is a Windows program: a double click opens no console
+  # window; its lines go to the starter's pipe or console, else to
+  # saves/game.log (src/game/program_output.hpp). Development builds
+  # (DW4_ONLINE_DEV) keep the console unless DW4_GAME_CONSOLE says otherwise.
+  option(DW4_GAME_CONSOLE "dw4_game as a console program (a console window opens with it)" ${DW4_ONLINE_DEV})
+  target_sources(dw4_game PRIVATE src/game/program_output.cpp)
+  if(WIN32 AND NOT DW4_GAME_CONSOLE)
+    set_target_properties(dw4_game PROPERTIES WIN32_EXECUTABLE ON)
+    target_compile_definitions(dw4_game PRIVATE DW4_GAME_WINDOWED=1)
+    if(MSVC)
+      # (main() stays the entry point of the Windows program.)
+      target_link_options(dw4_game PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+  endif()
   # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
   target_sources(dw4_game PRIVATE src/game/overflow_profile.cpp)
   if(WIN32)
@@ -490,18 +504,31 @@ if(DW4_BUILD_APP)
     target_link_libraries(dw4_save_store_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME save_store COMMAND dw4_save_store_tests)
   endif()
-  # The release's single entry point is DW4_PC.exe (dw4_game in the build).
+endif()
+# The release zip's layout, exactly (docs/DEVELOPMENT.md "Release packages";
+# scripts/package_windows.ps1 builds, installs, checks and zips it): the game
+# as DW4_PC.exe (dw4_game in the build), dw4_catalog (the mod authors' path
+# finder of the player guide), the player docs only (README, docs/PLAYER_GUIDE.md; the
+# developer docs stay on GitHub), the licenses, tools/verify_game.py and of
+# every committed language pack its language.ini and textures.tsv (never a
+# game.tsv: game-derived text, docs/L10N.md 2). No dw4_inspect, no PDB.
+if(DW4_BUILD_APP)
   install(PROGRAMS $<TARGET_FILE:dw4_game> DESTINATION . RENAME DW4_PC${CMAKE_EXECUTABLE_SUFFIX})
+endif()
+install(TARGETS dw4_catalog RUNTIME DESTINATION .)
+install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md DESTINATION .)
+if(DW4_BUILD_APP)
   install(FILES ${SDL3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL.txt)
   install(FILES ${imgui_src_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME imgui.txt)
   install(FILES ${stb_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME stb.txt)
   install(FILES ${zstd_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME zstd.txt)
 endif()
-install(TARGETS dw4_inspect dw4_catalog RUNTIME DESTINATION .)
-install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md DESTINATION .)
 install(FILES licenses/enbrip-MIT.txt DESTINATION licenses)
 if(DW4_BUILD_APP)
   install(FILES licenses/pl_mpeg-MIT.txt DESTINATION licenses)
 endif()
-install(DIRECTORY docs DESTINATION . FILES_MATCHING PATTERN "*.md")
+install(FILES docs/PLAYER_GUIDE.md DESTINATION docs)
 install(FILES tools/verify_game.py DESTINATION tools)
+if(DW4_BUILD_APP)
+  install(DIRECTORY data/lang/ DESTINATION lang FILES_MATCHING PATTERN "language.ini" PATTERN "textures.tsv")
+endif()

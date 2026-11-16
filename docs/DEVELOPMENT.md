@@ -19,6 +19,7 @@ test-run switches and the online server. Players find their guide in
 - [Online development](#online-development)
 - [Online server (DW4Online)](#online-server-dw4online)
 - [Release builds and the server pins](#release-builds-and-the-server-pins)
+- [Release packages](#release-packages)
 - [Further documentation](#further-documentation)
 
 ## What the project is
@@ -165,12 +166,20 @@ Visual Studio's CMake when present. Builds never start the game.
 | `-Configuration Debug\|Release\|RelWithDebInfo` | Build type and folder (`build\<Configuration>`, default Release) |
 | `-Jobs N` | Parallel build jobs (1-64, default 4) |
 | `-CoreOnly` | Skips the SDL/OpenGL runtime (`DW4_BUILD_APP=OFF`) |
-| `-Package` | Installs into `dist\DW4_PC`: one self-contained `DW4_PC.exe` (static C++ runtime, only system DLLs), the tools, licenses and docs, ready to copy anywhere |
+| `-Package` | Installs into `dist\DW4_PC` the release layout ([Release packages](#release-packages)): one self-contained `DW4_PC.exe` (static C++ runtime, only system DLLs), `dw4_catalog.exe`, the licenses, the player docs and the language packs, ready to copy anywhere |
 
 The game builds as `dw4_game.exe` (in `build\<Configuration>`); the install
 step renames it to `DW4_PC.exe`, the release's single entry point.
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe` (a separately configured
 build folder; `build.ps1` does not create it) with an optional stage name.
+
+A build without `DW4_ONLINE_DEV` (the release game) is a Windows program: no
+console window opens with it (`DW4_GAME_CONSOLE` OFF, PE subsystem 2). Its
+lines go to a pipe or file its starter gave it (test runs, `> out.txt`), else
+to the console it was started from (cmd, PowerShell; the prompt does not wait
+for it), else to `saves\game.log` next to the program (the start before:
+`saves\game.previous.log`); `src/game/program_output.hpp`. Development builds
+keep the console; `-DDW4_GAME_CONSOLE=ON` gives any build one.
 
 CMake options:
 
@@ -179,6 +188,7 @@ CMake options:
 | `DW4_BUILD_APP` | Build the game runtime (SDL3 / OpenGL / ImGui); default ON on Windows |
 | `DW4_STATIC_RUNTIME` | Link the C++ runtime statically (default ON): a clean Windows needs no Visual C++ redistributable |
 | `DW4_ONLINE_DEV` | Online client development build (the loopback test server allowed, see [Online development](#online-development)) |
+| `DW4_GAME_CONSOLE` | `dw4_game` as a console program (default at a build folder's first configure: ON with `DW4_ONLINE_DEV`, else OFF: a Windows program without a console window) |
 | `DW4_ONLINE_PINS`, `DW4_ONLINE_PINS_FILE`, `DW4_ONLINE_REQUIRE_PINS` | The server's certificate pins (see [Release builds](#release-builds-and-the-server-pins)) |
 | `DW4_TEST_DATA` | Game data for the tests that need it (skipped without) |
 | `BUILD_TESTING` | CTest targets (default ON) |
@@ -736,6 +746,45 @@ checkout, the build folder and the FetchContent source folders off `__FILE__`
 outside those folders. A release package's executables can be checked with
 `grep -a -o -E "Users[/\\][ -~]+" DW4_PC.exe` (no output). Release builds
 make no PDB; a build with one (RelWithDebInfo) names the PDB's absolute path.
+
+## Release packages
+
+The game's release zip is `DW4_PC-<version>-windows-x64.zip`; the release
+number follows the server's (0.2.1), the game's own version stays the CMake
+project version. `cmake --install` produces exactly its layout:
+
+| Path | From |
+| --- | --- |
+| `DW4_PC.exe` | `dw4_game` (renamed) |
+| `dw4_catalog.exe` | the mod authors' path finder ([PLAYER_GUIDE](PLAYER_GUIDE.md) "Content mods") |
+| `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` | the repository root |
+| `licenses\` | SDL, Dear ImGui, stb, Zstandard (from the fetched sources), enbrip, pl_mpeg |
+| `docs\PLAYER_GUIDE.md` | the player docs only; README and the guide link every other doc on GitHub |
+| `tools\verify_game.py` | the copy check of PLAYER_GUIDE "Game data" |
+| `lang\<code>\language.ini`, `textures.tsv` | every pack in `data/lang` (never a `game.tsv`: game-derived text, [L10N.md](L10N.md) 2) |
+
+No `dw4_inspect`, no developer docs, no PDB. The zip is made by
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\package_windows.ps1 -Version 0.2.1
+```
+
+It configures `-BuildDirectory` (default `build\Package`) as the release game
+(Release, `DW4_ONLINE_DEV` and `BUILD_TESTING` OFF, `DW4_GAME_CONSOLE` OFF,
+`DW4_ONLINE_REQUIRE_PINS` ON: the pins of `local/online_pins.txt`, or
+`-PinsFile FILE`; `-NoPins` allows a test package that plays offline and over
+LAN only), builds `dw4_game` and `dw4_catalog`, installs into a fresh
+`<build>\package\DW4_PC-<version>-windows-x64` and checks it: exactly the
+files above (the language files must be tracked in git), no `game.tsv`, no
+PDB / ILK / EXP / LIB, no file that names a profile folder (`Users/` or
+`Users\`, ASCII or UTF-16) or a PDB path, `DW4_PC.exe` a Windows program (PE
+subsystem 2) without a C++ runtime DLL (`dumpbin /dependents`). Only then it
+writes `-OutputDirectory` (default `dist`)`\DW4_PC-<version>-windows-x64.zip`
+(the files at its root, `/` separators) and `<zip>.sha256` (`sha256sum -c`
+reads it) and lists the zip's content. It refuses a checkout with changes to
+tracked files (`-AllowDirty`) and an existing zip (`-Force`); `-CMakeArgs`
+passes more configure options (for example `FETCHCONTENT_SOURCE_DIR_*` to
+build without downloads), `-Jobs N` the build's parallel jobs.
 
 ## Further documentation
 

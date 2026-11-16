@@ -198,8 +198,10 @@ void register_screen(online::OnlineLobby& lobby, OnlineUiState& s) {
     submit |= field("E-mail (optional)", "##reg_email", s.reg_email);
     label_cell("");
     ImGui::Checkbox("Remember me on this PC", &s.reg_remember);
+    // (0.2.1: true with and without e-mail on the server; the server sends none by default.)
     wrapped_disabled("User names: 3 to 20 letters, digits, '_' and '-'. Passwords: at least 10 characters. The e-mail address is "
-                     "only for password resets and never shown to others.");
+                     "optional and never shown to others; a server that sends e-mail uses it only for password resets. The "
+                     "recovery code resets a forgotten password either way.");
     ImGui::Spacing();
     if (button("Register", !lobby.busy(), true) || (submit && !lobby.busy())) {
         lobby.register_account(s.reg_name, s.reg_password, s.reg_again, s.reg_email, s.reg_remember);

@@ -716,6 +716,57 @@ void barrier_hold() {
     check(a.session->inst() >= 100, "a registered instance, not the timeout's");
 }
 
+// 0.2.1 (W4b's failed run of 0.2.0): the five seconds of a solo group at a
+// barrier are the relay's silence while this client listens. A stall of the
+// whole machine (the hub stops with the client: the client's pass takes 6.3 s,
+// and the hub's next hold is still 20 ms away when the client polls) is not
+// the relay's silence: the held barrier waits on and takes the relay's
+// decision. Counted in full (barrier_pass_limit 1000, as before 0.2.1) the
+// client goes on alone: the counter-proof. A relay that does not answer at all
+// still gets the fallback, after five seconds of listening.
+bool has_notice(std::vector<std::string> notices, const std::string& part);
+void barrier_stall() {
+    // The machine stalls: neither the hub nor the clients run in between.
+    const auto stall = [](World& world, double seconds) {
+        world.now += seconds;
+        world.hub.tick(world.now);
+        for (auto& c : world.clients) c->frame(world.now, seconds);
+    };
+    for (const double limit : {0.5, 1000.0}) {
+        World world;
+        world.hub.wait_hold = 14.0;
+        auto& a = world.add("kim", 1, [&](SessionConfig& config) { config.barrier_pass_limit = limit; });
+        a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+        check(world.run_until(10, [&] { return a.session->mode() == Mode::parked && a.engine.stage() == "stagml11"; }), "stall: parked at the field barrier");
+        world.run(2.5);
+        check(a.session->mode() == Mode::parked, "stall: parked before the stall (the hold speaks every second)");
+        stall(world, 6.3);
+        if (limit > 100) {
+            check(a.session->mode() != Mode::parked, "stall counted in full (before 0.2.1): the client goes on alone");
+            continue;
+        }
+        check(a.session->mode() == Mode::parked, "stall: still parked after a 6.3 s pass of the machine");
+        check(world.run_until(10, [&] { return a.session->mode() == Mode::solo && a.engine.stage() == "stag0101"; }),
+              "stall: the relay's decision after the hold");
+        check(a.session->inst() >= 100, "stall: a registered instance, not the timeout's");
+    }
+    {
+        World world;
+        world.hub.answer_barriers = false;
+        auto& a = world.add("kim", 1);
+        a.input = press_in({{"stagis10", 30}}, fake::kExitButton);
+        check(world.run_until(3, [&] { return a.session->mode() == Mode::parked; }), "stall, no answer: parked");
+        const double parked = world.now;
+        world.run(1.0);
+        stall(world, 6.3);
+        check(a.session->mode() == Mode::parked, "stall, no answer: still parked after the stall");
+        check(world.run_until(6, [&] { return a.session->mode() != Mode::parked; }), "stall, no answer: the fallback");
+        const double listened = world.now - parked - (6.3 - 0.5);
+        check(listened > 4.9 && listened < 5.3, "stall, no answer: after five seconds of listening (" + std::to_string(listened) + " s)");
+        check(has_notice(a.session->take_notices(), "The server did not answer; you continue on your own."), "stall, no answer: told");
+    }
+}
+
 // The room story through the client (SEAMLESS.md 8.3-8.6): the confirmed
 // story comes after WELCOME; nothing goes from the title (its character
 // select holds a record's own story); a flag and a key the guest's engine
@@ -2574,6 +2625,8 @@ int main(int argc, char** argv) {
         barrier_timeout();
         std::cout << "barrier hold\n";
         barrier_hold();
+        std::cout << "barrier: a stall of the machine\n";
+        barrier_stall();
         std::cout << "leave with an open prompt\n";
         leave_with_open_prompt();
         std::cout << "resync\n";
