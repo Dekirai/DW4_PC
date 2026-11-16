@@ -872,6 +872,22 @@ public sealed partial class RoomHub
                 StartGrace(w, now, "silence");
             if (w.HostAway)
             {
+                // fix-021: a grace his absence debt shortened while he shared a stage group with a guest is a fresh one again once he
+                // shares none (the guests went on without him: a barrier decided without him, an exit they took): his absence holds
+                // nobody up any more (the debt does not grow then either). A link that closed a moment before his BARRIER at a gate came
+                // ended the instance before the minute as finding 3's did.
+                var fresh = w.HostAwaySince + FromMs(_world.HostGraceSeconds * 1000.0);
+                if (w.GraceUntil < fresh && SharedGroup(w) is null)
+                {
+                    w.GraceUntil = fresh;
+                    w.LastAwayNotice = now;
+                    var renewed = (uint)Math.Ceiling(Ms(fresh - now) / 1000.0);
+                    Count("host_grace_fresh");
+                    Note("host_grace_fresh", null, ("wid", w.Wid), ("left_s", renewed), ("debt_s", Math.Round(Ms(w.HostDebt) / 1000.0, 1)));
+                    foreach (var x in w.Members)
+                        if (x != host) x.Peer?.Send(Notice(x, WorldNoticeKind.HostAway, host, renewed, ""));
+                    MarkInfoDirty(w);
+                }
                 if (now >= w.GraceUntil)
                 {
                     EndWorld(w, EndReason.HostLost, now);

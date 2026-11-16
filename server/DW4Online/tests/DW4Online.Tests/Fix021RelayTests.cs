@@ -226,6 +226,43 @@ public partial class HubLogicTests
         Assert.Same(h.Mem("a"), r.W.Host);
     }
 
+    [Fact]
+    public void A_host_whose_link_closes_a_moment_before_his_gate_gets_a_fresh_grace_once_his_guest_goes_on_without_him()
+    {
+        var r = new FlapRig();
+        var h = r.H;
+        r.Play(1000);
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(50_000);
+        r.Back("a");
+        r.Mode["a"] = 1;
+        r.Play(3000);
+        r.Mode["a"] = 2;
+        r.Play(2000);
+        // a's link closes in the stage, his BARRIER lost with it: an ordinary drop, b plays on with a's standing Digimon, the grace what
+        // his debt leaves (19 s).
+        r.DropAndNote("a");
+        r.Mode["a"] = 0;
+        Assert.InRange(r.GraceStarts.Single(), 17u, 21u);
+        // b reaches the exit a moment later: decided without a, b goes on alone. a shares no stage group with b any more: his grace is a
+        // fresh 60 s from its start (b's countdown says so). Before, the instance ended 19 s after the drop, b's countdown never grew.
+        r.Play(150);
+        r.Mode["b"] = 0;
+        h.Barrier("b", "stag0202", tick: r.I.NextSeal + 5);
+        r.Play(600);
+        Assert.Equal(BarrierDecision.New, h.Decision("b").Decision);
+        Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("host_grace_fresh"));
+        Assert.InRange(r.LastAway, 58u, 60u);
+        h.Advance(30_000);
+        h.Housekeep();
+        Assert.False(r.W.Ending);
+        r.Back("a");
+        Assert.False(r.W.HostAway);
+        Assert.False(r.W.Ending);
+        // While he shared b's stage group, his grace stays what the debt leaves (the drop above, and A_drop_soon_after_a_long_absence_...).
+    }
+
     /// <summary>A member's link that hangs open for <paramref name="cut"/> seconds at a time, with a burst between (0.1 s of late pads, then
     /// <paramref name="inTime"/> s in time: the held packets come out, the client's pads of the last ticks in time), from 1 s on, for at
     /// most <paramref name="limit"/> s. Returns the seconds from the first cut to the member's lag_leave (null: still in).</summary>
