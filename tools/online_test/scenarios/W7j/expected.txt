@@ -4,7 +4,9 @@
 relay: host_away .*why=silence.*grace_s=60
 relay: host_away .*why=silence.*grace_s=[1-5][0-9] .*debt_s=
 a: online: test: the link is cut at the barrier
-relay: host_away .*why=closed.*grace_s=60 .*debt_s=[1-9][0-9]
+# (a's BARRIER first, the barrier still gathering: a fresh grace at once; his link closed a moment before his BARRIER came: the
+# debt's grace, fresh once b went on without him, host_grace_fresh)
+relay: (host_away .*why=closed.*grace_s=60 .*debt_s=[1-9][0-9]|host_grace_fresh .*debt_s=[1-9][0-9])
 b: online-script: step .* log: b in stag0102
 relay: host_back
 relay: join_decided

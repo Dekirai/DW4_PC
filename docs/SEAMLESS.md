@@ -9795,7 +9795,10 @@ its own keeper with the former host's progress, and the context said
     nobody's play up (`lag_leave` took him out, or he leads alone, or his
     stage group gathers at a barrier: the guests do not wait for him there,
     "At a barrier" below; fix-021, before a host who dropped exactly at a
-    gate got what his debt left although his guests went on at once).
+    gate got what his debt left although his guests went on at once). A
+    grace the debt shortened is a fresh one from its start once he shares
+    no stage group with a guest any more (they went on without him;
+    `host_grace_fresh`, fix-021).
   - *The lag rule:* connected and lagging (outside `lagOut`'s exceptions:
     everyone lags, a resync), a host whose debt reached the limit is out of
     the stage group (`lag_leave`: he plays apart, still host, the instance
@@ -15363,7 +15366,7 @@ second a's row with one there, preselected).
 findings left open after 0.2.0 (docs/ROUND_INT_I1B_NOTES.md, "Open after
 0.2.0") and two older gaps; relay only, protocol 50 and schema 14 unchanged
 (0.2.0 clients and a 0.2.1 relay work together either way round). Notes:
-docs/ROUND_021_NOTES.md; tests `Fix021RelayTests` (12), each failing
+docs/ROUND_021_NOTES.md; tests `Fix021RelayTests` (13), each failing
 without its fix, two controls passing without them.
 
 - **The STATE reporter plays in time** (finding 1). `StateReporter` took
@@ -15394,10 +15397,15 @@ without its fix, two controls passing without them.
   `Instances:BarrierReportSeconds` (19.6.7, "At a barrier"). Before, his
   grace was computed while he was still in the gathering group, so his
   absence debt shortened it although his guests went on at once, and the
-  instance ended for everyone before the minute. Scenario W7j. (A host whose
-  BARRIER completed the barrier is in the guests' new stage group when his
-  link goes, as in W7e and W7f: that drop is an ordinary one, his debt
-  counts.)
+  instance ended for everyone before the minute. A link that closes a
+  moment before his BARRIER comes (lost with it) is an ordinary drop, the
+  grace what the debt leaves; once his guests go on without him (the
+  barrier decided without him, any exit they take) he shares no stage group
+  with them and the housekeeping makes the grace a fresh
+  `World:HostGraceSeconds` from its start (`host_grace_fresh`, the guests'
+  countdown renewed; the debt does not grow meanwhile). Scenario W7j. (A
+  host whose BARRIER completed the barrier is in the guests' new stage group
+  when his link goes, as in W7e and W7f: an ordinary drop, his debt counts.)
 - **The lag rule's gap** ("The flapping host", left by fix-flap): a pad in
   time ends the fill streak, so a link whose drops each stayed below the
   limit, with a short burst of pads in time between them, stayed in its
