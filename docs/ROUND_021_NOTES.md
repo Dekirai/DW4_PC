@@ -47,7 +47,19 @@ time (a half-open cut's end included), then 50 ms; `ProxyCutTests` pass.
 
 ## Left
 
-- (to be filled)
+- The server's version (`Directory.Build.props`) is still 0.2.0: the release's integration raises it to 0.2.1.
+- No real-client scenario for findings 2 and 5. 2: back from a drop, a host is away for the reporter while his engine
+  catches up (its NETFP behind), so his catch-up STATEs are ignored, not stale; the newer-by-tick rule is the unit test's.
+  5: an unmodified client keeps sending the host's owner key until it is home (W10c), so its STORY was refused before too;
+  the own key needs a modified client, the context an achievement report in that window; unit tests only.
+- A JOIN's checkpoint donor (`AskCheckpoint`) is still the connected member longest, also one whose link hangs open or
+  who catches up: the join waits `Instances:CheckpointWaitMs` (1 s) and takes the classic state (W7h's c). The reporter's
+  away rule would fit there too.
+- Seen in the code, not tested: a host whose link hangs open exactly at a stage load (after his BARRIER, before his
+  SNAPHASH) holds the new sealed stage group's start for up to `Instances:SnapHashSeconds` (60 s): before sealing starts
+  his slot does not fill, so neither the silence grace nor the lag rule sees him.
+- W7j takes the barrier-set path while the proxy passes a's close on before b's BARRIER (b's uplink 150 ms slower); in the
+  other order the renewed grace applies (its expectation takes either).
 
 ## How to run
 
