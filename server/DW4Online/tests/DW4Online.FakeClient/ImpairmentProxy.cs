@@ -198,8 +198,11 @@ public sealed class ImpairmentProxy : IAsyncDisposable
         }
         finally
         {
-            // Let queued data drain, then close both sides.
-            await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(imp.OneWayMs + imp.JitterMs, 0) + 600));
+            // Let this direction's queued data drain (until the latest segment's delivery time, a half-open cut's end included), then close
+            // both sides: an end of the link reaches the other side right after its last bytes, as through a real link (fix-021, W7j: a
+            // fixed 600 ms after the client's close let the relay decide its barrier with the closed member before it saw the close).
+            var drainMs = Math.Max(0, (last - Stopwatch.GetTimestamp()) * 1000.0 / Stopwatch.Frequency) + 50;
+            await Task.Delay(TimeSpan.FromMilliseconds(drainMs));
             c1.Dispose();
             c2.Dispose();
         }
