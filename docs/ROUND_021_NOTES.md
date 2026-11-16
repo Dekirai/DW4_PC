@@ -54,6 +54,26 @@ Logs in `build/r021/logs/`.
   `join_ready_timeout` and `fallback_new` as in W4b's failed run of 0.2.0), W1, W4, W10 (`upload_card` imports
   `character_test`) pass, W4b three times pass. W4b's second run had a real machine-wide stall (both clients' longest
   pass 6.5 s, in the lobby before the gate; the user played a game meanwhile) and passed.
+- **Final state** at 7b0ded0c (after the scenarios only `session.hpp`'s comment column and these notes changed): `rel`
+  and `dev` built again (`dw4_game.exe` md5 72544c60 / 0d532820), ctest dev 78/78 (`ctest_dev_final.log`); the
+  package again from the clean checkout: the existing zip refused without `-Force` (`pkg_refuse.log`), then with it
+  the same file list, SHA-256 f96745e9... (`pkg_final.log`, `pkg_zip_list.txt`); its `DW4_PC.exe` (md5 437ffb46) det.sh
+  4004f056 / 396cb219 (`det_pkg_final.log`) and `gui_test.py` all pass (`gui_test_pkg.log`). A negative run with an
+  untracked pack `data/lang/xx` (language.ini and a game.tsv; moved to `build/r021/alt/` afterwards) stopped with
+  "lang/xx/language.ini: not part of the release layout" and wrote no zip (`pkg_negative.log`); its game.tsv never
+  reached the stage.
+
+## Left
+
+- Merge and push are the user's (not done in this lane). The zip in `build/r021/dist` is the script's test output from
+  this branch; the release zip comes from main after the merge (`scripts/package_windows.ps1 -Version 0.2.1`).
+- `build/Game` of the main checkout (`Play-DW4-Game.cmd`) becomes a Windows program at its next configure after the
+  merge (DEV=OFF): cmd does not wait for it and its lines go to the cmd window only while that is still open, else to
+  `saves/game.log`; `-DDW4_GAME_CONSOLE=ON` there keeps the old console.
+- The AttachConsole path was checked from a process with a console but no window (no visible window was opened); a
+  real cmd window is the user's check.
+- Files without an eol rule (LICENSE, `licenses/*-MIT.txt`, `data/lang/*`) ship with the checkout's line endings; a
+  `.gitattributes` rule would make the zip independent of `core.autocrlf` (not changed here).
 
 ## How to run
 
