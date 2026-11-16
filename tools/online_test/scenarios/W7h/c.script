@@ -1,0 +1,11 @@
+# W7h, c (k2), a stranger: takes the lobby gate to stag0101 during b's scene (its prompt answered with a's row: autochoice first),
+# so its JOIN waits for the scene's end; it joins b while a's link still hangs (before @240). Before fix-021 its JOIN waited 30 s
+# and became a NEW of its own (HoldExpired): alone in stag0101.
+campaign until stage=stagml11,control
+idle until epoch>=@188
+explore mate00 yes until stage=stag0101,control fail epoch>=@270
+log c in stag0101
+idle until present=3 fail epoch>=@240
+log c joined while a was away
+idle until epoch>=@335 fail stage=stagml11
+log c stayed

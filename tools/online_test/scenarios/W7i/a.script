@@ -1,0 +1,13 @@
+# W7i, host a (k5): hosts in stag0101 with b; from @200 b's link keeps hanging open; b's lag debt takes it out of a's stage group
+# within its second cut (about @211), a leads on alone, still host.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until present=2,sealed>=600
+log b joined
+idle until epoch>=@195
+wander -150 -60 20 until present=1 fail epoch>=@300
+log a plays on without b
+wander -150 -60 20 until epoch>=@325 fail stage=stagml11
+log a stayed host

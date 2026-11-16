@@ -1,0 +1,17 @@
+# W7j, host a (k10): hosts in stag0101; with b walks stag0101's west route to matz02 and waits by it; from @230 his link keeps hanging
+# open (his absence debt grows), at @292 both step on matz02 and his client cuts its link at the park for 40 s. Back at about @332 he
+# arrives alone and joins b in stag0102, still host.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+idle until present=2,sealed>=600
+log b joined
+route {route:stag0101_west}
+idle until epoch>=@292
+mat matz02 yes 2 until stage=stag0102,control or epoch>=@420
+log a arrived in stag0102
+wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11 or epoch>=@420
+log a joined b there, still host
+wander 330 140 15 until epoch>=@420 fail stage=stagml11
+log a stayed for b

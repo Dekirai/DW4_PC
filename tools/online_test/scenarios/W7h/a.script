@@ -1,0 +1,15 @@
+# W7h, host a (k5): hosts in stag0101 with b; the proxy holds his packets from @197 for 50 s (a half-open link: his grace starts
+# after 4 s of silence); back at @247 he catches up and sees c, who joined meanwhile.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until present=2,sealed>=600
+log b joined
+idle until epoch>=@190
+idle until epoch>=@250
+log a back
+idle until present=3 fail epoch>=@330
+log a sees c
+wander -150 -60 20 until epoch>=@345 fail stage=stagml11
+log a played on as host

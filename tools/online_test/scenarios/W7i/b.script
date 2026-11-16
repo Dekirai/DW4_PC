@@ -1,0 +1,12 @@
+# W7i, guest b (k2): from @200 its link hangs open for 7 s at a time (eight cuts, 0.2 s apart); it plays on near (442,-10) (W7g's
+# spot: the wander towards (-150,-60) crosses stag0101's rock slope, which a k2 character does not survive). Taken out by its lag debt
+# it plays on apart (alone in its engine, its seat kept). Before fix-021 it stayed in a's stage group: present stayed 2.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until epoch>=@200
+wander 442 -10 8 until present=1 fail epoch>=@300
+log b plays on apart
+wander 442 -10 8 until epoch>=@315 fail stage=stagml11
+log b done

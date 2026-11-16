@@ -1,0 +1,39 @@
+{
+  "desc": "a guest's link that keeps hanging open below the lag limit (fix-021, 6.4, 19.6.7, W7g's shape for a guest): from @200 the proxy holds b's packets for 7 s at a time, 0.2 s apart (eight half-open cuts). Each cut stays below Relay:LagLeaveSeconds (10 s) and b's pads of the last ticks before each window come in time, so its fill streak ends every time; its lag debt (the ticks its slot held a up minus its ticks in time) reaches 10 s in the second cut and the lag rule takes b out of a's stage group (lag_leave why=lag_debt): b plays on apart with its seat, a leads on alone, the instance goes on. Before, b stayed in a's stage group for good",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "allow_close": true,
+  "db_checks": [
+    {
+      "name": "one instance, not lost",
+      "sql": "SELECT COUNT(*), SUM(COALESCE(end_reason, '') = 'host_lost') FROM instance_history",
+      "expect": "^1\t0$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "cut": {
+        "at": 200,
+        "seconds": 7,
+        "mode": "half",
+        "every": 7.2,
+        "count": 8
+      }
+    }
+  ]
+}

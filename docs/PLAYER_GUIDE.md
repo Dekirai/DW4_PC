@@ -723,7 +723,14 @@ the group. One whose connection keeps dropping gets less time to come back
 with each drop until he has played on long enough again (the countdown shows
 it), and if he still holds the others up he is set apart: he plays on in a
 stage instance of his own, still the host, and the instance goes on. So he
-cannot hold the others up for long. **Go offline** saves the online character
+cannot hold the others up for long. A host whose connection drops right as
+the group takes an exit gets the full minute: the others go on without
+waiting. The same goes for every member whose connection keeps stalling
+for a few seconds at a time: the stalls add up, and whoever holds the others
+up much longer than he plays along with them is set apart (he plays on alone
+in his stage and meets the others again at a stage change); a hiccup now and
+then costs nothing. While the host's connection hangs, the others' game
+decides when a newcomer may join. **Go offline** saves the online character
 and returns to the title.
 
 **Menus do not pause.** Everyone plays for themselves as in an online game:

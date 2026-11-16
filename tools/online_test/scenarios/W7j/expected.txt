@@ -1,0 +1,16 @@
+# W7j (fix-021, 19.6.7): a's half-open cuts leave an absence debt; his link closes at his park at matz02 while the barrier still waits
+# for b's report: decided without him, b goes on at once; a shares no stage group with b, so the grace is a fresh 60 s despite the
+# debt; a comes back after 40 s and joins b. Before, the gathering stage group counted as shared: about 25 s, host_lost
+relay: host_away .*why=silence.*grace_s=60
+relay: host_away .*why=silence.*grace_s=[1-5][0-9] .*debt_s=
+a: online: test: the link is cut at the barrier
+relay: host_away .*why=closed.*grace_s=60 .*debt_s=[1-9][0-9]
+b: online-script: step .* log: b in stag0102
+relay: host_back
+relay: join_decided
+a: online-script: step .* log: a joined b there, still host
+b: online-script: step .* log: a is back with b
+!relay: instance_end .*reason=host_lost
+!relay: lag_leave
+!a: online-script: FAIL
+!b: online-script: FAIL

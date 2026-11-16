@@ -1,0 +1,13 @@
+# W7h, guest b (k2): starts a shared scene at @190 (TEST busy for 1200 ticks: every engine of the stage group not joinable); when it
+# ends (about @210) its joinable STATE is the stage group's, a being silent, and c joins.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until epoch>=@190
+testhook busy 1200 until frames>=10
+log b starts the scene
+follow 40 until present=3 fail epoch>=@240
+log b sees c while a is away
+follow 40 until epoch>=@335 fail stage=stagml11
+log b stayed

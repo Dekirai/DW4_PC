@@ -1,0 +1,15 @@
+# W7j, guest b (k10): walks the route with a, waits by matz02 and steps on it with a at @292; goes on into stag0102 at once when a
+# drops at the park, and waits there for a (his grace a fresh 60 s). Before fix-021 the debt-shortened grace ended the instance
+# before a came back and b went home.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+route {route:stag0101_west}
+idle until epoch>=@292
+mat matz02 yes 2 until stage=stag0102,control
+log b in stag0102
+wander 330 140 15 until present=2,sealed>=600 fail stage=stagml11 or epoch>=@400
+log a is back with b
+wander 330 140 15 until epoch>=@410 fail stage=stagml11
+log b stayed
