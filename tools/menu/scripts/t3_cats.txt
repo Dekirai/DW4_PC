@@ -1,0 +1,59 @@
+# F: every category at the Thor's 231 % on the top screen, then on the lower screen (the virtual Thor pad).
+expect log + pad Odin Controller thor
+wait 120
+expect open
+shot t3_00_saves
+pad a
+pad r1
+expect page general
+shot t3_01_general
+pad r1
+shot t3_02_display
+pad r1
+shot t3_03_graphics
+pad r1
+expect page controls
+shot t3_04_controls
+pad down
+pad down
+pad down
+pad down
+expect focus controls.bind.buttons
+pad a
+shot t3_05_bindings
+pad b
+pad r1
+shot t3_06_cheats
+pad r1
+shot t3_07_achievements
+pad r1
+expect page online
+shot t3_08_online
+pad r1
+expect page saves
+pad down
+pad down
+pad down
+pad down
+pad down
+pad a
+expect page saves/cloud
+shot t3_09_cloud
+pad b
+# ---- the lower screen
+screen2
+wait 30
+shot t3_10_lower_saves
+pad r1
+shot t3_11_lower_general
+pad r1
+shot t3_12_lower_display
+tap 300 253.2 lower
+wait 10
+pad r1
+pad r1
+expect page controls
+shot t3_13_lower_controls
+pad start
+wait 10
+expect closed

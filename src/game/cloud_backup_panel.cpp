@@ -1,8 +1,12 @@
 #include "cloud_backup_panel.hpp"
 
 #include "online/api.hpp"
+#include "online/cpu_gate.hpp"
 #include "online/server_config.hpp"
 #include "online/token_store.hpp"
+
+#include "app_paths.hpp"
+#include "host_view.hpp"
 
 #include "dw4/save_import.hpp"
 
@@ -33,7 +37,8 @@ void wrapped_colored(const ImVec4& color, const std::string& text) {
 } // namespace
 
 CloudBackupPanel::CloudBackupPanel(std::filesystem::path online_folder, std::string client_version, int protocol)
-    : folder_(std::move(online_folder)), version_(std::move(client_version)), protocol_(protocol) {}
+    : folder_(std::move(online_folder)), version_(std::move(client_version)), protocol_(protocol),
+      refusal_(online::cloud_refusal().value_or(std::string())) {}
 
 CloudBackupPanel::~CloudBackupPanel() = default;
 
@@ -58,6 +63,11 @@ void CloudBackupPanel::ensure_worker() {
 }
 
 void CloudBackupPanel::log_in() {
+    // (No worker, no request where this build has no transport.)
+    if (!refusal_.empty()) {
+        login_message_ = refusal_;
+        return;
+    }
     ensure_worker();
     std::string account = account_;
     for (auto& c : account) c = c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c;
@@ -129,8 +139,79 @@ void CloudBackupPanel::poll() {
     }
 }
 
+CloudBackupPanel::View CloudBackupPanel::view() {
+    poll();
+    View v;
+    v.logged_in = logged_in_;
+    v.account = account_name_;
+    v.logging_in = login_id_ != 0;
+    v.busy = cloud_ && cloud_->busy() != online::cloud::CloudBackup::Busy::none;
+    v.known = cloud_ && cloud_->known();
+    v.overview = cloud_ && cloud_->overview() ? &*cloud_->overview() : nullptr;
+    if (cloud_) {
+        v.message = cloud_->message();
+        v.message_error = cloud_->message_is_error();
+    }
+    v.login_message = login_message_;
+    v.typed_account = account_;
+    v.password_typed = password_[0] != 0;
+    v.remember = remember_;
+    return v;
+}
+
+void CloudBackupPanel::set_account(const std::string& account) { std::snprintf(account_, sizeof account_, "%s", account.c_str()); }
+
+void CloudBackupPanel::set_password(const std::string& password) { std::snprintf(password_, sizeof password_, "%s", password.c_str()); }
+
+void CloudBackupPanel::set_remember(bool remember) { remember_ = remember; }
+
+void CloudBackupPanel::request_login() {
+    if (login_id_ == 0) log_in();
+}
+
+void CloudBackupPanel::request_logout(bool forget) { log_out(forget); }
+
+void CloudBackupPanel::request_refresh() {
+    if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) {
+        confirm_ = 0;
+        cloud_->refresh();
+    }
+}
+
+void CloudBackupPanel::request_upload(const save::CardStore& store) {
+    if (!cloud_ || cloud_->busy() != online::cloud::CloudBackup::Busy::none) return;
+    if (const auto local = store.read(0)) cloud_->upload(*local);
+}
+
+void CloudBackupPanel::request_download(int revision, const save::CardStore& store) {
+    if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) cloud_->download(revision, store, save::backup_folder(store));
+}
+
+void CloudBackupPanel::request_restore(int revision) {
+    if (cloud_ && cloud_->busy() == online::cloud::CloudBackup::Busy::none) cloud_->restore(revision);
+}
+
+void CloudBackupPanel::test_step(const save::CardStore& store) {
+    if (!refusal_.empty()) return;
+    poll();
+    if (std::exchange(test_login_, false)) log_in();
+    if (test_action_.empty() || !cloud_ || !cloud_->known() || cloud_->busy() != online::cloud::CloudBackup::Busy::none) return;
+    const auto action = std::exchange(test_action_, std::string());
+    std::printf("cloud backup test: %s\n", action.c_str());
+    std::fflush(stdout);
+    if (action == "upload") {
+        if (const auto local = store.read(0)) cloud_->upload(*local);
+    } else if (action == "download" && cloud_->overview()) {
+        cloud_->download(0, store, save::backup_folder(store));
+    }
+}
+
 void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     ImGui::SeparatorText("Cloud backup (online account)");
+    if (!refusal_.empty()) {
+        ImGui::TextWrapped("%s", refusal_.c_str());
+        return;
+    }
     poll();
     if (!available) {
         ImGui::TextWrapped("Not while you play online: the cloud backup is your local save's. Leave the room or session first.");
@@ -140,15 +221,17 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     ImGui::PushTextWrapPos(0.0f);
     if (!logged_in_) {
         ImGui::TextDisabled("One backup of your local save per online account, plus its five earlier revisions.");
-        ImGui::SetNextItemWidth(220);
+        // (220 px at the menus' 1x; FontScaleDpi is their scale, host_view.hpp.)
+        const float field = 220.0f * ImGui::GetStyle().FontScaleDpi;
+        ImGui::SetNextItemWidth(field);
         ImGui::InputText("Account##cloud", account_, sizeof account_);
-        ImGui::SetNextItemWidth(220);
+        ImGui::SetNextItemWidth(field);
         ImGui::InputText("Password##cloud", password_, sizeof password_, ImGuiInputTextFlags_Password);
         ImGui::Checkbox("Remember me##cloud", &remember_);
         ImGui::BeginDisabled(login_id_ != 0);
         if (ImGui::Button("Log in##cloud")) log_in();
         ImGui::EndDisabled();
-        ImGui::TextDisabled("(Without a password a remembered login of this PC is used.)");
+        ImGui::TextDisabled("(Without a password a remembered login of %s is used.)", kThisMachine);
         if (!login_message_.empty()) ImGui::TextWrapped("%s", login_message_.c_str());
         ImGui::PopTextWrapPos();
         return;
@@ -197,7 +280,7 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
             confirm_revision_ = 0;
         }
         ImGui::EndDisabled();
-        if (!overview->history.empty() && ImGui::TreeNode("Earlier revisions##cloud")) {
+        if (!overview->history.empty() && ImGui::TreeNodeEx("Earlier revisions##cloud", f1_tree_flags())) {
             for (const auto& h : overview->history) {
                 ImGui::PushID(h.revision);
                 ImGui::Text("Revision %d, %s from %s", h.revision, when(h.uploaded_at).c_str(), h.device.empty() ? "an unnamed PC" : h.device.c_str());

@@ -142,6 +142,10 @@ bool Languages::select(std::string_view code, std::string* message) {
         if (message) *message = std::string(code) + ": " + why;
         return false;
     }
+    // (The menu's entry follows what was read: a game.tsv copied in or
+    // removed while the game runs, as a player does over USB on Android.)
+    for (auto& entry : entries_)
+        if (entry.code == found->first) entry.texts = found->second.catalog != nullptr;
     selected_ = found->first;
     ++generation_;
     return true;

@@ -72,6 +72,32 @@ enum class WiiDriver : std::uint8_t { automatic, on, off };
 // GameCube pad's A and B); bindings: the game's A binding confirms and its
 // B binding goes back.
 enum class MenuButtons : std::uint8_t { layout, bindings };
+// [gamepad] thor_style: the AYN Thor's own controller setting "Controller
+// style" (Thor Settings, or its quick settings tile), which decides the key
+// codes of its face buttons, printed in the Nintendo layout (A right, B
+// bottom, X top, Y left): standard sends the printed letters' codes (SDL's
+// SOUTH is the printed A), xbox sends positions like an Xbox pad (SOUTH is
+// the bottom button, printed B). auto (the default): the device's setting as
+// Android reports it (persist.sys.gamepad.type), read again while the game
+// runs (pad_family.hpp).
+enum class ThorStyle : std::uint8_t { automatic, standard, xbox };
+// [screen2] mode: the second screen's panels (screen2.hpp: Online, Status,
+// Menu) on a second display of the device (the AYN Thor's lower screen):
+// auto (the default) uses one when Android reports it, off never does.
+// Nothing on the PC, which shows the same panels as an overlay instead.
+enum class Screen2Mode : std::uint8_t { automatic, off };
+// [screen2] tab: the panel the second screen shows (the last one chosen).
+enum class Screen2Tab : std::uint8_t { online, status, menu };
+// [menu] pause_unfocused's default (the owner's decision of 14.11.2026): on
+// Android, where the notification shade or the quick settings take the
+// controller while the game stays on the screen, the game pauses; on the PC
+// (Alt+Tab, a minimized window) it plays on unless the player turns it on.
+constexpr bool pause_unfocused_default(bool android) { return android; }
+#ifdef __ANDROID__
+inline constexpr bool kPauseUnfocusedDefault = pause_unfocused_default(true);
+#else
+inline constexpr bool kPauseUnfocusedDefault = pause_unfocused_default(false);
+#endif
 
 struct Settings {
     // [window]
@@ -84,6 +110,11 @@ struct Settings {
     int fps_limit = 0;       // presented frames per second, 0 = no limit
     bool smooth_motion = true; // blend between the 60 Hz steps when presenting faster
     int msaa = 4;            // samples, applied at start-up
+    // [window] ui_scale: the size of the port's menus (the F1 menu, the
+    // first start's screens, the controller pages, the notices) in percent;
+    // 0 = auto: the display's scale on Android (ui_scale_factor), 100 on the
+    // PC. Written only once it is not auto (a PC's file stays as it was).
+    int ui_scale = 0;
     // [graphics]: texture quality, filtering, LOD bias, sharpening, shadow
     // quality and the texture memory budget (graphics_options.hpp).
     GraphicsOptions graphics;
@@ -91,6 +122,12 @@ struct Settings {
     int volume = 100;        // master volume in percent
     // [menu]
     bool pause_in_menu = true;
+    // [menu] pause_unfocused: the game pauses while another window has the
+    // focus (Android: the notification shade, the quick settings, while the
+    // game stays on the screen; the PC: Alt+Tab, a minimized window), offline
+    // only. Default on Android, off on the PC (kPauseUnfocusedDefault); not
+    // written while it is the default.
+    bool pause_unfocused = kPauseUnfocusedDefault;
     // [preferences]
     bool skip_intro = false;
     // [preferences] language: the game text's display language (docs/L10N.md):
@@ -127,6 +164,7 @@ struct Settings {
     std::string prompts = "auto";
     WiiDriver wii_driver = WiiDriver::automatic;
     MenuButtons menu_buttons = MenuButtons::layout;
+    ThorStyle thor_style = ThorStyle::automatic; // (written only once it is not auto)
     bool gc_adapter = true;
     // [mods]
     std::filesystem::path texture_pack; // the texture pack folder (default mods/textures)
@@ -149,6 +187,14 @@ struct Settings {
     // [online] net_indicator: the small ping / input delay box in online
     // sessions (round 62).
     bool net_indicator = true;
+    // [screen2] the second screen's panels (screen2.hpp): the lower screen's
+    // use (Screen2Mode), its tab, and the same panels as an overlay window
+    // over the game (the PC's form, and Android's without a second screen;
+    // off by default). Each is written only once it is not its default (a
+    // PC's file stays as it was).
+    Screen2Mode screen2_mode = Screen2Mode::automatic;
+    Screen2Tab screen2_tab = Screen2Tab::status;
+    bool screen2_overlay = false;
     // [data]
     std::filesystem::path data;
     // The save files of memory card slots A and B (GCI bytes; relative paths
@@ -188,5 +234,16 @@ struct Settings {
 private:
     IniFile ini_;
 };
+
+// The menus' scale (ImGui) for a ui_scale setting (percent, 0 = auto) and
+// the display's scale (SDL_GetWindowDisplayScale: Android's density, the
+// Thor's 369 dpi panel 2.31). Auto follows the display where the port asks
+// for it (Android: follow_display) and is 1 elsewhere, so the PC looks as
+// before; a set percent counts everywhere. Between 1 and 4.
+float ui_scale_factor(int setting_percent, float display_scale, bool follow_display);
+// The menu sizes the F1 menu offers (percent; 0 = auto).
+inline constexpr int kUiScaleChoices[] = {0, 100, 125, 150, 175, 200, 225, 250, 300};
+// The [screen2] tab's names in settings.ini ("online", "status", "menu").
+const char* screen2_tab_id(Screen2Tab tab);
 
 } // namespace dw4::game

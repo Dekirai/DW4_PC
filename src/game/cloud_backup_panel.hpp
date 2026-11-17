@@ -34,6 +34,42 @@ public:
     // confirmed.
     void set_test(const std::string& account, const std::string& password, const std::string& action);
 
+    // ---- The console menu's view and actions (docs/CONSOLE_MENU.md: the
+    // same state and the same requests as the section above; the console
+    // menu asks its own confirms before an overwrite).
+    struct View {
+        bool logged_in = false;
+        std::string account;          // logged in as
+        bool logging_in = false;      // the login request runs
+        bool busy = false;            // a backup request runs
+        bool known = false;           // the backup was read (or "none yet")
+        const online::cloud::Overview* overview = nullptr;
+        std::string message;          // the backup's last answer
+        bool message_error = false;
+        std::string login_message;
+        std::string typed_account;    // the account field
+        bool password_typed = false;  // the password field holds something
+        bool remember = true;
+    };
+    // (Polls the answers first, as draw() does.)
+    View view();
+    void set_account(const std::string& account);
+    void set_password(const std::string& password);
+    void set_remember(bool remember);
+    void request_login();
+    void request_logout(bool forget);
+    void request_refresh();
+    void request_upload(const save::CardStore& store);
+    void request_download(int revision, const save::CardStore& store);
+    void request_restore(int revision);
+    // The console menu's DW4_MENU_CLOUD: the test login at its first call,
+    // the test action once the backup was read (draw() runs the same).
+    void test_step(const save::CardStore& store);
+    // Why this build offers no cloud backup (online::cloud_refusal: Android,
+    // whose HttpWorker has no transport yet), or empty: both menus show only
+    // this sentence then, and nothing is ever sent.
+    const std::string& refusal() const { return refusal_; }
+
 private:
     void poll();
     void ensure_worker();
@@ -43,6 +79,7 @@ private:
     std::filesystem::path folder_;
     std::string version_;
     int protocol_ = 0;
+    std::string refusal_;
     std::unique_ptr<online::HttpWorker> http_;
     std::unique_ptr<online::cloud::CloudBackup> cloud_;
     char account_[64]{};

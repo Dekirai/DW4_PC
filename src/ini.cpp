@@ -140,6 +140,25 @@ bool IniFile::remove(std::string_view section, std::string_view key) {
     return lines_.size() != before;
 }
 
+bool IniFile::remove_section_if_empty(std::string_view section) {
+    std::size_t first = lines_.size(), last = 0;
+    for (std::size_t i = 0; i < lines_.size(); ++i) {
+        const auto& line = lines_[i];
+        if (!same(line.section, section)) continue;
+        const auto content = trim(line.text);
+        const bool header = content.size() >= 2 && content.front() == '[' && content.back() == ']';
+        if (!line.key.empty() || (!content.empty() && !header)) return false; // (a key or a comment keeps it)
+        first = std::min(first, i);
+        last = i;
+    }
+    if (first == lines_.size()) return false;
+    const bool at_end = last + 1 == lines_.size();
+    std::erase_if(lines_, [&](const Line& line) { return same(line.section, section); });
+    // (set() separated an appended section from the one before by a blank line.)
+    if (at_end && first > 0 && first == lines_.size() && trim(lines_.back().text).empty()) lines_.pop_back();
+    return true;
+}
+
 void IniFile::set_int(std::string_view section, std::string_view key, int value) { set(section, key, std::to_string(value)); }
 
 void IniFile::set_bool(std::string_view section, std::string_view key, bool value) {

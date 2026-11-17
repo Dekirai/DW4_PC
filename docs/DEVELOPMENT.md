@@ -137,6 +137,8 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | `server/DW4Online` | The online backend (ASP.NET Core + MariaDB: accounts, online character, cloud save, achievements, the online world, relay, website), its tests and deployment kit; built with `dotnet`, separate from the CMake build |
 | `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `dw4_texpack` (texture export for pack authors), `remaster/` (4x upscaling pipeline for texture packs), `verify_game.py` (read-only game identification), `flicker.py` and `blend_report.py` (presentation dumps), `online_test/` (the local online stack) |
 | `tests` | Asset-free tests for the core formats and tools |
+| `cmake` | CMake includes of the root CMakeLists.txt: `third_party.cmake` (the pinned FetchContent sources, one list for the PC and the Android build), `copy_lang.cmake` (the language packs next to the PC program), `trim_build_paths.cmake` (no build-machine path in the binaries) and `android.cmake` (its Android path) |
+| `android`, `src/android`, `tools/android` | The Android port in progress (AYN Thor): the Gradle wrapper around the root CMakeLists.txt, which builds the game itself as `libmain.so` into the APK, phase A's device probe (`src/android`) and the programs and scripts for `adb shell` runs on a device (`tools/android`, e.g. gles_check); see [ANDROID.md](ANDROID.md) |
 | `data` | Committed data that is not game data (language pack manifests and picture hashes, online definitions) |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
 
@@ -799,4 +801,5 @@ build without downloads), `-Jobs N` the build's parallel jobs.
 | [L10N.md](L10N.md), [LOCALIZATION.md](LOCALIZATION.md) | Display languages and language packs |
 | [SEAMLESS.md](SEAMLESS.md) | The online co-op design |
 | [SURVIVAL.md](SURVIVAL.md) | Data Overflow (survival mode) |
+| [ANDROID.md](ANDROID.md), [CONSOLE_MENU.md](CONSOLE_MENU.md) | The Android port in progress (AYN Thor) and its console-style F1 menu |
 | [research/](research/) | Reverse-engineering notes (DOL addresses, recovered behavior) |

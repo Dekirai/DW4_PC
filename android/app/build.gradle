@@ -1,0 +1,178 @@
+// DW4_PC for Android (docs/ANDROID.md). The native code is the repository's
+// own root CMakeLists.txt (its if(ANDROID) path, cmake/android.cmake); this
+// file only wraps it into an APK with SDL's Java side.
+plugins {
+    id 'com.android.application'
+}
+
+// The repository root: android/ sits in it.
+def repoRoot = rootProject.projectDir.parentFile
+
+// One version for PC and Android: project(DW4_PC VERSION MAJOR.MINOR.PATCH)
+// in the root CMakeLists.txt is the versionName, and the versionCode is
+// MAJOR*10000000 + MINOR*10000 + PATCH*100 + BUILD, so 0.46.0 is 460000.
+// BUILD (0..99, default 0) is -Pdw4.build=N for a rebuild of one version.
+def cmakeLists = new File(repoRoot, 'CMakeLists.txt').getText('UTF-8')
+def versionMatch = cmakeLists =~ /project\(\s*DW4_PC\s+VERSION\s+(\d+)\.(\d+)\.(\d+)/
+if (!versionMatch.find()) {
+    throw new GradleException("${repoRoot}/CMakeLists.txt has no 'project(DW4_PC VERSION x.y.z' line")
+}
+def vMajor = versionMatch.group(1) as int
+def vMinor = versionMatch.group(2) as int
+def vPatch = versionMatch.group(3) as int
+def vBuild = (project.findProperty('dw4.build') ?: '0') as int
+if (vMajor > 209 || vMinor > 999 || vPatch > 99 || vBuild < 0 || vBuild > 99) {
+    throw new GradleException("version ${vMajor}.${vMinor}.${vPatch} build ${vBuild} does not fit the versionCode scheme")
+}
+def dw4VersionName = "${vMajor}.${vMinor}.${vPatch}"
+def dw4VersionCode = vMajor * 10000000 + vMinor * 10000 + vPatch * 100 + vBuild
+
+// The third-party sources without network: the PC build's FetchContent copies
+// (build/Release/_deps by default). A worktree or another checkout names the
+// directory in local.properties (dw4.depsDir=C:/.../build/Release/_deps) or
+// with -Pdw4.depsDir=...; nothing in it is ever written.
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+def depsDir = new File((project.findProperty('dw4.depsDir') ?: localProperties.getProperty('dw4.depsDir')
+        ?: new File(repoRoot, 'build/Release/_deps').path) as String)
+def sdlSource = new File(depsDir, 'sdl3-src')
+if (!new File(sdlSource, 'android-project/app/src/main/java/org/libsdl/app/SDLActivity.java').isFile()) {
+    throw new GradleException("No SDL source tree at ${sdlSource}: build the PC version once (its FetchContent " +
+            "fills build/Release/_deps) or set dw4.depsDir in android/local.properties (docs/ANDROID.md)")
+}
+def forwardSlashes = { File f -> f.absolutePath.replace('\\', '/') }
+// The game's other third-party sources from the same _deps directory
+// (FETCHCONTENT_SOURCE_DIR_<NAME>, cmake/third_party.cmake).
+def fetchContentDirs = ['IMGUI_SRC': 'imgui_src-src', 'PL_MPEG_SRC': 'pl_mpeg_src-src', 'STB_SRC': 'stb_src-src',
+                        'ZSTD_SRC': 'zstd_src-src'].collect { name, dir ->
+    def source = new File(depsDir, dir)
+    if (!source.isDirectory()) {
+        throw new GradleException("No ${dir} at ${source}: build the PC version once (docs/ANDROID.md)")
+    }
+    "-DFETCHCONTENT_SOURCE_DIR_${name}=${forwardSlashes(source)}".toString()
+}
+
+// SDL's Java classes from the same SDL source tree as libSDL3.so, copied at
+// build time and never kept in the repository: SDLActivity refuses to start
+// when its version and the native library's differ.
+def sdlJavaDir = layout.buildDirectory.dir('generated/sdl3-java').get().asFile
+def copySdlJava = tasks.register('copySdlJava', Sync) {
+    from new File(sdlSource, 'android-project/app/src/main/java')
+    into sdlJavaDir
+}
+
+// The language packs (docs/L10N.md, docs/ANDROID.md) as the assets
+// lang/<code>/: the repository's data/lang (language.ini, textures.tsv),
+// which the game copies into lang/ of its folder at start, as the PC build
+// puts them next to the program. The game text (game.tsv, derived from the
+// game's script) is never committed and never goes into the APK: a file
+// named game.* is left out even if one lies in data/lang.
+def assetsDir = layout.buildDirectory.dir('generated/dw4-assets').get().asFile
+def copyLangAssets = tasks.register('copyLangAssets', Sync) {
+    from(new File(repoRoot, 'data/lang')) {
+        include '*/*.ini', '*/*.tsv', '*/*.po'
+        exclude '*/game.*'
+    }
+    into new File(assetsDir, 'lang')
+}
+
+// The native build's parallel jobs, capped with -Pdw4.nativeJobs=N (CMake
+// job pools for compiling and linking); unset: Ninja's default.
+def nativeJobs = (project.findProperty('dw4.nativeJobs') ?: '0') as int
+def jobPoolArguments = nativeJobs > 0
+        ? ["-DCMAKE_JOB_POOLS=dw4_jobs=${nativeJobs}".toString(), '-DCMAKE_JOB_POOL_COMPILE=dw4_jobs', '-DCMAKE_JOB_POOL_LINK=dw4_jobs']
+        : []
+
+// The ABIs built (-Pdw4.abis=x86_64 for an emulator-only test build, half the
+// native build's time); default both: arm64-v8a for the Thor, x86_64 for the
+// emulator.
+def knownAbis = ['arm64-v8a', 'x86_64']
+def buildAbis = ((project.findProperty('dw4.abis') ?: knownAbis.join(',')) as String).split(',')*.trim().findAll { it }
+if (buildAbis.isEmpty() || !knownAbis.containsAll(buildAbis)) {
+    throw new GradleException("dw4.abis=${buildAbis.join(',')}: only ${knownAbis.join(', ')}")
+}
+
+android {
+    namespace 'org.dw4pc.game'
+    compileSdk 35
+    ndkVersion '30.0.16248370'
+
+    defaultConfig {
+        applicationId 'org.dw4pc.game'
+        // Android 13, the AYN Thor's system; officially only the Thor.
+        minSdk 33
+        targetSdk 35
+        versionCode dw4VersionCode
+        versionName dw4VersionName
+        ndk {
+            // arm64-v8a for the Thor, x86_64 for the emulator (dw4.abis above).
+            abiFilters(*buildAbis)
+        }
+        externalNativeBuild {
+            cmake {
+                arguments(*(['-DANDROID_STL=c++_static',
+                              "-DFETCHCONTENT_SOURCE_DIR_SDL3=${forwardSlashes(sdlSource)}".toString(),
+                              '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'] + fetchContentDirs + jobPoolArguments))
+                // The game as libmain.so (cmake/android.cmake).
+                targets 'dw4_game'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDir sdlJavaDir
+            assets.srcDir assetsDir
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        // Debug builds carry the debug key. Release signing (an own key kept
+        // outside the repository, never another project's) comes in phase F.
+        release {
+            minifyEnabled false
+        }
+        // profile (assembleProfile): the debug build with the native code
+        // optimized as a release build's. The debug build type compiles it
+        // without optimization (CMAKE_BUILD_TYPE Debug, -O0), so measurements
+        // (frame and step times) use this one: RelWithDebInfo (-O2; the
+        // APK's libraries are stripped as usual). It is the debug build
+        // otherwise: the SDK's debug key and the same application id (it
+        // installs over a debug APK with `install -r` and keeps the app's
+        // data), debuggable (run-as, the dw4args test runs). Debuggable does
+        // not slow the native code; only the Java side checks its JNI calls
+        // (CheckJNI; the game makes a few per frame at most).
+        // docs/ANDROID.md, "Measuring".
+        profile {
+            initWith debug
+            matchingFallbacks = ['debug']
+            externalNativeBuild {
+                cmake {
+                    arguments '-DCMAKE_BUILD_TYPE=RelWithDebInfo'
+                }
+            }
+        }
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn copySdlJava, copyLangAssets
+}
+tasks.matching { it.name ==~ /merge\w*Assets/ }.configureEach {
+    dependsOn copyLangAssets
+}

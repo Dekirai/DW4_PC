@@ -1,0 +1,20 @@
+# D6: the lower screen's Menu panel on the PC (DW4_MENU_LOWER=1, 1240x1080 at 231 %): touch, then the pad
+# (its first press after a touch only shows the cursor), the category by R1, a drag.
+wait 3
+expect open
+expect page display
+shot d6_00_lower
+tap 300 253.2
+expect setting window.widescreen true
+tap 486.6 315.2
+expect setting window.fps_limit 30
+pad down
+expect focus display.frame_limit
+pad left
+expect setting window.fps_limit 0
+shot d6_01_lower_pad
+pad r1
+expect page graphics
+drag 350 400 350 150 500
+wait 3
+shot d6_02_lower_dragged

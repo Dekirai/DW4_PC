@@ -28,6 +28,16 @@
 
 namespace dw4::game::online {
 
+// Whether HttpWorker has a transport on this platform: WinHTTP on Windows;
+// elsewhere (Android) every request ends at once with "no HTTPS transport on
+// this platform", so nothing that needs the server may be offered there
+// (online_cpu_refusal, cloud_refusal: online/cpu_gate.hpp).
+#ifdef _WIN32
+inline constexpr bool kHttpsTransport = true;
+#else
+inline constexpr bool kHttpsTransport = false;
+#endif
+
 struct HttpRequest {
     std::string method = "GET";
     std::string path;                 // below the endpoint's base path, e.g. "/rooms"

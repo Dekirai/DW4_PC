@@ -1,0 +1,111 @@
+# D2: Select does nothing on the Thor (Android's rules), Back opens and closes from any depth, the binding capture
+# (A, L2 analog, the Thor's digital L2, Select bindable), its cancel by Back, by the deadline and by touch, clear by X.
+expect log + pad Odin Controller thor
+wait 3
+expect open
+pad select
+wait 3
+expect open
+back
+wait 2
+expect log menu: closed (the Back key)
+expect closed
+back
+wait 2
+expect log menu: open (the Back key)
+expect open
+# ---- Controls > Buttons
+pad down
+pad down
+pad down
+pad down
+expect page controls
+pad a
+expect focus controls.prompts
+pad down
+expect focus controls.thor_style
+pad down
+pad down
+pad down
+expect focus controls.bind.buttons
+pad a
+expect page controls/bindings.buttons
+expect focus controls.bind.buttons.a
+shot d2_00_bindings
+# Back from a sub-page closes the menu (and opens it there again).
+back
+wait 2
+expect closed
+back
+wait 2
+expect page controls/bindings.buttons
+# ---- capture slot 1 with X
+pad a
+wait 4
+expect dialog capture
+shot d2_01_capture
+pad x
+wait 3
+expect log menu: capture A slot 1 =
+expect focus controls.bind.buttons.a
+# ---- slot 2 with the analog L2
+pad right
+pad a
+wait 4
+pad l2
+wait 3
+expect log menu: capture A slot 2 = lefttrigger
+# ---- slot 3 with the Thor's digital L2 (joystick button 15): its trigger
+pad right
+pad a
+wait 4
+pad thor-r2
+wait 3
+expect log menu: capture A slot 3 = righttrigger
+# ---- Select binds (it is a game button on the Thor)
+pad a
+wait 4
+pad select
+wait 3
+expect log menu: capture A slot 3 = back
+expect open
+# ---- Back cancels only the capture
+pad a
+wait 4
+back
+wait 3
+expect log menu: capture A slot 3 cancelled (the Back key)
+expect open
+expect page controls/bindings.buttons
+# ---- the deadline
+pad a
+wait 4
+waitms 10300
+wait 2
+expect log menu: capture A slot 3 cancelled (timeout)
+# ---- X clears the slot
+pad x
+wait 2
+expect log menu: Controls > A slot 3 = (cleared)
+expect value controls.bind.buttons.a X|L2|-
+# ---- the default layout (a confirm, Cancel first)
+pad b
+expect page controls
+key end
+expect focus controls.reset
+pad a
+wait 2
+expect dialog confirm
+shot d2_02_confirm
+waitms 300
+pad a
+wait 2
+expect log -> Cancel
+pad a
+wait 2
+waitms 300
+pad left
+pad a
+wait 2
+expect log 'Reset all controller bindings to the defaults?' -> Reset
+expect value controls.reset Default controller layout

@@ -133,8 +133,15 @@ std::string lower(std::string text) {
 }
 
 // The banner over every screen: the gate, a newer version, this PC's refusal.
+// (online_refusal_first: Android's refusal before anything else, as the
+// second screen's Online panel says it.)
 void banner(online::OnlineLobby& lobby) {
     using online::Gate;
+    if (online_refusal_first() && !lobby.refusal().empty()) {
+        wrapped_colored(kWarn, lobby.refusal());
+        ImGui::Spacing();
+        return;
+    }
     const auto gate = lobby.gate();
     if (gate != Gate::open && gate != Gate::unknown) {
         wrapped_colored(gate == Gate::checking ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled) : kWarn, lobby.gate_text());
@@ -871,6 +878,13 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
         if (here) state.focus_pending = false;
     }
     banner(lobby);
+    // Android's refusal (online_refusal_first) is the whole screen: the
+    // device has no HTTPS transport (online/http.hpp), so no form below it
+    // could ever reach the server, and the server's state would only mislead.
+    if (online_refusal_first() && !lobby.refusal().empty() && !lobby.in_world()) {
+        wrapped_disabled("Offline play is not affected.");
+        return;
+    }
     using online::Gate;
     const Gate gate = lobby.gate();
     // A closed gate shows only its banner (and what to do), except while the
@@ -916,6 +930,9 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     // round 50 / 54 screenshots' window), on the 4:3 picture.
     const float scale = std::max(0.6f, io.DisplaySize.y / 1009.0f);
     const float text = std::round(22.0f * scale), title = std::round(34.0f * scale);
+    // (These screens size themselves by the window like the game's own text;
+    // PushFont's sizes are taken before the menus' scale, update_ui_scale.)
+    const float font_scale = ImGui::GetStyle().FontScaleDpi > 0 ? ImGui::GetStyle().FontScaleDpi : 1.0f;
     const float picture_width = std::min(io.DisplaySize.x, io.DisplaySize.y * 4.0f / 3.0f);
     const float width = std::min(picture_width * 0.86f, 1000.0f * scale);
 
@@ -965,7 +982,7 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f * scale, 4.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     constexpr int kVars = 10;
-    ImGui::PushFont(body, text);
+    ImGui::PushFont(body, text / font_scale);
 
     // The title behind them steps back (as under the game's own windows).
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 120));
@@ -990,7 +1007,7 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
         draw->AddRectFilled(ImVec2(at.x, at.y + size.y - gap - line), ImVec2(at.x + size.x, at.y + size.y - gap), color);
     }
     // The heading in the title menu's manner.
-    ImGui::PushFont(heading, title);
+    ImGui::PushFont(heading, title / font_scale);
     const char* name = "Online";
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize(name).x) * 0.5f);
     ImGui::TextUnformatted(name);

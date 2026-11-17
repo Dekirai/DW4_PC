@@ -27,7 +27,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
+#define DW4_HAVE_MXCSR 1
+#endif
 
 #ifndef DW4_SOURCE_DIR
 #define DW4_SOURCE_DIR "."
@@ -374,6 +377,7 @@ void rules_guards() {
         check(online_refused, "an engine does not go online while another lives");
     }
     check(Engine::live_engines() == 0, "every engine counted out");
+#ifdef DW4_HAVE_MXCSR
     // MXCSR: an entry with flush to zero repairs it for its duration.
     Engine engine{dw4::MountedResources{}};
     const unsigned before = _mm_getcsr();
@@ -386,6 +390,27 @@ void rules_guards() {
     check(Engine::mxcsr_repairs() == repairs + 1, "a changed MXCSR is repaired");
     check((_mm_getcsr() & 0xFFC0u) == ((before | 0x8040u) & 0xFFC0u), "and put back afterwards");
     _mm_setcsr(before);
+#elif defined(__aarch64__) && (defined(__clang__) || defined(__GNUC__))
+    // FPCR (the Android port): an entry with flush to zero and default NaN
+    // repairs it for its duration.
+    Engine engine{dw4::MountedResources{}};
+    auto fpcr = [] {
+        unsigned long long value;
+        __asm__ __volatile__("mrs %0, fpcr" : "=r"(value));
+        return value;
+    };
+    auto set_fpcr = [](unsigned long long value) { __asm__ __volatile__("msr fpcr, %0" : : "r"(value)); };
+    const unsigned long long before = fpcr();
+    const auto repairs = Engine::mxcsr_repairs();
+    std::array<PadSample, 4> pads{};
+    engine.step(pads);
+    check(Engine::mxcsr_repairs() == repairs, "the default FPCR needs no repair");
+    set_fpcr(before | (3ull << 24)); // FZ + DN
+    engine.step(pads);
+    check(Engine::mxcsr_repairs() == repairs + 1, "a changed FPCR is repaired");
+    check(fpcr() == (before | (3ull << 24)), "and put back afterwards");
+    set_fpcr(before);
+#endif
 }
 
 void rules_replay_and_split_without_players() {

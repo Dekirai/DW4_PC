@@ -7,3 +7,10 @@
 *.ps1 text eol=crlf
 # Unified diff context lines use a significant single-space prefix.
 *.patch text eol=lf whitespace=-blank-at-eol
+# Android (docs/ANDROID.md): the Gradle wrapper scripts keep their platform's line ends.
+/android/gradlew text eol=lf
+/android/*.sh text eol=lf
+/android/*.bat text eol=crlf
+/android/*.cmd text eol=crlf
+# The console menu's checks (docs/CONSOLE_MENU.md): bash and the game's script readers take them with LF.
+/tools/menu/** text eol=lf

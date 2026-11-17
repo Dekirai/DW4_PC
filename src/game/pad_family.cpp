@@ -25,6 +25,7 @@ constexpr std::array<FamilyInfo, kPadFamilyCount> kFamilies{{
     {"Switch 2 Pro", "switch2_pro"},
     {"Wii U Pro", "wiiu_pro"},
     {"GameCube", "gamecube"},
+    {"AYN Thor", "thor"},
     {"Other controller", "generic"},
 }};
 
@@ -77,6 +78,11 @@ bool host_key(SDL_Scancode code) {
     case SDL_SCANCODE_LALT: case SDL_SCANCODE_RALT: case SDL_SCANCODE_LGUI: case SDL_SCANCODE_RGUI:
     case SDL_SCANCODE_PRINTSCREEN: case SDL_SCANCODE_CAPSLOCK: case SDL_SCANCODE_NUMLOCKCLEAR: case SDL_SCANCODE_SCROLLLOCK:
         return true;
+#ifdef SDL_PLATFORM_ANDROID
+    // (Android's Back and Home keys are the system's, not a keyboard player's.)
+    case SDL_SCANCODE_AC_BACK: case SDL_SCANCODE_AC_HOME:
+        return true;
+#endif
     default: return false;
     }
 }
@@ -100,11 +106,45 @@ std::optional<PadFamily> family_from_id(std::string_view id) {
     if (id == "switch2") return PadFamily::switch2_pro;
     if (id == "wiiu") return PadFamily::wiiu_pro;
     if (id == "gc") return PadFamily::gamecube;
+    if (id == "ayn" || id == "odin") return PadFamily::thor;
     return std::nullopt;
 }
 
 bool nintendo_family(PadFamily family) {
-    return family == PadFamily::switch_pro || family == PadFamily::switch2_pro || family == PadFamily::wiiu_pro;
+    return family == PadFamily::switch_pro || family == PadFamily::switch2_pro || family == PadFamily::wiiu_pro || family == PadFamily::thor;
+}
+
+namespace {
+ThorStyle g_thor_codes = ThorStyle::standard;
+
+// Whether the binding space swaps a Nintendo-layout pad's face buttons
+// (SOUTH with EAST, WEST with NORTH): SDL reads Nintendo pads by position
+// (SOUTH is the printed B), the Thor in its Standard style by label (SOUTH
+// is the printed A); the binding space reads them by label
+// (nintendo_layout=label, the default) or by position.
+bool nintendo_swap(PadFamily family, NintendoLayout nintendo) {
+    if (!nintendo_family(family)) return false;
+    const bool sdl_by_label = family == PadFamily::thor && g_thor_codes != ThorStyle::xbox;
+    return (nintendo == NintendoLayout::by_label) != sdl_by_label;
+}
+} // namespace
+
+void set_thor_codes(ThorStyle style) { g_thor_codes = style == ThorStyle::xbox ? ThorStyle::xbox : ThorStyle::standard; }
+ThorStyle thor_codes() { return g_thor_codes; }
+
+std::optional<ThorStyle> thor_style_from_property(std::string_view value) {
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\n' || value.back() == '\r')) value.remove_suffix(1);
+    if (value == "0") return ThorStyle::standard;
+    if (value == "1") return ThorStyle::xbox;
+    return std::nullopt;
+}
+
+GamepadState with_digital_triggers(GamepadState state, bool l2_key, bool r2_key) {
+    auto& left = state.axes[std::size_t(SDL_GAMEPAD_AXIS_LEFT_TRIGGER)];
+    auto& right = state.axes[std::size_t(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)];
+    if (l2_key) left = std::int16_t(32767);
+    if (r2_key) right = std::int16_t(32767);
+    return state;
 }
 
 PadIdentity pad_identity(SDL_Gamepad* pad) {
@@ -135,6 +175,9 @@ PadFamily classify(const PadIdentity& id) {
     // or without a Nunchuk or Classic Controller).
     if (id.wii_extension >= 0) return id.wii_extension == kWiiExtensionWiiUPro ? PadFamily::wiiu_pro : PadFamily::generic;
     if (contains_nocase(id.name, "Wii U Pro")) return PadFamily::wiiu_pro;
+    // The AYN Thor's built-in controller (SDL's Android backend: no type).
+    if ((id.vendor == kVendorAyn && id.product == kProductOdinController) || contains_nocase(id.name, "Odin Controller"))
+        return PadFamily::thor;
     if (id.type == SDL_GAMEPAD_TYPE_GAMECUBE || gamecube_ids(id.vendor, id.product) || contains_nocase(id.name, "GameCube"))
         return PadFamily::gamecube;
     switch (id.type) {
@@ -186,8 +229,9 @@ int line_player(std::string_view layer, std::string_view name) {
 
 GamepadState binding_state(const GamepadState& state, PadFamily family, NintendoLayout nintendo, bool clicks) {
     GamepadState out = state;
-    if (nintendo_family(family) && nintendo == NintendoLayout::by_label) {
-        // Printed A is on SDL's EAST, B on SOUTH, X on NORTH, Y on WEST.
+    if (nintendo_swap(family, nintendo)) {
+        // (By label: printed A is on SDL's EAST, B on SOUTH, X on NORTH, Y on
+        // WEST; the Thor's Standard style the other way round.)
         swap_buttons(out, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST);
         swap_buttons(out, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH);
     } else if (family == PadFamily::gamecube) {
@@ -200,7 +244,7 @@ GamepadState binding_state(const GamepadState& state, PadFamily family, Nintendo
 
 int binding_button(int sdl_button, PadFamily family, NintendoLayout nintendo) {
     auto swap = [](int value, int a, int b) { return value == a ? b : value == b ? a : value; };
-    if (nintendo_family(family) && nintendo == NintendoLayout::by_label)
+    if (nintendo_swap(family, nintendo))
         return swap(swap(sdl_button, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST), SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH);
     if (family == PadFamily::gamecube) return swap(sdl_button, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST);
     return sdl_button;
@@ -251,6 +295,8 @@ const char* face_name(Face face) {
     case Face::touchpad: return "Touchpad";
     case Face::mic: return "Mute";
     case Face::c_button: return "C";
+    case Face::start_arrow: return "Start";
+    case Face::select_square: return "Select";
     case Face::left_stick: return "Left stick";
     case Face::right_stick: return "Right stick";
     case Face::left_stick_click: return "Left stick press";
@@ -268,6 +314,7 @@ const char* face_name(Face face) {
     case Face::gl: return "GL";
     case Face::gr: return "GR";
     case Face::misc: return "Extra";
+    case Face::back_key: return "Back";
     }
     return "";
 }
@@ -276,10 +323,11 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
     const bool sony = family == PadFamily::ps4 || family == PadFamily::ps5;
     const bool nintendo_pad = nintendo_family(family);
     const bool gc = family == PadFamily::gamecube;
+    const bool thor = family == PadFamily::thor;
     if (input.kind == PadInput::Kind::axis) {
         const bool left = input.code == SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
         if (input.code != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && input.code != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) return Face::none;
-        if (sony) return left ? Face::l2 : Face::r2;
+        if (sony || thor) return left ? Face::l2 : Face::r2;
         if (nintendo_pad) return left ? Face::zl : Face::zr;
         if (gc) return left ? Face::l : Face::r;
         return left ? Face::lt : Face::rt;
@@ -303,6 +351,7 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
         if (nintendo_pad && nintendo == NintendoLayout::by_position) return Face::letter_x;
         return Face::letter_y;
     case SDL_GAMEPAD_BUTTON_BACK:
+        if (thor) return Face::select_square;
         if (family == PadFamily::xbox360) return Face::back_360;
         if (family == PadFamily::ps4) return Face::share;
         if (family == PadFamily::ps5) return Face::create;
@@ -310,6 +359,7 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
         if (gc) return Face::none;
         return Face::view;
     case SDL_GAMEPAD_BUTTON_START:
+        if (thor) return Face::start_arrow;
         if (family == PadFamily::xbox360) return Face::start_360;
         if (sony) return Face::options;
         if (nintendo_pad) return Face::plus;
@@ -319,12 +369,12 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
     case SDL_GAMEPAD_BUTTON_LEFT_STICK: return Face::left_stick_click;
     case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return Face::right_stick_click;
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
-        if (sony) return Face::l1;
+        if (sony || thor) return Face::l1;
         if (nintendo_pad) return Face::l;
         if (gc) return Face::none;
         return Face::lb;
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
-        if (sony) return Face::r1;
+        if (sony || thor) return Face::r1;
         if (nintendo_pad) return Face::r;
         if (gc) return Face::z;
         return Face::rb;
@@ -334,6 +384,7 @@ Face face_of(PadFamily family, NintendoLayout nintendo, const PadInput& input) {
     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return Face::dpad_right;
     case SDL_GAMEPAD_BUTTON_MISC1:
         if (family == PadFamily::ps5) return Face::mic;
+        if (thor) return Face::misc;
         if (nintendo_pad) return Face::capture;
         if (family == PadFamily::xbox_one) return Face::share;
         return Face::misc;
@@ -444,6 +495,14 @@ PromptFace prompt_face(PadFamily family, const Settings& settings, PromptControl
     case PromptControl::c_stick: result.face = family == PadFamily::gamecube ? Face::c_stick : Face::right_stick; return result;
     case PromptControl::dpad: result.face = Face::dpad; return result;
     case PromptControl::menu:
+#ifdef SDL_PLATFORM_ANDROID
+        // (Android: the Thor's Back key opens the F1 menu, its SELECT stays
+        // a game button; host_view.cpp back_toggles_menu.)
+        if (family == PadFamily::thor) {
+            result.face = Face::back_key;
+            return result;
+        }
+#endif
         result.face = face_of(family, settings.nintendo_layout, PadInput{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_BACK});
         if (result.face == Face::none) result.key = "F1";
         return result;

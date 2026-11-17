@@ -1,0 +1,133 @@
+# D3: save and load states with their confirms (Load closes F1), the text sheet (a number with its range, the cloud
+# login's account and password: the focus moves on), the preset with its confirm.
+expect log + pad Odin Controller thor
+# (In dng101b1 a state can be saved: past frame 3740.)
+wait 3900
+expect open
+expect page saves
+pad a
+expect focus saves.state.1
+pad a
+wait 2
+expect log menu: Saves > State 1: Save
+expect value saves.state.1 Save|Load
+pad a
+wait 2
+expect dialog confirm
+shot d3_00_overwrite
+waitms 300
+pad a
+wait 2
+expect log 'Overwrite state 1?' -> Save
+pad right
+pad a
+wait 2
+expect dialog confirm
+waitms 300
+pad a
+wait 4
+expect log menu: closed (Load state)
+expect closed
+f1
+wait 3
+expect open
+expect page saves
+# ---- the cloud login's fields (no request is sent: no Log in)
+pad down
+pad down
+pad down
+pad down
+pad down
+expect focus saves.cloud
+pad a
+expect page saves/cloud
+expect focus cloud.account
+pad a
+wait 3
+expect log menu: edit cloud.account active
+expect dialog text
+shot d3_01_text_account
+type tester
+pad a
+wait 2
+expect log menu: edit cloud.account commit
+expect value cloud.account tester
+expect focus cloud.password
+pad a
+wait 3
+expect log menu: edit cloud.password active
+type secret
+shot d3_02_text_password
+pad a
+wait 2
+expect value cloud.password ****
+expect focus cloud.login
+pad b
+# ---- Cheats > Randomizer > Seed: a number (the range checked at Done)
+pad l1
+pad l1
+pad l1
+expect page cheats
+pad a
+pad down
+pad down
+pad down
+pad down
+pad down
+pad down
+expect focus cheats.randomizer
+pad a
+expect page cheats/randomizer
+expect focus cheats.seed
+pad a
+wait 3
+key backspace
+type 12345
+pad a
+wait 2
+expect setting randomizer.seed 12345
+expect focus cheats.new_seed
+pad up
+pad a
+wait 3
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+type 99999999999
+pad a
+wait 2
+expect dialog text
+shot d3_03_number_range
+pad b
+wait 2
+expect log menu: edit cheats.seed cancel
+expect setting randomizer.seed 12345
+pad b
+# ---- General > Preset: Modernized after its confirm (Cancel first)
+pad l1
+pad l1
+pad l1
+pad l1
+expect page general
+pad down
+expect focus general.preset
+pad right
+wait 2
+expect dialog confirm
+shot d3_04_preset_confirm
+waitms 300
+pad left
+pad a
+wait 2
+expect log 'Apply Modernized?' -> Apply
+expect setting window.widescreen true
+expect setting window.msaa 4
+expect setting preferences.skip_intro true
+expect setting gameplay.loading fast
+expect value general.preset Modernized
+pad start
+wait 3
+expect log menu: closed (Start)
+expect closed

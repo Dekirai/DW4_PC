@@ -148,6 +148,15 @@ else()
 endif()
 string(REPLACE ";" "," DW4_PINS_JOINED "${DW4_PIN_LIST}")
 
+# Android (docs/ANDROID.md): android/ is only the Gradle wrapper around this
+# file. cmake/android.cmake turns the game below into the app's native
+# library libmain.so with SDL3 as libSDL3.so (DW4_BUILD_APP on, no tests;
+# Gradle builds only dw4_game). Its DW4_ANDROID_APP=OFF builds only the
+# portable libraries above (android/ndk-core-check.cmd).
+if(ANDROID)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/android.cmake)
+endif()
+
 # Development tools: IGB inspection and logical resource catalog.
 add_executable(dw4_inspect tools/dw4_inspect.cpp)
 target_link_libraries(dw4_inspect PRIVATE dw4_core)
@@ -310,36 +319,16 @@ if(BUILD_TESTING)
 endif()
 
 if(DW4_BUILD_APP)
-  include(FetchContent)
-  # Exact upstream commits and SHA-256 archives. No prebuilt game binaries.
+  # Exact upstream commits and SHA-256 archives (cmake/third_party.cmake, the
+  # same list as the Android build). No prebuilt game binaries.
+  if(NOT ANDROID) # (Android: libSDL3.so, cmake/android.cmake)
   set(SDL_SHARED OFF CACHE BOOL "" FORCE)
   set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  endif()
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_TESTS OFF CACHE BOOL "" FORCE)
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-  FetchContent_Declare(SDL3
-    URL https://codeload.github.com/libsdl-org/SDL/zip/fa2c02bb6e21974a89ea9824bc53c9932abe5f9c
-    URL_HASH SHA256=ab7a774d41332dc73e6cad6ed9cb14b91cb1de76497dca116be7080f069a703a
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  FetchContent_Declare(imgui_src
-    URL https://codeload.github.com/ocornut/imgui/zip/f1cc2ae15e53a861a874c3034aae6798fde194ab
-    URL_HASH SHA256=008e1f3398e1c6e4d317ae4a05d2dec597bd360f4f3717b1d96e9edb66dba34f
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # MPEG-1 video of the Sofdec movies (single header, no CMake project).
-  FetchContent_Declare(pl_mpeg_src
-    URL https://codeload.github.com/phoboslab/pl_mpeg/zip/c871f2be022ece7ef4f64230b4fb8e1fb9eb6023
-    URL_HASH SHA256=67dd194f9de4af65937c057cf630e5e189e163a0ed9f489de2fcc75ee2117daf
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # PNG reading and writing for texture packs and dumps (single headers).
-  FetchContent_Declare(stb_src
-    URL https://codeload.github.com/nothings/stb/zip/2c980bb59875b0d32144a71867fbdebb2f77cd20
-    URL_HASH SHA256=8e59f72b0780690cda64726804269f638a3be77b9d1506ea95f443f7964bccf0
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # Zstandard decoding for RVZ disc images (decoder sources only).
-  FetchContent_Declare(zstd_src
-    URL https://codeload.github.com/facebook/zstd/zip/refs/tags/v1.5.6
-    URL_HASH SHA256=3b1c3b46e416d36931efd34663122d7f51b550c87f74de2d38249516fe7d8be5
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/third_party.cmake)
   # SDL without libusb (docs/ROUND_SW2WIN_NOTES.md): the port reads the
   # controllers SDL 3.4.16 reaches only through libusb itself, the Switch 2
   # Pro Controller (switch2_pro.cpp: Windows' own HID driver for its input,
@@ -368,7 +357,9 @@ if(DW4_BUILD_APP)
   target_include_directories(zstd_encoder PUBLIC ${ZSTD_LIB})
   target_compile_definitions(zstd_encoder PRIVATE ZSTD_DISABLE_ASM)
   target_link_libraries(zstd_encoder PUBLIC zstd_decoder)
+  if(NOT ANDROID) # (Android: OpenGL::GL is GLESv3 and EGL, cmake/android.cmake)
   find_package(OpenGL REQUIRED)
+  endif()
   add_library(imgui STATIC
     ${imgui_src_SOURCE_DIR}/imgui.cpp
     ${imgui_src_SOURCE_DIR}/imgui_draw.cpp
@@ -390,9 +381,13 @@ if(DW4_BUILD_APP)
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
   # The language packs next to the program (docs/L10N.md): data/lang and a
   # translator's local/lang game.tsv (never installed: game-derived text).
+  # (Android has no program folder: the APK carries data/lang as assets,
+  # android/app/build.gradle, and never a game.tsv.)
+  if(NOT ANDROID)
   add_custom_command(TARGET dw4_game POST_BUILD
     COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -DTARGET=$<TARGET_FILE_DIR:dw4_game> -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_lang.cmake
     VERBATIM)
+  endif()
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   # The release game is a Windows program: a double click opens no console
@@ -411,6 +406,15 @@ if(DW4_BUILD_APP)
   endif()
   # Data Overflow's meta file saves/overflow.dat (round O1b lane F, docs/SURVIVAL.md 8).
   target_sources(dw4_game PRIVATE src/game/overflow_profile.cpp)
+  # The second screen's panels (docs/ANDROID.md phase E): the PC's overlay,
+  # Android's lower screen (cmake/android.cmake adds its own frame).
+  target_sources(dw4_game PRIVATE src/game/screen2.cpp)
+  # The F1 menu's one apply layer and option tables (docs/CONSOLE_MENU.md).
+  target_sources(dw4_game PRIVATE src/game/menu_choices.cpp src/game/menu_ops.cpp)
+  # Android's console F1 menu (docs/CONSOLE_MENU.md; on the PC only in test runs).
+  target_sources(dw4_game PRIVATE src/game/console_nav.cpp src/game/console_menu.cpp src/game/console_pages.cpp src/game/console_glyphs.cpp)
+  # The menu script and its virtual pad (test runs: PC, emulator, AYN Thor).
+  target_sources(dw4_game PRIVATE src/game/menu_script.cpp src/game/menu_script_parse.cpp)
   if(WIN32)
     # (setupapi, winusb: the GameCube adapter in Wii U mode, gc_adapter.cpp;
     # with hid, cfgmgr32 also the Switch 2 Pro Controller, switch2_pro.cpp)
@@ -435,6 +439,27 @@ if(DW4_BUILD_APP)
     add_executable(dw4_controls_tests tests/controls_tests.cpp src/game/controls.cpp src/game/settings.cpp src/game/graphics_options.cpp)
     target_link_libraries(dw4_controls_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME controls COMMAND dw4_controls_tests)
+    # The F1 menu's apply layer: every op against the direct assignment the
+    # PC's menu made (settings.ini bytes, side effects), the option tables,
+    # the choice and stepper arithmetic (docs/CONSOLE_MENU.md).
+    add_executable(dw4_menu_ops_tests tests/menu_ops_tests.cpp src/game/menu_ops.cpp src/game/menu_choices.cpp src/game/settings.cpp
+      src/game/graphics_options.cpp src/game/controls.cpp src/game/pad_family.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
+    target_include_directories(dw4_menu_ops_tests PRIVATE src/game)
+    target_link_libraries(dw4_menu_ops_tests PRIVATE dw4_engine dw4_core SDL3::SDL3)
+    add_test(NAME menu_ops COMMAND dw4_menu_ops_tests)
+    # The console F1 menu's navigation model (focus, pages, buttons, touch).
+    add_executable(dw4_console_nav_tests tests/console_nav_tests.cpp src/game/console_nav.cpp)
+    add_test(NAME console_nav COMMAND dw4_console_nav_tests)
+    # The console menu's button pictures (every family, both menu_buttons
+    # modes, both platforms), the Back / Select rule, the menu script's parser.
+    add_executable(dw4_console_glyph_tests tests/console_glyph_tests.cpp src/game/console_glyphs.cpp src/game/menu_script_parse.cpp
+      src/game/pad_family.cpp src/game/button_art.cpp src/game/prompt_layout.cpp src/game/controls.cpp src/game/settings.cpp
+      src/game/graphics_options.cpp src/game/gc_adapter.cpp)
+    target_link_libraries(dw4_console_glyph_tests PRIVATE dw4_engine dw4_core imgui SDL3::SDL3 OpenGL::GL)
+    if(WIN32)
+      target_link_libraries(dw4_console_glyph_tests PRIVATE setupapi winusb)
+    endif()
+    add_test(NAME console_glyphs COMMAND dw4_console_glyph_tests)
     # Controller families: classification, binding spaces, prompt pictures,
     # the prompts in the game's text lines (laid out by the engine's
     # layout_text), settings migration (no device), and detection through
@@ -512,7 +537,8 @@ endif()
 # developer docs stay on GitHub), the licenses, tools/verify_game.py and of
 # every committed language pack its language.ini and textures.tsv (never a
 # game.tsv: game-derived text, docs/L10N.md 2). No dw4_inspect, no PDB.
-if(DW4_BUILD_APP)
+# (Android's game is the app's libmain.so in the APK, android/: no DW4_PC.)
+if(DW4_BUILD_APP AND NOT ANDROID)
   install(PROGRAMS $<TARGET_FILE:dw4_game> DESTINATION . RENAME DW4_PC${CMAKE_EXECUTABLE_SUFFIX})
 endif()
 install(TARGETS dw4_catalog RUNTIME DESTINATION .)

@@ -1,0 +1,101 @@
+# D7 (review fixes, ngsr.txt: a new game, dng101b1, a soft reset back to the title at 4688): Save refused once for
+# all slots on the title while Load is not; the Saves home row; the load's card; Load on the title after the soft
+# reset; Back while a capture still waits for the A that chose it; Y held shows the game; the notice under the header.
+expect log + pad Odin Controller thor
+wait 40
+expect open
+expect page saves
+pad a
+wait 2
+expect focus saves.state.1
+pad a
+wait 2
+expect log Save locked (
+pad right
+pad a
+wait 2
+expect log Load locked (State 1 is empty.)
+shot d7_00_title_saves
+# ---- in dng101b1 (past 3740): save state 2, the home row
+wait 3800
+pad down
+expect focus saves.state.2
+pad left
+pad a
+wait 3
+expect log menu: Saves > State 2: Save
+shot d7_01_saved_notice
+pad up
+expect focus saves.state.1
+pad r1
+expect page general
+pad l1
+expect page saves
+expect focus saves.state.2
+# ---- Y held: only the game (a look)
+pad r1
+pad r1
+pad r1
+expect page graphics
+pad y down
+wait 6
+shot d7_02_peek
+pad y up
+wait 3
+shot d7_03_after_peek
+# ---- Back while the capture waits for the A that chose its slot (F1 stays open)
+pad r1
+expect page controls
+pad down
+pad down
+pad down
+pad down
+expect focus controls.bind.buttons
+pad a
+expect page controls/bindings.buttons
+expect focus controls.bind.buttons.a
+pad a down
+wait 3
+expect dialog capture
+back
+wait 3
+pad a up
+wait 4
+expect log menu: capture A slot 1 cancelled (the Back key)
+expect open
+expect page controls/bindings.buttons
+# ---- F1 closed for the soft reset (the game's pads are neutral while F1 is open)
+f1
+wait 4
+expect closed
+# (The soft reset holds B + X and presses START from 4600; the title is back at 4688.)
+wait 820
+f1
+wait 4
+expect open
+expect page controls/bindings.buttons
+pad b
+expect page controls
+pad l1
+pad l1
+pad l1
+pad l1
+expect page saves
+expect focus saves.state.2
+pad right
+pad a
+wait 2
+expect dialog confirm
+shot d7_04_load_confirm_title
+waitms 300
+pad a
+wait 1
+shot d7_05_loading_card
+wait 6
+expect log menu: closed (Load state)
+expect closed
+wait 30
+f1
+wait 4
+expect open
+shot d7_06_after_load

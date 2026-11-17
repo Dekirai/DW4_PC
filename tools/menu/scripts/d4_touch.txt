@@ -1,0 +1,32 @@
+# D4: touch on the top screen (DW4_MENU_INPUT=touch, DW4_MENU_PAGE=display): categories, a toggle row, the
+# arrows, a picker (cancelled by a tap outside), a drag and a fling, the Close button.
+wait 3
+expect open
+expect page display
+tap 120 235.6
+expect page graphics
+tap 120 186
+expect page display
+tap 400 171.9
+expect setting window.widescreen true
+tap 781 226.8
+expect setting window.fps_limit 30
+tap 605 226.8
+expect setting window.fps_limit 0
+tap 690 117.7
+wait 2
+expect dialog picker
+shot d4_00_picker
+tap 300 20
+wait 2
+expect log 'Menu size' -> Cancel
+drag 500 420 500 200 500
+wait 3
+shot d4_01_dragged
+drag 500 160 500 440 60
+waitms 900
+shot d4_02_flung
+tap 689 32
+wait 3
+expect log menu: closed (Close)
+expect closed

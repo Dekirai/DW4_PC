@@ -12,6 +12,7 @@
 #include <SDL3/SDL_scancode.h>
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -207,6 +208,86 @@ void migration() {
     check(s.pad[std::size_t(PadKey::dpad_up)][0] == PadInput{PadInput::Kind::button, SDL_GAMEPAD_BUTTON_NORTH}, "Old gamepad up lost");
     check(s.pad[std::size_t(PadKey::y)][0] == PadInput{}, "A default controller input stayed on two controls");
 }
+// The menus' size (settings.ini [window] ui_scale): auto follows the display
+// only where asked (Android), a percent counts everywhere, written only once
+// it is not auto; the AYN Thor's controller style likewise.
+void menu_size() {
+    check(ui_scale_factor(0, 2.30625f, false) == 1.0f, "Auto on the PC is 1x whatever the display");
+    check(std::fabs(ui_scale_factor(0, 2.30625f, true) - 2.30625f) < 1e-6f, "Auto on Android is the display's scale (369 dpi: 2.31)");
+    check(ui_scale_factor(0, 0.75f, true) == 1.0f && ui_scale_factor(0, 9.0f, true) == 4.0f, "Auto between 1x and 4x");
+    check(ui_scale_factor(150, 2.3f, true) == 1.5f && ui_scale_factor(200, 1.0f, false) == 2.0f, "A set percent counts everywhere");
+    Settings s = parsed("");
+    check(s.ui_scale == 0 && s.thor_style == ThorStyle::automatic, "defaults: auto");
+    s.store();
+    check(!s.ini().get("window", "ui_scale") && !s.ini().get("gamepad", "thor_style"), "auto is not written into a file without it");
+    s = parsed("[window]\nui_scale=175\n[gamepad]\nthor_style=xbox\n");
+    check(s.ui_scale == 175 && s.thor_style == ThorStyle::xbox, "read back");
+    s.ui_scale = 0;
+    s.store();
+    check(s.ini().get_or("window", "ui_scale", "") == "auto", "auto again once it was set");
+    s = parsed("[window]\nui_scale=auto\n");
+    check(s.ui_scale == 0, "auto read");
+    s = parsed("[window]\nui_scale=40\n");
+    check(s.ui_scale == 100, "a too small percent is 100");
+}
+// The second screen's panels (settings.ini [screen2]): auto, the Status tab
+// and no overlay by default, none of them written into a file without them,
+// and gone again (with the section) once they are their defaults again.
+void second_screen() {
+    Settings s = parsed("");
+    check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status && !s.screen2_overlay, "[screen2] defaults");
+    s.store();
+    check(!s.ini().get("screen2", "mode") && !s.ini().get("screen2", "tab") && !s.ini().get("screen2", "overlay"),
+          "[screen2] defaults are not written into a file without them");
+    s = parsed("[screen2]\nmode=off\ntab=menu\noverlay=true\n");
+    check(s.screen2_mode == Screen2Mode::off && s.screen2_tab == Screen2Tab::menu && s.screen2_overlay, "[screen2] read back");
+    s.screen2_mode = Screen2Mode::automatic;
+    s.screen2_tab = Screen2Tab::online;
+    s.screen2_overlay = false;
+    s.store();
+    check(!s.ini().get("screen2", "mode") && s.ini().get_or("screen2", "tab", "") == "online" && !s.ini().get("screen2", "overlay"),
+          "[screen2] a key back at its default goes, the others stay");
+    s.screen2_tab = Screen2Tab::status;
+    s.store();
+    check(s.ini().text().find("[screen2]") == std::string::npos, "[screen2] the section goes with its last key");
+    {
+        Settings fresh = parsed("[window]\nwidth=1280\n");
+        const std::string before = (fresh.store(), fresh.ini().text());
+        fresh.screen2_mode = Screen2Mode::off;
+        fresh.store();
+        check(fresh.ini().get_or("screen2", "mode", "") == "off", "[screen2] off is written");
+        fresh.screen2_mode = Screen2Mode::automatic;
+        fresh.store();
+        check(fresh.ini().text() == before, "[screen2] off and on again: the file as before");
+    }
+    s = parsed("[screen2]\nmode=sideways\ntab=map\n");
+    check(s.screen2_mode == Screen2Mode::automatic && s.screen2_tab == Screen2Tab::status, "[screen2] unknown values stay the defaults");
+}
+// The pause while another window has the focus ([menu] pause_unfocused, the
+// owner's decision of 14.11.2026): on by default on Android, off on the PC,
+// switchable on both; not written while it is this platform's default.
+void focus_pause() {
+    check(pause_unfocused_default(true) && !pause_unfocused_default(false), "pause_unfocused: on by default on Android, off on the PC");
+#ifdef __ANDROID__
+    check(kPauseUnfocusedDefault, "this platform (Android): on by default");
+#else
+    check(!kPauseUnfocusedDefault, "this platform (the PC): off by default");
+#endif
+    Settings s = parsed("[window]\nwidth=1280\n");
+    check(s.pause_unfocused == kPauseUnfocusedDefault, "pause_unfocused: a file without it has the default");
+    const std::string before = (s.store(), s.ini().text());
+    check(!s.ini().get("menu", "pause_unfocused"), "pause_unfocused: the default is not written into a file without it");
+    s.pause_unfocused = !kPauseUnfocusedDefault;
+    s.store();
+    check(s.ini().get_or("menu", "pause_unfocused", "") == (kPauseUnfocusedDefault ? "false" : "true"), "pause_unfocused: a change is written");
+    s.pause_unfocused = kPauseUnfocusedDefault;
+    s.store();
+    check(s.ini().get_or("menu", "pause_unfocused", "") == (kPauseUnfocusedDefault ? "true" : "false"),
+          "pause_unfocused: once written it stays (back at the default)");
+    check(s.ini().text() != before, "pause_unfocused: the key stays in the file");
+    check(parsed("[menu]\npause_unfocused=true\n").pause_unfocused && !parsed("[menu]\npause_unfocused=false\n").pause_unfocused,
+          "pause_unfocused: read back on every platform");
+}
 } // namespace
 
 int main() {
@@ -214,6 +295,9 @@ int main() {
         keyboard_defaults();
         controller_defaults();
         migration();
+        menu_size();
+        second_screen();
+        focus_pause();
     } catch (const std::exception& error) {
         std::cerr << "controls tests failed: " << error.what() << '\n';
         return 1;

@@ -28,6 +28,9 @@ PadFamily family_of(const PromptTracker& tracker, SDL_Gamepad* pad);
 // Whether SDL reports a GameCube pad's trigger clicks (its own driver does;
 // DirectInput database mappings do not).
 bool trigger_clicks(SDL_Gamepad* pad);
+// A pad's state (read_gamepad) with what its family adds: the AYN Thor's
+// L2 / R2 keys folded into its trigger axes (with_digital_triggers).
+GamepadState read_pad(SDL_Gamepad* pad, PadFamily family);
 
 // A pad's input through the [gamepad] bindings in its family's binding
 // space; a GameCube pad on its original layout plays 1:1.

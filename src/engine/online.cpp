@@ -16,7 +16,12 @@
 #include <cstdlib>
 #include <sstream>
 #include <stdexcept>
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
+#define DW4_HAVE_MXCSR 1
+#elif defined(__aarch64__) && (defined(__clang__) || defined(__GNUC__))
+#define DW4_HAVE_FPCR 1
+#endif
 
 namespace dw4::engine {
 
@@ -44,17 +49,52 @@ void engine_destroyed(bool online) {
 // masked: the MXCSR of a fresh Windows x64 thread. Only the control bits
 // (6-15) count; bits 0-5 are the sticky exception flags any arithmetic sets.
 constexpr unsigned kMxcsr = 0x1F80u;
+
+#ifdef DW4_HAVE_MXCSR
 constexpr unsigned kMxcsrControl = 0xFFC0u;
 
-MxcsrGuard::MxcsrGuard() : saved_(_mm_getcsr()) {
+FpEnvGuard::FpEnvGuard() : saved_(_mm_getcsr()) {
     if ((saved_ & kMxcsrControl) != kMxcsr) {
         g_mxcsr_repairs.fetch_add(1, std::memory_order_relaxed);
-        _mm_setcsr(kMxcsr | (saved_ & 0x3Fu));
+        _mm_setcsr(kMxcsr | unsigned(saved_ & 0x3Fu));
     }
 }
-MxcsrGuard::~MxcsrGuard() {
-    if ((saved_ & kMxcsrControl) != kMxcsr) _mm_setcsr(saved_);
+FpEnvGuard::~FpEnvGuard() {
+    if ((saved_ & kMxcsrControl) != kMxcsr) _mm_setcsr(unsigned(saved_));
 }
+#elif defined(DW4_HAVE_FPCR)
+// FPCR bits the simulation depends on: FIZ (0), AH (1), NEP (2), the trap
+// enables IOE..IXE (8-12) and IDE (15), RMode (22-23), FZ (24), DN (25). All
+// zero is the Linux / Android default (round to nearest, IEEE behaviour,
+// exceptions masked); the others (AHP, FZ16, Len, Stride) stay as found.
+// (FIZ, AH and NEP read as zero on cores without FEAT_AFP.)
+constexpr unsigned long long kFpcrControl = (1ull << 0) | (1ull << 1) | (1ull << 2) | (0x1Full << 8) | (1ull << 15) |
+                                            (3ull << 22) | (1ull << 24) | (1ull << 25);
+
+namespace {
+unsigned long long read_fpcr() {
+    unsigned long long value;
+    __asm__ __volatile__("mrs %0, fpcr" : "=r"(value));
+    return value;
+}
+void write_fpcr(unsigned long long value) { __asm__ __volatile__("msr fpcr, %0" : : "r"(value)); }
+} // namespace
+
+FpEnvGuard::FpEnvGuard() : saved_(read_fpcr()) {
+    if (saved_ & kFpcrControl) {
+        g_mxcsr_repairs.fetch_add(1, std::memory_order_relaxed);
+        write_fpcr(saved_ & ~kFpcrControl);
+    }
+}
+FpEnvGuard::~FpEnvGuard() {
+    if (saved_ & kFpcrControl) write_fpcr(saved_);
+}
+#else
+// Neither MXCSR nor FPCR (another architecture): the guard does nothing and
+// the thread keeps the process default.
+FpEnvGuard::FpEnvGuard() : saved_(kMxcsr) {}
+FpEnvGuard::~FpEnvGuard() = default;
+#endif
 } // namespace detail
 
 int Engine::live_engines() { return detail::g_live_engines; }
@@ -119,7 +159,7 @@ const std::vector<std::string_view>& online_forbidden_env() {
 const std::vector<std::string_view>& online_presentation_env() {
     // An entry ending in '*' is a prefix.
     static const std::vector<std::string_view> names = {
-        "DW4_TRACE_*", "DW4_DEV_*", "DW4_AUDIO_*", "DW4_CAMPAIGN_*", "DW4_MENU_TAB", "DW4_FARM_*",
+        "DW4_TRACE_*", "DW4_DEV_*", "DW4_AUDIO_*", "DW4_CAMPAIGN_*", "DW4_MENU_TAB", "DW4_MENU_SECTION", "DW4_FARM_*",
         "DW4_ACHIEVEMENTS", "DW4_AX_COMPRESSOR", "DW4_AVOID_MATS", "DW4_DISCORD_PIPE", "DW4_DRAW_DUMP", "DW4_DUMP_SEQ",
         "DW4_DUMP_TEXTURES", "DW4_LABELS", "DW4_MAT_SEQUENCE", "DW4_MAT_SWITCH", "DW4_MIGRATE_FROM", "DW4_MSAA",
         "DW4_NO_ERROR_BOX", "DW4_OPEN_MENU", "DW4_PRESENCE_ART_ALL", "DW4_PROFILE", "DW4_RENDER",
@@ -131,8 +171,27 @@ const std::vector<std::string_view>& online_presentation_env() {
         // refused as by a driver; presentation only)
         "DW4_TEXTURE_QUALITY", "DW4_TEXTURE_FILTER", "DW4_LOD_BIAS", "DW4_SHARPEN", "DW4_SHADOW_QUALITY", "DW4_TEXTURE_MEMORY",
         "DW4_TEXTURE_CPU_DECODE", "DW4_TEXTURE_UPLOAD_MS", "DW4_TEXTURE_QUALITY_AT", "DW4_TEXTURE_TEST_REFUSE",
+        // the renderer's check of the depth clamp emulation (gl_renderer.cpp, docs/ANDROID.md: a CPU count of
+        // crossing orthographic triangles, logged; presentation only) and of the GL errors (logged and counted)
+        "DW4_CHECK_DEPTH_CLAMP", "DW4_GL_CHECK",
+        // the menus' size in a test run, the touch menu button shown on the PC, and the frame statistics' lines
+        // (host_view.hpp: ImGui's sizes, a picture over the game, a log line; presentation only)
+        "DW4_UI_SCALE", "DW4_TOUCH_UI", "DW4_FRAME_STATS",
         // a test run's controller prompt family (button_prompts.hpp: which pictures are drawn, nothing else)
         "DW4_PROMPTS",
+        // the F1 menu's picture proofs and the console menu's test switches (docs/CONSOLE_MENU.md: the PC menu's
+        // headers open, its live values fixed, its scroll; the console menu's style, platform rules, start page,
+        // dialog, input mode, virtual pad, the lower screen's form on the PC, the Developer category, its trace
+        // and layout lines, and the menu script, whose virtual pad is a controller like a real one; presentation
+        // and the menus' input only, the cheats stay off online as always)
+        "DW4_MENU_EXPAND", "DW4_MENU_STILL", "DW4_MENU_SCROLL", "DW4_MENU_STYLE", "DW4_MENU_PLATFORM", "DW4_MENU_PAGE",
+        "DW4_MENU_DIALOG", "DW4_MENU_INPUT", "DW4_MENU_PAD", "DW4_MENU_LOWER", "DW4_MENU_DEVELOPER", "DW4_MENU_TRACE",
+        "DW4_MENU_LAYOUT_LOG", "DW4_MENU_SCRIPT",
+        // the second screen's panels in a test run (screen2.hpp: the overlay window, its tab, the F1 menu there;
+        // presentation only) and a provoked loss of the OpenGL context (game_main.cpp, context_loss_test: at given
+        // frames, or Android's EGL context destroyed in the background; every GL object made again, presentation
+        // only)
+        "DW4_SCREEN2_*", "DW4_TEST_CONTEXT_LOSS",
         // a test run's controller log and the Switch 2 Pro reader in a test run (pad_usb.hpp: a file about the
         // controllers, and a look at Windows' device list; a test run's pads are its script's)
         "DW4_CONTROLLER_LOG", "DW4_TEST_SWITCH2",

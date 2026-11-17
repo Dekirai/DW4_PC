@@ -1,0 +1,23 @@
+# The console menu checks' stage input (tools/menu/run.sh d7): a new game, dng101b1, a soft reset to the title at 4688.
+@offset 0 76
+@offset 158 166
+@offset 452 157
+@offset 870 237
+@offset 1503 239
+@offset 3598 238    # loading card "Humid Cave / Death Valley" starts (r41audio: Dolphin counter = port - 84)
+@offset 3716 276    # dungeon intro + play (r41audio: Dolphin counter = port - 54, its card now ~30 fields longer; was 730)
+1500 START 3
+2000 START 3
+2200 A 3
+2500 A 3
+2650 A 3
+2800 A 3
+2900 START 3
+3100 A 3
+3300 A 3
+3500 START 3
+3600 SEND STAGECTL NEXTSTAGE dng101b1
+# review r44timingrev: soft reset (B+X held, START) in dng101b1
+4600 B 140
+4600 X 140
+4606 START 120

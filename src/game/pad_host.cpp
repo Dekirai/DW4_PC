@@ -53,6 +53,14 @@ bool trigger_clicks(SDL_Gamepad* pad) {
     return SDL_GamepadHasButton(pad, SDL_GAMEPAD_BUTTON_MISC3) && SDL_GamepadHasButton(pad, SDL_GAMEPAD_BUTTON_MISC4);
 }
 
+GamepadState read_pad(SDL_Gamepad* pad, PadFamily family) {
+    GamepadState state = read_gamepad(pad);
+    if (family == PadFamily::thor)
+        if (SDL_Joystick* joystick = SDL_GetGamepadJoystick(pad); joystick && SDL_GetNumJoystickButtons(joystick) > kThorR2Button)
+            state = with_digital_triggers(state, SDL_GetJoystickButton(joystick, kThorL2Button), SDL_GetJoystickButton(joystick, kThorR2Button));
+    return state;
+}
+
 HostPadInput pad_input(const Settings& settings, PadFamily family, const GamepadState& state, bool clicks) {
     if (family == PadFamily::gamecube && settings.gamecube_layout == GameCubeLayout::original) return gamecube_input(state, clicks);
     return gamepad_input(settings, binding_state(state, family, settings.nintendo_layout, clicks));
@@ -60,7 +68,7 @@ HostPadInput pad_input(const Settings& settings, PadFamily family, const Gamepad
 
 HostPadInput pad_input(const Settings& settings, PadFamily family, SDL_Gamepad* pad) {
     const bool clicks = family != PadFamily::gamecube || trigger_clicks(pad);
-    return pad_input(settings, family, read_gamepad(pad), clicks);
+    return pad_input(settings, family, read_pad(pad, family), clicks);
 }
 
 MenuKeys menu_keys(const Settings& settings, PadFamily family, const GamepadState& state, bool clicks) {

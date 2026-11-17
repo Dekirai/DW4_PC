@@ -21,6 +21,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 // Extension enums (GL 3.3 core has these only as extensions).
 #ifndef GL_TEXTURE_MAX_ANISOTROPY
@@ -65,7 +66,9 @@ namespace dw4::game {
     X(PFNGLBLENDFUNCSEPARATEPROC, BlendFuncSeparate) X(PFNGLBLENDEQUATIONPROC, BlendEquation) \
     X(PFNGLGENERATEMIPMAPPROC, GenerateMipmap) X(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers) \
     X(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer) X(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D) \
-    X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers)
+    X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers) \
+    X(PFNGLBLITFRAMEBUFFERPROC, BlitFramebuffer) X(PFNGLGETSTRINGIPROC, GetStringi) \
+    X(PFNGLGETFRAMEBUFFERATTACHMENTPARAMETERIVPROC, GetFramebufferAttachmentParameteriv) X(PFNGLCLEARBUFFERUIVPROC, ClearBufferuiv)
 
 struct GlRenderer::Impl {
 #define DECLARE(type, name) type name{};
@@ -84,8 +87,134 @@ struct GlRenderer::Impl {
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
     int u_texgen{}, u_pixel_center{}, u_normal{};
     int u_id_mode{}, u_id{}, u_lod_bias{};
+    int u_depth_clamp{}, u_palette_tex{};
     PFNGLUNIFORM2FPROC Uniform2f{};
     PFNGLTEXSTORAGE2DPROC TexStorage2D{}; // GL 4.2 / ARB_texture_storage (null without)
+    // OpenGL ES 3 (the Android port, docs/ANDROID.md) instead of OpenGL 3.3
+    // core: the shaders' #version line, no GL_MULTISAMPLE switch, the kept
+    // picture by a blit, the depth read through a texture (depth_probe_es).
+    // Depth clamping is the context's own
+    // where it has it (OpenGL 3.3, GL_EXT_depth_clamp), else the vertex
+    // shader clamps z (u_depth_clamp).
+    bool gles = gl_is_es();
+    bool native_depth_clamp = true;
+    // The skinning palette (64 matrices): a 4 x 64 RGBA32F texture the
+    // vertex shader fetches (one row per matrix, one texel per column), not
+    // uniforms: OpenGL ES guarantees only 256 vertex uniform vectors, and
+    // some implementations (SwiftShader) count a uniform block's members
+    // against them too. Texture unit 2.
+    unsigned palette_texture{};
+    // The kept picture's framebuffer (keep_picture's blit on OpenGL ES) and
+    // the full-screen strips' vertex buffer (attribute 0 enabled: some GL ES
+    // drivers draw nothing without one).
+    unsigned kept_fbo{}, strip_vbo{};
+    // OpenGL ES copies no multisampled framebuffer into a texture (the
+    // Sharpening option's copy of the picture): the window's rectangle is
+    // resolved by a blit (the same rectangle on both sides, as GLES wants
+    // it) into resolve_texture and copied from there into the texture bound
+    // to GL_TEXTURE_2D. (The PC copies the window directly.)
+    unsigned resolve_fbo{}, resolve_texture{};
+    int resolve_width{}, resolve_height{};
+    // OpenGL ES 3.0 reads no depth buffer (its glReadPixels takes no
+    // GL_DEPTH_COMPONENT), so the name tags' occlusion probes go through a
+    // texture (depth_probe_es): the window's depth around them is blitted
+    // into depth_texture (the window's own depth and stencil format: a depth
+    // blit wants them equal; a multisampled window is resolved by it), one
+    // pass of points (kDepthProbe*) fetches it at the probes into a row of
+    // probe_texture (R32UI, the depth's float bits) and one glReadPixels
+    // takes the row back. depth_read_off: the window has no depth buffer or
+    // a step failed once (logged): no tag hides behind the scene then.
+    unsigned depth_fbo{}, depth_texture{}, probe_fbo{}, probe_texture{}, probe_program{}, probe_vao{}, probe_vbo{};
+    int depth_width{}, depth_height{}, probe_slots{}, u_probe_slots{-1}, u_probe_depth{-1};
+    unsigned depth_internal{}, depth_format{}, depth_type{};
+    bool depth_read_ready{}, depth_read_off{};
+    // DW4_CHECK_DEPTH_CLAMP=1 (any platform, a CPU check that changes no
+    // picture): the vertex shader's clamp (GLES without GL_EXT_depth_clamp)
+    // equals GL_DEPTH_CLAMP's per-pixel clamp only for triangles that lie
+    // wholly on one side of the near and of the far plane. Counts the
+    // orthographic triangles that cross one, logged at 1, 10, 100, ...
+    // and as a total at the end.
+    bool check_depth_clamp = std::getenv("DW4_CHECK_DEPTH_CLAMP") != nullptr;
+    std::uint64_t clamp_checked{}, clamp_crossing{}, clamp_report{1};
+    // DW4_GL_CHECK=1 (any platform): the GL errors raised, read at the end
+    // of every frame and where the texture uploads clear the error flags
+    // (GlRenderer::check_gl_errors); the first 20 are logged with where and
+    // when they were seen, the total when the renderer ends.
+    bool check_gl = [] {
+        const char* value = std::getenv("DW4_GL_CHECK");
+        return value && *value && *value != '0';
+    }();
+    std::uint64_t gl_errors{}, gl_checks{};
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    ~Impl() {
+        if (check_depth_clamp)
+            std::cout << "renderer: depth clamp check: " << clamp_crossing << " of " << clamp_checked
+                      << " orthographic triangles crossed the near or far plane\n";
+        if (check_gl) std::cout << "renderer: GL error check: " << gl_errors << " errors in " << gl_checks << " checks\n";
+    }
+    void check_clamp(const engine::GeometryData& g, const engine::Mat4& mvp) {
+        auto side = [&](std::uint32_t index) {
+            if (index >= g.positions.size()) return 0;
+            const auto& p = g.positions[index];
+            const float z = p.x * mvp(0, 2) + p.y * mvp(1, 2) + p.z * mvp(2, 2) + mvp(3, 2);
+            const float w = p.x * mvp(0, 3) + p.y * mvp(1, 3) + p.z * mvp(2, 3) + mvp(3, 3);
+            return z < -w ? -1 : z > w ? 1 : 0;
+        };
+        for (std::size_t i = 0; i + 2 < g.indices.size(); i += 3) {
+            ++clamp_checked;
+            const int a = side(g.indices[i]), b = side(g.indices[i + 1]), c = side(g.indices[i + 2]);
+            if (a == b && b == c) continue;
+            if (++clamp_crossing == clamp_report) {
+                std::cout << "renderer: depth clamp check: " << clamp_crossing << " of " << clamp_checked
+                          << " orthographic triangles cross the near or far plane\n";
+                clamp_report *= 10;
+            }
+        }
+    }
+    void copy_window_es(int x, int y, int width, int height) {
+        GLint bound = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+        const int right = x + width, top = y + height;
+        if (!resolve_texture) glGenTextures(1, &resolve_texture);
+        if (!resolve_fbo) GenFramebuffers(1, &resolve_fbo);
+        glBindTexture(GL_TEXTURE_2D, resolve_texture);
+        if (right > resolve_width || top > resolve_height) {
+            resolve_width = std::max(right, resolve_width);
+            resolve_height = std::max(top, resolve_height);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, resolve_width, resolve_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        }
+        // (A blit is scissored; the whole rectangle is wanted.)
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        BindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo);
+        FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, resolve_texture, 0);
+        BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        BlitFramebuffer(x, y, right, top, x, y, right, top, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        BindFramebuffer(GL_READ_FRAMEBUFFER, resolve_fbo);
+        glBindTexture(GL_TEXTURE_2D, GLuint(bound));
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, width, height);
+        BindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    void set_depth_clamp(bool on) {
+        if (native_depth_clamp) {
+            if (on) glEnable(GL_DEPTH_CLAMP);
+            else glDisable(GL_DEPTH_CLAMP);
+        } else {
+            Uniform1i(u_depth_clamp, on ? 1 : 0);
+        }
+    }
+    void upload_palette(const std::vector<engine::Mat4>& palette) {
+        const auto count = std::min<std::size_t>(palette.size(), 64);
+        ActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, palette_texture);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, GLsizei(count), GL_RGBA, GL_FLOAT, palette.front().m.data());
+        ActiveTexture(GL_TEXTURE0);
+    }
     // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
     // (unless antialiasing); Dolphin's VertexShaderManager compensates with
     // pixel_center_correction = 7/12 - 1/2, moving every vertex 1/12 of a
@@ -120,7 +249,7 @@ layout(location=5) in vec2 a_indices;
 uniform mat4 u_model, u_view, u_proj;
 uniform mat4 u_normal;
 uniform int u_skinned;
-uniform mat4 u_palette[64];
+uniform sampler2D u_palette_tex;
 uniform mat4 u_tex_matrix;
 uniform int u_texgen;
 uniform int u_use_vcol;
@@ -133,10 +262,16 @@ uniform vec3 u_light_ambient;
 uniform vec4 u_diffuse;
 uniform mat4 u_shadow_matrix;
 uniform vec2 u_pixel_center;
+uniform int u_depth_clamp;
 out vec4 v_color;
 out vec2 v_uv;
 out float v_depth;
 out vec4 v_shadow;
+// The skinning palette's matrix i (Impl::palette_texture).
+mat4 u_palette(int i) {
+    return mat4(texelFetch(u_palette_tex, ivec2(0, i), 0), texelFetch(u_palette_tex, ivec2(1, i), 0),
+                texelFetch(u_palette_tex, ivec2(2, i), 0), texelFetch(u_palette_tex, ivec2(3, i), 0));
+}
 void main() {
     vec4 local = vec4(a_pos, 1.0);
     vec3 normal = a_normal;
@@ -157,11 +292,11 @@ void main() {
         int i0 = int(a_indices.x + 0.5), i1 = int(a_indices.y + 0.5);
         vec4 p = vec4(0.0);
         if (a_weights.x != 0.0) {
-            p = u_palette[i0] * local * a_weights.x;
-            if (a_weights.y != 0.0) p += u_palette[i1] * local * a_weights.y;
+            p = u_palette(i0) * local * a_weights.x;
+            if (a_weights.y != 0.0) p += u_palette(i1) * local * a_weights.y;
         }
         local = vec4(p.xyz, 1.0);
-        normal = mat3(u_palette[i0]) * a_normal;
+        normal = mat3(u_palette(i0)) * a_normal;
     }
     vec4 world = u_model * local;
     v_shadow = u_shadow_matrix * world;
@@ -170,6 +305,9 @@ void main() {
     gl_Position = u_proj * eye;
     // GX pixel centre at 7/12 (see Impl::pixel_center): GL y points up.
     gl_Position.xy += gl_Position.w * u_pixel_center;
+    // Depth clamping without GL_DEPTH_CLAMP (OpenGL ES): z into the clip
+    // volume instead of clipping (the 2D layers in front of their near plane).
+    if (u_depth_clamp != 0) gl_Position.z = clamp(gl_Position.z, -gl_Position.w, gl_Position.w);
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
         // GX channel as Alchemy sets it up (800F6DC0): the material colour
@@ -289,6 +427,37 @@ out vec4 o_color;
 void main() { o_color = vec4(texture(u_tex, v_uv).rgb, 1.0); }
 )";
 
+// The shaders are written for OpenGL 3.3 core; on OpenGL ES 3 their
+// "#version 330 core" line becomes ES 3.00 with high precision (the alpha
+// test compares 8-bit values: mediump is too coarse on some GPUs).
+constexpr std::string_view kCoreHeader = "#version 330 core\n";
+constexpr const char* kEsHeader = "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n";
+
+// The name tags' depth probes on OpenGL ES (GlRenderer::read_depths): one
+// point per probe, in a row of an R32UI target, each fetching the window's
+// depth (blitted into a depth texture) at its pixel and writing the float's
+// bits, which one glReadPixels takes back exactly.
+const char* kDepthProbeVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_probe; // the window pixel (x, y) and the probe's slot in the row
+uniform float u_slots;
+flat out ivec2 v_pixel;
+void main() {
+    v_pixel = ivec2(a_probe.xy);
+    gl_Position = vec4((a_probe.z + 0.5) / u_slots * 2.0 - 1.0, 0.0, 0.0, 1.0);
+    gl_PointSize = 1.0;
+}
+)";
+
+// The probe row's clear: a NaN's bits, never a depth's (read_depths).
+constexpr GLuint kProbeUnwritten = 0xFFFFFFFFu;
+
+const char* kDepthProbeFragment = R"(#version 330 core
+flat in ivec2 v_pixel;
+uniform sampler2D u_depth;
+out uvec4 o_bits;
+void main() { o_bits = uvec4(floatBitsToUint(texelFetch(u_depth, v_pixel, 0).r), 0u, 0u, 1u); }
+)";
+
 // The Sharpening option: contrast adaptive sharpening of the game picture
 // (written after the published description of AMD FidelityFX CAS, MIT: a
 // cross-shaped negative lobe whose weight follows how far the 3x3
@@ -320,6 +489,11 @@ void main() {
 
 unsigned compile(GlRenderer::Impl& gl, unsigned type, const char* source) {
     const unsigned shader = gl.CreateShader(type);
+    std::string es_source;
+    if (gl.gles && std::string_view(source).substr(0, kCoreHeader.size()) == kCoreHeader) {
+        es_source = kEsHeader + std::string(source + kCoreHeader.size());
+        source = es_source.c_str();
+    }
     gl.ShaderSource(shader, 1, &source, nullptr);
     gl.CompileShader(shader);
     int ok = 0;
@@ -332,7 +506,15 @@ unsigned compile(GlRenderer::Impl& gl, unsigned type, const char* source) {
     return shader;
 }
 
-GLenum blend_factor(int value) {
+GLenum blend_factor(int value, bool destination = false, bool gles = false) {
+    // (OpenGL ES 3 takes SRC_ALPHA_SATURATE as a source factor only; GX has
+    // no such factor, the IG enum's 10 is not known to occur.)
+    if (value == 10 && destination && gles) {
+        static bool noted = false;
+        if (!noted) std::cerr << "renderer: SRC_ALPHA_SATURATE as a destination blend factor (OpenGL ES: ONE)\n";
+        noted = true;
+        return GL_ONE;
+    }
     switch (value) {
     case 0: return GL_ZERO;
     case 1: return GL_ONE;
@@ -347,6 +529,25 @@ GLenum blend_factor(int value) {
     case 10: return GL_SRC_ALPHA_SATURATE;
     default: return GL_ONE;
     }
+}
+
+// The full-screen strips' vertex array (their shaders use gl_VertexID):
+// attribute 0 on a four-vertex buffer, unused by the shaders.
+void strip_vao(GlRenderer::Impl& gl, unsigned& vao) {
+    gl.GenVertexArrays(1, &vao);
+    gl.BindVertexArray(vao);
+    if (!gl.strip_vbo) {
+        const float corners[8] = {0, 0, 1, 0, 0, 1, 1, 1};
+        gl.GenBuffers(1, &gl.strip_vbo);
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.strip_vbo);
+        gl.BufferData(GL_ARRAY_BUFFER, sizeof corners, corners, GL_STATIC_DRAW);
+    } else {
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.strip_vbo);
+    }
+    gl.EnableVertexAttribArray(0);
+    gl.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
+    gl.BindVertexArray(0);
+    gl.BindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 GLenum depth_func(int value) {
@@ -365,9 +566,197 @@ GLenum take_gl_error() {
     }
     return first;
 }
+
+// The window's depth (and stencil) format as a texture's (Impl::depth_*): a
+// depth blit wants the formats of both sides equal. False without a depth
+// buffer or in a format OpenGL ES has no texture for.
+bool window_depth_format(GlRenderer::Impl& gl, std::string& name) {
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    auto query = [&](GLenum attachment, GLenum what) {
+        GLint type = GL_NONE, value = 0;
+        gl.GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+        if (type != GL_NONE) gl.GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, attachment, what, &value);
+        return value;
+    };
+    const GLint depth = query(GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE);
+    const GLint stencil = query(GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE);
+    const GLint kind = depth ? query(GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE) : 0;
+    take_gl_error();
+    struct Format {
+        GLint depth, stencil;
+        bool floating;
+        GLenum internal, format, type;
+        const char* name;
+    };
+    static const Format formats[] = {
+        {16, 0, false, GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, "DEPTH_COMPONENT16"},
+        {24, 0, false, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, "DEPTH_COMPONENT24"},
+        {24, 8, false, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, "DEPTH24_STENCIL8"},
+        {32, 0, true, GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT, "DEPTH_COMPONENT32F"},
+        {32, 8, true, GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, "DEPTH32F_STENCIL8"},
+    };
+    name = "depth " + std::to_string(depth) + (kind == GL_FLOAT ? " float" : "") + ", stencil " + std::to_string(stencil);
+    for (const auto& f : formats)
+        if (f.depth == depth && f.stencil == stencil && f.floating == (kind == GL_FLOAT)) {
+            gl.depth_internal = f.internal;
+            gl.depth_format = f.format;
+            gl.depth_type = f.type;
+            name = f.name;
+            return true;
+        }
+    return false;
+}
+
+// GlRenderer::read_depths' objects on OpenGL ES (Impl::depth_*, probe_*) for
+// a window of this size and `slots` probes; false with the reason when they
+// cannot be made. Texture work on unit 3 (the renderer's units are 0..2).
+bool prepare_depth_probe(GlRenderer::Impl& gl, int width, int height, int slots, std::string& failure) {
+    if (!gl.depth_read_ready) {
+        std::string format;
+        if (!window_depth_format(gl, format)) {
+            failure = "the window's depth buffer (" + format + ") has no texture format";
+            return false;
+        }
+        unsigned vs = 0, fs = 0;
+        try {
+            vs = compile(gl, GL_VERTEX_SHADER, kDepthProbeVertex);
+            fs = compile(gl, GL_FRAGMENT_SHADER, kDepthProbeFragment);
+        } catch (const std::exception& e) {
+            if (vs) gl.DeleteShader(vs);
+            failure = std::string("the probe shader does not compile: ") + e.what();
+            return false;
+        }
+        gl.probe_program = gl.CreateProgram();
+        gl.AttachShader(gl.probe_program, vs);
+        gl.AttachShader(gl.probe_program, fs);
+        gl.LinkProgram(gl.probe_program);
+        gl.DeleteShader(vs);
+        gl.DeleteShader(fs);
+        int ok = 0;
+        gl.GetProgramiv(gl.probe_program, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[1024]{};
+            gl.GetProgramInfoLog(gl.probe_program, sizeof log, nullptr, log);
+            failure = std::string("the probe shader does not link: ") + log;
+            return false;
+        }
+        gl.u_probe_slots = gl.GetUniformLocation(gl.probe_program, "u_slots");
+        gl.u_probe_depth = gl.GetUniformLocation(gl.probe_program, "u_depth");
+        gl.GenFramebuffers(1, &gl.depth_fbo);
+        gl.GenFramebuffers(1, &gl.probe_fbo);
+        glGenTextures(1, &gl.depth_texture);
+        glGenTextures(1, &gl.probe_texture);
+        gl.GenVertexArrays(1, &gl.probe_vao);
+        gl.GenBuffers(1, &gl.probe_vbo);
+        gl.BindVertexArray(gl.probe_vao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.probe_vbo);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        gl.BindVertexArray(0);
+        gl.depth_read_ready = true;
+        std::cout << "renderer: the name tags' depth read-back through a " << format << " texture (OpenGL ES)\n";
+    }
+    gl.ActiveTexture(GL_TEXTURE3);
+    gl.BindSampler(3, 0);
+    if (width != gl.depth_width || height != gl.depth_height) {
+        glBindTexture(GL_TEXTURE_2D, gl.depth_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GLint(gl.depth_internal), width, height, 0, gl.depth_format, gl.depth_type, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, gl.depth_fbo);
+        gl.FramebufferTexture2D(GL_FRAMEBUFFER, gl.depth_format == GL_DEPTH_STENCIL ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT,
+                                GL_TEXTURE_2D, gl.depth_texture, 0);
+        if (const GLenum status = gl.CheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE) {
+            char text[64];
+            std::snprintf(text, sizeof text, "the depth texture's framebuffer is incomplete (0x%x)", status);
+            failure = text;
+            return false;
+        }
+        gl.depth_width = width;
+        gl.depth_height = height;
+    }
+    if (slots > gl.probe_slots) {
+        int row = 32;
+        while (row < slots) row *= 2;
+        glBindTexture(GL_TEXTURE_2D, gl.probe_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, row, 1, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, gl.probe_fbo);
+        gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl.probe_texture, 0);
+        if (const GLenum status = gl.CheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE) {
+            char text[64];
+            std::snprintf(text, sizeof text, "the probe row's framebuffer is incomplete (0x%x)", status);
+            failure = text;
+            return false;
+        }
+        gl.probe_slots = row;
+    }
+    return true;
+}
 } // namespace
 
-GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
+GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) { create_objects(); }
+
+void GlRenderer::check_gl_errors(const char* where) { note_gl_error(take_gl_error(), where); }
+
+void GlRenderer::note_gl_error(unsigned error, const char* where) {
+    auto& gl = *gl_;
+    if (!gl.check_gl) return;
+    ++gl.gl_checks;
+    if (error == GL_NO_ERROR) return;
+    if (++gl.gl_errors <= 20)
+        std::cerr << "renderer: GL error 0x" << std::hex << error << std::dec << " " << where << " (frame " << frame_ << ")"
+                  << (gl.gl_errors == 20 ? "; further errors are only counted" : "") << '\n';
+}
+
+bool GlRenderer::checking_gl() const { return gl_->check_gl; }
+
+void GlRenderer::reset_context() {
+    // (Every GL object went with the lost context: the names are only
+    // forgotten. The loading thread holds none; it starts again, configured
+    // as before, and the pack's textures come again as they are drawn.)
+    streamer_.reset();
+    upload_.reset();
+    meshes_.clear();
+    splits_.clear();
+    textures_.clear();
+    originals_.clear();
+    replacements_.clear();
+    failed_uploads_.clear();
+    samplers_.clear();
+    owned_bytes_ = 0;
+    title_variants_.clear();
+    program_ = white_texture_ = 0;
+    sharpen_program_ = sharpen_texture_ = 0;
+    sharpen_width_ = sharpen_height_ = 0;
+    movie_program_ = movie_vao_ = 0;
+    movie_textures_ = {};
+    movie_pictures_ = {};
+    movie_slot_ = 0;
+    movie_width_ = movie_height_ = 0;
+    kept_program_ = kept_texture_ = 0;
+    kept_width_ = kept_height_ = 0;
+    shadow_fbo_ = shadow_texture_ = 0;
+    shadow_width_ = shadow_height_ = 0;
+    shadow_ready_ = false;
+    // (The checks' counts go on in the new context's Impl: one total at the end.)
+    auto fresh = std::make_unique<Impl>();
+    fresh->gl_errors = gl_->gl_errors;
+    fresh->gl_checks = gl_->gl_checks;
+    fresh->clamp_checked = gl_->clamp_checked;
+    fresh->clamp_crossing = gl_->clamp_crossing;
+    fresh->clamp_report = gl_->clamp_report;
+    gl_->check_gl = gl_->check_depth_clamp = false;
+    gl_ = std::move(fresh);
+    create_objects();
+    configure_streamer();
+}
+
+void GlRenderer::create_objects() {
     auto& gl = *gl_;
     const unsigned vs = compile(gl, GL_VERTEX_SHADER, kVertex);
     const unsigned fs = compile(gl, GL_FRAGMENT_SHADER, kFragment);
@@ -377,19 +766,45 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     gl.LinkProgram(program_);
     int ok = 0;
     gl.GetProgramiv(program_, GL_LINK_STATUS, &ok);
-    if (!ok) throw std::runtime_error("game shader link failed");
+    if (!ok) {
+        char log[2048]{};
+        gl.GetProgramInfoLog(program_, sizeof log, nullptr, log);
+        throw std::runtime_error(std::string("game shader link failed: ") + log);
+    }
     gl.DeleteShader(vs);
     gl.DeleteShader(fs);
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id) U(lod_bias)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id) U(lod_bias) U(depth_clamp) U(palette_tex)
 #undef U
+    if (gl.gles) {
+        int extensions = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &extensions);
+        gl.native_depth_clamp = false;
+        for (int i = 0; i < extensions; ++i)
+            if (const auto* name = reinterpret_cast<const char*>(gl.GetStringi(GL_EXTENSIONS, GLuint(i)));
+                name && std::string_view(name) == "GL_EXT_depth_clamp")
+                gl.native_depth_clamp = true;
+        std::cout << "renderer: " << reinterpret_cast<const char*>(glGetString(GL_VERSION)) << " on "
+                  << reinterpret_cast<const char*>(glGetString(GL_RENDERER)) << ", depth clamp "
+                  << (gl.native_depth_clamp ? "GL_EXT_depth_clamp" : "in the vertex shader") << '\n';
+    }
+    gl.ActiveTexture(GL_TEXTURE2);
+    glGenTextures(1, &gl.palette_texture);
+    glBindTexture(GL_TEXTURE_2D, gl.palette_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 64, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    gl.ActiveTexture(GL_TEXTURE0);
     gl.UseProgram(program_);
     const engine::Mat4 identity{};
     gl.UniformMatrix4fv(gl.u_normal, 1, GL_FALSE, identity.m.data());
     gl.Uniform1f(gl.u_lod_bias, 0.0f);
+    gl.Uniform1i(gl.u_depth_clamp, 0);
+    gl.Uniform1i(gl.u_palette_tex, 2);
     gl.UseProgram(0);
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -404,6 +819,12 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     caps_.bc7 = SDL_GL_ExtensionSupported("GL_ARB_texture_compression_bptc") || major > 4 || (major == 4 && minor >= 2);
     if (SDL_GL_ExtensionSupported("GL_ARB_texture_storage") || major > 4 || (major == 4 && minor >= 2))
         gl.TexStorage2D = reinterpret_cast<PFNGLTEXSTORAGE2DPROC>(SDL_GL_GetProcAddress("glTexStorage2D"));
+    // (OpenGL ES 3.0 has immutable storage in its core, BPTC only as
+    // GL_EXT_texture_compression_bptc; its version numbers are ES ones.)
+    if (gl.gles) {
+        caps_.bc7 = SDL_GL_ExtensionSupported("GL_EXT_texture_compression_bptc");
+        if (major >= 3) gl.TexStorage2D = reinterpret_cast<PFNGLTEXSTORAGE2DPROC>(SDL_GL_GetProcAddress("glTexStorage2D"));
+    }
     caps_.bc1 = caps_.bc3 = SDL_GL_ExtensionSupported("GL_EXT_texture_compression_s3tc");
     caps_.anisotropic =
         SDL_GL_ExtensionSupported("GL_ARB_texture_filter_anisotropic") || SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic");
@@ -437,16 +858,29 @@ GlRenderer::~GlRenderer() {
     if (shadow_fbo_) gl_->DeleteFramebuffers(1, &shadow_fbo_);
     if (shadow_texture_) glDeleteTextures(1, &shadow_texture_);
     if (white_texture_) glDeleteTextures(1, &white_texture_);
-    if (movie_texture_) glDeleteTextures(1, &movie_texture_);
+    for (auto& texture : movie_textures_)
+        if (texture) glDeleteTextures(1, &texture);
     if (kept_texture_) glDeleteTextures(1, &kept_texture_);
     if (kept_program_) gl_->DeleteProgram(kept_program_);
     if (movie_vao_) gl_->DeleteVertexArrays(1, &movie_vao_);
+    if (gl_->strip_vbo) gl_->DeleteBuffers(1, &gl_->strip_vbo);
+    if (gl_->kept_fbo) gl_->DeleteFramebuffers(1, &gl_->kept_fbo);
+    if (gl_->resolve_fbo) gl_->DeleteFramebuffers(1, &gl_->resolve_fbo);
+    if (gl_->resolve_texture) glDeleteTextures(1, &gl_->resolve_texture);
+    if (gl_->depth_fbo) gl_->DeleteFramebuffers(1, &gl_->depth_fbo);
+    if (gl_->probe_fbo) gl_->DeleteFramebuffers(1, &gl_->probe_fbo);
+    if (gl_->depth_texture) glDeleteTextures(1, &gl_->depth_texture);
+    if (gl_->probe_texture) glDeleteTextures(1, &gl_->probe_texture);
+    if (gl_->probe_program) gl_->DeleteProgram(gl_->probe_program);
+    if (gl_->probe_vao) gl_->DeleteVertexArrays(1, &gl_->probe_vao);
+    if (gl_->probe_vbo) gl_->DeleteBuffers(1, &gl_->probe_vbo);
+    if (gl_->palette_texture) glDeleteTextures(1, &gl_->palette_texture);
     if (movie_program_) gl_->DeleteProgram(movie_program_);
     if (program_) gl_->DeleteProgram(program_);
 }
 
-void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, const Viewport& screen, int window_width,
-                            int window_height) {
+void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, std::uint64_t picture, const Viewport& screen,
+                            int window_width, int window_height) {
     auto& gl = *gl_;
     if (!movie_program_) {
         const unsigned vs = compile(gl, GL_VERTEX_SHADER, kMovieVertex);
@@ -460,29 +894,50 @@ void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, con
         int ok = 0;
         gl.GetProgramiv(movie_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("movie shader link failed");
-        if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
-        glGenTextures(1, &movie_texture_);
+        if (!movie_vao_) strip_vao(gl, movie_vao_);
     }
-    glBindTexture(GL_TEXTURE_2D, movie_texture_);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     if (width != movie_width_ || height != movie_height_) {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // (Another size: the ring's textures are made again.)
+        for (auto& texture : movie_textures_)
+            if (texture) glDeleteTextures(1, &texture);
+        movie_textures_ = {};
+        movie_pictures_ = {};
         movie_width_ = width;
         movie_height_ = height;
-    } else {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    }
+    // A picture is uploaded once, into the ring's next texture (its last draw
+    // was two pictures ago, so the upload never waits for the GPU to finish
+    // with it); a picture shown again draws the texture that holds it.
+    // (Picture 0: no number, uploaded every time.)
+    std::size_t slot = movie_textures_.size();
+    if (picture)
+        for (std::size_t i = 0; i < movie_textures_.size(); ++i)
+            if (movie_textures_[i] && movie_pictures_[i] == picture) slot = i;
+    gl.ActiveTexture(GL_TEXTURE0);
+    if (slot == movie_textures_.size()) {
+        slot = (movie_slot_ + 1) % movie_textures_.size();
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (!movie_textures_[slot]) {
+            glGenTextures(1, &movie_textures_[slot]);
+            glBindTexture(GL_TEXTURE_2D, movie_textures_[slot]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, movie_textures_[slot]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        }
+        movie_pictures_[slot] = picture;
+        movie_slot_ = slot;
     }
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
     glViewport(screen.x, screen.y, screen.width, screen.height);
     gl.UseProgram(movie_program_);
-    gl.ActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, movie_texture_);
+    glBindTexture(GL_TEXTURE_2D, movie_textures_[slot]);
     gl.Uniform1i(gl.GetUniformLocation(movie_program_, "u_tex"), 0);
     gl.BindVertexArray(movie_vao_);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -504,17 +959,142 @@ void GlRenderer::keep_picture(int window_width, int window_height) {
         kept_width_ = window_width;
         kept_height_ = window_height;
     }
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, window_width, window_height);
+    if (!gl_->gles) {
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, window_width, window_height);
+        return;
+    }
+    // OpenGL ES copies no multisampled framebuffer into a texture: the
+    // window's picture is blitted (resolved) into the texture's framebuffer.
+    auto& gl = *gl_;
+    if (!gl.kept_fbo) gl.GenFramebuffers(1, &gl.kept_fbo);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, gl.kept_fbo);
+    gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, kept_texture_, 0);
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    gl.BlitFramebuffer(0, 0, window_width, window_height, 0, 0, window_width, window_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 std::optional<float> GlRenderer::read_depth(int x, int y, int window_width, int window_height) {
-    if (x < 0 || y < 0 || x >= window_width || y >= window_height) return std::nullopt;
-    for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {
+    return read_depths({{x, y}}, window_width, window_height).front();
+}
+
+std::vector<std::optional<float>> GlRenderer::read_depths(const std::vector<std::array<int, 2>>& pixels, int window_width,
+                                                          int window_height) {
+    std::vector<std::optional<float>> depths(pixels.size());
+    auto inside = [&](const std::array<int, 2>& p) { return p[0] >= 0 && p[1] >= 0 && p[0] < window_width && p[1] < window_height; };
+    auto& gl = *gl_;
+    if (!gl.gles) {
+        for (std::size_t i = 0; i < pixels.size(); ++i) {
+            if (!inside(pixels[i])) continue;
+            for (int k = 0; k < 16 && glGetError() != GL_NO_ERROR; ++k) {
+            }
+            float depth = 1.0f;
+            glReadPixels(pixels[i][0], pixels[i][1], 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+            if (glGetError() == GL_NO_ERROR) depths[i] = depth;
+        }
+        return depths;
     }
-    float depth = 1.0f;
-    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
-    if (glGetError() != GL_NO_ERROR) return std::nullopt;
-    return depth;
+    // OpenGL ES (Impl::depth_*): the window's depth inside the probes'
+    // bounding rectangle blitted into the depth texture, one pass of points
+    // fetching it into the probe row, one read of that row.
+    if (gl.depth_read_off) return depths;
+    std::vector<std::size_t> slots;
+    int x0 = window_width, y0 = window_height, x1 = -1, y1 = -1;
+    for (std::size_t i = 0; i < pixels.size(); ++i) {
+        if (!inside(pixels[i])) continue;
+        slots.push_back(i);
+        x0 = std::min(x0, pixels[i][0]);
+        y0 = std::min(y0, pixels[i][1]);
+        x1 = std::max(x1, pixels[i][0]);
+        y1 = std::max(y1, pixels[i][1]);
+    }
+    if (slots.empty()) return depths;
+    check_gl_errors("before the name tags' depth read-back");
+    // (The state the frame's later passes and ImGui's backend find.)
+    GLint viewport[4]{}, program = 0, active = GL_TEXTURE0, vao = 0, array_buffer = 0, unit3 = 0;
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &array_buffer);
+    GLboolean color_mask[4]{GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
+    const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST), depth_test = glIsEnabled(GL_DEPTH_TEST), blend = glIsEnabled(GL_BLEND),
+                    cull = glIsEnabled(GL_CULL_FACE);
+    gl.ActiveTexture(GL_TEXTURE3);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &unit3);
+    std::string failure;
+    std::vector<GLuint> bits;
+    const int count = int(slots.size());
+    if (prepare_depth_probe(gl, window_width, window_height, count, failure)) {
+        // (A blit is scissored; a multisampled window wants the same
+        // rectangle on both sides.)
+        glDisable(GL_SCISSOR_TEST);
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, gl.depth_fbo);
+        gl.BlitFramebuffer(x0, y0, x1 + 1, y1 + 1, x0, y0, x1 + 1, y1 + 1, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        std::vector<float> points;
+        points.reserve(slots.size() * 3);
+        for (std::size_t k = 0; k < slots.size(); ++k) {
+            points.push_back(float(pixels[slots[k]][0]));
+            points.push_back(float(pixels[slots[k]][1]));
+            points.push_back(float(k));
+        }
+        gl.BindFramebuffer(GL_FRAMEBUFFER, gl.probe_fbo);
+        glViewport(0, 0, count, 1);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        // (A slot the pass does not write keeps a NaN's bits, which no
+        // depth is: the R32UI target has no alpha to mark the written ones,
+        // GL_RGBA_INTEGER reads A = 1 for every pixel.)
+        const GLuint unwritten[4]{kProbeUnwritten, 0, 0, 0};
+        gl.ClearBufferuiv(GL_COLOR, 0, unwritten);
+        gl.UseProgram(gl.probe_program);
+        gl.Uniform1f(gl.u_probe_slots, float(count));
+        gl.Uniform1i(gl.u_probe_depth, 3);
+        glBindTexture(GL_TEXTURE_2D, gl.depth_texture);
+        gl.BindVertexArray(gl.probe_vao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, gl.probe_vbo);
+        gl.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(points.size() * sizeof(float)), points.data(), GL_STREAM_DRAW);
+        glDrawArrays(GL_POINTS, 0, count);
+        bits.assign(std::size_t(count) * 4, 0);
+        glReadPixels(0, 0, count, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, bits.data());
+        if (const GLenum error = take_gl_error(); error != GL_NO_ERROR) {
+            note_gl_error(error, "in the name tags' depth read-back");
+            char text[64];
+            std::snprintf(text, sizeof text, "GL error 0x%x", error);
+            failure = text;
+        }
+    }
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, GLuint(unit3));
+    gl.ActiveTexture(GLenum(active));
+    gl.BindVertexArray(GLuint(vao));
+    gl.BindBuffer(GL_ARRAY_BUFFER, GLuint(array_buffer));
+    gl.UseProgram(GLuint(program));
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
+    if (depth_test) glEnable(GL_DEPTH_TEST);
+    if (blend) glEnable(GL_BLEND);
+    if (cull) glEnable(GL_CULL_FACE);
+    take_gl_error();
+    if (!failure.empty()) {
+        gl.depth_read_off = true;
+        std::cerr << "renderer: no depth read-back on this OpenGL ES context (" << failure
+                  << "): the name tags never hide behind the scene\n";
+        return depths;
+    }
+    for (std::size_t k = 0; k < slots.size(); ++k) {
+        // (A probe the pass did not write: unknown, not "in front".)
+        if (bits[k * 4] == kProbeUnwritten) continue;
+        float depth = 1.0f;
+        std::memcpy(&depth, &bits[k * 4], sizeof depth);
+        depths[slots[k]] = depth;
+    }
+    return depths;
 }
 
 bool GlRenderer::draw_kept_picture(int window_width, int window_height) {
@@ -533,7 +1113,7 @@ bool GlRenderer::draw_kept_picture(int window_width, int window_height) {
         gl.GetProgramiv(kept_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("kept picture shader link failed");
     }
-    if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
+    if (!movie_vao_) strip_vao(gl, movie_vao_);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
@@ -725,30 +1305,41 @@ void GlRenderer::stream_textures(const std::vector<std::shared_ptr<const IgbDocu
     std::size_t total = owned_bytes_;
     for (const auto& [_, t] : originals_) total += t.bytes;
     for (const auto& [_, t] : replacements_) total += t.bytes;
-    if (total > budget) {
-        std::vector<BudgetEntry> entries;
-        std::unordered_map<std::uint64_t, std::pair<bool, std::uint64_t>> by_slot; // slot -> (replacement, hash)
-        for (const auto& [hash, t] : originals_) {
-            entries.push_back({t.slot, t.bytes, t.last_frame});
-            by_slot[t.slot] = {false, hash};
-        }
-        for (const auto& [hash, t] : replacements_) {
-            entries.push_back({t.slot, t.bytes, t.last_frame});
-            by_slot[t.slot] = {true, hash};
-        }
-        const std::size_t shared_budget = budget > owned_bytes_ ? budget - owned_bytes_ : 0;
-        for (const auto slot : choose_evictions(std::move(entries), shared_budget, frame_ >= 2 ? frame_ - 2 : 0)) {
-            const auto [replacement, hash] = by_slot[slot];
-            auto& map = replacement ? replacements_ : originals_;
-            if (auto found = map.find(hash); found != map.end()) {
-                delete_texture(found->second);
-                map.erase(found);
-                if (replacement) streamer_->forget(hash);
-                ++stats_.evictions;
-            }
+    if (total > budget) evict_hashed(budget > owned_bytes_ ? budget - owned_bytes_ : 0);
+    note_bytes();
+}
+
+GlRenderer::Trimmed GlRenderer::evict_hashed(std::size_t shared_budget) {
+    std::vector<BudgetEntry> entries;
+    std::unordered_map<std::uint64_t, std::pair<bool, std::uint64_t>> by_slot; // slot -> (replacement, hash)
+    for (const auto& [hash, t] : originals_) {
+        entries.push_back({t.slot, t.bytes, t.last_frame});
+        by_slot[t.slot] = {false, hash};
+    }
+    for (const auto& [hash, t] : replacements_) {
+        entries.push_back({t.slot, t.bytes, t.last_frame});
+        by_slot[t.slot] = {true, hash};
+    }
+    Trimmed trimmed;
+    for (const auto slot : choose_evictions(std::move(entries), shared_budget, frame_ >= 2 ? frame_ - 2 : 0)) {
+        const auto [replacement, hash] = by_slot[slot];
+        auto& map = replacement ? replacements_ : originals_;
+        if (auto found = map.find(hash); found != map.end()) {
+            ++trimmed.textures;
+            trimmed.bytes += found->second.bytes;
+            delete_texture(found->second);
+            map.erase(found);
+            if (replacement) streamer_->forget(hash);
+            ++stats_.evictions;
         }
     }
+    return trimmed;
+}
+
+GlRenderer::Trimmed GlRenderer::trim_textures() {
+    const Trimmed trimmed = evict_hashed(0);
     note_bytes();
+    return trimmed;
 }
 
 void GlRenderer::begin_upload(TexturePayload payload) {
@@ -780,7 +1371,7 @@ void GlRenderer::begin_upload(TexturePayload payload) {
     up->level = up->first;
     const auto& top = payload.levels[up->first];
     const GLsizei levels = GLsizei(payload.levels.size() - up->first);
-    take_gl_error(); // (errors of earlier calls are not this texture's)
+    check_gl_errors("before a texture upload"); // (errors of earlier calls are not this texture's)
     glGenTextures(1, &up->texture.id);
     glBindTexture(GL_TEXTURE_2D, up->texture.id);
     // Immutable storage for every level at once (GL 4.2 / ARB_texture_storage),
@@ -807,7 +1398,7 @@ void GlRenderer::begin_upload(TexturePayload payload) {
 
 bool GlRenderer::continue_upload(std::chrono::steady_clock::time_point deadline, bool& moved) {
     auto& up = *upload_;
-    take_gl_error(); // (errors of the frame's draws are not this texture's)
+    check_gl_errors("before a texture upload"); // (errors of the frame's draws are not this texture's)
     glBindTexture(GL_TEXTURE_2D, up.texture.id);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     constexpr std::size_t kBandBytes = std::size_t(256) << 10;
@@ -1231,7 +1822,7 @@ void GlRenderer::sharpen(const Viewport& area) {
         gl.GetProgramiv(sharpen_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("sharpening shader link failed");
     }
-    if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
+    if (!movie_vao_) strip_vao(gl, movie_vao_);
     if (!sharpen_texture_) glGenTextures(1, &sharpen_texture_);
     gl.ActiveTexture(GL_TEXTURE0);
     gl.BindSampler(0, 0);
@@ -1245,13 +1836,16 @@ void GlRenderer::sharpen(const Viewport& area) {
         sharpen_height_ = area.height;
     }
     // (The window's picture, multisampling resolved as keep_picture's copy.)
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, area.x, area.y, area.width, area.height);
+    if (!gl.gles) glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, area.x, area.y, area.width, area.height);
+    else gl.copy_window_es(area.x, area.y, area.width, area.height);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glDisable(GL_DEPTH_CLAMP);
+    // (render() turned depth clamping off before; GLES without
+    // GL_EXT_depth_clamp has no such switch.)
+    if (gl.native_depth_clamp) glDisable(GL_DEPTH_CLAMP);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glViewport(area.x, area.y, area.width, area.height);
     gl.UseProgram(sharpen_program_);
@@ -1662,8 +2256,7 @@ void GlRenderer::render_shadow_map() {
         if (!m || !m->index_count) continue;
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         if (item.palette && !item.palette->empty()) {
-            const auto count = std::min<std::size_t>(item.palette->size(), 64);
-            gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
+            gl.upload_palette(*item.palette);
             gl.Uniform1i(gl.u_skinned, 1);
         } else {
             gl.Uniform1i(gl.u_skinned, 0);
@@ -1677,7 +2270,7 @@ void GlRenderer::render_shadow_map() {
         const auto& s = item.state;
         if (s.blend_enabled) {
             glEnable(GL_BLEND);
-            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst, true, gl.gles), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             gl.BlendEquation(GL_FUNC_ADD);
         } else {
             glDisable(GL_BLEND);
@@ -1738,7 +2331,7 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     glEnable(GL_BLEND);
     gl.BlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ZERO, GL_ONE);
     gl.BlendEquation(GL_FUNC_ADD);
-    glDisable(GL_DEPTH_CLAMP);
+    gl.set_depth_clamp(false);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
     gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, camera.view.m.data());
     gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, camera.projection.m.data());
@@ -1786,9 +2379,9 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     if (!id_pass_) render_shadow_map();
     // Dev item-id pass: no blending and no multisampling (every sample of a
     // pixel gets the item's exact number), no shadow receivers.
-    const bool multisample = glIsEnabled(GL_MULTISAMPLE);
+    const bool multisample = !gl.gles && glIsEnabled(GL_MULTISAMPLE);
     if (id_pass_) {
-        glDisable(GL_MULTISAMPLE);
+        if (!gl.gles) glDisable(GL_MULTISAMPLE);
         glDisable(GL_DITHER);
     }
     // Widescreen: perspective projections keep their vertical field of view
@@ -1895,8 +2488,9 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         // 2D layers (orthographic, e.g. the FONT camera with near 10) place
         // geometry in front of the near plane (item names at z -5); GX draws
         // it, so clamp depth there instead of clipping.
-        if (proj(2, 3) == 0.0f && proj(3, 3) == 1.0f) glEnable(GL_DEPTH_CLAMP);
-        else glDisable(GL_DEPTH_CLAMP);
+        gl.set_depth_clamp(proj(2, 3) == 0.0f && proj(3, 3) == 1.0f);
+        if (gl.check_depth_clamp && proj(2, 3) == 0.0f && proj(3, 3) == 1.0f && item.geometry && !(item.palette && !item.palette->empty()))
+            gl.check_clamp(*item.geometry, item.model * view * proj);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         // The modelview flush 800F805C (via 800F84EC) loads the position
         // matrix and, as the normal matrix, the transpose of its inverse:
@@ -1919,8 +2513,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const int texgen = s.texcoord_source == 2 && m->has_normals ? 2 : 0;
         gl.Uniform1i(gl.u_texgen, texgen);
         if (item.palette && !item.palette->empty()) {
-            const auto count = std::min<std::size_t>(item.palette->size(), 64);
-            gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
+            gl.upload_palette(*item.palette);
             gl.Uniform1i(gl.u_skinned, 1);
         } else {
             gl.Uniform1i(gl.u_skinned, 0);
@@ -2027,7 +2620,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             // item adds (the igBlendFunctionAttr equation is dropped, see the
             // blend_function case in scene_graph.cpp).
             glEnable(GL_BLEND);
-            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst, true, gl.gles), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             gl.BlendEquation(GL_FUNC_ADD);
         } else {
             glDisable(GL_BLEND);
@@ -2068,12 +2661,12 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         glScissor(wide.x, wide.y, wide.width, wide.height);
         render_shadow_receivers(camera);
     }
+    gl.set_depth_clamp(false);
     // (Later draws of the frame, the movie and the kept picture, sample with
     // their textures' own parameters.)
     gl.BindSampler(0, 0);
     // Sharpening (an option) over the game picture, before the menus.
     if (!id_pass_ && graphics_.sharpening != Sharpening::off) sharpen(wide);
-    glDisable(GL_DEPTH_CLAMP);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
@@ -2095,6 +2688,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             ++it;
         }
     }
+}
+
+bool gl_is_es() {
+    const auto* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    return version && std::string_view(version).rfind("OpenGL ES", 0) == 0;
 }
 
 } // namespace dw4::game

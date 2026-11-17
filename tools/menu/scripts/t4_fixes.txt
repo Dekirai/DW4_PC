@@ -1,0 +1,78 @@
+# F (the review fixes on a device, the virtual Thor pad, F1 open on the title by DW4_OPEN_MENU): Saves' one lock line
+# on the title, where the save lives in the player's words, the language's value zone, paths broken after their
+# separators, Y's look, the packs' folder line, the prompts' preview, the bindings' {DEL} line; then the lower
+# screen: the focus row in view after the move, a sub-page's header with its title alone.
+expect log + pad Odin Controller thor
+wait 120
+expect open
+expect page saves
+shot t4_00_saves_title
+pad a
+expect focus saves.state.1
+pad down
+pad down
+pad down
+pad down
+expect focus saves.card
+pad a
+expect page saves/card
+pad a
+wait 4
+shot t4_01_card_details
+pad b
+pad r1
+expect page general
+shot t4_02_general
+pad up
+expect focus general.files
+pad a
+expect page general/files
+shot t4_03_files
+pad b
+pad r1
+expect page display
+pad down
+pad y down
+waitms 600
+shot t4_04_look
+pad y up
+waitms 300
+shot t4_05_display
+pad r1
+expect page graphics
+pad up
+expect focus graphics.advanced
+pad a
+shot t4_06_graphics_advanced
+pad b
+pad r1
+expect page controls
+shot t4_07_controls
+pad down
+pad down
+pad down
+pad down
+expect focus controls.bind.buttons
+pad a
+expect page controls/bindings.buttons
+shot t4_08_bindings
+pad b
+expect focus controls.bind.buttons
+screen2
+wait 30
+shot t4_09_lower_controls_moved
+pad a
+expect page controls/bindings.buttons
+wait 4
+shot t4_10_lower_bindings
+pad b
+pad l1
+pad l1
+pad l1
+pad l1
+expect page saves
+wait 4
+shot t4_11_lower_saves
+pad start
+wait 10
+expect closed

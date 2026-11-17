@@ -1,4 +1,5 @@
 #include "settings.hpp"
+#include "app_paths.hpp"
 
 #include "dw4/pad.hpp"
 
@@ -112,10 +113,8 @@ void drop_defaults_in_use(std::array<std::array<T, Settings::kKeysPerButton>, kP
     }
 }
 
-std::filesystem::path program_folder() {
-    const char* base = SDL_GetBasePath();
-    return base ? std::filesystem::path(base) : std::filesystem::path();
-}
+// (On Android the app's external files folder, app_paths.hpp.)
+std::filesystem::path program_folder() { return app_root(); }
 
 } // namespace
 
@@ -222,8 +221,14 @@ Settings Settings::parse(IniFile document) {
     settings.fps_limit = std::clamp(ini.get_int("window", "fps_limit", settings.fps_limit), 0, 1000);
     settings.smooth_motion = ini.get_bool("window", "smooth_motion", settings.smooth_motion);
     settings.msaa = std::clamp(ini.get_int("window", "msaa", settings.msaa), 0, 16);
+    if (const auto scale = ini.get("window", "ui_scale"); scale && *scale != "auto") {
+        // (A percent; a value this build cannot read stays auto.)
+        const int percent = ini.get_int("window", "ui_scale", 0);
+        settings.ui_scale = percent > 0 ? std::clamp(percent, 100, 400) : 0;
+    }
     settings.volume = std::clamp(ini.get_int("audio", "volume", settings.volume), 0, 100);
     settings.pause_in_menu = ini.get_bool("menu", "pause", settings.pause_in_menu);
+    settings.pause_unfocused = ini.get_bool("menu", "pause_unfocused", settings.pause_unfocused);
     settings.skip_intro = ini.get_bool("preferences", "skip_intro", settings.skip_intro);
     // (A code the language packs could name: lowercase letters, digits, '-'.)
     if (std::string language = ini.get_or("preferences", "language", settings.language);
@@ -316,6 +321,10 @@ Settings Settings::parse(IniFile document) {
         ini.get_or("gamepad", "menu_buttons", "layout") == "bindings" ? MenuButtons::bindings : MenuButtons::layout;
     settings.gc_adapter = ini.get_bool("gamepad", "gc_adapter", settings.gc_adapter);
     {
+        const std::string style = ini.get_or("gamepad", "thor_style", "auto");
+        settings.thor_style = style == "standard" ? ThorStyle::standard : style == "xbox" ? ThorStyle::xbox : ThorStyle::automatic;
+    }
+    {
         // (A value this build does not read keeps the default.)
         auto& g = settings.graphics;
         if (const auto v = ini.get("graphics", "texture_quality"))
@@ -374,6 +383,13 @@ Settings Settings::parse(IniFile document) {
     settings.achievements = ini.get_bool("achievements", "enabled", settings.achievements);
     settings.achievement_popups = ini.get_bool("achievements", "popups", settings.achievement_popups);
     settings.net_indicator = ini.get_bool("online", "net_indicator", settings.net_indicator);
+    settings.screen2_mode = ini.get_or("screen2", "mode", "auto") == "off" ? Screen2Mode::off : Screen2Mode::automatic;
+    {
+        const std::string tab = ini.get_or("screen2", "tab", screen2_tab_id(settings.screen2_tab));
+        for (const Screen2Tab t : {Screen2Tab::online, Screen2Tab::status, Screen2Tab::menu})
+            if (tab == screen2_tab_id(t)) settings.screen2_tab = t;
+    }
+    settings.screen2_overlay = ini.get_bool("screen2", "overlay", settings.screen2_overlay);
     settings.data = ini.get_or("data", "path", "");
     settings.save_file = ini.get_or("data", "save", settings.save_file.string());
     settings.save_file_b = ini.get_or("data", "save_b", settings.save_file_b.string());
@@ -394,8 +410,12 @@ void Settings::store() {
     ini_.set_int("window", "fps_limit", fps_limit);
     ini_.set_bool("window", "smooth_motion", smooth_motion);
     ini_.set_int("window", "msaa", msaa);
+    if (ui_scale > 0) ini_.set_int("window", "ui_scale", ui_scale);
+    else if (ini_.get("window", "ui_scale")) ini_.set("window", "ui_scale", "auto");
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
+    if (pause_unfocused != kPauseUnfocusedDefault || ini_.get("menu", "pause_unfocused"))
+        ini_.set_bool("menu", "pause_unfocused", pause_unfocused);
     ini_.set_bool("preferences", "skip_intro", skip_intro);
     ini_.set("preferences", "language", language);
     ini_.set_int("gameplay", "exp_rate", exp_rate);
@@ -438,6 +458,21 @@ void Settings::store() {
     ini_.set("gamepad", "wii_driver", wii_driver == WiiDriver::on ? "on" : wii_driver == WiiDriver::off ? "off" : "auto");
     ini_.set("gamepad", "menu_buttons", menu_buttons == MenuButtons::bindings ? "bindings" : "layout");
     ini_.set_bool("gamepad", "gc_adapter", gc_adapter);
+    // [screen2]: a key only while it is not its default, the section only
+    // with a key in it (a PC's or a device's settings.ini without them stays
+    // as it was, also after a setting went back to its default).
+    {
+        const auto keep = [this](const char* key, bool changed, std::string_view value) {
+            if (changed) ini_.set("screen2", key, value);
+            else ini_.remove("screen2", key);
+        };
+        keep("mode", screen2_mode != Screen2Mode::automatic, screen2_mode == Screen2Mode::off ? "off" : "auto");
+        keep("tab", screen2_tab != Screen2Tab::status, screen2_tab_id(screen2_tab));
+        keep("overlay", screen2_overlay, "true");
+        ini_.remove_section_if_empty("screen2");
+    }
+    if (thor_style != ThorStyle::automatic || ini_.get("gamepad", "thor_style"))
+        ini_.set("gamepad", "thor_style", thor_style == ThorStyle::standard ? "standard" : thor_style == ThorStyle::xbox ? "xbox" : "auto");
     {
         const auto g = graphics.clamped();
         ini_.set("graphics", "texture_quality", texture_quality_name(g.texture_quality));
@@ -475,6 +510,21 @@ void Settings::store() {
 bool Settings::save() {
     store();
     return ini_.save(file);
+}
+
+float ui_scale_factor(int setting_percent, float display_scale, bool follow_display) {
+    if (setting_percent > 0) return std::clamp(float(setting_percent) / 100.0f, 1.0f, 4.0f);
+    if (!follow_display || !(display_scale > 0.0f)) return 1.0f;
+    return std::clamp(display_scale, 1.0f, 4.0f);
+}
+
+const char* screen2_tab_id(Screen2Tab tab) {
+    switch (tab) {
+    case Screen2Tab::online: return "online";
+    case Screen2Tab::menu: return "menu";
+    case Screen2Tab::status: break;
+    }
+    return "status";
 }
 
 } // namespace dw4::game

@@ -14,9 +14,11 @@
 #include "dev_present.hpp"
 #include "gl_renderer.hpp"
 #include "interpolation.hpp"
+#include "menu_ops.hpp"
 #include "movie_decoder.hpp"
 #include "overhead_labels.hpp"
 #include "pad_family.hpp"
+#include "pad_host.hpp"
 #include "pad_usb.hpp"
 #include "settings.hpp"
 
@@ -38,6 +40,7 @@
 #include <vector>
 
 struct ImFont;
+struct ImGuiContext;
 
 namespace dw4::game {
 
@@ -81,6 +84,7 @@ struct PictureState {
     std::unique_ptr<MovieDecoder> movie_decoder;
     std::uint32_t movie_serial = 0;
     std::string movie_stage;    // stage the decoder's movie played in
+    std::uint64_t movie_drawn = 0; // the decoder's last picture drawn (MovieDecoder::picture_id; DW4_FRAME_STATS counts each once)
     int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
     // A picture's list and shadow with the story's ghost figures in
     // (present_scene's copies; kept here, as the renderer keeps the shadow's
@@ -173,10 +177,37 @@ struct HostView {
 
     // The F1 menu.
     bool show_menu = false;
+    // It shows on the second screen (its Menu tab, screen2.hpp), where it was
+    // opened by touch; the window shows the game meanwhile. Closing it ends
+    // that.
+    bool menu_on_screen2 = false;
     std::string menu_tab; // a tab to select when it first shows (DW4_MENU_TAB)
+    std::string menu_section; // a Settings section scrolled to when it first shows (DW4_MENU_SECTION: Graphics)
     std::optional<KeyCapture> capture;
+    // The console F1 menu (console_menu.hpp) shows F1: set while F1 is
+    // closed for its next opening (Android; a PC test run with
+    // DW4_MENU_STYLE=console), off for an opening where Developer > Classic
+    // menu was chosen. host_event latches the pad when it closes such a menu.
+    bool console_menu = false;
+    // Keys pressed while the console menu shows (host_event; the menu takes
+    // them every pass).
+    std::vector<SDL_Keycode> console_keys;
+    // The menu script's virtual pad (menu_script.hpp): player 1's menu keys
+    // come from it instead of the first pad.
+    SDL_Gamepad* menu_pad_override = nullptr;
+    // The console menu's binding capture shows (also while it waits for the
+    // button that chose the slot to be let go): the Back key cancels it.
+    bool console_capturing = false;
+    // Counts the captures the Back key cancelled (the console menu sees it).
+    std::uint32_t capture_cancels = 0;
     bool settings_changed = false;
     bool quit_requested = false; // the window was closed
+    // Another window has the focus: on Android the notification shade, the
+    // quick settings, a dialog or the app switcher's live tile while the game
+    // stays on the screen (so Android does not pause it), on the PC another
+    // program (Alt+Tab) or the game's window minimized; the loop pauses an
+    // offline game meanwhile when [menu] pause_unfocused says so.
+    bool unfocused = false;
 
     // Pictures.
     PictureState picture;
@@ -185,12 +216,27 @@ struct HostView {
     int trace_labels = 0;            // DW4_TRACE_LABELS
     std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
 
+    // The menu button for touch (Android, or DW4_TOUCH_UI=1): shown for a
+    // few seconds after a touch and while the F1 menu is open
+    // (draw_touch_menu_button); the last touch anywhere on the window.
+    bool touch_ui = false;
+    std::chrono::steady_clock::time_point last_touch;
+    // The AYN Thor's controller style as the device reports it (Android's
+    // persist.sys.gamepad.type, read again every second; nullopt: unknown)
+    // and the one the Thor's pads are read with now (update_controllers).
+    std::optional<ThorStyle> thor_device;
+    ThorStyle thor_used = ThorStyle::standard;
+    std::chrono::steady_clock::time_point thor_checked;
+
     // Presents.
     double present_interval = 1.0 / 60.0;
     double last_present_seconds = 0; // the last present's own interval (DW4_TRACE_GHOSTS' longest present)
     std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
     std::size_t frame_time_at = 0;
     std::chrono::steady_clock::time_point last_present, next_present;
+    // The pass's start (the loop sets it): DW4_FRAME_STATS measures the
+    // pass's own work up to the swap and the swap's wait.
+    std::chrono::steady_clock::time_point pass_started;
 
     // The name tags' mode (settings.ini [hud]; test runs: DW4_LABELS, all
     // with DW4_TRACE_LABELS, else off).
@@ -213,6 +259,14 @@ struct HostView {
 bool host_event(HostView& view, const SDL_Event& event);
 // The F1 menu opens or closes (F1, the controller's View / Back button).
 void toggle_menu(HostView& view);
+// ... with the input in the log ("menu: open (the Back key)").
+void toggle_menu_logged(HostView& view, const char* input);
+// Android's Back key (the AYN Thor's): F1 opens and closes; while the
+// console menu captures a binding it only cancels the capture.
+void menu_back_key(HostView& view);
+// Player 1's menu keys (pad_host.hpp menu_keys) from the menu script's
+// virtual pad or the first pad; none without a pad.
+std::optional<MenuKeys> player1_menu_keys(HostView& view);
 // This machine's devices as the game's pads take them: player 1 is the
 // keyboard and the first gamepad, players 2-4 the further gamepads, each on
 // its own controller slot (the main stick, the D-pad and the C-stick stay
@@ -289,6 +343,14 @@ void update_sdl_and_adapter(HostView& view);
 // A new ImGui frame (`test_gamepad`: a UI test run's controller keys count
 // as a controller's).
 void new_ui_frame(bool test_gamepad);
+// Player 1's controller as ImGui's gamepad keys into the current ImGui
+// context (new_ui_frame does it for the window's; the second screen's context
+// takes them while the F1 menu shows there).
+void feed_menu_pad(HostView& view);
+// Whether player 1's controller holds any of the menus' keys now (a button,
+// the D-pad, a trigger or a stick off its centre): the second screen's F1
+// menu draws at once then, else every other pass.
+bool menu_pad_held(HostView& view);
 // A pad's input through the bindings in its family's binding space (a
 // GameCube pad on its original layout: 1:1).
 HostPadInput pad_input(const HostView& view, SDL_Gamepad* pad);
@@ -307,6 +369,39 @@ void finish_present(HostView& view, engine::Engine& engine, const std::function<
 // Frame limit (settings.ini fps_limit): presents are spaced out; the
 // simulation keeps its fixed 60 Hz steps.
 void pace_presents(HostView& view);
+// DW4_FRAME_STATS: one engine step's time (the story loop around
+// Engine::step; nothing is kept without the switch).
+void frame_stats_step(double ms);
+// DW4_FRAME_STATS: one frame of the second screen after the window's swap
+// (screen2.hpp): its time and whether it drew and swapped its surface.
+void frame_stats_screen2(double ms, bool swapped);
+// DW4_FRAME_STATS: a movie picture the window drew for the first time: its
+// decoding and RGBA conversion (MovieDecoder's worker), how long the pass
+// waited for it, and its upload and draw in the pass.
+void frame_stats_movie(double decode_ms, double convert_ms, double waited_ms, double upload_ms);
+
+// ---- The F1 menu's one apply layer (menu_ops.hpp) with this view's side
+// effects: the swap interval, the display's rate, the renderer's graphics,
+// the Thor's controller style.
+ops::Target host_ops(HostView& view);
+// The anti-aliasing levels the GPU offers (menu_choices.hpp kMsaaValues'
+// first ones; GL_MAX_SAMPLES) and the texture filters (TextureFilter's first
+// ones; anisotropic only as far as the GPU goes).
+int msaa_levels_offered();
+int texture_filters_offered(const GlRenderer::Caps& caps);
+
+// ---- The F1 menu's picture hooks (test runs only, docs/CONSOLE_MENU.md:
+// the proof that the PC's F1 menu stays as it was): DW4_MENU_EXPAND=1 every
+// collapsing header and tree node of F1 open, DW4_MENU_STILL=1 the live
+// values fixed (the frame time graph at 16.67 ms, "now 60 fps", the
+// texture counts, the play time and the Debug tab's frame 0). Set once by
+// game_main in a test run; off otherwise (the calls are then the same as
+// before).
+void set_menu_picture_hooks(bool expand, bool still);
+bool menu_still();
+// An F1 collapsing header / tree node's flags (ImGuiTreeNodeFlags): with
+// DW4_MENU_EXPAND also DefaultOpen.
+int f1_tree_flags(int flags = 0);
 
 // ---- The F1 menu's settings sections (inside the Settings tab)
 void settings_display_section(HostView& view);
@@ -325,6 +420,96 @@ void settings_audio_section(HostView& view);
 void settings_presence_section(HostView& view, const char* discord_status);
 void settings_keyboard_section(HostView& view);
 void settings_controllers_section(HostView& view);
+// ---- The menus' size (settings.hpp ui_scale_factor)
+// The ImGui fonts the menus take: ImGui's pixel font at 13 px (scale 1, the
+// PC's look) and its scalable one (any other scale). Set once the window's
+// ImGui has them (open_game_window).
+void set_ui_fonts(ImFont* pixel, ImFont* scalable);
+// ImGui's scalable font (the console menu draws with it at every scale; it is
+// in the atlas on the PC too); null before set_ui_fonts.
+ImFont* ui_scalable_font();
+// The menus' scale for the window (settings.ini ui_scale; auto: the
+// display's scale on Android, 1 on the PC; test runs: DW4_UI_SCALE=percent)
+// into ImGui's style: every size of the dark style scaled, the font size,
+// the scalable font above 1. Called before every ImGui frame; only a change
+// does anything (logged as "ui: menus at N %"). Returns the scale.
+float update_ui_scale(SDL_Window* window, const Settings& settings, bool test_run);
+// The scale in use (1 until update_ui_scale set another).
+float ui_scale();
+// The second screen's ImGui context (screen2.hpp) at its own scale: the dark
+// style at 1x scaled to `scale` and the font that scale takes, into the
+// current context; and the scale ui_px uses while it draws (returns the one
+// before).
+void apply_ui_style(float scale);
+float exchange_ui_scale(float scale);
+// A length of the menus' layout at the scale in use (12 px at 1x).
+inline float ui_px(float pixels) { return pixels * ui_scale(); }
+
+// ---- Text input
+// The system keyboard for the menus' text fields: ImGui's SDL backend starts
+// SDL's text input while a field is active, which opens Android's keyboard
+// (no hardware keyboard: SDL shows its screen keyboard). Android only: a
+// password field opens it as a password field's (no suggestions, nothing
+// learned). Once, after ImGui's SDL backend started.
+void install_text_input_hook();
+// Android: a tap on the active field (window pixels) after the player put
+// the keyboard away (Back, the keyboard's own button) brings the keyboard
+// back (the field stays active for ImGui, so its backend would not start
+// the text input again).
+void reopen_text_input(SDL_Window* window, float x, float y);
+// (SDL's SCREEN_KEYBOARD_SHOWN / HIDDEN events: whether the keyboard is on
+// the screen now.)
+void note_screen_keyboard(bool shown);
+// Whether the system keyboard is on the screen (the last SHOWN / HIDDEN;
+// false on the PC).
+bool screen_keyboard_visible();
+// Whether the context's active item is a password field (an InputText with
+// ImGuiInputTextFlags_Password).
+bool password_field_active(const ImGuiContext& context);
+// ... a number field (ImGuiInputTextFlags_CharsDecimal: the console menu's).
+bool numeric_field_active(const ImGuiContext& context);
+// ... a plain field: a name or a path (the console menu marks its field with
+// set_plain_text_field; 0: none), typed without suggestions, autocorrection
+// or capitals.
+bool plain_field_active(const ImGuiContext& context);
+void set_plain_text_field(unsigned id);
+// SDL's text input on `window` (stopped first when it runs) for a field of
+// that kind: on Android a password field's (SDL's TEXT_PASSWORD_HIDDEN, no
+// autocorrection, so the keyboard offers no suggestions and learns nothing)
+// or a text field's, with the keyboard's input restarted so it takes the
+// kind. The top screen's fields and the second screen's share it.
+// `numeric` (Android): a number field's keyboard (SDL's TEXTINPUT_TYPE_NUMBER);
+// `plain` (Android): a text field's without suggestions, autocorrection or
+// capitals (Android: a visible password's input type, which no keyboard corrects).
+void start_text_input(SDL_Window* window, bool secret, bool numeric = false, bool plain = false);
+
+// ---- Touch (Android; DW4_TOUCH_UI=1 shows it in a PC test run)
+// The menu button's rectangle in window pixels: a small square in the top
+// right corner, inside the bar the 4:3 picture leaves on a wider window (the
+// HUD stays on the 4:3 picture, also in widescreen), never over it there.
+struct TouchRect {
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool contains(float x, float y) const { return x >= x0 && x <= x1 && y >= y0 && y <= y1; }
+};
+TouchRect touch_menu_rect(float width, float height);
+// The button over the picture (ImGui's foreground): three lines on a dark
+// square, shown after a touch for kTouchButtonSeconds and while the F1 menu
+// is open, then fading out; its tap (host_event) opens and closes the menu.
+inline constexpr double kTouchButtonSeconds = 4.0;
+void draw_touch_menu_button(HostView& view);
+
+// ---- Android's display and the app's lifecycle
+// The rate the game presents at asked of the display (Android: 60, or a
+// frame limit above 60 up to 120; nothing on the PC).
+void request_frame_rate(const Settings& settings);
+// What the lifecycle watch (game_main) left for the loop: the app came back
+// to the foreground (the loop starts its clock again: no catch-up of the
+// time it stood), and Android said memory is short (the renderer lets its
+// unused textures go). Each is taken once.
+enum class LifecycleNote : std::uint8_t { foreground = 1, low_memory = 2 };
+void note_lifecycle(LifecycleNote note);
+bool take_lifecycle(LifecycleNote note);
+
 // The SDL hints for the controller families, before SDL_Init: SDL's Wii
 // driver only with wii_driver=on (automatic turns it on later, while a Wii
 // U Pro Controller's ids are connected: update_controllers); no libusb, and

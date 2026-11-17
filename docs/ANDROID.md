@@ -1,0 +1,2370 @@
+# DW4_PC on Android (AYN Thor)
+
+The Android port runs the same source tree as the PC version: one CMake root,
+one version number, one protocol. `android/` is only a Gradle wrapper whose
+native build is the repository's own `CMakeLists.txt` (its `if(ANDROID)` path,
+`cmake/android.cmake`). The target device is the AYN Thor (Base/Pro/Max:
+Snapdragon 8 Gen 2, Adreno 740, Android 13); other devices are not supported
+officially.
+
+Status: **phase B done** (13.11.2026): the game itself runs on the emulator
+(SwiftShader and the host GPU) up to the title screen with sound, from the
+first start's file picker on, with the F1 menu by controller, Back key and
+touch and HOME and back; the PC build is unchanged in its checks ("Phase B"
+below, with what is left for phase C). Phase A (toolchain, the Gradle build
+offline, the device probe) is done. Phase B's APK reached the title on the
+owner's Thor (13.11.2026). main 12f6a1a8 (the display languages with the
+live switch, the remaster's Graphics options and texture streaming) is merged
+in (14.11.2026, "The main merge of 14.11.2026" below). Phase C's player
+side (branch feat-android-cux, 14.11.2026): immersive full screen, the
+menus at the display's scale, a menu button for touch, the AYN Thor's
+controller family, the lifecycle (settings saved, no catch-up, low
+memory), the display's frame rate, the system keyboard for text fields
+and the save round trip PC / emulator / PC ("Phase C: the player's side on
+Android" below; the Thor was locked, its in-game checks are open), and its
+leftovers of lane C2 (the name tags' depth read-back on GLES, a profile
+build type, the context loss, the storage cases; "Phase C leftovers on the
+player's side"). Phase E, the Thor's lower screen (`feat-android-e`), is
+merged into this branch (14.11.2026, "Phase E: the second screen"): the
+player's side with phase E goes to main before the determinism part. The
+owner's Thor ran it in the game on 14.11.2026; that check's review and its
+fixes (among them a crash of the scene traversal in a stage change's held
+fields, the judder at 60 Hz, the START / SELECT pictures, the keyboard):
+"The Thor check and its review fixes". main d230037f (release 0.2.0,
+protocol 50) is merged into this branch (16.11.2026, "The main merge of
+16.11.2026"); since then an Android build refuses online play and LAN play
+with another machine with a message until the simulation math is the
+PC's (feat-android-cdet's protocol bump).
+
+## Decisions this port follows
+
+- The Thor's lower screen shows online panels (instance list, friends, lobby
+  status) and a status mirror (party, HP/SP) switchable by tabs, the F1 menu by
+  touch on demand, and "off" as a setting. Every one of these also exists on
+  the PC as an overlay or F1 panel. The one Android-only presentation is the
+  F1 menu's console style ("The console F1 menu" below, docs/CONSOLE_MENU.md):
+  the same settings as the PC's F1 menu, laid out for a controller and touch.
+- Touch serves menus only (both screens); gameplay uses the controller.
+- Simulation math: the original's bit-exact MSL routines on every platform (a
+  later phase). The det reference is re-based once and must then match on PC,
+  emulator and Thor.
+- Distribution: an APK sideloaded, signed with the project's own release key
+  (phase F; later a download link through DW4Online). Application id
+  `org.dw4pc.game`, minSdk 33 (Android 13).
+- Storage: `Android/data/org.dw4pc.game/files` (with import/export); the disc
+  is chosen once and copied into the app's storage.
+- One version from CMake for both platforms (below).
+- The USB controller readers (GameCube adapter, Switch 2 Pro) on Android are
+  an optional later phase.
+- No new `#ifdef _WIN32` without an Android branch or an explicit "Windows
+  only" note.
+
+## Toolchain (phase A, 13.11.2026)
+
+| Part | Version | Note |
+| --- | --- | --- |
+| Android SDK | `%LOCALAPPDATA%\Android\Sdk` | `ANDROID_HOME` is not set; `android/local.properties` names it |
+| NDK | `ndk;30.0.16248370` (r30) | clang 21.0.0, `Android (16134705, based on r574158c)`, libc++ `_LIBCPP_VERSION` 210000 |
+| CMake | `cmake;3.31.6` (SDK package) | with Ninja 1.12.1 |
+| JDK | Oracle JDK 17.0.12 | `JAVA_HOME=C:\Program Files\Java\jdk-17` |
+| Gradle | 8.9 (wrapper in `android/gradle/wrapper`) | always through `android/gradlew-dw4.cmd`: DW4_PC's own Gradle user home `%USERPROFILE%\.gradle-dw4` ("Gradle user home") |
+| Android Gradle Plugin | 8.7.3 | needs Gradle 8.9 or newer |
+| Platform / build tools | `platforms;android-35`, `build-tools;34.0.0` | compileSdk and targetSdk 35 |
+| Emulator | 36.6.11, WHPX | |
+| Emulator image | `system-images;android-33;default;x86_64` rev 2 | AOSP with SystemUI, GLES up to 3.1 |
+| SDL | 3.4.16 (`fa2c02bb`, `cmake/third_party.cmake`) | `libSDL3.so` on Android, static on the PC; a local copy must have the pinned version (Building, 2.) |
+
+libc++ 21 has `std::from_chars` for `float` and `double` (the code uses it in
+`src/lua4.cpp`, `src/engine/engine.cpp` and `src/game/online/json.cpp`): a
+test built for arm64-v8a and x86_64 links with `-static-libstdc++` and parses
+decimal and hexadecimal floats correctly on the x86_64 emulator.
+
+ABIs: `arm64-v8a` (the Thor) and `x86_64` (the emulator), `c++_static`.
+
+## Layout
+
+| Path | Contents |
+| --- | --- |
+| `cmake/third_party.cmake` | The FetchContent sources (SDL3, imgui, pl_mpeg, stb, zstd) for the PC and the Android build: one list; checks a local SDL copy against the pinned version |
+| `cmake/android.cmake` | The Android path of the root `CMakeLists.txt`: SDL3 shared, the PC's target `dw4_game` as `libmain.so`, the floating-point flags |
+| `src/game/app_paths.hpp` | `app_root()` and `private_root()`: the game's folders on each platform |
+| `src/game/platform_android.cpp` | Android only: stdout and stderr into logcat (tag `DW4`) |
+| `src/game/screen2.hpp`, `src/game/screen2.cpp` | The second screen's panels (Status, Online, Menu) for both platforms: the lower screen's form, the PC's overlay, F1 > Settings > Second screen ("Phase E") |
+| `src/game/screen2_android.cpp`, `android/app/src/main/java/org/dw4pc/game/LowerScreen.java` | Android only: the second display's Presentation, its EGL surface, the second ImGui context and its touch |
+| `src/android/probe_main.cpp` | Phase A's device probe (`-DDW4_ANDROID_PROBE=ON` builds it as `libmain.so` instead of the game) |
+| `android/` | Gradle wrapper project: `settings.gradle`, `build.gradle`, `app/build.gradle`, manifest, resources, `DW4Activity.java` |
+| `android/gradlew-dw4.cmd`, `android/gradlew-dw4.sh` | The Gradle entry points: `gradlew` in DW4_PC's own Gradle user home ("Gradle user home") |
+| `android/ndk-core-check.cmd` | Compiles `dw4_core`, `dw4_engine`, `dw4_online` with the NDK for both ABIs |
+| `android/gradle/cache-retention.init.gradle` | The cache retention (365 days) that `gradlew-dw4` copies into its Gradle user home's `init.d` before every run |
+| `tools/android/gles_check.cpp` | A plain `adb shell` executable (EGL pbuffer, no app) that runs the renderer's OpenGL ES paths of the Graphics options and the texture streaming on a device ("GLES checks without the app") |
+
+SDL's Java classes (`org.libsdl.app.*`) are never kept in the repository: the
+Gradle task `copySdlJava` copies them at build time from the same SDL source
+tree that `libSDL3.so` is built from (`<deps>/sdl3-src/android-project/app/
+src/main/java`), because `SDLActivity` refuses to start when its version and
+the native library's differ. `DW4Activity` extends `SDLActivity`; it loads
+`SDL3` and then `main`.
+
+The manifest: `INTERNET` and `VIBRATE`, no camera, microphone or storage
+permissions, `allowBackup="false"`, `hasFragileUserData="true"` (uninstalling
+asks whether to keep the data), OpenGL ES 3.0 required, landscape.
+
+## Version
+
+`project(DW4_PC VERSION MAJOR.MINOR.PATCH)` in the root `CMakeLists.txt` is the
+`versionName`; `app/build.gradle` reads it. The `versionCode` is
+
+    MAJOR * 10000000 + MINOR * 10000 + PATCH * 100 + BUILD
+
+with `BUILD` 0..99 (`-Pdw4.build=N`, default 0) for a rebuild of the same
+version. 0.46.0 is 460000. Any change of the version happens in
+`CMakeLists.txt` only.
+
+## Building
+
+Prerequisites:
+
+1. The SDK packages above (`sdkmanager "ndk;30.0.16248370" "cmake;3.31.6"`).
+2. The third-party sources offline: the PC build's FetchContent copies in
+   `build/Release/_deps` (build the PC version once). A worktree or another
+   checkout names the directory in `android/local.properties`:
+
+       sdk.dir=C\:/Users/<you>/AppData/Local/Android/Sdk
+       dw4.depsDir=C\:/Users/<you>/source/repos/DW4_PC/build/Release/_deps
+
+   Nothing in that directory is ever written. Its `sdl3-src` must be the
+   pinned SDL: `cmake/third_party.cmake` keeps the pin's version next to it
+   (`DW4_SDL3_VERSION`, 3.4.16) and stops the configure when the copy's
+   `include/SDL3/SDL_version.h` names another version, because a local copy
+   bypasses the pin's `URL_HASH`. (A different commit of the same version is
+   not caught; the copy from a current PC build is the pinned one.) The SDL
+   Java classes come from the same directory, so Java and native SDL always
+   match.
+3. The Gradle 8.9 distribution, the Android Gradle Plugin 8.7.3 and its
+   dependencies in DW4_PC's own Gradle user home `%USERPROFILE%\.gradle-dw4`:
+   one online run fills it ("Gradle user home" below).
+
+Then, from the repository root (`gradlew-dw4` sets the Gradle user home,
+`JAVA_HOME` if it is not set, and the project directory `android`):
+
+    android\gradlew-dw4.cmd --offline --no-daemon assembleDebug
+
+or in Git Bash `sh android/gradlew-dw4.sh --offline --no-daemon assembleDebug`.
+`-Pdw4.nativeJobs=N` caps the native build's parallel compile and link jobs
+(CMake job pools; unset: Ninja's default), `--max-workers=1` builds the two
+ABIs one after the other (both used while another job needs the CPU: at most
+N jobs at a time).
+Never run `android\gradlew.bat` directly: it uses the shared
+`%USERPROFILE%\.gradle` (`settings.gradle` warns when a build runs there).
+`android/gradle.properties` sets `android.builder.sdkDownload=false`, so a
+missing SDK package stops the build instead of being downloaded.
+
+The APK is `android/app/build/outputs/apk/debug/app-debug.apk`, signed with
+the SDK's debug key (`%USERPROFILE%\.android\debug.keystore`, which the build
+only reads). Release signing comes in phase F: a key of this project
+kept outside the repository (never another project's key); `.gitignore`
+excludes `*.jks`, `*.keystore`, `*signing*.properties` and
+`*keystore*.properties` (the usual `keystore.properties`).
+
+The wrapper: `gradle-wrapper.jar` is Gradle 8.9's own (SHA-256 `49849512...`,
+the same file as `lib/plugins/gradle-wrapper-main-8.9.jar` of the 8.9
+distribution), and `gradle-wrapper.properties` carries the distribution's
+published SHA-256 (`distributionSha256Sum`), which the wrapper checks when it
+downloads the distribution (an installed one is not checked again); the
+download into DW4_PC's Gradle user home on 13.11.2026 passed that check.
+
+### Gradle user home
+
+DW4_PC's Gradle runs use a Gradle user home of their own,
+`%USERPROFILE%\.gradle-dw4` (`DW4_GRADLE_USER_HOME` names another one), never
+the shared `%USERPROFILE%\.gradle`. `android/gradlew-dw4.cmd` and
+`android/gradlew-dw4.sh` set `GRADLE_USER_HOME` to it and copy
+`android/gradle/cache-retention.init.gradle` into its `init.d` before every
+run. Nothing of the shared home is changed (no `init.d` there, no settings).
+
+Why: Gradle 8 cleans the user home it runs in at most once a day, at the end
+of a build, and deletes downloaded dependencies and wrapper distributions that
+no build there used for 30 days. In the shared home, a DW4_PC build can delete
+other projects' caches and theirs can delete DW4_PC's. The retention script
+keeps them for 365 days in DW4_PC's home (checked on Gradle 8.9: 365 instead
+of 30; created resources keep Gradle's 7 days), so a rarely built Android
+project still builds offline. A build that does run in the shared home logs a
+warning ("DW4_PC: this build runs in the shared Gradle user home ...").
+
+**The one-time online step (done 13.11.2026, owner's approval):** a fresh
+Gradle user home holds nothing, so its first `gradlew-dw4` run must be online:
+
+    android\gradlew-dw4.cmd --no-daemon --info --continue assembleDebug
+
+It downloads the Gradle 8.9 distribution (`gradle-8.9-bin.zip`, checked
+against `distributionSha256Sum`, unpacked 151 MB; the wrapper deletes the zip
+after unpacking) and the Android Gradle Plugin 8.7.3 with everything it needs
+to assemble a debug APK: 322 files, 104.5 MB (125 jars, 181 POMs, 16 Gradle
+module files; 104 from `dl.google.com`, 218 from `repo.maven.apache.org`),
+among them `com.android.tools.build:gradle:8.7.3`, `builder`, `bundletool`,
+`aapt2:8.7.3-12006047:windows`, `com.android.tools:sdk-common`/`sdklib`/
+`repository`/`ddmlib` 31.7.3, Kotlin stdlib 1.9.20, netty, grpc, guava and
+bouncycastle (`--info` logs each one as `Downloading <url>`; the list of
+13.11. is `work/android_research/gradle_downloaded_urls.txt`, gitignored).
+`--continue` lets independent tasks finish when one fails, so a failing
+native build does not leave execution-time artifacts such as `aapt2`
+undownloaded. The home then holds 488 MB (most of it the unpacked
+distribution and Gradle's transformed jars). From then on every build is
+`--offline`.
+
+Checked on 13.11.2026 after the online step: with `android/.gradle`,
+`android/build`, `android/app/build` and `android/app/.cxx` deleted,
+`android\gradlew-dw4.cmd --offline --no-daemon --info assembleDebug` builds the
+APK from nothing (39 tasks, both ABIs' native builds, 4 min 47 s at
+below-normal priority) with no `Downloading` line and an unchanged
+`modules-2`; `sh android/gradlew-dw4.sh --offline ...` in Git Bash (without
+`JAVA_HOME`) finds the same home. The shared `%USERPROFILE%\.gradle` had no
+file newer than the start of these runs. The warning "This version only
+understands SDK XML versions up to 3 but an SDK XML file of version 4 was
+encountered" comes from the newer SDK packages next to AGP 8.7.3 and does not
+matter.
+
+**Another project's cache (EmuSaveSync):** before DW4_PC had its own home,
+phase A's first Gradle 8.9 run (creating the wrapper, 13.11.2026 06:05) ran in
+the shared `%USERPROFILE%\.gradle`. Its cleanup deleted the AGP and AndroidX
+jars from September 2026 that EmuSaveSync's Android build had left there
+(older than 30 days; any other Gradle run would have done the same). Only
+their metadata remained (`caches/modules-2` 2.5 MB); the `gradle-8.9-bin`
+distribution in `wrapper/dists` and `caches/build-cache-1` stayed.
+EmuSaveSync's next Android build therefore needs network once. DW4_PC never
+runs Gradle in the shared home again, so it cannot happen through DW4_PC a
+second time; whether the shared home gets a retention script of its own is
+EmuSaveSync's owner's choice (the same `cache-retention.init.gradle` in
+`%USERPROFILE%\.gradle\init.d` would do it).
+
+### NDK compile check
+
+    android\ndk-core-check.cmd [build dir]
+
+configures the root `CMakeLists.txt` with the NDK for arm64-v8a and x86_64
+(`-DDW4_ANDROID_APP=OFF`: no SDL) and builds `dw4_core`, `dw4_engine` and
+`dw4_online` with `ninja -k 0`, so every compile error shows. It runs the
+builds at below-normal priority and ends with exit code 1 and "errors" when
+either ABI fails (it names the ABI), 0 otherwise.
+
+## The emulator
+
+AVD `dw4thor33` (its own; the AVD `emusync33` belongs to another project and
+is never touched): API 33 `default` x86_64 image, upper screen 1920x1080 at
+400 dpi, landscape, 4 GB RAM, hardware keyboard, no audio, no camera, and the
+Thor's lower screen as a second display 1240x1080 at 330 dpi. `hw.ramSize` in
+the AVD's `config.ini` is a plain number of MB (`4096`, guest `MemTotal`
+4008536 kB): with `4096M` the emulator fell back to its 2048 MB minimum
+("Increasing RAM size to 2048MB").
+
+    emulator -avd dw4thor33 -no-window -no-audio -gpu swiftshader_indirect ^
+             -no-snapshot -no-boot-anim -port 5580 -multidisplay 1,1240,1080,330,0
+
+- `-multidisplay` takes one comma-separated argument (`index,width,height,
+  dpi,flag`); with spaces the emulator refuses the command line.
+- Flag 0 means "the emulator's default", not "no flags": the emulator writes
+  `hw.display1.flag = 1739` into the AVD's `config.ini`, Android's virtual
+  display flags PUBLIC | PRESENTATION | OWN_CONTENT_ONLY | SUPPORTS_TOUCH |
+  ROTATES_WITH_CONTENT | SHOULD_SHOW_SYSTEM_DECORATIONS | TRUSTED. Inside the
+  guest DisplayManager reports display 2 "Emulator 2D Display" 1240x1080 with
+  `Display` flags 0xc8 (PRESENTATION, SHOULD_SHOW_SYSTEM_DECORATIONS,
+  TRUSTED), state ON, listed in `DISPLAY_CATEGORY_PRESENTATION`. Phase E
+  compares these with what `dumpsys display` reports for the Thor's lower
+  screen. On the emulator it is a virtual display: `screencap -d` cannot
+  capture it.
+- `-gpu swiftshader_indirect` and `-gpu host` both work without a window;
+  `host` reaches the NVIDIA GPU (GLES 3.1). The very first boot of the fresh
+  AVD with `-gpu host` and `-multidisplay` ended (exit 127) right after the
+  app started; two later boots (`host` alone, `host` with `-multidisplay`)
+  ran the app and `screencap` without a problem.
+- Stop it with `adb -s emulator-5580 emu kill`.
+
+Install, start, look:
+
+    adb -s emulator-5580 install -r android\app\build\outputs\apk\debug\app-debug.apk
+    adb -s emulator-5580 shell am start -W -n org.dw4pc.game/.DW4Activity
+    adb -s emulator-5580 shell "am start -n org.dw4pc.game/.DW4Activity --es dw4args '--seconds 10'"
+    adb -s emulator-5580 exec-out screencap -p > probe.png
+    adb -s emulator-5580 logcat -d -s DW4probe
+
+The intent extra `dw4args` becomes the program's arguments
+(`DW4Activity.getArguments`, split at white space); phase C uses it for the
+det runs. `adb shell` joins its arguments into one shell line on the device,
+so the whole `am start` goes in one pair of quotes and the extra's value in
+its own inner quotes; `... --es dw4args "--seconds 10"` without them reaches
+the app as just `--seconds`. The probe logs what it got (`arguments 2:
+[--seconds] [10]`). The launcher activity is exported, so any app on the
+device may start it, also with an extra: the game takes `dw4args` only in a
+debuggable build (`FLAG_DEBUGGABLE`, every debug APK) and only while the
+file `dw4args.allow` is in the app's internal folder, which no other app
+can write (since 14.11.2026; a debug APK is what the owner plays on the
+Thor until phase F):
+
+    adb shell run-as org.dw4pc.game touch files/dw4args.allow
+    adb shell run-as org.dw4pc.game rm files/dw4args.allow
+
+Otherwise it ignores the extra and logs why ("dw4args ignored: not a
+debuggable build" / "... no files/dw4args.allow"). Two arguments exist for
+such runs: `--mute` (no audio device
+this run: silent on a device nobody listens to, settings.ini and the
+device's volume untouched) and `--env NAME=VALUE` (an environment variable
+set before the run reads any: the test switches such as `DW4_GL_CHECK=1`,
+`DW4_LANGUAGE=de` or a test run's Graphics options, which Android cannot
+pass otherwise). Both work on the PC too. Checked on the emulator (13.11.2026): the debug APK logs
+`arguments 2: [--seconds] [3]` and quits after 3 s; the same APK without
+`android:debuggable` logs "dw4args ignored" and `arguments 0: none`.
+
+## The device probe (phase A's app)
+
+`src/android/probe_main.cpp` opens an OpenGL ES 3.0 context through SDL,
+clears to `#2060C0` and draws a `#F0B020` triangle with a `#version 300 es`
+shader from a vertex buffer, and logs to logcat (tag `DW4probe`):
+
+- its arguments (`dw4args`), SDL's compiled and linked version, the Android
+  SDK version, the ABI, clang and libc++;
+- `SDL_GetBasePath`, `SDL_GetPrefPath`, the internal, external and cache
+  paths, the external storage state;
+- `GL_VERSION`, `GL_RENDERER`, the GLSL version, the uniform limits
+  (`GL_MAX_VERTEX_UNIFORM_VECTORS` and others), highp/mediump precision, the
+  watched extensions (`GL_EXT_depth_clamp`, ASTC, BPTC/S3TC/RGTC, `KHR_debug`,
+  ...), every extension and every compressed texture format, EGL version and
+  extensions;
+- the displays from Android's DisplayManager with their flags, state, mode,
+  dpi and the activity's own display (`DW4Activity.displayReport` through
+  JNI), and display events (`DisplayListener`);
+- game controllers SDL sees (name, vendor, product), key, button and touch
+  events, the lifecycle events with the thread they arrive on, frame times
+  every 5 s, and the first frame's centre and corner pixel.
+
+### Results on the emulator (x86_64, 13.11.2026)
+
+| | `-gpu swiftshader_indirect` | `-gpu host` |
+| --- | --- | --- |
+| `GL_VERSION` | OpenGL ES 3.0 (SwiftShader 4.0.0.1) | OpenGL ES 3.1 (4.5.0 NVIDIA 621.01) |
+| `GL_RENDERER` | Android Emulator OpenGL ES Translator (Google SwiftShader) | ... (NVIDIA GeForce RTX 5070 Ti) |
+| GLSL | ES 3.00 | ES 3.10 |
+| `GL_MAX_VERTEX_UNIFORM_VECTORS` | 256 | 1024 |
+| `GL_MAX_UNIFORM_BLOCK_SIZE` | 16384 | 65536 |
+| fragment highp / mediump | 23 / 23 bit | 23 / 10 bit |
+| `GL_EXT_depth_clamp` | no | no |
+| ASTC (`KHR_..._astc_ldr`) | yes (28 formats) | yes (28 formats) |
+| BC (BPTC, S3TC, RGTC) | no | no |
+| ETC2/EAC | 10 formats | 10 formats |
+| Frame time | 16.67 ms (60 Hz vsync) | 16.67 ms |
+
+The screencap shows exactly the two test colours (the triangle 12.6 % of
+the picture, the expected 12.5 %); after HOME and a restart (`LaunchState
+HOT`) the picture is the same. The Thor's own numbers (Adreno 740) come from
+the same probe once it may be installed there.
+
+These first results came from a test APK assembled by hand with the SDK's
+`aapt2`, `javac`, `d8`, `zipalign` and `apksigner` while Gradle could not yet
+build offline. The Gradle-built debug APK (13.11.2026, `--offline` from a
+clean build directory; 7.4 MB, `lib/arm64-v8a` and `lib/x86_64` each with
+`libSDL3.so` and `libmain.so`, versionCode 460000, versionName 0.46.0,
+`DEBUGGABLE`, signed with the SDK's debug key) gives the same: installed
+fresh on `dw4thor33` (`-gpu swiftshader_indirect`, second display), Android
+picks `primaryCpuAbi=x86_64`; it starts cold in 487 ms, the screencap has
+exactly `#2060C0` 87.5 % and `#F0B020` 12.5 %, the same after HOME and a
+restart (`HOT`); the log shows SDL compiled and linked 3.4.16, clang 21.0.0,
+the same paths, GL limits and display list (display 2 1240x1080, flags
+0xc8), all five lifecycle events on the SDL main thread, 16.65-16.97 ms per
+frame, and `dw4args '--seconds 3'` arrives as `arguments 2: [--seconds] [3]`
+and quits after 3.0 s.
+
+Findings for phase B:
+
+- `SDL_GetBasePath` is `./` and `SDL_GetPrefPath` the internal
+  `/data/data/org.dw4pc.game/files/`; `SDL_GetAndroidExternalStoragePath` is
+  `/storage/emulated/0/Android/data/org.dw4pc.game/files` (read and write).
+  The game needs one central `app_root()`.
+- The lifecycle events (`WILL_ENTER_BACKGROUND`, `DID_ENTER_BACKGROUND`,
+  `LOW_MEMORY` on HOME, `WILL_ENTER_FOREGROUND`, `DID_ENTER_FOREGROUND`)
+  reached an `SDL_AddEventWatch` callback, never `SDL_PollEvent`; the game's
+  lifecycle handling goes into such a watch. The watch runs on the SDL
+  thread: SDL 3.4.16 queues the events from the Java side and delivers them
+  in `Android_PumpEvents` (also while it blocks in a pause) through
+  `SDL_SendAppEvent`, which only calls the event watchers. The probe logs
+  the thread: all five events arrived on the thread that runs `SDL_main`.
+- The emulator's GLES translator draws nothing without an enabled vertex
+  attribute array (an attribute-less `gl_VertexID` triangle stayed
+  invisible); the renderer always draws from buffers anyway.
+- 256 vertex uniform vectors (the GLES minimum, SwiftShader) are less than the
+  renderer's bone palette needs today (about 295): the palette goes into a
+  uniform buffer.
+- No depth clamp and no BC formats on either GPU; ASTC LDR everywhere.
+- The emulator's keyboard appears as a gamepad ("qwerty2", 0x0627:0x0001);
+  BACK arrives as the key "AC Back".
+
+## Phase B: the game on Android (13.11.2026)
+
+### Build
+
+- `cmake/android.cmake` turns the root `CMakeLists.txt`'s own game target
+  `dw4_game` into the shared library `libmain.so` (`OUTPUT_NAME main`):
+  SDL3 shared, `OpenGL::GL` an interface target on `GLESv3` and `EGL`, no
+  tests (`BUILD_TESTING` off), the Android parts added after the target
+  exists (`cmake_language(DEFER)`: `platform_android.cpp`, `android`, `log`).
+  `game_main.cpp` includes `SDL_main.h` on Android only, so `main` is the
+  `SDL_main` SDLActivity calls. Gradle builds only `dw4_game`
+  (`targets 'dw4_game'`), with every third-party source from the PC build's
+  `_deps` (`FETCHCONTENT_SOURCE_DIR_*`).
+- The root `CMakeLists.txt` changes only under `if(ANDROID)` / `NOT ANDROID`:
+  SDL static on the PC only, `find_package(OpenGL)` on the PC only, the
+  `DW4_PC.exe` install rule on the PC only. The Windows libraries were
+  already under `if(WIN32)`. Its `add_executable(dw4_game ...)` line is the
+  PC's own, unchanged (branches that add a game source change only that
+  line): `cmake/android.cmake` overrides `add_executable` for the one target
+  `dw4_game`, which becomes `add_library(dw4_game SHARED ...)` there; every
+  other target goes to the built-in command (`_add_executable`).
+- Clang flags on `dw4_core`, `dw4_engine`, `dw4_online` and `dw4_game`:
+  `-ffp-contract=off -fno-fast-math -fsigned-char` (no fused multiply-adds
+  as MSVC x64, `char` signed as on x86). `dw4_game` also gets
+  `-Wno-error=format-security` (the NDK's default error; the F1 menu's
+  wrapped text helpers pass literal formats through a variadic lambda).
+- Data Overflow builds unchanged (it reaches the paths through
+  `program_dir()`, which is `app_root()` now).
+
+### Floating-point environment
+
+`FpEnvGuard` (`src/engine/online_detail.hpp`, `online.cpp`) replaces the
+x86-only MXCSR guard at every simulation entry (`MxcsrGuard` stays as its
+name for the call sites): MXCSR 0x1F80 on x86 / x86-64 as before; on
+AArch64 FPCR with RMode round to nearest, FZ, FIZ, DN, AH, NEP and every
+trap enable off, put back on exit. `Engine::mxcsr_repairs()` counts either;
+`tests/online_tests.cpp` checks FPCR on AArch64 the way it checks MXCSR on
+x86. Online play stays refused on Android (`online_cpu_refusal`) until the
+simulation math is the MSL routines everywhere (a later phase); since the
+main merge of 16.11.2026 LAN play with another machine too (`lan_refusal`
+and, through an adb tunnel to loopback, the LAN hello's platform tag;
+"The main merge of 16.11.2026" below).
+
+### Paths and logs
+
+`app_paths.hpp`: `app_root()` is the PC's program folder
+(`SDL_GetBasePath`) and on Android the app's external files folder
+`/storage/emulated/0/Android/data/org.dw4pc.game/files` (settings.ini,
+saves/, mods/, data/). There is no fallback to the internal folder (it would
+be a new first start without the player's settings, saves and disc copy):
+when the external storage cannot be written at start-up, the game stops with
+a message (`app_root_problem()`). `private_root()` is the same on the PC and the
+internal `/data/data/org.dw4pc.game/files` on Android: the remembered online
+login (`saves/online`), `online.log`, `controllers.log`. Every former
+`SDL_GetBasePath` caller (`game_main.cpp`, `settings.cpp`) goes through
+them; the paths are decoded as UTF-8 everywhere now (before, some callers
+took SDL's UTF-8 text as the ANSI code page), and the start-up line
+`data: PATH` prints the path as UTF-8 (`path::string()` throws on MSVC for
+characters outside the ANSI code page; the game has no UTF-8 code page
+manifest). On Android stdout and stderr go
+to logcat line by line (tag `DW4`), so the game's own lines and the error
+texts before their message boxes are there. stdout's lines are `I/DW4`;
+stderr carries the engine's trace (`[67] stage stagis08 section ...`) and
+SDL's echo of its own log next to the real problems, so its lines are
+`I/DW4` too unless their words name a problem: `W/DW4` for "error",
+"fail", "cannot", "could not", "unable", "warning", "refused", "invalid",
+"missing", "not found", "unsupported", "corrupt", `E/DW4` for "fatal",
+"crash", "abort", "exception" and the reason the game stops (`dw4_game:
+...`, before its message box); `logcat *:W` shows the problems alone.
+
+### The one window
+
+`open_game_window()` opens the game's window with its OpenGL context, ImGui
+and fonts once; whoever needs it first opens it and the game keeps it (on
+Android SDL has exactly one window):
+
+- the RVZ conversion's progress (before: its own SDL window and renderer),
+- the LAN lobby of `--host` / `--join` (before: its own window "Digimon World
+  4 PC - Online"); a test run draws it only with `DW4_RENDER=1`, hidden,
+- Android's first-start import.
+
+`status_frame()` draws one ImGui panel (lines, a progress bar, Cancel) in
+it. Checked on the PC: a hidden LAN session (`--host` and `--join` on
+127.0.0.1, `DW4_RENDER=1`, 120 frames) logs "the lobby drew in the game
+window" on both, starts both players and ends with the same fingerprint.
+
+### The first start and the disc
+
+- The PC: a message box (disc image or extracted folder), the file or
+  folder dialog and an RVZ converted once into `data/` as before; what
+  changed is where an RVZ conversion's progress shows (and the LAN lobby of
+  `--host` / `--join`): in the game window, with its size, full screen and
+  MSAA from settings.ini, instead of a small window of its own ("The one
+  window"). Checked hidden for the LAN lobby; an RVZ of the game was never
+  converted on the PC this way (no DW4 RVZ exists here: one made by Dolphin
+  outside its folder is the check before the merge into main).
+- Android: the message box offers the disc image only (SDL has no folder
+  picker there), then `SDL_ShowOpenFileDialog` with the filter `*` (with
+  `iso;gcm;rvz` Android's picker would hide `.rvz` / `.gcm`, which have no
+  MIME type). The picker returns a `content://` URI; `import_disc` reads it
+  with `SDL_IOFromFile` (SDL opens content URIs through the
+  `ContentResolver`). Before anything is copied it reads the first 0x80
+  bytes and stops on a file that is no GameCube ISO / RVZ (the magic at
+  0x1C; an RVZ's disc header at 0x58) or not GDJEB2 disc 0 revision 0, and
+  when the copy (plus an RVZ's converted ISO, plus 64 MB) does not fit into
+  the free space. A provider that streams through a pipe (no seek back to 0,
+  no size, e.g. a cloud provider: SDL makes such a descriptor a `FILE*`) gets
+  the head written first and the rest after it; the progress then uses the
+  RVZ's own size or a whole GameCube disc (1,459,978,240 bytes). It copies
+  it into `data/dw4.iso` of the app's folder
+  (progress and Cancel in the game window; an RVZ image is copied to
+  `data/dw4.rvz.part`, converted with the PC's converter, and the copy
+  removed), checks it like the PC (`check_game_data`: GDJEB2 revision 0,
+  `ndmw.igb`; an unusable copy is removed again) and saves the path in
+  settings.ini.
+- Debug builds take `--import-disc PATH` (through the `dw4args` extra) for a
+  test of the same import from a plain path, without the picker.
+- Every start logs the game data's identity, `data: PATH, data_hash
+  0123456789abcdef` (the value LAN and online peers compare).
+
+### Renderer on OpenGL ES 3.0
+
+`gl_renderer.cpp` keeps one set of shader sources (written for OpenGL 3.3
+core) and one code path, with these differences on a GLES context
+(`gl_is_es()`, the `GL_VERSION` string):
+
+- `compile()` swaps the `#version 330 core` line for `#version 300 es` with
+  `precision highp float; precision highp int; precision highp sampler2D;`
+  (the alpha test compares 8-bit values; mediump is 10 bits on the NVIDIA
+  host GPU). ImGui's backend gets `#version 300 es`.
+- The skinning palette (64 matrices) is a 4 x 64 `RGBA32F` texture on unit 2
+  that the vertex shader reads with `texelFetch` (exact floats), on the PC
+  too. Neither plain uniforms (about 295 vectors, GLES guarantees 256) nor
+  a uniform block works on the emulator: SwiftShader counts a block's
+  members against the 256 vertex uniform vectors ("Vertex shader active
+  uniforms exceed GL_MAX_VERTEX_UNIFORM_VECTORS (256)").
+- Depth clamping: `GL_DEPTH_CLAMP` where the context has it (OpenGL 3.3, or
+  `GL_EXT_depth_clamp` on GLES); otherwise the vertex shader clamps
+  `gl_Position.z` into `[-w, w]` (`u_depth_clamp`), which only the
+  orthographic 2D layers use. The per-vertex clamp equals GL_DEPTH_CLAMP's
+  per-pixel one only for triangles wholly on one side of the near and of
+  the far plane (orthographic: depth is linear across the triangle); a
+  triangle that crosses one gets a different depth inside. That this never
+  happens is an assumption that `DW4_CHECK_DEPTH_CLAMP=1` checks on any
+  platform (a CPU check, no picture change): it counts the orthographic
+  triangles that cross a plane and logs `renderer: depth clamp check: N of
+  M orthographic triangles cross the near or far plane` at 1, 10, 100, ...
+  (silent while none does) and the total when the renderer ends. On the PC
+  the route `newgame_dng101b1` (6000 frames, rendered hidden with
+  `DW4_RENDER=1`: the new game's menus and talk, the HUD, the dungeon) ends
+  with `0 of 3442592 orthographic triangles crossed the near or far plane`
+  (13.11.2026). The renderer logs which clamp it uses.
+- `keep_picture`: GLES copies no multisampled framebuffer into a texture;
+  the window's picture is blitted (resolved) into the kept texture's
+  framebuffer. The PC keeps `glCopyTexSubImage2D`. Android asks for an
+  RGBA8 surface (the blit needs the texture's format).
+- No `GL_MULTISAMPLE` switches on GLES (multisampling follows the surface).
+- The overhead name tags' depth probes (`read_depths`): ES 3.0 reads no
+  depth buffer, so the window's depth around the probes is blitted into a
+  depth texture of the window's own format and fetched there (since phase
+  C, "Phase C leftovers on the player's side").
+- `GL_SRC_ALPHA_SATURATE` is a source factor only on GLES; as a destination
+  (never seen; GX has no such factor) it becomes `ONE` with one log line.
+- The full-screen strips (movie, kept picture, sharpening) draw with
+  attribute 0 enabled on a small buffer (the emulator's translator draws
+  nothing without one).
+- A failed shader link names the driver's reason.
+- With main's texture streaming and Graphics options (merged 13.11.2026,
+  main bb95abb5): the Sharpening option copies the window's picture; on
+  GLES the multisampled window is resolved first by a blit (the same
+  rectangle on both sides, as GLES wants it) into a window-sized texture
+  and copied from there (`Impl::copy_window_es`), and `GL_DEPTH_CLAMP` is
+  only switched where the context has it. Texture packs: BC7 needs OpenGL
+  4.2 or `GL_ARB_texture_compression_bptc`, on GLES
+  `GL_EXT_texture_compression_bptc`; BC1 / BC3
+  `GL_EXT_texture_compression_s3tc` (`caps_`). A GPU without them (the
+  emulator's) gets the pack's DDS files decoded to RGBA8 on the loading
+  thread (the path `DW4_TEXTURE_CPU_DECODE=1` tests on the PC); the Thor's
+  Adreno 740 has all three and takes them compressed (gles_check,
+  14.11.2026; phase B's note that Adreno had neither was wrong). Pack
+  textures go up into immutable storage (`glTexStorage2D`, core in GLES
+  3.0) in bands of 256 KiB, as on the PC (before 14.11.2026 GLES uploaded
+  each level whole). Anisotropic filtering follows
+  `GL_EXT_texture_filter_anisotropic` (the menu offers only the levels the
+  GPU has, none without it); sampler objects and the LOD bias in the
+  shader are GLES 3.0 already.
+- `DW4_GL_CHECK=1` (any platform; on Android `--env DW4_GL_CHECK=1` in
+  `dw4args`): the GL errors raised in every presented frame and before
+  the texture uploads (which clear the error flags to tell a refused
+  upload) are logged (`renderer: GL error 0x... <where> (frame N)`, the
+  first 20) and counted (`renderer: GL error check: N errors in M checks`
+  when the renderer ends).
+- `reset_context()` (a lost context) also forgets the samplers, the game's
+  and the pack's textures, refused uploads, the upload in progress and the
+  sharpening objects, and starts the loading thread again with the same
+  configuration; the pack's textures come again as they are drawn
+  (provoked on the emulator since phase C: `DW4_TEST_CONTEXT_LOSS`, "Phase
+  C leftovers on the player's side").
+
+### Lifecycle and input
+
+- An `SDL_AddEventWatch` logs `lifecycle: entering the background / in the
+  background / low memory / entering the foreground / in the foreground /
+  terminating` (SDL hands these only to watches). In the background the game
+  loop stands in `SDL_PollEvent` (SDL's `ANDROID_BLOCK_ON_PAUSE`) and SDL
+  pauses the sound output.
+- `SDL_EVENT_RENDER_DEVICE_RESET` (SDL made a new EGL context after the old
+  one was lost): ImGui's OpenGL backend is shut down and started again, the
+  renderer forgets every object name and makes its objects again
+  (`GlRenderer::reset_context`), the prompt pictures are uploaded again. An
+  Android-only event watch takes SDL's new context handle into the game
+  window (SDL replaces it internally; run() destroys the live one at the
+  end), and `status_frame` (the first start's import, the LAN lobby; no
+  renderer yet) rebuilds ImGui's GL objects itself.
+- A failed GL context closes the window again (`open_game_window`), so a
+  later call does not hand out a window without a context.
+- Android's Back key is trapped (`SDL_HINT_ANDROID_TRAP_BACK_BUTTON`) and
+  opens and closes the F1 menu (`SDLK_AC_BACK`), as the controller's View /
+  Back button does (the Thor's own controller through SDL's Android gamepad
+  backend). A touch in the window's top right corner (x >= 90 %, y <= 12 %)
+  toggles it too, unless it lands on an open menu's window (ImGui's hit
+  test, `FindHoveredWindowEx`: then the tap is ImGui's); ImGui takes touches
+  as SDL's mouse events, so the menus work by touch. Both are Android-only
+  (`SDL_PLATFORM_ANDROID`): on the PC a keyboard's or mouse's browser Back
+  key stays a bindable key and a Windows touch screen's tap stays a click.
+  Every toggle logs `menu: open|closed (input)`.
+
+### Results on the emulator (x86_64, `-gpu swiftshader_indirect`)
+
+- First start from a clean app (`pm clear`): the message box, "Disc
+  image..." opens Android's picker (DocumentsUI, logged `first start: the
+  file picker`); a copy of the disc image pushed to `/sdcard/Download`
+  (never the user's folder itself) picked there arrives as
+  `content://com.android.providers.downloads.documents/document/msf%3A...`,
+  1459978240 bytes, copied in about 25 s with the progress in the game
+  window, checked, saved.
+- `data: /storage/emulated/0/Android/data/org.dw4pc.game/files/data/dw4.iso,
+  data_hash 1c693d45198dd6c1`: the same value the PC logs for the same
+  image and for the Dolphin extraction.
+- The renderer: `OpenGL ES 3.0 (OpenGL ES 3.0 SwiftShader 4.0.0.1) on
+  Android Emulator OpenGL ES Translator (Google SwiftShader), depth clamp in
+  the vertex shader`. The logos, the opening movie and the title screen
+  (`stagis10`) draw; about 25-40 ms per frame on SwiftShader.
+- Sound: `dumpsys audio` lists the app's AAudio player (usage MEDIA) as
+  `started`; `dumpsys media.audio_flinger` shows its track active on the
+  speaker output (48000 Hz, stereo, 16 bit, no underruns) with the output's
+  frames written growing.
+- The F1 menu: by touch (the corner), by Android's Back key
+  (`input keyevent KEYCODE_BACK`), and by a controller: a virtual Xbox 360
+  pad made through `/dev/uinput` (root on the emulator image;
+  `work/android_research/emulator/vpad.c`) appears as "Xbox 360 Controller"
+  045e:028e in SDL's Android gamepad backend, and its View button opens and
+  closes the menu. A touch switches the menu's tabs.
+- HOME and back (`LaunchState HOT`): the lifecycle lines in order, the game
+  goes on drawing (no black picture, no new context needed).
+- The emulator's own keyboard ("qwerty2") counts as a controller for SDL
+  but has no View / Back button in its gamepad mapping; `input gamepad
+  keyevent` comes from the virtual keyboard device, not a controller.
+
+### Results on the emulator (`-gpu host`, the Gradle APK)
+
+The debug APK from `gradlew-dw4 --offline assembleDebug` (versionCode
+460000, versionName 0.46.0, `DEBUGGABLE`, `primaryCpuAbi=x86_64`), installed
+over the earlier one (the imported disc and settings.ini stayed):
+`renderer: OpenGL ES 3.1 (4.5.0 NVIDIA 621.01) on Android Emulator OpenGL ES
+Translator (NVIDIA GeForce RTX 5070 Ti/PCIe/SSE2), depth clamp in the vertex
+shader`, the same `data_hash 1c693d45198dd6c1`, the title screen, the
+AAudio player `started`, the menu by touch and by the virtual pad's View
+button, HOME and back `HOT` with the lifecycle lines. While the PC built at
+the same time, the emulator's own System UI showed "isn't responding"
+dialogs (not the game's).
+
+### The PC after phase B
+
+- `build/Clean` from scratch (MSVC, Ninja, Release) and `ctest`: 66 of 66.
+- `work/dref/checks/det.sh` twice: `4004f056` / `396cb219` both runs, both
+  times.
+- The save state suite (a private copy of `st_all.sh`): 17 of 17 identical
+  after loading.
+- Screenshots of `newgame_dng101b1.txt` at frames 1500, 4300 and 5000
+  (the title, the dungeon with the skinned partner and the HUD) are
+  pixel-identical to main `463c7a5b`'s.
+- The same disc logs the same `data_hash` as on Android, as an image and
+  as the Dolphin extraction.
+
+### The phase B review fixes (13.11.2026)
+
+The review's findings are fixed on feat-android, with main bb95abb5
+merged in (the texture streaming and the Graphics options; see the
+renderer section). Checked:
+
+- The PC: `build/Clean` from scratch and `ctest` 76 of 76 (main brought
+  the texture and graphics tests); `det.sh` twice on an exe copy,
+  `4004f056` / `396cb219` in both runs both times; the depth clamp check
+  on `newgame_dng101b1` (renderer section): 0 crossing triangles.
+- `git merge-tree` of feat-android with main, int-i1b and feat-remaster:
+  no conflict (CMake keeps main's `add_executable(dw4_game ...)` line).
+  With feat-l10n: exactly the five conflicts main itself has with it
+  (CMakeLists.txt, gl_renderer.cpp/.hpp, texture_pack.cpp/.hpp: main's
+  texture streaming against l10n's texture swaps); feat-android before
+  the main merge (e934cd39) had none with it.
+- The emulator (SwiftShader, the Gradle APK built offline, both ABIs with
+  the new code): the title with the same `data_hash 1c693d45198dd6c1`;
+  a tap in the top right corner opens and a second one closes the menu;
+  with the menu's window dragged into the corner a tap there goes to
+  ImGui (no toggle); the Back key opens and closes it.
+- The import: `--import-disc` of a 1 MB file of zeros stops at once with
+  "The chosen file is not a GameCube disc image (ISO) or RVZ image." (no
+  copy). The import through a FIFO (a writer `cat`s the ISO into it: no
+  seek, no size, as a streaming provider) copies 1,459,978,240 bytes in
+  about 16 s, passes `check_game_data` and starts with the same
+  `data_hash`; the title follows.
+- The Sharpening option on GLES (`sharpening=high` in settings.ini): the
+  title draws with it on SwiftShader and on `-gpu host` (NVIDIA through
+  the translator), no GL error or crash in logcat; the logo's edge
+  strength rises by a third against the unsharpened title. Neither
+  emulator surface is multisampled (the menu says "now 0x" for msaa=4),
+  so the multisampled resolve of `copy_window_es` and of `keep_picture`
+  waits for the Thor.
+- Home and back to the app: the lifecycle lines in order, the game draws
+  on.
+
+### Open for phase C (and later)
+
+- Depth read-back for the name tags on GLES; a debug walk through every
+  menu with `DW4_GL_CHECK=1` (the title, the new game, the dungeon, the F1
+  menu and the Graphics options are checked, 14.11.2026). (Both done in
+  phase C, "Phase C leftovers on the player's side".)
+- ImGui's size on the Thor's 400 dpi screen (the menus are drawn at 1x),
+  fullscreen without the status bar (immersive mode), a visible menu button
+  for touch. (Done in phase C's UX lane: "Phase C: the player's side on
+  Android".)
+- Pausing the sound and saving settings when going to the background;
+  `LOW_MEMORY` (the texture cache). (Done, the same section.)
+- A context loss is handled but was not provoked on the emulator (nor the
+  texture pack streaming after one). (Done in phase C, the same section.)
+- On the Thor, in the game itself: a multisampled surface (msaa=4) with
+  the kept picture and the Sharpening option, a texture pack (BC7 / BC1 /
+  BC3 compressed on Adreno), the language switch (gles_check ran the same
+  GL calls without the app, 14.11.2026); a full external storage (the
+  import's space check) and an unmounted one (`app_root_problem`), neither
+  provoked on the emulator. (Both provoked on the emulator in phase C, the
+  same section; the rest needs the Thor in the game.)
+- Measure on the Thor (correct, possibly expensive on a tiler):
+  `keep_picture` blits the whole (with msaa=4 multisampled) window every
+  frame, an extra resolve in the middle of the frame after which ImGui
+  loads the tiles again (alternatives: keep only when a stall is likely,
+  or every few frames); the skinning palette goes up with
+  `glTexSubImage2D` per skinned item into the one texture earlier draws of
+  the frame still read, which drivers answer by copying the texture
+  (alternative: all of the frame's palettes in one larger texture, one
+  upload, a row offset per draw). The Sharpening option adds a second
+  resolve and copy on GLES. gles_check's figures on the Thor (1920 x 1080,
+  4x multisampled, 60 rounds, each with `glFinish`): the kept picture's
+  blit 0.53 ms, the sharpening's resolve, copy and pass 2.42 ms (without
+  multisampling 0.49 / 1.10 ms); measured with the screen locked, so the
+  GPU's clock may have been low.
+- Texture packs on a GPU without BC formats: CPU-decoded RGBA8 needs 4x
+  (BC7) to 8x (BC1) the memory of the compressed files (not the Thor's
+  case: Adreno 740 takes BC7, BC1 and BC3, and ASTC LDR / HDR).
+- The debug APK's native code is built without optimization (Gradle's
+  Debug build type: `CMAKE_BUILD_TYPE=Debug`, no `-O`); performance on the
+  Thor is measured with an optimized build (a release build type or
+  `RelWithDebInfo` for the native part). (The profile build type since
+  phase C: "Phase C leftovers on the player's side".)
+- The F1 menu shows PC-only entries on Android too (Fullscreen (F11), the
+  window size buttons, "Dump textures"); they go or change with phase C's
+  menu work. (Fullscreen, the window sizes and the WinUSB GameCube adapter
+  are PC only now; "Dump textures" stays, not checked on Android.)
+- The RVZ import was not run on the emulator (no RVZ of the game); it uses
+  the PC's converter on the copied file.
+
+## The main merge of 14.11.2026 (main 12f6a1a8)
+
+main 12f6a1a8 brought feat-l10n (game text catalogs laid out at display
+time, the live language switch in F1 > Settings > Language, the German
+pictures, the composed glyph cells of the font atlas, the l10n tools and
+lint; docs/L10N.md) and the remaster tools' review rounds; the texture
+streaming and the Graphics options were merged before (main bb95abb5).
+The merge commit had no conflict: l10n's renderer changes are CPU side
+(texture records keyed by the USA texture's hash and the language
+picture's, the composed glyph cells painted into the font atlas's pixels
+before an upload, a pack's font00 decoded to RGBA8 for it) and sit next to
+phase B's GLES paths. The changes after it, for Android:
+
+- **Language packs in the APK.** The PC build copies `data/lang/<code>/`
+  next to the program (`cmake/copy_lang.cmake`, now PC only); Android has
+  no program folder, so Gradle (`copyLangAssets`) puts the committed pack
+  files (`language.ini`, `textures.tsv`; never a file named `game.*`) into
+  the APK's assets `lang/<code>/`, and the game copies them into `lang/` of
+  its folder (`Android/data/org.dw4pc.game/files/lang`) at every start
+  where they differ (`install_bundled_language_packs`,
+  `platform_android.cpp`; logged as `language: N language pack files from
+  the APK into ...`). Without a `game.tsv` the German pack is "pictures
+  only" (two of its three pictures come from the player's own disc; the
+  travel dialog's is drawn from game.tsv's text). The game text catalog
+  (`game.tsv`) is derived from the game's script: it is never committed and
+  never in an APK; a player puts their own into `files/lang/de/`.
+- **Putting a game.tsv on the owner's Thor (a local step).** `adb push`
+  into `Android/data/org.dw4pc.game/files` creates folders owned by the
+  shell (`drwxrws--- shell ext_data_rw`), which the app (no member of
+  `ext_data_rw`) cannot enter: the folder must be the app's own. So:
+
+      adb push local\lang\de\game.tsv /data/local/tmp/dw4c/game.tsv
+      adb shell "run-as org.dw4pc.game mkdir -p /storage/emulated/0/Android/data/org.dw4pc.game/files/lang/de"
+      adb shell "cat /data/local/tmp/dw4c/game.tsv | run-as org.dw4pc.game sh -c 'cat > /storage/emulated/0/Android/data/org.dw4pc.game/files/lang/de/game.tsv'"
+      adb shell rm -rf /data/local/tmp/dw4c
+
+  (a debug build only: `run-as` needs `debuggable`). A file pushed into a
+  folder the app made is readable (`-rw-r--r-- shell`), as on the
+  emulator. A game.tsv copied in while the game runs is read when the
+  language is chosen again; the menu's entry follows it (before, it kept
+  saying "pictures only" until the next start; checked on the PC the other
+  way round: a game.tsv removed after the start, the switch at frame 3000,
+  the entry then says "(pictures only, no game.tsv)").
+- **The renderer on GLES**: immutable storage for pack textures and BC7
+  through `GL_EXT_texture_compression_bptc` (renderer section above),
+  `DW4_GL_CHECK=1`.
+- **Test aids**: `--mute`, `--env NAME=VALUE` (the emulator section),
+  `DW4_MENU_SECTION=Graphics` (the F1 Settings tab scrolled to its Graphics
+  section, for menu screenshots); a test run's F1 menu now shows the
+  Graphics options the renderer uses (the environment's), not settings.ini's
+  (test runs never save settings.ini).
+- `-Pdw4.nativeJobs=N` for Gradle (Building).
+
+What the Graphics options and the languages do on GLES:
+
+| Feature | OpenGL ES 3.0 (emulator, SwiftShader) | OpenGL ES 3.2 (Thor, Adreno 740) |
+| --- | --- | --- |
+| Texture quality, streaming | BC7 / BC1 decoded to RGBA8 on the loading thread, uploaded in bands | BC7 / BC1 / BC3 uploaded compressed in bands |
+| Texture filtering | Bilinear and Trilinear only (no `GL_EXT_texture_filter_anisotropic`): the menu offers no anisotropic level and says "This GPU offers no anisotropic filtering"; a settings.ini value of `anisotropic16` shows and samples as Trilinear | up to Anisotropic 16x (maximum 16) |
+| Mip LOD bias | the shader's bias, as on the PC | the same |
+| Sharpening | the window resolved by a blit, copied, the pass drawn (`copy_window_es`) | the same, with a 4x multisampled window |
+| Shadow quality | RGBA8 colour attachment up to 1024 x 1024 | the same (max texture size 16384) |
+| Texture memory | the same budget | the same |
+| Language | packs from the APK; German text and the composed glyph cells (ä ö ü ß „ “) | the same GL calls (gles_check); the game run is still open (below) |
+
+Checked on 14.11.2026:
+
+- `git merge-tree` of feat-android's head with int-i1b 446595aa,
+  feat-remaster 150f42a2 and main / feat-l10n 12f6a1a8: no conflict.
+- **The PC** (`build/Clean`, MSVC, after the merge and every change):
+  `ctest` 78 of 78 (main brought the i18n and l10n lint tests);
+  `det.sh` twice on an exe copy, `4004f056` / `396cb219` in both runs both
+  times; the save state suite 17 of 17. Hidden UI runs (test runs, no
+  window shown, no sound, `DW4_GL_CHECK=1`, the new game route
+  `newgame_dng101b1`): the F1 Settings tab open while `DW4_L10N_SWITCH=
+  2400:de,3900:en` switches the language (the Language entry shows
+  "Deutsch (Fan-Übersetzung)" and the game text behind it is German, then
+  English again); German from the start (the name entry's "Gib den Namen
+  deines Digimon ein. Drücke zum Abschluss START." with ü); the Graphics
+  section (`DW4_MENU_SECTION=Graphics`) with Anisotropic 16x, Sharpening
+  High, Shadow quality Ultra and a synthetic texture pack (below) in the
+  dungeon; 0 GL errors in every run.
+- **The emulator** (`dw4thor33`, SwiftShader, OpenGL ES 3.0, the debug APK
+  built offline at idle priority with `-Pdw4.nativeJobs=6`): installed over
+  the earlier APK (the disc copy stayed), started with `dw4args '--mute
+  --env DW4_GL_CHECK=1'`: `language: 2 language pack files from the APK
+  into .../files/lang`, the title; the Back key opens F1, the Language
+  entry offers "Deutsch (Fan-Übersetzung) (pictures only, no game.tsv)";
+  chosen by touch: `language: de: no game.tsv ... 2 of 3 pictures ready`;
+  with a game.tsv pushed into the app's folder and German chosen again:
+  `game.tsv 4515 texts, 0 rejected ..., 3 of 3 pictures ready`; back to
+  English, settings.ini `language=en`; logcat without errors. Two test
+  runs through `dw4args` (`--smoke-test`, the route's input script and a
+  card folder in the app's folder, `--screenshot` BMPs pulled with adb):
+  German from the start shows the same German name entry as the PC; the
+  Graphics run (`DW4_TEXTURE_PACK` = the synthetic pack, anisotropic16,
+  sharpening high, shadow quality ultra, `DW4_MSAA=4`) draws the pack's
+  checkerboards in the dungeon, the menu shows Trilinear and the note that
+  the GPU has no anisotropic filtering; `renderer: GL error check: 0
+  errors` in 4300 and 5023 checks.
+- **The synthetic texture pack** (`work/android_research/synth_pack.py`,
+  local): format 2, eight textures of the title and the dungeon by their
+  hashes and sizes only (from a dump run's file names; the dumped pictures
+  were deleted), each a checkerboard of 4 x 4 texel blocks in two colours
+  per mip level (BC7 mode 6, BC1 and RGBA8 DDS files, scale 4 down to 1):
+  no game pixels, so it may go onto a device.
+- **The Thor**: `adb install -r` of the new debug APK (the imported
+  `files/data/dw4.iso` and settings.ini stayed, settings.ini byte for byte).
+  Its lock screen is secure (a PIN or pattern; `KeyguardServiceDelegate
+  secure=true`), so the game was not started there (no UI check while the
+  owner is away): the title, F1 by the Back key and the language switch in
+  the game on the Thor are still open. Instead gles_check ran by `adb
+  shell` (below), and the owner's game.tsv was put into the app's folder
+  as the local step above (`files/lang/de/game.tsv`, the app's own; the
+  game adds `language.ini` and `textures.tsv` at its next start), so F1 >
+  Settings > Language offers German with its text.
+
+### GLES checks without the app (gles_check)
+
+`tools/android/gles_check.cpp` is a plain executable for `adb shell`: an
+EGL pbuffer of 1920 x 1080 (4x multisampled by default) with an OpenGL ES 3
+context, no Activity and no SDL, so it runs while the device is locked. It
+reads the renderer's shader sources from a copy of `src/game/
+gl_renderer.cpp`, compiles them with the renderer's GLES header and runs the
+GL calls of the Graphics options and the texture streaming as the renderer
+makes them, `glGetError` after every step (the file's header lists them).
+Build and run (the folder `/data/local/tmp/dw4c` is removed afterwards):
+
+    %NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++ --target=aarch64-linux-android33 -std=c++20 -O1 -s ^
+        -static-libstdc++ tools\android\gles_check.cpp -lEGL -lGLESv3 -o gles_check
+    adb push gles_check src\game\gl_renderer.cpp /data/local/tmp/dw4c/
+    adb shell "chmod 755 /data/local/tmp/dw4c/gles_check && /data/local/tmp/dw4c/gles_check /data/local/tmp/dw4c/gl_renderer.cpp 4"
+
+On the owner's Thor (14.11.2026): `OpenGL ES 3.2 V@0676.53 ... Adreno (TM)
+740`, GLSL ES 3.20, max texture size 16384, max samples 4, 256 vertex
+uniform vectors (the GLES minimum: the palette texture was the right
+choice), 118 extensions, 78 compressed formats; anisotropic filtering (max
+16), BPTC, S3TC, ASTC LDR and HDR, `GL_EXT_depth_clamp`, `KHR_debug`. Every
+program links (the scene 32 active uniforms, the movie, the kept picture,
+the sharpening); immutable RGBA8 storage 2048 x 2048 with 12 levels filled
+in 93 bands (21.3 MiB in 22 ms) and BC7 / BC1 / BC3 in 30 / 20 / 30 bands;
+a draw through a trilinear sampler with 16x anisotropy; the RGBA32F
+palette; the shadow map at 128, 512 and 1024 texels complete, drawn and
+read back; the multisampled window resolved by a blit, copied, sharpened,
+and blitted into the kept picture; `GL_DEPTH_CLAMP_EXT` on and off:
+**PASSED, 0 failures** (with and without multisampling).
+
+## Phase C: the player's side on Android (UX lane, 14.11.2026)
+
+Branch `feat-android-cux` (from feat-android 0dc24e67). The owner's Thor was
+locked with a PIN or pattern the whole time (`KeyguardServiceDelegate
+secure=true`), so the game itself was not started there: everything below
+that runs the game was checked on the emulator (an AVD of this lane's own,
+`dw4cux33`: the Thor's 1920 x 1080 at 369 dpi, a navigation bar, no
+hardware keyboard, 2 GB, `-gpu host`; `dw4thor33` belongs to the
+determinism lane) and on the PC; on the Thor ran only `adb shell` reads and
+gles_check.
+
+### Full screen (immersive)
+
+- The Android window opens with `SDL_WINDOW_FULLSCREEN` (SDL's immersive
+  window style) and `DW4Activity` hides the status and navigation bars
+  itself (`WindowInsetsController.hide(systemBars)`, transient bars by a
+  swipe, `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS`, `setDecorFitsSystemWindows
+  (false)`), again on every focus gain, resume, configuration change and
+  input device added, removed or changed (a controller reconnect, the
+  Thor's controller style switched), and logs the result 0.6 s later:
+  `window: 1920x1080, status bar hidden, navigation bar hidden, display 0
+  at 60.00 Hz` (logcat tag `DW4`).
+- F11, "Fullscreen (F11)" and the window size buttons are PC only.
+- Emulator: hidden bars at the start (the emulator shows Android's
+  one-time "Viewing full screen" note; the owner's Thor has it confirmed
+  for good, `immersive_mode_confirmations=confirmed`, so it shows none), after F1 by the
+  button, after HOME and back, after the app switcher and back, and after
+  a virtual pad (uinput) came and went; the first start's disc dialog is a
+  system dialog and shows the bars while it is open.
+
+### The menus' size
+
+- `[window] ui_scale` (percent; `auto`, the default, is not written into a
+  file that has none): auto is the display's scale on Android
+  (`SDL_GetWindowDisplayScale`, Android's `densityDpi / 160`: 369 dpi is
+  **231 %**) and 1x on the PC, whose look stays as it was. A set percent
+  (100-400) counts on both. F1 > Settings > Display > "Menu size": Automatic
+  (N %), 100 ... 300 %.
+- At a scale above 1: ImGui's style sizes scaled from the dark style
+  (`ScaleAllSizes`), the font size (`FontScaleDpi`), ImGui's scalable font
+  instead of its 13 px pixel font, the F1 window as large as the display
+  allows (620 x 560 at 1x scaled, centred, scrolling inside), the notices'
+  places, the first start's screen, the frame time graph and the fixed
+  widths of the saves and cloud backup fields. The online screens over the
+  title keep sizing themselves by the window's height like the game's own
+  text (22 px at 1009 lines, 24 px on the Thor); their PushFont sizes are
+  taken before the menus' scale.
+- PC (`DW4_UI_SCALE=percent` shows a scale in a test run): at 1x the game's
+  pictures are byte for byte the same as before (title, name entry,
+  dungeon, Xbox prompts: same md5); the F1 menu's pictures differ only
+  where the new "Menu size" line and the changed controllers note stand
+  (and below, moved down; the scrollbar), the lines above them
+  pixel-identical. The Thor's look on the PC (1920 x 1080, 231 %,
+  `build/phc/ui_thor/`): every tab readable and inside the window.
+
+### The menu button for touch
+
+- Android only (`DW4_TOUCH_UI=1` draws it in a test run, also on the PC;
+  other test runs leave it out of their screenshots): three lines on
+  a dark rounded square, 44 px at 1x (102 px on the Thor), in the middle of
+  the bar right of the 4:3 picture, so never over the HUD (which stays on
+  the 4:3 picture, also in widescreen); in a window too narrow for that, in
+  the top right corner.
+- Shown for 4 s after any touch (and at the start), always while F1 is
+  open, then it fades out in 0.5 s. A tap on it (or in the top right
+  corner as before) opens and closes F1. Touch still works only on menus.
+- The button is drawn over everything, so a tap on it is always the
+  button's (`menu: closed (the touch menu button)`), also where the F1
+  window reaches under it (a menu size of 300 % on the Thor's 1920 x 1080:
+  the window spans x 30-1890, the button x 1734-1866; before, ImGui took
+  that tap). A tap elsewhere in the top right corner is ImGui's when it
+  lands on an open menu.
+
+### The AYN Thor's controller
+
+What the device reports (read only, 14.11.2026): the controller is USB HID
+`2020:0111` "Odin Controller" (`Vendor_2020_Product_0111.kl`: `BTN_SOUTH`
+`BUTTON_A`, `BTN_EAST` `BUTTON_B`, `BTN_NORTH` (0x133) `BUTTON_X`,
+`BTN_WEST` (0x134) `BUTTON_Y`, `BTN_TL2` / `BTN_TR2` `BUTTON_L2` / `R2`,
+`BTN_SELECT`, `BTN_START`, `BTN_MODE`, `KEY_BACK` `BACK`, `KEY_HOME`,
+`KEY_APPSELECT`; axes X, Y, Z, RZ, GAS 0..32767, BRAKE, HAT). The key
+layout is fixed, so the face buttons' codes change in the controller
+itself. Its settings: `persist.sys.gamepad.type` **0** while the quick
+settings tile "Controller style" says **Standard**; `trigger_input_mode`
+0 with the tile "L2/R2 mode" **Analog**; "Smooth Display" (peak refresh
+rate) 60; `global_gamepad_to_mouse_mode` 0 (the stick mouse off). Reviews
+and AYN's settings: face buttons printed in the Nintendo layout (A right,
+B bottom, X top, Y left; the Super Famicom colours A red, B yellow, X blue,
+Y green), shoulders L1 / R1, analog triggers L2 / R2, Start and Select
+above the lower screen; "Style: Xbox or Standard", "L2/R2 mode: Analog,
+Digital or Both". A tester's report for the Odin's styles fits Standard =
+the printed letters' codes and Xbox = positions.
+
+- `PadFamily::thor` ("AYN Thor", settings id `thor`): 2020:0111 or a name
+  with "Odin Controller". It reads like the Nintendo pads: by label (the
+  default `nintendo_layout`) the printed A is the game's A and the menus'
+  confirm, by position the bottom button is.
+- `[gamepad] thor_style` = auto (the device's setting, read every second,
+  so the quick settings tile takes effect while the game runs; Standard
+  when it cannot be read), standard or xbox (F1 > Controls, "AYN Thor
+  controller style", shown when a Thor pad is connected). Standard: SDL's
+  SOUTH is the printed A (no swap by label); Xbox: SOUTH is the bottom
+  button (swapped by label, as a Switch Pro). `persist.sys.gamepad.type` 1
+  is taken as Xbox; only 0 = Standard was seen on the device.
+- Pictures: round dark buttons with the letters in their colours, L1 / R1,
+  L2 / R2, and START / SELECT as printed on the owner's Thor (PlayStation 2
+  style, its answer of 14.11.2026): START a right-pointing arrow, SELECT a
+  square, each on a round dark button (`Face::start_arrow`,
+  `select_square`; before the Thor check they were pills with the words).
+- L2 / R2: SDL's Android backend makes the GAS / BRAKE axes the triggers
+  (the generic mapping `lefttrigger:a4,righttrigger:a5`) and the L2 / R2
+  keys joystick buttons 15 and 16 outside the gamepad mapping, so in
+  "Both" a pull counts once already; in "Digital" (keys only) the triggers
+  did nothing. The keys are now folded into the trigger axes
+  (`with_digital_triggers`, `read_pad`): one pull in every mode, and a
+  binding captured from them binds the trigger.
+- The "ODIN Station Virtual Mouse" (the same USB id, `Sources: MOUSE`) is
+  no joystick for SDL and takes no player slot; with the stick mouse off it
+  sends nothing.
+- Android's Back and Home keys no longer switch the prompts to the
+  keyboard (on the emulator `input keyevent BACK` did; the Thor's Back
+  button is the controller's).
+- The Thor's controller has a Back button (`KEY_BACK`) and a Select button
+  (`BTN_SELECT`); SDL's Android backend makes both its gamepad button
+  BACK, so the Back button opened F1 only while no binding used BACK.
+  `DW4Activity.dispatchKeyEvent` hands `KEYCODE_BACK` from the Thor's
+  controller (2020:0111 or "Odin Controller", a gamepad source) to SDL as
+  Android's Back key: F1 always (`menu: open (the Back key)`), whatever
+  the bindings. Since the console F1 menu (14.11.2026) Select on the Thor no
+  longer opens F1 on Android: it stays a game button (bindable, the prompts'
+  SELECT square), and `{MENU}` shows the Back key. Other controllers are
+  unchanged.
+
+### Lifecycle
+
+- Going to the background saves changed settings (`lifecycle: settings
+  saved`); the game loop stands in `SDL_PollEvent` (the game pauses: SDL
+  blocks on pause) and SDL pauses the AAudio output. Coming back the loop
+  starts its clock again (`lifecycle: the game goes on`; before, up to four
+  steps caught up).
+- Another window in front while the game stays on the screen (the
+  notification shade, the quick settings with the Thor's "Controller style"
+  tile, a dialog): SDLActivity pauses nothing then (Android 7+ multi-window:
+  only `SDL_EVENT_WINDOW_FOCUS_LOST`), and the controller's input goes to
+  that window. The game pauses meanwhile like the F1 menu's pause and goes
+  quiet (`focus: another window is in front: the game pauses` / `focus:
+  back: the game goes on`), never in a LAN or online session (their steps
+  are every member's) or a test run. `[menu] pause_unfocused` switches it,
+  on both platforms since the review fixes of 16.11.2026 (the owner's
+  decision of 14.11.2026: default on on Android, off on the PC, switchable
+  in F1 on both; written only once it differs from the platform's
+  default): F1 > Settings "Pause the game while another window is in
+  front (notifications, quick settings)" on Android, "... (Alt+Tab,
+  minimized)" on the PC, the console menu's General > "Pause in the
+  background" on both. On the PC the focus leaves the game window with
+  Alt+Tab or a minimized window. A touch on the second screen's panels
+  takes no focus (their window is not focusable) and never pauses the game
+  ("Phase E: the second screen"; AYN's Focus Mode on the Thor: its
+  checklist); the PC's panels are a window inside the game's.
+- `DW4Activity.onTrimMemory` passes only real memory warnings on, the
+  `TRIM_MEMORY_RUNNING_*` levels (5, 10, 15: memory is short while the game
+  runs). `TRIM_MEMORY_UI_HIDDEN` (20, every HOME) and the background levels
+  `BACKGROUND`, `MODERATE`, `COMPLETE` (40, 60, 80) are logged and dropped:
+  in the background the game loop stands in SDL's pause, so they would act
+  only after coming back (letting go of the textures it is about to draw)
+  and never while the low memory killer decides. The passed ones arrive as
+  `SDL_EVENT_LOW_MEMORY`, on which the renderer lets go of the hashed
+  textures no picture drew in the last two frames
+  (`GlRenderer::trim_textures`, as the memory budget would).
+- Emulator: HOME (`entering the background`, `settings saved` after F1 >
+  VSync was switched, settings.ini `vsync=false`, `trim memory level 20
+  ... not passed on`), back (`in the foreground`, `the game goes on`, the
+  surface's frame rate asked again, bars hidden), `am send-trim-memory ...
+  RUNNING_LOW` (`trim memory level 10 (passed on as low memory)`, `low
+  memory: 0 textures (0 KiB) let go`: no pack loaded). The app switcher
+  (Launcher3's live tile) neither paused the app nor took its focus there.
+- HOME inside a long pass: SDL releases the EGL surface after waiting at
+  most 0.5 s for the game's thread to reach its pause, and a stage load
+  holds that thread longer (stagis09's load: about 1.1 s in the debug
+  APK on the emulator). On the emulator (14.11.2026, HOME 0.4-1.0 s after
+  `stage stagis09 section ...`, three of four rounds inside the load)
+  `surfaceDestroyed` came while the load ran, the game logged `in the
+  background` only after it, and one of the three met the released surface
+  at its swap (`E/libEGL eglSwapBuffersWithDamageKHRImpl: error 300d
+  (EGL_BAD_SURFACE)`); no crash, and the game drew on after coming back.
+  Since then `DW4Activity.GameSurface.surfaceDestroyed` asks for the pause
+  itself and waits (at most 3 s) until the game's lifecycle watch has seen
+  `DID_ENTER_BACKGROUND` (`nativeGamePaused`, `platform_android.cpp`;
+  SDL lets go of the context right after that) before SDL releases the
+  surface; a wait of 100 ms or more is logged (`lifecycle: the surface
+  waited N ms for the game to reach its pause`).
+
+### Frame pacing
+
+- Every game surface asks for the game's rate: `Surface.setFrameRate(60,
+  FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, CHANGE_FRAME_RATE_ALWAYS)` in
+  `DW4Activity.GameSurface.surfaceChanged`, and the game passes a frame
+  limit above 60 (up to 120) through JNI (`DW4Activity.setFrameRate`).
+  SurfaceFlinger on the emulator: the game's layer votes `60.00 Hz
+  ExactOrMultiple SeamedAndSeamless`. On the Thor the display runs mode 1
+  (60 Hz) under the owner's Smooth Display 60 (`PRIORITY_USER_SETTING_PEAK
+  _REFRESH_RATE` max 60); at 120 the vote picks a rate 60 divides.
+- `DW4_FRAME_STATS=SECONDS` (any platform; `--env` on Android) logs
+  presents per second, the percentiles of the present interval, of the
+  pass's work up to the swap, of the swap and of the engine step, and a
+  second line with the presents after 0, 1 and 2+ engine steps and how
+  often a 0 and a 2+ follow each other (`frames: presents after 0 / 1 / 2+
+  steps: ...`): the game steps at 59.94 Hz, a 60 Hz panel repeats a picture
+  about every 16.7 s (a lone 0); 0 / 2+ pairs in a row are judder. Emulator
+  (`-gpu host`, the debug APK), intro and title: 56.8 / 52.4 presents/s
+  over 10 s (the second with a stage load), interval p50 16.7 ms, work p50
+  4.4-4.8 ms, step p50 0.12 ms, p99 1-7 ms. On the Thor: open (locked).
+- gles_check on the Thor (`gles_check gl_renderer.cpp SAMPLES FRAMES`, a
+  frame stand-in of three blended full-screen quads and an overlay quad,
+  GPU time by `GL_EXT_disjoint_timer_query`, wall time to `glFinish`;
+  medians; the GPU clock rose from 401 to 615 MHz of 680 during the runs):
+
+  | 1920 x 1080 | GPU, 4x MSAA | wall, 4x MSAA | GPU, no MSAA | wall, no MSAA |
+  | --- | --- | --- | --- | --- |
+  | plain frame | 0.37-0.52 ms | 2.3-3.2 ms | 0.27 ms | 1.0 ms |
+  | + kept picture | +0.06-0.11 ms | +0.5-0.8 ms | +0.03 ms | +0.23 ms |
+  | + Sharpening | +0.35-0.37 ms | +1.1-1.8 ms | +0.28 ms | +0.39 ms |
+  | + both | +0.36-0.50 ms | +1.5-2.4 ms | +0.27 ms | +0.97 ms |
+
+  The kept picture's blit in the middle of a multisampled frame costs the
+  GPU about 0.1 ms, the Sharpening option about 0.4 ms (the wall times add
+  the flushes a `glFinish` per frame forces): no reason to change a GLES
+  default. Thermal (sysfs, read only, after the runs): CPU 33-39 °C, GPU
+  30-33 °C, battery 20 °C, thermal status 0 (the thermal HAL reported "not
+  ready").
+
+### Text input
+
+- ImGui's SDL backend starts SDL's text input while a field is active;
+  without a hardware keyboard SDL shows Android's keyboard and pans the
+  picture so the field stays above it (emulator: the Saves tab's cloud
+  backup Account field, `mInputShown=true`, `inputType=0x3c001`).
+- A password field opens it as a password field's: SDL's
+  `TEXT_PASSWORD_HIDDEN` without autocorrection, and the keyboard's input
+  restarted (`DW4Activity.restartTextInput`), since it keeps a field's kind
+  otherwise (emulator: `inputType=0x20081`).
+- Back on the keyboard stops SDL's text input while ImGui's field stays
+  active; a tap on that field brings the keyboard back (`text input: the
+  system keyboard again`). `DW4_TRACE_IME=1` logs the IME calls.
+- The game's own name entry is the original's letter grid (controller);
+  the port's on-screen keyboard of the online screens stays for the
+  controller.
+
+### Saves between the PC and Android
+
+`DW4_CAMPAIGN_SAVE_NOW=NAME` (test runs with the campaign driver,
+`DW4_CAMPAIGN_LOAD=1`: Call Digimon at the title with Card A's character)
+makes a save due at once; the driver saves in the save room and keeps the
+card as checkpoint NAME. The det route itself never saves, so the PC's save
+came from r25c's k2 checkpoint (a PC campaign run), loaded and saved again
+in a hidden PC run (`work/cux/rt_pc.sh`, private copies):
+
+| step | where | loaded | saved |
+| --- | --- | --- | --- |
+| pc1 | PC (hidden test run) | r25c k2: level 7, phase 2, keys 0,1,2 at frame 3197 | frame 6279 |
+| emu1 | x86_64 emulator, the debug APK (pc1's GCI in the app's folder, `--card-dir`) | the same at 3197 | 6279 |
+| pc2 | PC from emu1's GCI pulled back | the same at 3197 | 6279 |
+
+The three GCI files differ only in bytes 0x2a-0x2b (the header's
+modification time). The same file is the player's `saves/savedata.dat`
+("the same bytes as Dolphin's B2-GDJE-NDMWSaveData.gci"). The Thor's turn
+(arm64) waits for an unlocked device: put the GCI into `files/rt/...`
+through `run-as` as the game.tsv above and run the same `dw4args`.
+
+### settings.ini on Android
+
+The same file and defaults as on the PC (`Android/data/org.dw4pc.game/
+files/settings.ini`, written on the way to the background and when F1
+closes), with these differences:
+
+| key | Android |
+| --- | --- |
+| `[window] width`, `height`, `fullscreen` | not used: always the whole screen |
+| `[window] ui_scale` | auto = the display's scale (231 % on the Thor) |
+| `[window] fps_limit` | 0 (the default): 60 Hz asked of the display; above 60: that rate up to 120 |
+| `[window] msaa` | 4 (the PC's default; Adreno 740: 4x) |
+| `[gamepad] thor_style` | auto (the Thor's Controller style) |
+| `[menu] pause_unfocused` | true (written only once it differs from the platform's default; the PC's default is false): the game pauses while another window is in front |
+| `[gamepad] gc_adapter` | not used (WinUSB, the PC's GameCube adapter reader) |
+| `[screen2] mode` | auto (the default): the panels on a second display when there is one; off (phase E) |
+| `[screen2] tab`, `overlay` | the second screen's tab (status, the default; online; menu) and the overlay window (false), as on the PC |
+
+### Phase C leftovers on the player's side (lane C2, 14.11.2026)
+
+The points of "Phase C status > Left" that need no device, on
+`feat-android-cux` (the determinism leftovers are on `feat-android-cdet`,
+"Determinism across platforms"). Checked on the emulator (`dw4cux33`,
+`-gpu host`, headless) and the PC; the Thor only by `adb shell`
+(gles_check), its lock screen still secure.
+
+**Measuring: the profile build type.** `android\gradlew-dw4.cmd --offline
+--no-daemon assembleProfile` builds `app-profile.apk`: the debug build
+(the SDK's debug key, the same application id, so `adb install -r` puts it
+over a debug APK and keeps the app's data; debuggable, so `run-as` and the
+`dw4args` test runs work) with the native code built as `RelWithDebInfo`
+(`-O2`; Gradle's Debug build type compiles it without optimization). Only
+the Java side differs from a release build (CheckJNI; the game makes a few
+JNI calls per frame at most). `-Pdw4.abis=x86_64` (or `arm64-v8a`) builds
+one ABI, half the native build's time (x86_64's `libmain.so`: 9.9 MB in the
+profile APK, 20.3 MB in the debug APK). Frame times on the emulator, debug
+against profile APK of this head
+(`DW4_FRAME_STATS=5`, `--mute`, the same 30 s from the start: the logos, the
+opening movie, the title):
+
+| 5 s period (two runs each) | debug APK | profile APK |
+| --- | --- | --- |
+| the logos | work p50 2.7-2.8 ms, step p50 0.03-0.10 ms | work p50 2.5-2.7 ms, step p50 0.02-0.04 ms |
+| the title stage's load | longest frame 1,123-1,182 ms (47 steps/s) | longest frame 126-138 ms (59 steps/s) |
+| the opening movie | work p50 6.8-8.3, p90 15.5-17.7 ms | work p50 5.0-5.3, p90 7.5-8.2 ms |
+
+60 presents/s in every period but the load's (interval p50 16.7 ms; the
+emulator's GPU, the NVIDIA card through the translator, sets the logos'
+work). The optimized native code cuts the movie's frame work (the MPEG
+decoder) by a third at the median and by half at the 90th percentile, and
+the load's hitch to a ninth; the step itself is 0.02-0.03 ms. The
+emulator's x86_64 cores (WHPX on the PC's CPU) say nothing about the Thor:
+its numbers need the owner's unlocked Thor ("Left").
+
+**The name tags' depth read-back on GLES.** `GlRenderer::read_depths`
+reads every shown tag's three occlusion probes of a frame in one go. OpenGL
+ES 3.0 has no depth read (`glReadPixels` takes no `GL_DEPTH_COMPONENT`), so
+there the window's depth inside the probes' bounding rectangle is blitted
+into a depth texture of the window's own depth and stencil format (a depth
+blit wants both sides equal; `DEPTH24_STENCIL8` on the emulator and the
+Thor; a multisampled window is resolved by the blit), one pass of points
+(`kDepthProbeVertex` / `kDepthProbeFragment`) fetches it at the probes into
+a row of an `R32UI` texture (the depth's float bits) and one `glReadPixels`
+takes the row back: the same values the PC's per-pixel `glReadPixels`
+gives. The pass keeps the frame's state (viewport, program, vertex array,
+texture unit 3, the enables); a context where a step fails logs it once
+(`renderer: no depth read-back on this OpenGL ES context (...)`) and keeps
+the old behaviour (no tag hides). The PC reads each pixel as before.
+
+- gles_check runs the same calls against known depths (scissored clears of
+  0.25, 0.75 and 1; twelve probes as four tags spread over 1801 x 971
+  pixels): every probe reads its depth on the emulator (`-gpu host`, no
+  multisampled pbuffer there) and on the Thor (Adreno 740, 4x multisampled
+  and without), PASSED. One read-back (blit, pass, read, which waits for the
+  GPU) takes 0.33 ms median on the Thor at 4x MSAA (0.31 ms without), 0.38
+  ms on the emulator.
+- The game: `det_walk3` with `DW4_LABELS=all DW4_TRACE_LABELS=10` (the
+  player's tag, traced every 10 frames, first 8,000 frames): the PC and the
+  emulator mark the tag "behind the scene" at exactly the same frames
+  (4350, 4530, 4850, 5100-5120, 6190-6210, 7570-7630, 7860-7870; before,
+  GLES marked none), and the pictures at frame 7600 show the faded tag
+  behind the same rock (`build/phe/shots/walk3_7600_pc_emu.png` and the
+  zoom `walk3_7600_tag_zoom.png` of the worktree, not committed). 0 GL
+  errors in 11,719 checks.
+
+**A walk through every F1 page with `DW4_GL_CHECK=1`** (the emulator, test
+runs from the start: Settings, Settings scrolled to Graphics, Controls,
+Gameplay, Saves, Online, Cheats, Achievements, Debug): 0 GL errors in each
+(700 checks per run). The first start's screens: `DW4_GL_CHECK=1` now also
+checks the status screens (the copy and conversion of the first start, the
+LAN lobby: `status screen: GL error check (SCREEN): N errors in M
+frames`); the import of the disc image by `--import-disc` drew 362 frames
+of the copy's progress with 0 GL errors (the message box and Android's
+picker are system UI). A test run has no online lobby, so its Online tab is
+empty; a normal start shows the refusal ("Online play is not available in
+this build yet: the server's certificate is not set up."). The offline
+menus said "this PC" on Android: "Offline achievements stay on this
+device" and the texture pack's "this device uses its own" now
+(`kThisMachine`, app_paths.hpp; the online screens' wording is phase D's).
+
+**A lost OpenGL context.** `DW4_TEST_CONTEXT_LOSS=background` (Android, a
+test switch through `--env`; lane C2 wrote it `=1` before phase E's frame
+list joined the same switch, below) destroys the game's EGL context
+while the game is in the background (`eglDestroyContext` when SDL sends
+`WILL_ENTER_FOREGROUND`, before it makes the context current again), so
+SDL finds it lost, makes a new one and sends `SDL_EVENT_RENDER_DEVICE_RESET`:
+the path of a device that loses its context. The emulator, the det route
+`newgame_dng101b1` with the synthetic texture pack (`DW4_TEXTURE_PACK`,
+format 2: BC7 / BC1 / RGBA8, decoded on the loading thread there), HOME at
+24 s (the title) and back after 4 s: `lifecycle: test: the OpenGL context
+destroyed in the background`, `lifecycle: the OpenGL context was
+recreated`, `the game goes on`; the dungeon's four pack textures stream in
+again (`uploads 4 (14.4 MiB)`, as in the run without HOME) and the pictures
+at frames 4300, 5000 and 6000 are pixel-identical to that run's; 0 GL
+errors. The renderer's GL and depth clamp checks now count across a reset
+(one total at the end; before, the lost context's Impl printed its own).
+
+**"Don't keep activities"** (the emulator only: `settings put global
+always_finish_activities 1` and a reboot, which Android needs to take it;
+deleted and rebooted again afterwards): HOME ends the activity, the game
+gets `terminating` and its main returns (`GL error check: 0 errors`); coming
+back, SDLActivity starts a new process (`Process org.dw4pc.game has died`,
+`Start proc`) and the game starts again from the logos, twice in a row,
+without a crash. What was not saved is gone, as in any game Android ends.
+
+**The external storage.**
+
+- Full: a file of 2,500 MB (`fallocate`) left 1,378 MB free;
+  `--import-disc` of the disc copy stopped before copying with "There is
+  not enough free space for the game data: 1456 MB needed, 1378 MB free."
+  (logged as `E/DW4` and shown in the message box). With the file removed
+  the same import copied the 1,459,978,240 bytes in 8 s and the game
+  started with the same `data_hash 1c693d45198dd6c1`.
+- Unmounted: `sm unmount emulated;0` (mounted again afterwards): the start
+  stops with `app_root_problem()`'s message ("The game's folder
+  (Android/data/org.dw4pc.game/files) cannot be written: the device's
+  shared storage is not available. ...").
+
+**Mods, PNG texture packs and offline achievements on Android** (the
+player's folders in `Android/data/org.dw4pc.game/files`; folders made by
+`adb shell` need `chmod 777`, files `666`, or the app cannot enter them):
+
+- A synthetic mod (`mods/c2synth/mod.ini` and one added text file, no game
+  data): `mod: C2 synthetic check 1.0 (1 files)` and the data identity
+  follows it (`data_hash 28d995fccac778ee` instead of `1c693d45198dd6c1`,
+  as on the PC).
+- A synthetic PNG pack of format 1 (`mods/textures/synthpng_<hash>.png`:
+  red and white checkerboards at twice the size of the synthetic DDS pack's
+  eight textures, `work/c2/png_pack.py`, local) replaces the logo in a
+  normal start.
+- Offline achievements: the det_walk3 run with `DW4_ACHIEVEMENTS=1` writes
+  a profile byte for byte the PC's (186 bytes, md5 d5797351..., in-game
+  minutes 4); the F1 Achievements tab of a normal start shows the profile
+  in `files/saves/profile.dat`.
+
+**Seen on the way (not changed):** at the start the touch menu button
+stands at the top centre for the first seconds (the logos), then in the
+bar right of the picture (the reason is not known yet). `adb push` / `adb shell` stdin is not binary safe for `run-as ... cat
+> file` (a PNG arrived as 5 bytes): `adb exec-in` is.
+
+### Open after this lane
+
+- On the Thor in the game (it was locked): the immersive window and its
+  log line, the menus at 231 %, the touch button, the Thor family's
+  prompts and the controller style (also switched while the game runs:
+  one getevent capture of the printed A in each style confirms the
+  mapping), L2 / R2 in Digital and Both, HOME / app switcher, the keyboard,
+  `DW4_FRAME_STATS` in the intro, the title and the det route
+  (`newgame_dng101b1`, `--mute`), the save round trip on arm64.
+- START / SELECT: the printed icons. (Since the Thor check: the arrow and
+  the square.)
+- The online screens on the Thor at their window-height size (24 px text):
+  the owner's judgement.
+
+## The console F1 menu (14.11.2026)
+
+The F1 menu was hard to use on the AYN Thor in every way (controller
+navigation, touch, too much at once). Android has its own F1 menu now, in
+console style; docs/CONSOLE_MENU.md has the whole design, its files, test
+switches and checks. In short:
+
+- Categories as large entries on the left (Saves, General, Display,
+  Graphics, Controls, Cheats, Achievements, Online), a list of large rows on
+  the right. D-pad + A / B reach everything; L1 / R1 change the category,
+  Left / Right a value; a hint bar at the bottom shows the buttons with the
+  controller's own pictures. Touch: targets of 48 u or more, a tap acts on
+  release, a drag scrolls, a fling glides.
+- The same settings and the same apply and save paths as the PC's F1 menu
+  (`menu_ops.hpp`, `f1_actions.hpp`): nothing new in settings.ini, saved when
+  the menu closes and in the lifecycle as before. Only what makes sense on
+  Android: no window size, Discord, keyboard bindings, Wii U / GameCube
+  adapter switches, texture dumps or Data Overflow switches; the GameCube
+  save import waits for `content://` support.
+- It shows on the top screen and in the lower screen's Menu panel (the same
+  page and row on both); the panel's own header has *Close menu*.
+- Text fields (the cloud backup's login, the texture pack folder, the
+  randomizer's seed) open a text sheet with the system keyboard; a password
+  field's keyboard has no suggestions as before, the seed's is a number
+  keyboard.
+- The Thor's Back key opens and closes F1 everywhere (during a binding
+  capture it only cancels the capture); SELECT stays a game button.
+- Save states (Save / Load with a confirm), the binding capture (A, L2 / R2
+  analog and digital, Select; cancelled by Back, after 10 s or by touch;
+  cleared by X or a long press), the cloud backup, the presets (with a
+  confirm), achievements and cheats as on the PC.
+- The PC's F1 menu is unchanged (pictures of every tab and page before and
+  after compared); on the PC the console menu shows only in a test run
+  (`DW4_MENU_STYLE=console`), which the menu script (`--menu-script`, a
+  virtual SDL gamepad, the Thor's own by default) drives on the PC, the
+  emulator and the Thor alike.
+
+## Compile status (NDK clang 21, phase A)
+
+- `dw4_core`, `dw4_engine`, `dw4_online`: no errors for arm64-v8a and x86_64.
+  The only blocker was `src/engine/online.cpp:19`, the unguarded
+  `<xmmintrin.h>` of the MXCSR guard (x86 only). It is now included on x86
+  only; elsewhere the guard does nothing until phase B's platform-neutral
+  `FpEnvGuard` (FPCR on AArch64) replaces it. The PC build is unchanged
+  (`tests/online_tests.cpp` guards its MXCSR test the same way).
+- Two warnings remain: `src/sndf.cpp:249` (missing field initializer) and
+  `src/engine/overflow/director.cpp:678` (switch without every enumerator;
+  Data Overflow, paused).
+- The game layer (`src/game`, the 48 sources of `dw4_game`) passes
+  `-fsyntax-only` for arm64-v8a against the SDL3, imgui, pl_mpeg, stb and zstd
+  headers without errors (warnings: `achievements.cpp:499` switch,
+  `game_main.cpp:1091` deprecated `u8path`, `game_main.cpp:3935` non-literal
+  format string). Linking and running it on GLES is phase B's work: OpenGL
+  3.3 core to GLES 3.0 (shader header, uniform buffer for the palette, depth
+  clamp in the vertex shader, depth read-back, `keep_picture` through an FBO,
+  no `GL_MULTISAMPLE` toggles), the Windows-only libraries behind `WIN32`, the
+  paths, the one-window rule (RVZ progress and lobby as ImGui), the
+  lifecycle.
+
+## Phase E: the second screen (lane E, 14.11.2026)
+
+Branch `feat-android-e` (from `feat-android-cux` de4ffe93; worktree
+`android-e`). It changes no simulation result: the panels read the game's
+state after a step, as the overhead name tags do, and write nothing back
+(the det pair is the old one, below). It goes to main with the player's
+side (`feat-android-cux`), before the determinism part. Status: done on the
+PC and the emulator (`dw4thor33` with its second display); on the owner's
+Thor only read-only queries ran (its lock screen is secure), so its
+checklist below is open.
+
+### What the player sees
+
+- **On the AYN Thor's lower screen** (any second display Android offers for
+  presentations): three tabs, at the display's scale (the Thor's 369 dpi:
+  231 %; the emulator's 330 dpi: 206 %):
+  - **Status**: the area ("Death Valley: Humid Cave"), the difficulty and
+    every joined player's name, form, level, HP and MP bars (the game's own
+    HP / MP; the decision's "HP/SP"), EXP to the next level and bits; in an
+    online instance also the members the name tags know in this stage. Read
+    only. Before Game Start or Call Digimon: "No game is running."
+  - **Online**: the lobby as this machine knows it, without sending
+    anything while it is only looked at: "Offline" with the reason (this
+    build's or device's refusal, "Not connected" with a Connect button, the
+    server gate's text), logged in: the account, the world's counts
+    ("Online now: N players, M instances"), the friends online, Play's
+    label; in the world: the instance (whose, its visibility, the own slot,
+    the mode, the input delay, the story line) and its members (name, area,
+    level, HP, host / lagging / away). Buttons lead to the F1 menu's Online
+    tab (log in, Play, the Instance page) on the lower screen. A direct LAN
+    session shows its line. On Android it says why online play is off
+    (today the CPU gate's text on the UX branch, "not available on Android
+    yet" with the determinism part).
+  - **Menu**: the F1 menu by touch on demand: "Open the menu" opens the
+    same F1 menu (every tab) on the lower screen, "Close the menu" (or
+    Back, F1, the touch button) closes it; leaving the tab closes it too. It
+    pauses the game like F1 ([menu] pause), the controller moves through it
+    there (its A / B and D-pad), and a text field takes the game window's
+    keyboard (the system keyboard opens on the top screen; the typing goes
+    into the lower field). Opened on the top screen (Back, F1, the touch
+    button) it stays there; the Menu tab then offers "Show it here".
+- **On the PC** (and on Android without a second screen): the same Status
+  and Online panels as an overlay window "Second screen" over the game, off
+  by default; F1 > Settings > Second screen > "Panels over the game"
+  (`[screen2] overlay`) or its close button switch it. The Menu tab is
+  missing there: F1 is the menu. A PC player sees nothing new unless he
+  turns it on (pictures below).
+- F1 > Settings > **Second screen**: on Android "Lower screen: Automatic /
+  Off" (`[screen2] mode`) with what the device reports ("Now on display 4
+  "Screen-2", 1240 x 1080 at 369 dpi" / "No second screen now ..."), on
+  both the overlay switch. The last tab is remembered (`[screen2] tab`).
+  Each key is written only while it is not its default and the section
+  goes with its last key (also after a setting went back to its default),
+  so a PC's settings.ini stays as it was.
+
+### How it works on Android
+
+- **The display** (`LowerScreen.java`): a `DisplayListener` and
+  `DisplayManager.getDisplays(DISPLAY_CATEGORY_PRESENTATION)`: a display
+  with `FLAG_PRESENTATION`, not `FLAG_PRIVATE`, not the activity's own, state
+  not `OFF`; with several the lowest id (the built-in screen before a video
+  out plugged in later). The Thor's lower screen is display 4 ("Screen-2",
+  `SECURE | SUPPORTS_PROTECTED_BUFFERS | PRESENTATION | TRUSTED`, read on the
+  owner's Thor 14.11.2026), the AVD's display 2 (a new number each time the
+  emulator adds it again). Added, removed and changed displays (a screen
+  switched off) are followed at once.
+- **The Presentation**: an `android.app.Presentation` on that display whose
+  window has `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL` (no system bars,
+  the cutout used), hosting a `SurfaceView`. It is shown only after the
+  game's loop asked for it (`[screen2] mode`, JNI
+  `DW4Activity.setLowerScreenWanted`), so the lower screen never shows an
+  empty surface first, nor at all with mode=off.
+- **The frame** (`screen2_android.cpp`, on the game's thread, after the
+  window's `SDL_GL_SwapWindow` and the frame statistics): the surface's
+  `ANativeWindow` (`ANativeWindow_fromSurface`) gets an EGL window surface
+  with SDL's own EGL display, config and context
+  (`SDL_EGL_GetCurrentDisplay`, `SDL_EGL_GetCurrentConfig`,
+  `eglGetCurrentContext`; no shared context needed); a second ImGui context
+  shares the window's font atlas (ImGui 1.92's shared atlas: the window's
+  context owns and updates it) and the dark style scaled for the lower
+  display's density; its ImGui frame runs with SDL's surface still
+  current, and only when the draw data changed (a digest of the vertices,
+  indices and commands; a texture waiting for its upload; a screenshot; a
+  new surface) the lower surface is made current, cleared, drawn,
+  `eglSwapBuffers` at swap interval 0 (the lower 60 Hz never waits on the
+  top) and SDL's surface current again, the GL state the frame touched put
+  back. The panels' frame runs every other pass (30 a second beside the
+  game's 60) unless a touch waits (and for half a second after one) or the
+  controller moves through the F1 menu there (and half a second after it);
+  the F1 menu's live frame time graph alone would swap the lower screen
+  every pass on the game's thread.
+- **Touch**: the SurfaceView's touches (the first finger, followed by its
+  pointer id: down, move, up, cancel; surface pixels) go through JNI into a
+  queue and from there into the second context as touch-screen mouse
+  events; after a release the pointer leaves (no hover stays). A cancelled
+  touch (Android took the gesture over, the palm rejection, the panels
+  going while it lasted) and the first finger's lift while another one
+  stays are no click: the pointer leaves before the release. A drag on an
+  empty part of a panel scrolls it.
+- **Text fields**: a field of the lower screen starts the game window's
+  text input with the field's kind, the top screen's code
+  (`start_text_input`: a password field's without suggestions), again when
+  the kind changes or a tap on a field follows a keyboard the player put
+  away (Back); when the lower screen goes while one has the keyboard
+  (its surface or display, mode off) the text input stops and the field is
+  left (`screen2_release_input`).
+- **The surface's end**: `surfaceDestroyed` waits (at most 2 s) for a frame
+  that is drawing into it (the frame holds the surface's lock), then the
+  EGL surface and the window reference go; a frame that takes longer lets
+  them go itself. The Presentation goes in
+  `DW4Activity.GameSurface.surfaceDestroyed`, before the game is asked for
+  SDL's pause (the activity leaving the screen: HOME, the app switcher,
+  another app), and comes again with the game's surface and `onStart`; the
+  lifecycle watch lets go of a lower EGL surface still alive at
+  `SDL_EVENT_WILL_ENTER_BACKGROUND`, before `SDL_androidevents.c` backs up
+  the context.
+- **A lost context** (`SDL_EVENT_RENDER_DEVICE_RESET`): the second context
+  and the lower EGL surface go first (`screen2_device_reset`, so the shared
+  font texture is the window's alone and its backend's restart makes it
+  again), then the window's ImGui backend and the renderer as before; both
+  come back at the next lower frame.
+- **Focus**: the Presentation never takes the input focus, so the
+  controller stays with the game on the top screen; a focus loss within 1 s
+  of a touch on the panels would not pause the game either (the cux lane's
+  focus pause ignores it; logged as `focus: lost N ms after a touch on the
+  second screen`). One case did move the focus away on the emulator: a
+  display added at run time gets Android's secondary home screen, which
+  took the focus under the panels (the game paused, the controller's input
+  went there). Within 3 s of a display event (a display added, or one
+  switched on from off), while the panels show, a focus loss makes the
+  activity take the focus back (its task to the front again): `second
+  screen: the display that came took the focus; the game takes it back`.
+  Every other focus loss (the notification shade, a dialog, HOME and the
+  app switcher also in the first seconds after a return, when the panels
+  come back too) is left to the cux lane's pause (until the Thor check the
+  3 s counted from every show of the panels, so the game came back to the
+  front by itself after HOME in those seconds).
+- **Without a second screen** (none, switched off, mode=off, the game
+  itself on the only presentation display such as with AYN's "Screen
+  Launch: Bottom"): no Presentation; the panels are the overlay window when
+  `[screen2] overlay` is on (checked on the emulator with mode=off: the
+  overlay at 250 % on the top screen), and an F1 menu shown on the lower
+  screen moves back into the window (`menu: back in the window (no second
+  screen)`).
+- **Not drawn during a Data Overflow run** (paused mode; its loop does not
+  call the lower frame): the lower screen keeps its last picture until the
+  story loop runs again.
+
+Test switches (presentation only, listed in `online_presentation_env`):
+`DW4_SCREEN2_OVERLAY=1`, `DW4_SCREEN2_TAB=status|online|menu`,
+`DW4_SCREEN2_MENU=1` (DW4_OPEN_MENU's menu on the lower screen),
+`DW4_MENU_SECTION=Screen2` (F1 scrolled to the section),
+`DW4_TEST_CONTEXT_LOSS=FRAME[,FRAME...]` (any platform, test runs: at those
+frames the game does what SDL does after a lost context, a new context made
+current, the old one destroyed, `SDL_EVENT_RENDER_DEVICE_RESET` pushed, so
+every GL object of both screens is made again; the list may also hold the
+word `background`, lane C2's Android test of the same name: the EGL context
+destroyed in the background, "A lost OpenGL context" above; one switch,
+listed once, with the presentation switches). A test run's
+`--screenshot` also writes `NAME_screen2.bmp` with the lower screen's
+picture. `DW4_FRAME_STATS` adds `frames: second screen N frames/s (M drawn
+and swapped), p50 ... ms`; `DW4_GL_CHECK=1` checks the lower frames too
+(`second screen: GL error check: N errors in M frames`).
+
+### Results (14.11.2026)
+
+**The PC** (`build/Clean` from scratch, MSVC, idle priority, 4 jobs; logs
+and pictures in `build/phe/` of the worktree):
+
+- `ctest` 78 of 78 (the controls test checks `[screen2]`'s defaults, read
+  back and not written without them); `det.sh` twice on an exe copy:
+  4004f056 / 396cb219 in all four runs; the save state suite (a private
+  copy) 17 of 17 identical after loading.
+- Hidden test runs of `newgame_dng101b1` (1280 x 960, `DW4_GL_CHECK=1`),
+  the UX branch's exe (de4ffe93) against this branch's: the frames 1500
+  (the title), 4300 and 5000 (the dungeon) byte for byte the same (md5
+  ac2ff218..., 08096d22..., fde83d2f...); with `DW4_OPEN_MENU=1` the F1
+  Settings tab differs only in its live frame time graph and "now N fps"
+  (and its scrollbar: the tab is longer). With `DW4_SCREEN2_OVERLAY=1` the
+  overlay at the top right (Status: "a", Dorumon Lv 1, HP 170 / 170, MP 60
+  / 60, EXP 0 (next level at 341), 0 bits, Death Valley: Humid Cave; Online:
+  "Offline, this run has no online screens"); F1 > Settings > Second
+  screen (`DW4_MENU_SECTION=Screen2`). 0 GL errors in every run.
+- `DW4_TEST_CONTEXT_LOSS=2000,4400` with the overlay: both losses rebuilt,
+  the frames 4300 and 5000 byte for byte those of the run without a loss,
+  0 GL errors.
+
+**The emulator** (`dw4thor33`, `-gpu host`, headless, idle priority; the
+debug APK built offline with both ABIs, `--max-workers=1`,
+`-Pdw4.nativeJobs=4`):
+
+- The start: `second screen: display 2 'Emulator 2D Display' 1240x1080 330
+  dpi, flags 0xc8`, `shown on display 2`, `drawing on display 2 ...`,
+  `menus at 206 %`. The emulator's own screenshot of its display 1
+  (`adb emu screenrecord screenshot DIR --display 1`; `screencap -d` cannot
+  capture the emulator's virtual display) shows the tabs and "No game is
+  running."
+- Touch on the second display (`adb shell input -d <id> tap X Y`): the
+  Online tab (the offline reason), the Menu tab, "Open the menu" (`menu:
+  open (the second screen)`: the F1 menu with every tab on the lower
+  screen, "(the game is paused)", the top screen shows the paused game and
+  the touch button), its Controls tab (the prompts' pictures drawn from the
+  window's textures), "Close the menu" (`menu: closed (the second
+  screen)`); the Debug tab's stage field typed into with `input text` and
+  `KEYCODE_DEL` (the field shows the text; `second screen: a text field
+  takes the keyboard`).
+- The controller after a touch on the panels: `dumpsys window` keeps
+  `mCurrentFocus` on `DW4Activity`; a virtual Xbox 360 pad (uinput, root on
+  the emulator) opens and closes F1 on the top screen with its View button
+  (`menu: open / closed (the controller's View / Back button)`); no `focus:`
+  line.
+- The display removed and added at run time (`adb emu multidisplay del 1` /
+  `add 1 1240 1080 330 0`): `second screen: none`, `surface released (11
+  ms)`, `gone (display 3 removed)`; then `shown on display 4 (display 4
+  added)` and drawing again. Before the focus fix the added display's home
+  screen took the focus and the game paused until the top screen was
+  touched; since then `the display that came took the focus; the game takes
+  it back` within 0.3 s.
+- HOME and back: `second screen: surface released`, `gone (the game's
+  surface goes)` before `nativePause` and `lifecycle: entering the
+  background`; back: `shown on display ... (the activity is visible)`, the
+  lifecycle lines, `drawing on display ...`, the panels as before; no EGL
+  error.
+- A lost context: `DW4_TEST_CONTEXT_LOSS=2000,4400` in a test run through
+  `dw4args` (`--smoke-test 5000`, newgame_dng101b1): `lifecycle: the
+  OpenGL context was recreated`, `second screen: made again after the lost
+  OpenGL context` twice, the screenshots of both screens at 1500, 4300 and
+  5000 (the lower Status panel with the party), `renderer: GL error check: 0
+  errors`, `second screen: GL error check: 0 errors in 2501 frames`. The
+  developer option "Don't keep activities" could not be switched on this
+  image without its developer options UI (`settings put global
+  always_finish_activities 1` is not taken by the activity manager there;
+  the value was put back): with it SDL 3 ends the game when the activity
+  goes (`nativeSendQuit`) and a new activity exits the process
+  (`SDL_ANDROID_ALLOW_RECREATE_ACTIVITY` unset), so it means a cold start,
+  not a lost context; the test switch provokes the real path.
+- `DW4_GL_CHECK=1` in every run: no `GL error` line in any log, no EGL
+  error.
+- Frame statistics of the top screen at the title (`DW4_FRAME_STATS=10`,
+  the debug APK, nothing else building): with the panels on the lower
+  screen 58.8-60.0 presents/s, interval p50 16.65-16.82 ms, p99 21.8-27.9
+  ms; with the display removed 57.4-60.0 presents/s, p50 16.63-16.72 ms,
+  p99 20.1-24.1 ms (the emulator's own jitter: the 0 / 2+ pairs vary from 0
+  to 51 per 10 s either way). The lower frame: p50 0.10-0.13 ms while its
+  picture stays the same (0 to 0.2 swaps a second at the title); a swapped
+  frame cost 4-5 ms on the emulator's GLES translator, which drew every
+  frame before the digest.
+- `[screen2] mode=off` and `overlay=true` in the emulator's settings.ini:
+  no Presentation, the overlay on the top screen; the keys removed again
+  afterwards.
+
+### The Thor: the owner's checklist
+
+The debug APK of this branch, installed over the earlier one (`adb install
+-r`, the disc copy and settings.ini stay); the game started normally from
+the top screen. AYN's own settings as read on 14.11.2026 (Settings.System,
+their meaning not documented): `screen_focus_lock=1`, `focus_change=599`,
+`dual_screen_display_mode=0`, `second_create=97`, `enable_system_key_focus_lock=0`;
+reading them again after switching Focus Mode tells which key is which
+(`adb shell settings get system screen_focus_lock`).
+
+1. **The panels**: within a second of the intro the lower screen shows
+   Status | Online | Menu at 231 % (logcat: `second screen: drawing on
+   display 4 "Screen-2" (1240x1080, 369 dpi)`, `menus at 231 %`). Tap the
+   tabs, open the menu there, change a setting by touch, close it.
+2. **Focus Mode Auto**: walk with the stick and tap the lower screen's tabs
+   meanwhile: the Digimon keeps walking, no `focus: another window is in
+   front` line, the Back button still opens F1 on the top screen; `adb
+   shell dumpsys window | grep mCurrentFocus` names DW4Activity.
+3. **Focus Mode Top**: the same.
+4. **Screen Launch: Bottom**: start the game with it. The game then runs on
+   the lower screen; the top screen is no presentation display, so there
+   are no panels (`second screen: none`) and F1 > Settings > Second screen
+   says so and offers the overlay. If the top screen is reported as a
+   presentation display, the panels go there instead: a picture of it is
+   welcome.
+5. **The lower screen off and on** (the Thor's switch): off: `second screen:
+   gone (display 4 changed)`, the game goes on without a pause and without
+   a black picture; on: the panels again (and no focus taken away: no
+   `the display that came took the focus` line expected, the display stays
+   the same).
+6. **HOME and back, the app switcher**: the panels go and come back.
+7. **Frame pacing**: with `files/dw4args.allow` (the owner's choice) and
+   `--env DW4_FRAME_STATS=10`: at the title and in the dungeon, the lines
+   with the panels on and with F1 > Settings > Second screen > Lower screen:
+   Off: the same presents/s, interval p50 and p99 at 60 Hz (Smooth Display
+   60) and at 120 Hz; `frames: second screen ...` p50 well below 1 ms.
+8. **Text**: F1 on the lower screen, Saves tab, the cloud backup's Account
+   field: the keyboard opens on the top screen, the typing lands in the
+   lower field.
+
+### Open after this lane
+
+- The Thor's checklist above (the device's lock screen is secure).
+- Text fields on both screens active at once share the one keyboard: the
+  typing goes to the lower screen's field while it is active.
+- The Online panel with a logged-in lobby and a running instance (members,
+  visibility) was not run against a server (no test server in this lane);
+  it reads the same lobby and `RoomLive` facts as F1 > Online. Online on
+  Android itself is phase D.
+- The Data Overflow loop (paused) does not draw the lower screen.
+
+## The player's side integrated (14.11.2026)
+
+`feat-android-cux` 229cc18d holds phases A and B (feat-android 0dc24e67),
+phase C's player side with its review fixes (de4ffe93), lane C2's leftovers
+on the player's side (b6934564: the profile build type, the name tags' depth
+read-back on GLES, the GL check walk, the context loss test, the storage
+cases, "this device") and phase E (`feat-android-e` 2a42570d, merge commit
+229cc18d: no textual conflict; `DW4_TEST_CONTEXT_LOSS`, which both lanes
+added, is one switch, "Phase E: the second screen"). It changes no
+simulation result (its det pair is the old one) and is the line that may
+reach main before the determinism part, after the usual review and the
+owner's look at it on the Thor in the game (the checklist below; the merge
+rule itself is in feat-android's copy of this file, "Phase C status").
+feat-android carries this line together with the determinism part and phase
+F; its APK is the one the emulator ran.
+
+Checked on 229cc18d (logs in `build/phi/` of the worktree):
+
+- The PC (`build/Clean`, MSVC, idle priority, 4 jobs): `ctest` 78 of 78;
+  `det.sh` twice on an exe copy, 4004f056 / 396cb219 in all four runs; the
+  save state suite (a private copy) 17 of 17 identical after loading.
+- `git merge-tree` with main 12f6a1a8, int-i1b d80617ef, feat-remaster
+  150f42a2 and feat-l10n 12f6a1a8: no conflict; main with this line, then
+  int-i1b, then feat-android: no conflict.
+
+### The owner's checklist on the Thor (the game itself)
+
+The Thor's lock screen was secure all day, so the game has not run on it
+since phase B; everything below was checked on the emulator and the PC
+only. One debug APK covers it (the phase C and E points; `adb install -r`
+keeps the disc copy, settings.ini and game.tsv). Logcat: `adb logcat -s
+DW4`. Point 9 and the lower screen's frame statistics (point 4) run test
+switches through `dw4args`, which needs
+`adb shell run-as org.dw4pc.game touch files/dw4args.allow` (the owner's
+choice; `rm` it afterwards).
+
+1. **Start**: the logos, the intro, the title; no status or navigation bar;
+   `math self-test: passed`, `ui: menus at 231 %`, `window: 1920x1080,
+   status bar hidden, navigation bar hidden, display 0 at 60.00 Hz`.
+2. **The top screen's menus**: F1 by the Back button; every tab readable
+   at 231 %; the touch button (three lines right of the 4:3 picture; on the
+   emulator it stood at the top centre during the logos) shows after a
+   touch, fades after 4 s, and a tap on it opens and closes F1.
+3. **The controller**: the Thor's prompts (round letter buttons, START /
+   SELECT as the printed arrow and square); the quick settings tile
+   "Controller style" switched while the game runs: the printed A confirms
+   in Standard, the bottom button in Xbox (`adb shell getevent -l` of the
+   printed A in each style); "L2/R2 mode" Analog, Digital and Both: one
+   pull each; a binding on BACK and the Back button still opens F1.
+4. **The lower screen**: the eight points of "The Thor: the owner's
+   checklist" (phase E): the panels at 231 % by touch, Focus Mode Auto and
+   Top, Screen Launch: Bottom, the lower screen off and on, HOME and the
+   app switcher, the frame statistics with the panels on and off, a text
+   field there.
+5. **Lifecycle**: HOME and back, the app switcher, the notification shade
+   down (`focus: another window is in front: the game pauses`, silent, then
+   `focus: back: the game goes on`), HOME inside a stage load (`lifecycle:
+   the surface waited N ms ...` and no `EGL_BAD_SURFACE`);
+   `adb shell dumpsys media.audio_flinger` after HOME (the track paused).
+6. **Text**: F1 > Saves, the cloud backup's Account field: the system
+   keyboard; its password field as a password field.
+7. **Language**: F1 > Settings > Language > Deutsch (the owner's game.tsv is
+   in the app's folder): German text; English again.
+8. **Graphics**: msaa 4 (the default) with Sharpening on; a texture pack
+   (BC7 / BC1 / BC3 compressed on Adreno); F1 > Settings > Graphics.
+9. **Frame pacing** (`dw4args`, best with the profile APK, `assembleProfile`):
+   `--mute --env DW4_FRAME_STATS=10` in the intro, the title and the det
+   route (`newgame_dng101b1`): 60 presents/s, interval p50 16.7 ms, no 0 /
+   2+ pairs in a row (done when 5: the reference scenes at a steady 60 fps),
+   at Smooth Display 60 and 120.
+10. **Memory**: `adb shell dumpsys meminfo org.dw4pc.game` at the title and
+    in the dungeon.
+11. **A new game**: the first dungeon, a save; `saves/savedata.dat` loaded
+    on the PC, saved there and loaded on the Thor again (the arm64 turn of
+    the save round trip).
+12. **The online screens** over the title at their window-height size (24 px
+    text): the owner's judgement (online play on Android is phase D).
+
+## The Thor check and its review fixes (14.11.2026)
+
+The owner's Thor ran the integrated head (feat-android 57278b1d, the debug
+APK 7f50cfea, and a profile APK for the frame times) from 14:48 to 15:27; its
+results and a review of the merged head and of the release pipeline gave the
+points below. Each fix is on the lane branch it belongs to (phase E's on
+`feat-android-e`, the player's side and the engine fix on
+`feat-android-cux`, the pipeline's on `feat-android-f`, RELEASE.md) and
+merged again into cux and feat-android, so the lines stay separable.
+
+| Finding | Fix | Commits |
+| --- | --- | --- |
+| **A SIGSEGV at the Thor's title** (once, 42 s after the start, 7-15 steps before the attract switch stagis10 -> stagis09, F1 open, `[menu] pause=false`): `visit()` read a node's children through garbage | A heap-use-after-free, reproduced at once by MSVC's AddressSanitizer in hidden runs over that switch with `DW4_DEV_PRESENT=90` and `40` (passes without a step and with two): a stage change's module reload (`reset_modules`) freed the layer switch `LayerSwt` and its groups (`LayerManager::clear_stage`) while the outgoing stage's `LAYERPARENT` still linked it, and a pass without a step inside the reload's held fields traversed the graph for its picture (`make_picture` kept the picture only after a step). The PC read the freed node (MSVC's destructor had emptied its children), Android crashed once the memory was used again (the F1 menu's allocations). Now the switch leaves its parent before it goes, the seamless scene copies go before the managers' resets (a window copy hangs under a layer group), and no picture is traversed in a teardown's held fields (the screen shows the kept picture anyway). ASan afterwards: no report in the title over the switch (F1 open, 90 and 40 Hz) and `newgame_dng101b1` (6000 steps, 90 and 40 Hz) | cux 778eb680 |
+| Judder at 60 Hz: 10-20 pairs of a 0 next to a 2+ per 10 s on the Thor | `RefreshClock` (`interpolation.hpp`): with VSync a pass counts as whole refreshes of the display's measured period, so the jitter of a pass's start no longer decides between 0 and 2 steps; only while the display is steady (a confidence from the passes), never online or in test runs; `DW4_DEV_MEASURED_CLOCK=1` for a comparison; tests (a simulation with 0-3 ms jitter over 6000 passes: measured 134 pairs, counted none and 5 lone repeats; a 59.94 Hz display that says 60: no judder; 120 Hz: never 2 steps; an uneven display: as measured) | cux 1d1f073f, ba2bb7a0 |
+| START / SELECT pictures did not match the Thor's printing | an arrow and a square (`Face::start_arrow`, `select_square`) | cux 1d1f073f |
+| MSAA 8x offered on Adreno 740 (4x at most), and 8x gave none | only the levels of `GL_MAX_SAMPLES`; a level the surface cannot have falls back to the next lower one | cux 1d1f073f |
+| The top screen's password field lay under the keyboard | the picture panned to the last field: Android takes SDL's text input area only when the keyboard shows, and ImGui's backend set it after the IME hook. The field's area first; another field takes the keyboard that is up in place (SDL's show task again with the field's type and area, `DW4Activity.showTextInputAgain`: a stop and a start in one frame hid the keyboard for good, seen on the emulator) | cux 1d1f073f, fbcfa753, 9b6a26b9 |
+| The lower screen's password field opened a normal keyboard (suggestions) | the top's code (`start_text_input`, `password_field_active`): `inputType=0x20081` | e 10f20fc4 |
+| A cancelled touch on the lower screen clicked ("Open the menu") | the pointer leaves before the release; the first finger by its pointer id, its lift while another stays is a cancel | e 10f20fc4 |
+| HOME, the shade or the app switcher in the first 3 s after a return were undone (the game came back to the front) | the focus is taken back only within 3 s of a display event (added, or switched on from off) | e 10f20fc4 |
+| The keyboard stayed after the lower screen went; the field took it again when the screen came back | `screen2_release_input` every frame without a lower screen; the keyboard only for a field that is active now | e 10f20fc4, 6d1f0853 |
+| After Back no tap brought the keyboard back for a lower field | a tap on a field (or another field) starts it again | e 10f20fc4 |
+| F1 on the lower screen swapped every pass | every pass only while the controller moves through it, else every other pass | e 10f20fc4 |
+| F1 > Online and the Online panel gave different reasons | one order: Android's refusal first, then the server's state; the PC's CPU refusal after it once logged in (`online_refusal_first`) | e 10f20fc4 |
+| `[screen2] mode=auto` written after off and on | a key only while it is not its default, the section with its last key (`IniFile::remove_section_if_empty`, tests) | e 10f20fc4 |
+| PC-only texts on Android, cut lines | no Discord, Wii U Pro driver or keyboard binding entries on Android; "this device"; no F5 / F9; a long press clears a controller binding; the sections' lines wrap; the Menu panel names no F1 key | cux 1d1f073f, e 10f20fc4 |
+| The GLES depth probes could not tell an unwritten probe (R32UI has no alpha) | the probe row cleared with a NaN's bits; gles_check checks a slot the pass never writes | cux 1d1f073f |
+| The depth read-back's cost in the game, the lower F1 with `pause=false` | measurements on the Thor (the checklist below) | - |
+| The Online panel shows counts, not an instance list or the friends | the owner's decision (below) | - |
+| The Status panel's area names stay English in German | the owner's decision (below) | - |
+| "The PC is unchanged" in the first start's section | made exact: the RVZ conversion's progress shows in the game window ("The first start and the disc") | docs |
+| The release pipeline: the key scan in the main worktree, the SDK for Gradle, a TEST server zip under the live name, the development notes in the zip, the debug-to-release key change, the changelog's footer, UTF-8, the password at the start, the device folder after a failed gate | RELEASE.md and `scripts/release.ps1` (phase F) | f 47a4793a |
+
+Checked (logs in `build/phx/` of the worktrees):
+
+- **The PC** (`build/Clean`, MSVC, idle priority, 4 jobs): `ctest` 78 of 78
+  on cux and e, 80 of 80 on feat-android; `det.sh` twice on an exe copy:
+  4004f056 / 396cb219 in all four runs on each; the save state suite (a
+  private copy) 17 of 17. MSVC ASan (`build/asan` of the cux worktree,
+  RelWithDebInfo with `/fsanitize=address`): see the first row.
+- **The emulator** (`dw4thor33`, `-gpu host`, headless, idle priority; the
+  debug APK of feat-android built offline): the lower screen's password
+  field `inputType=0x20081`, Account `0x3c001`, the switch between them and
+  Back then a tap with the keyboard shown again; a DOWN and a CANCEL on
+  "Open the menu" opened nothing, a tap did; HOME 1.2 s after a return
+  went to the background, the shade stayed, nothing came back to the front;
+  the display removed while a lower field had the keyboard: `its text field
+  let go of the keyboard`, `mInputShown=false`; the display added again:
+  `the display that came took the focus; the game takes it back`, no text
+  input started; the top screen's Password field above the keyboard
+  (inputType 0x20081), Account then Tab to Password with the keyboard up;
+  F1 offers Off / 2x / 4x (the emulator's `GL_MAX_SAMPLES` 4); "this
+  device" in the cloud backup's line. On the emulator the step clock stayed on the measured time: its display presented at uneven times under the PC's load (intervals of 15.6 and 27 ms at
+  the median and the 90th percentile), so the passes never came steadily enough in whole
+  refreshes, as the clock wants it; with `DW4_DEV_MEASURED_CLOCK=1` the same
+  regime (60 s each, twice: 40-155 against 41-188 pairs of a 0 next to a 2+ per
+  10 s). The emulator cannot show the fix; the Thor's steady 60 Hz is where it
+  counts (the owner's point 3 below).
+- **The Thor**: `adb install -r` of this debug APK (the disc copy, settings.ini with md5
+  0de27a40 and the internal folder kept, no `dw4args.allow`); the game was not
+  started there in this round (its test switches need `dw4args.allow`, which
+  this round did not create); gles_check of this code by `adb shell`
+  (`/data/local/tmp/dw4c`, removed afterwards; `/data/local/tmp` is empty):
+  PASSED, 0 failures with 4x multisampling and without, the depth probes
+  with the new marker (the slot after the probes keeps it), one read-back
+  0.48 / 0.50 ms median.
+
+### The owner's checks on the Thor after these fixes
+
+The debug APK of feat-android (both ABIs; `adb install -r` keeps the disc
+copy, settings.ini and game.tsv) and, for the frame times, the profile APK
+(arm64-v8a, `assembleProfile`). Points 3, 8 and 9 run test switches through
+`dw4args` (`adb shell run-as org.dw4pc.game touch files/dw4args.allow`, `rm`
+afterwards; `--mute` in every such run).
+
+1. **The crash's case**: the title with F1 open and `[menu] pause=false`
+   (the owner's settings), left alone over the attract switch (about 40 s
+   after the title), three times: no crash (`adb shell dumpsys dropbox
+   --print data_app_native_crash` stays without a new entry).
+2. **START / SELECT**: the title's PRESS START, the name entry's prompt and
+   F1 > Controls show the printed arrow and square.
+3. **Frame pacing** (the profile APK, `--mute --env DW4_FRAME_STATS=10`, at
+   the title and in a dungeon): `frames: the step clock counts in the
+   display's refreshes (16.667 ms)` and "a 0 next to a 2+" at 0 (a lone 0
+   about every 16.7 s); for a comparison the same with `--env
+   DW4_DEV_MEASURED_CLOCK=1` (the old clock: 10-20 pairs per 10 s); at Smooth
+   Display 120 no pass with 2+ steps.
+4. **MSAA**: F1 > Settings offers Off, 2x and 4x; an `msaa=8` in
+   settings.ini starts with 4x (`window: 8x anti-aliasing is not offered
+   here; 4x instead`).
+5. **The keyboard**: F1 > Saves, the cloud backup's Password field stays
+   above Gboard's taller password keyboard; Account to Password and back
+   with the keyboard up keeps it up; on the lower screen (its Menu tab, F1
+   there > Saves) the Password field opens the keyboard without suggestions,
+   and switching the lower screen off while typing there puts the keyboard
+   away.
+6. **Controls**: a long press on a controller binding in F1 > Controls
+   clears it.
+7. **HOME and the notification shade** within the first seconds after a
+   return: the game stays in the background (no `the display that came took
+   the focus` line).
+8. **The lower F1 with `pause=false`** (`--env DW4_FRAME_STATS=10`):
+   `frames: second screen ...` about 30 drawn and swapped a second while the
+   controller rests, every pass while it moves through the menu; the top
+   screen's presents/s as without it.
+9. **The name tags' depth read-back** (the profile APK, a dungeon, `--env
+   DW4_FRAME_STATS=10`, with a settings.ini copy that has `[hud]
+   overhead_labels=all` against one with `off`; `DW4_LABELS` is read in
+   test runs only, `dw4args` runs are not): the work's p50 and the
+   interval's p99 with and without the tags (an asynchronous read through a
+   pixel pack buffer only if it costs).
+10. The hand points of the earlier list that stay open: Focus Mode Auto and
+    Top while walking, Screen Launch: Bottom, the lower screen off and on
+    with AYN's switch, L2 / R2 in every mode, the touch feel, the sound after
+    HOME and the shade, the controller style switched while the game runs, a
+    binding on BACK, the online screens' text size.
+
+### The owner's decisions from this review
+
+- **The Online panel** shows the world's counts and the number of friends
+  online (the client knows no more today; the seamless model has no list of
+  open instances; the running instance with its members is shown). Keep it,
+  or with phase D a friends list (names, online) from `GET /friends`?
+- **The Status panel's area names** ("Death Valley: Humid Cave") stay
+  English when the game text is German (the port's UI is English); or from
+  the language catalog, as game text?
+- **The release** (RELEASE.md): which documents players get (none now:
+  README, LICENSE, notices, licenses, lang), the exe's name (`DW4_PC.exe` or
+  `dw4_game.exe`), the version players see (DW4_PC 0.46.0 or DW4Online
+  0.1.x), the two TEST server zips in the `android-f` worktree's `dist/`.
+- **The engine fix 778eb680** is main's bug too (every stage change; a
+  picture traversal in the held fields read freed memory, and the seamless
+  copies' clean-up right after the reset could write into a freed layer
+  group; harmless on the PC so far only because MSVC's destructor had
+  emptied the node): it goes to main with the player's side, or to main and
+  int-i1b on its own first.
+
+## The Thor re-check and its fixes (14.11.2026, evening)
+
+The owner's Thor ran the fix stage above (16:32-18:38, debug APK f4031258,
+profile APK a9149d43, both displays at 60 Hz): 9 of its 10 points passed
+(no crash in 14 sessions with about 40 attract switches with F1 open, also
+opened 0.04 s before a switch and during a load; the arrow and the square;
+the step clock 0-1 pairs of a 0 next to a 2+ per 10 s in the title, a
+dungeon and the fields against 3-28 with the old clock; MSAA, the keyboard,
+the long press, the focus, the name tags; det 4004f056 / 396cb219 twice).
+That check, and a review of the engine fix 778eb680 with MSVC ASan, gave
+three fixes, all on `feat-android-cux` (the engine's and the player's side)
+and merged into feat-android; the lower screen's lane needed none.
+
+| Finding | Fix | Commit |
+| --- | --- | --- |
+| **The top screen juddered again with F1 on the lower screen** (`pause=false`, the pad resting: 6-42 pairs per 10 s with the profile APK, 94-152 with the debug APK; the presents and the lower screen's swaps right) | The lower screen draws every other pass after the top swap (2.9 ms, 4.6 ms in the debug build): the next pass starts that much later and the one after it earlier. `RefreshClock` judged each pass's measured time alone (a refresh plus or minus a quarter): the alternation and the usual jitter left that often enough for its confidence to fall, and the measured time put the passes on 0 and 2 steps. The clock is phase locked now: every pass's start is placed on the grid of the reported rate's refreshes and counts the refreshes from the last pass's grid point to its own, nearest to where passes usually start (a running mean); the late pass and the early one after it count 1 each. A pass is steady within 0.35 of a refresh of that place; while the clock counts, an unsteady pass counts its refreshes on the grid too (a late start and an early one: 1 and 1). The period is the reported one plus the usual place's drift per refresh (the mean of the steady passes' measured times was biased by the passes it left out and made the owed time reach a field: a lone double). Tests (6000 passes, 0-3 ms jitter): 3 and 5 ms every other pass, the measured clock 798 / 1495 pairs, counted none; 6 ms with 3.5 ms jitter: none; a 5 ms late start every 50 passes: none, 7 ms: under a tenth of the measured clock's | cux 0cb06d9a |
+| **The opening and the attract movie (stagis09) juddered**, the profile APK too (every fourth pass 36-46 ms, 20-45 pairs per 10 s; older than this stage) | The pass decoded the next picture with pl_mpeg, converted it to RGBA and uploaded it, the upload in every pass into the one texture the frames before still drew. Now a worker thread decodes and converts two pictures ahead (`MovieDecoder`; `seek` takes the picture and waits only when the worker is behind, so the pictures stay exact: the PC's screenshots in the attract movie are byte-identical to before), each picture is uploaded once, into the next of three textures, and `DW4_FRAME_STATS` adds `frames: movie ...` (the worker's decoding and RGBA times, the pass's wait, upload and draw) | cux 1b6cf72d |
+| **A heap-use-after-free left after 778eb680** (the review: a context loss, or a window size change, in a stage change's held fields: the kept picture cannot be drawn and present_scene rendered the draw list from before the module reload, whose texture bindings `TextureCtrlManager::clear_stage` had freed; ASan at stag0101's teardown; not new, the same case crashed at the layer switch before) | `make_picture` drops the draw list and the shadow in the reload's held fields (held and not presenting): such a pass draws an empty picture (the clear colour) and keeps it. One rule for all the list's pointers into what the resets free (the texture control's bindings, the managers' nodes, attributes and geometry); the engine's own state is unchanged (presentation only, no traversal changes) | cux 42825960 |
+
+**The 0.2.0 line (int-i1b) takes the engine fix with its follow-up:
+778eb680, then 42825960** (both are main's bug too). A dry run on the
+`ef-i1b` worktree: both cherry-picked onto int-i1b 0ef550e9 without a
+conflict and with identical patches (`git patch-id`); ctest 78 of 78, det.sh
+twice 4004f056 / 396cb219 (four runs), the save state suite 17 of 17, the
+scenarios W1, W4c, W7 and W8 with real hidden clients (mysqld 3720, ports
+60000-60199, loopback): 4 of 4 passed, no fingerprint differed (W8 is
+the seamless stage change into dng101b1 with a stage group's join; the
+worktree's `build/efi/round3.log`, `scen_3.log`). The other two commits are the
+player's side (the step clock exists on `feat-android-cux` only; the movie
+decoder helps the PC, too, but fixes nothing there).
+
+Checked (logs in `build/phx2/` of the cux worktree, `build/phx3/` and
+`build/thor3/` of the feat-android worktree):
+
+- **The PC** (`build/Clean`, MSVC, idle priority, 4 jobs): cux: ctest 78 of
+  78 (`presence`, a wall-clock test, failed once under `-j 2` and passes
+  alone), det.sh twice on an exe copy: 4004f056 / 396cb219 in all four
+  runs, the save state suite 17 of 17. feat-android (the merge 02f838eb):
+  ctest 80 of 80, det.sh twice 4004f056 / 396cb219, the save state suite 17
+  of 17. The attract
+  movie's pictures at 9 frames (2420-3250) are byte-identical between the
+  old and the new exe; on the PC a picture takes 3 ms to decode and 0.8 ms
+  to convert on the worker, the pass 0.1 ms to upload and draw it.
+- **MSVC ASan** (`build/asan` of the cux worktree, RelWithDebInfo with
+  `/fsanitize=address`, rendered with `thor_like.ini`): the review's case
+  (`DW4_TEST_CONTEXT_LOSS=4605` inside stag0101's teardown, 60 Hz) reports
+  the use-after-free with 778eb680 alone and nothing with 42825960; nine more
+  runs clean: context losses inside the teardowns of stag0101 and dng101b1
+  at 40, 60, 90 and 144 Hz and without pacing (F1 open at 144 Hz; three or
+  four losses a run), the title's attract switch at 90 Hz with F1 open, the
+  new game into dng101b1 at 61 Hz; stag0101 <-> dng101b1 at 90 Hz with F1
+  and the title at 40 Hz without a loss.
+- **The Thor** (19:03-19:28, display 60 Hz under Smooth Display 60, both
+  displays in their 60 Hz mode; the debug APK 605d79be and the profile APK
+  00c73f7f of feat-android 02f838eb; `adb install -r`, the user's files
+  restored byte-identical by md5 afterwards). Pairs of a 0 next to a 2+ per
+  10 s, the windows after the start's:
+
+  | | new clock | the old measured clock (`DW4_DEV_MEASURED_CLOCK=1`) | before (the re-check) |
+  | --- | --- | --- | --- |
+  | title, F1 on the lower screen, profile APK | 0 (the attract switch's window 2-3) | 71-118 | 6-42 |
+  | title, F1 on the lower screen, debug APK | 0 (once 7: a lower frame of 18 ms) | 123-167 | 94-152 |
+  | dungeon dng101b1, F1 on the lower screen, profile APK | 0 | - | - |
+  | title and dungeon without the lower F1, profile APK | 0 | - | 0-1 |
+  | the attract movie, profile APK | 0-1 | - | 20-45 |
+
+  The top screen with the lower F1: 59.8 presents/s, interval p50 16.7 ms,
+  p90 17.8-17.9 ms (as without it), the lower screen 29.9 swaps/s at 2.9 ms
+  (4.5 ms in the debug APK). The movie (profile APK): interval p90 18.3-18.7
+  ms, p99 19.7-19.9 ms (before: p90 36-40, p99 44-47), work p99 17.7-18.3 ms
+  (before 42-46); the worker decodes a picture in 11-14 ms at the median
+  (p99 22-25, at most 28.5) and converts it in 3.6-5.2 ms, the pass waits
+  0.05 ms (p99 0.2) and uploads and draws in 0.65 ms (p99 1.3); the debug
+  APK's worker 9-14 ms (p99 26-29, at most 35.5), the pass's wait p99 0.1 ms,
+  0 pairs. The crash's case (the debug APK, F1 open, three sessions of 120 s
+  over two attract switches each): no crash, `dumpsys dropbox` without a
+  new entry. The Thor's 60 Hz mode presents 59.8 times a second (the clock
+  measures 16.72 ms): a lone double about every 7 s is the game's 59.94 Hz
+  on that panel, not judder.
+
+Left from the re-check's smaller points: a test run with `--stage` and
+`--card-dir` on Android is no test run for the achievements (a `dw4args`
+run writes `saves/profile.dat` like a player's; none was written in this
+round's runs); `DW4_GL_CHECK`'s total line is printed at the game's end,
+which a force-stop skips; the debug APK is for checks, the profile APK
+(`-O2`) is the one to play with until a release build.
+
+### The owner's checks on the Thor after these fixes
+
+The debug APK of feat-android is installed; the hand points that only the
+owner can check:
+
+1. Focus Mode Auto and Top: walking in the game, tap the lower screen; the
+   controller's input stays with the game.
+2. Screen Launch: Bottom: where the game lands, and whether the lower
+   screen's panels come.
+3. AYN's switch for the lower screen, once while playing and once while
+   typing into a lower field: the keyboard goes, the panels come back, and
+   the game takes the focus back only when the screen has just come.
+4. L2 / R2 in all three trigger modes (Analog, Digital, Both): one press
+   each, analog in steps.
+5. The touch feel on both screens: a tap, a long press, dragging F1's
+   scroll bar.
+6. Smooth Display 120 Hz: in a dungeon never a pass with 2+ steps, even
+   movement.
+7. The sound after HOME and after the notification shade: it comes back,
+   without a crackle.
+8. The controller style switched in the quick settings while the game
+   runs: the A / B pictures and the binding change within about a second.
+9. A binding on the BACK key: Back still opens F1.
+10. The online screens' text size.
+11. F1 on the lower screen with `pause=false` while walking in a dungeon
+    (no judder now), the opening movie (smooth now), and whether Gboard's
+    hint banner at the first password field gets in the way.
+
+## The main merge of 16.11.2026 (main d230037f, release 0.2.0)
+
+feat-android-cux took main d230037f (release 0.2.0, protocol 50: round
+I1b's online world with *Go along*, the arrival prompt and the player card,
+the Switch 2 Pro reader's fixes, the player README with
+docs/PLAYER_GUIDE.md and docs/DEVELOPMENT.md, no build-machine path in the
+binaries) in one merge commit, 172 commits of main.
+
+- **Conflicts.** Only README.md: main's README is the player landing page
+  now and its repository layout table moved to docs/DEVELOPMENT.md, so the
+  Android rows (`cmake`, `android`, `src/android`, `tools/android`) stand in
+  DEVELOPMENT.md's layout table and ANDROID.md / CONSOLE_MENU.md in its
+  documentation list; the README keeps main's one line about the Android
+  version. The engine fixes both sides carried (cux 778eb680 + 42825960,
+  main 3973088b + 68bae4ee) merged into main's text without a conflict;
+  `online_presentation_env` keeps main's I1b test switches and this
+  branch's menu, screen and frame switches.
+- **`cmake/trim_build_paths.cmake` on Android:** the Gradle build's
+  `FETCHCONTENT_SOURCE_DIR_*` (the PC build's `_deps`) are trimmed through
+  their parent folder like the PC's, and the APK's `libmain.so` holds no
+  path of the build machine (searched for the profile folder's name).
+
+### Online and LAN play on Android until the protocol bump
+
+This line computes the simulation with the device's libm (the MSL routines
+are feat-android-cdet's, with their own protocol bump), but after the merge
+an Android build has the PC's protocol numbers and the same data hash: a
+session with a PC would part. Online play itself never worked on Android:
+`HttpWorker` has a transport only on Windows (WinHTTP; `online/http.cpp`),
+so every request (the server's status, a login, a world's entry, the cloud
+backup) ends at once with "no HTTPS transport on this platform"; the CPU
+gate's refusal (no FMA3 words, with the PC's text about the CPU) was only
+the reason the screens named. LAN play (`--host` / `--join`, TCP, through
+a debug build's `dw4args`) has its own transport and was not refused at
+all. Now (`online/cpu_gate.hpp`):
+
+- `online_cpu_refusal()` refuses every Android build with "Online play on
+  Android comes with a later update." (`kAndroidRefusal`): F1 > Online, the
+  lower screen's Online panel (Android's refusal first, as before) and the
+  console menu's Online page show it; *Play* in the online screens and a
+  room from the command line stop with it. Since the review fixes the
+  online screens (over the title, F1 > Online) show only this refusal and
+  "Offline play is not affected." (`online_ui.cpp`), not the server's
+  state below it.
+- `NetSession::host` / `join` ask `lan_refusal(peer_is_loopback)`: on
+  Android a host or guest on another machine is refused ("LAN play with
+  another device on Android comes with a later update."); a loopback
+  session (a test run's `DW4_MENU_HOST` / `DW4_MENU_JOIN`) passes. The PC's
+  rules are unchanged.
+- The loopback rule cannot see a tunnel: `adb reverse` (the device's
+  loopback to the PC) or `adb forward` (the PC to the device's loopback)
+  reaches another machine through 127.0.0.1 (a debuggable build, files/
+  dw4args.allow and adb; checked on the emulator in both directions: the
+  session started; the refusal since: "The review fixes of 16.11.2026").
+  Since the review fixes the LAN hello carries the platform: its game tag is the
+  PC's `GDJEB2` as always and `GDJEB2/android` on Android
+  (`lan_game_for`), and the host refuses the other platform's tag
+  (`lan_game_problem`: "LAN play with an Android device comes with a later
+  update." on a PC host, the Android text above on an Android host; an
+  earlier PC release answers "Another game."), whichever side hosts.
+- The cloud backup (`cloud_refusal()`: Android, or a build without
+  `kHttpsTransport`): F1 > Saves > Cloud backup is locked with "Cloud
+  backup on Android comes with a later update." in the console menu (its
+  pages are not reachable) and the classic panel shows only that line; no
+  login is sent, no worker is made (`CloudBackupPanel::refusal`).
+- `tests/online_cpu_gate_tests.cpp` checks both platforms' rules through
+  the platform flag (`online_refusal_for`, `lan_refusal_for`,
+  `lan_game_problem_for`, `cloud_refusal_for`) on the PC.
+
+feat-android-cdet has its own `lan_refusal` and `kAndroidRefusal` (the
+protocol bump's gate); its merge with this line takes cdet's gate and this
+line's Android texts. With the protocol bump (the same math on both) the
+LAN tag goes back to one tag for both platforms; the cloud refusal stays
+until Android has an HTTPS transport.
+
+### Checks (16.11.2026)
+
+Logs in the worktree's `build/sync020` (not committed).
+
+- **The PC**, Release builds with `DW4_ONLINE_DEV` off and on: ctest 81 of
+  81 in both (the plain build's first run, while two builds ran beside it,
+  had switch2's slow restart at 865 ms after the stall's mark instead of
+  950 or more: main's timing test, unchanged here; alone 3 of 3 and the
+  whole run again 81 of 81). `det.sh` twice on an exe copy: `4004f056` / `396cb219` in both
+  runs both times. The save state suite 17 of 17 in English and 17 of 17 in
+  German (game.tsv, `DW4_LANGUAGE=de`).
+- **The PC's F1 menu** (P0 as for the earlier merges: the 8 tabs, and
+  Settings at Graphics and at Second screen, at 100 % 1280 x 960 with Xbox
+  prompts and 231 % 1920 x 1080 with the Thor's, the title at frame 240,
+  every exe run from the same folder): bytewise identical to
+  feat-android-cux cadef0f2's in 20 of 20 pictures with `DW4_MENU_STILL`
+  and 16 of 16 without (outside the live frame time box). Against main
+  d230037f's release build at 100 %: 6 of 8 tabs identical; Settings (the
+  *Menu size* row) and Controls (the Nintendo layout's "and the AYN Thor")
+  differ exactly as cadef0f2 differs; at 231 % every tab differs because
+  main has no `DW4_UI_SCALE` (its menu stays at 100 % in the window).
+  (Settings also has the section *Second screen* with *Panels over the
+  game*, new against main on the PC too; at 100 % it lies below the tab's
+  first picture, which only shows its scrollbar. The full list of the PC's
+  F1 differences against main: "The review fixes of 16.11.2026".)
+- **The console menu's scripts** (`tools/menu/run.sh d`, the PC with
+  Android's rules): d1 to d8 without a failed expect.
+- **Online scenarios** with the merged development client
+  (`tools/online_test/run.py`, real hidden clients, a private MariaDB, the
+  server of this tree): W1, W4, W4i and W7 passed.
+- **APKs** (offline, idle priority, `-Pdw4.nativeJobs=6`): the debug APK
+  with both ABIs and the profile APK for arm64-v8a (`assembleProfile
+  -Pdw4.abis=arm64-v8a`), versionName 0.46.0.
+- **The emulator** (`dw4cux33`, headless, `-gpu host`, the debug APK
+  installed over the earlier one; this line has no math self-test line):
+  `--mute` start to the title (OpenGL ES 3.1, `data_hash
+  1c693d45198dd6c1`); the Back key opens the console F1 (`menu: open (the
+  Back key)`), its Online page shows "Online play on Android comes with a
+  later update.", Back closes it; `--mute --smoke-test 1500` with
+  `DW4_RENDER=1 DW4_GL_CHECK=1`: `GL error check: 0 errors in 1500
+  checks`; `--join 10.0.2.2:60850` stops before any connection with the
+  LAN refusal in a message box (`E/DW4 dw4_game: LAN play with another
+  device on Android comes with a later update.`); logcat without fatal
+  lines.
+
+### The review fixes of 16.11.2026
+
+The merge's review found four points, none of them from the merge itself:
+
+- **The focus pause on the PC.** The owner's decision of 14.11.2026
+  (`[menu] pause_unfocused`: on by default on Android, off on the PC,
+  switchable in F1 on both) came after the Android-only pause of that
+  morning, which nobody had caught up with: the PC had neither the focus
+  events nor the F1 row, and the default was on everywhere. Now both
+  platforms have it (`kPauseUnfocusedDefault`; "Lifecycle").
+- **Android's missing HTTPS transport.** The cloud backup offered its login,
+  Upload and Download on Android, and the online screens showed their forms
+  below the refusal, though no request could ever leave the device. Now
+  `cloud_refusal()` locks the cloud backup and the online screens show only
+  the refusal ("Online and LAN play on Android until the protocol bump",
+  which also corrects the earlier claim that only the CPU gate had kept
+  Android offline).
+- **The adb tunnel past the loopback rule.** `adb reverse` / `adb forward`
+  reach another machine through the device's loopback (a developer's setup:
+  a debuggable build, `dw4args`, adb); the LAN hello's platform tag refuses
+  such a session whichever side hosts (same section).
+- **The player guide.** docs/PLAYER_GUIDE.md now describes the options this
+  line shows on the PC, and this list replaces the P0 note's "only *Menu
+  size*".
+
+The PC's F1 (the classic menu; the console style is only a test run's
+there, `DW4_MENU_STYLE=console` with `--smoke-test`) against main d230037f,
+all of it:
+
+- Settings, display: *Menu size* (`[window] ui_scale`; *Automatic (100 %)*
+  on the PC).
+- Settings: the section *Second screen* with *Panels over the game (Status,
+  Online)* (`[screen2] overlay`, `tab`; off by default).
+- Settings: *Pause the game while another window is in front (Alt+Tab,
+  minimized)* below *Pause the game while this menu is open* (`[menu]
+  pause_unfocused`, off by default).
+- Controls: the Nintendo layout's text names the AYN Thor; *AYN Thor
+  controller style* (`[gamepad] thor_style`) shows only while such a
+  controller is connected or the style is set; the Thor's button pictures
+  (`prompts=thor`).
+
+Checks (finished on 17.11.2026; logs in the worktree's `build/fixr`, not
+committed):
+
+- **The PC**, the Release builds with `DW4_ONLINE_DEV` off and on at the
+  fixes (Ninja: no work left at the final commit): ctest 81 of 81 (the
+  focus pause's defaults and storage in `controls_tests`, the LAN tags and
+  the cloud refusal for both platforms in `online_cpu_gate_tests`).
+  `det.sh` twice on an exe copy: `4004f056` / `396cb219` in both runs both
+  times.
+- **P0** (`DW4_MENU_STILL`, as above) against the merged state's build:
+  14 of 20 pictures identical; the 6 Settings pictures (the tab, Graphics,
+  Second screen, at 100 % and 231 %) differ only by the new pause row (the
+  scrollbar, and the rows below it moved down by one).
+- **The console menu's scripts** (`tools/menu/run.sh d`, the exe beside the
+  committed `lang/de` files as before): d1 to d8 without a failed expect.
+- **LAN between two PC games** on loopback (`--host` / `--join`, a 900-frame
+  test run each): the session started, the final fingerprints equal.
+- **Online scenarios** with the development client: W1, W4, W4i and W7
+  passed.
+- **APKs**: the debug APK with both ABIs and the profile APK for
+  arm64-v8a; their `libmain.so` holds the new texts.
+- **The emulator** (`dw4cux33`, headless, the debug APK): the console F1's
+  Saves > *Cloud backup* is locked with "Cloud backup on Android comes with
+  a later update."; the classic F1's Saves tab shows only that line under
+  *Cloud backup (online account)*; its Online tab shows only "Online play
+  on Android comes with a later update." and "Offline play is not
+  affected."; the notification shade pauses the game (`focus: another
+  window is in front: the game pauses`, then `focus: back: the game goes
+  on`); `--smoke-test 1500` with `DW4_GL_CHECK=1`: 0 GL errors; logcat
+  without fatal lines.
+- **LAN through adb tunnels** (the emulator and a PC game on loopback
+  ports): before the fixes a PC host and the emulator's guest through `adb
+  reverse`, and the emulator's host and a PC guest through `adb forward`,
+  both played a session. After them, `adb reverse`: the emulator's guest
+  stops with "Rejected: LAN play with an Android device comes with a later
+  update." and the PC host ends with "Nobody joined in time."; `adb
+  forward`: the PC guest stops with "Rejected: LAN play with another device
+  on Android comes with a later update.".
+- **Not checked:** the PC's focus pause by hand (Alt+Tab, a minimized
+  window). A hidden test run never has the focus and never pauses for it
+  (`--smoke-test`), so this needs a played window.
+
+## The Thor
+
+Nothing is installed on the Thor without the owner's approval. The first
+steps are read-only and their output goes to `work/android_research/thor/`
+(gitignored):
+
+    adb devices -l
+    adb shell dumpsys display
+    adb shell dumpsys input
+    adb shell getprop ro.build.fingerprint   (and the other ro.build.*, ro.product.*)
+
+Connecting it:
+
+1. Settings > About phone (or About device): tap "Build number" seven times;
+   Android reports that developer options are on.
+2. Settings > System > Developer options: turn on "USB debugging". Connect
+   the Thor to the PC by USB-C and accept the "Allow USB debugging?" prompt on
+   the Thor (with "Always allow from this computer" if wanted).
+3. Without a cable: Developer options > "Wireless debugging" (PC and Thor in
+   the same Wi-Fi), "Pair device with pairing code", then on the PC
+   `adb pair <ip>:<pairing port>` with the six-digit code and
+   `adb connect <ip>:<port>` (the port shown on the Wireless debugging page).
+4. If Windows shows no ADB device over USB, the Google USB driver
+   (`extras;google;usb_driver`) may be needed; wireless debugging works
+   without it.
+
+After that (with approval): install the probe APK for the real Adreno 740
+limits, then phase E0's focus spike (does a touch on the lower screen take the
+controller focus away in AYN's Focus Mode "Auto").
+
+### Read-only results on the user's Thor (13.11.2026)
+
+`adb devices -l`: `product:kalama model:AYN_Thor device:kalama`. Windows
+showed the Thor as `USB\VID_18D1&PID_4EE1` (MTP only) until USB debugging was
+on; Windows' own driver was enough for ADB, no Google USB driver needed.
+Output in `work/android_research/thor/` (gitignored; it holds the serial).
+
+| | |
+| --- | --- |
+| System | Android 13 (API 33), build `Thor_V1.0.0.377_20260206`, security patch 2024-01-01, locale `de-DE` |
+| SoC / GPU | QCS8550 (`kalama`, the Snapdragon 8 Gen 2 family), Adreno; `ro.opengles.version` 196610 = **OpenGL ES 3.2** (+ AEP), Vulkan 1.3 (`vulkan.level=1`) |
+| ABIs | `arm64-v8a` (32-bit `armeabi-v7a` too) |
+| Frame pacing | `vendor.perf.framepacing.enable=1` |
+
+**Displays** (`dumpsys display`, `cmd display get-displays`):
+
+| id | name | logical size | panel | refresh | flags | touch |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | "Integrierter Bildschirm" (built-in) | 1920 x 1080 (rotation 1) | 1080 x 1920 portrait, 369 dpi, HDR (420 nits) | mode 1 = 60 Hz now, mode 2 = 120 Hz (default mode) | SECURE, TRUSTED | `fts_ts`, viewport INTERNAL |
+| **4** | "Screen-2" | 1240 x 1080 (rotation 1) | 1080 x 1240 portrait, 369 dpi | mode 4 = 60 Hz now, mode 3 = 120 Hz (default mode) | SECURE, **PRESENTATION**, TRUSTED | `fts_ts_3`, viewport EXTERNAL |
+
+- The lower screen's display id is **4** on the Thor (2 on the AVD
+  `dw4thor33`). Phase E must find it through
+  `DisplayManager.getDisplays(DISPLAY_CATEGORY_PRESENTATION)` and the
+  `DisplayListener`, never by a fixed id.
+- Both panels are portrait panels the system rotates to landscape; the
+  logical sizes above are what an app sees.
+- Both run at 60 Hz in this state although 120 Hz modes exist; the game runs
+  at its own 60 (frame pacing, gate 2) and should ask for the 60 Hz mode
+  (`preferredDisplayModeId`) rather than rely on the current one.
+
+**Input devices** (`dumpsys input`):
+
+- **"Odin Controller"**: USB HID `2020:0111` (bus 3), classes KEYBOARD |
+  GAMEPAD | JOYSTICK | EXTERNAL, controller number 1, key layout
+  `/system/usr/keylayout/Vendor_2020_Product_0111.kl`:
+  - buttons: `BUTTON_A` 0x130, `BUTTON_B` 0x131, `BUTTON_C` 0x132,
+    `BUTTON_X` 0x133, `BUTTON_Y` 0x134, `BUTTON_Z` 0x135, `L1`/`R1`
+    0x136/0x137, `L2`/`R2` 0x138/0x139, `SELECT` 0x13a, `START` 0x13b,
+    `MODE` 0x13c, `THUMBL`/`THUMBR` 0x13d/0x13e; `DPAD_UP/DOWN/LEFT/RIGHT`
+    0x220-0x223; `HOME` 0x66, `BACK` 0x9e, `APP_SWITCH` 0x244, volume keys.
+  - axes reported: `X`/`Y` (left stick), `Z`/`RZ` (right stick), raw
+    -32767..32767, flat 15; `GAS`/`BRAKE` (analog triggers, raw 0..32767);
+    `HAT_X`/`HAT_Y` (D-pad, -1..1). The layout also names RX/RY/THROTTLE/
+    RUDDER/WHEEL, which this controller does not report.
+  - So the triggers come both as buttons (L2/R2) and as analog axes; SDL's
+    Android joystick path sees a standard gamepad. Phase C added the "AYN
+    Thor" pad family (`PadFamily::thor`; "The AYN Thor's controller" in
+    phase C's section).
+- **"ODIN Station Virtual Mouse"**: the same USB id (version 0x00c8),
+  CURSOR_ICON | EXTERNAL: AYN's mouse emulation. The game ignores mouse
+  input from it.
+- Touch: `fts_ts` (upper screen, display 0) and `fts_ts_3` (lower screen,
+  display 4, EXTERNAL viewport).
+- `gpio-keys`: volume, HOME, FOCUS, CAMERA; `pmic_pwrkey`, `pmic_resin`,
+  `hall_switch` (lid/cover), headset jack.
+
+### Phase B's APK on the Thor (13.11.2026, installed with the owner's approval)
+
+The debug APK of phase B (`org.dw4pc.game` 0.46.0, arm64-v8a) on the real
+device:
+
+- First start: the message box and Android's picker; the owner picked the
+  image from the SD card (`content://com.android.externalstorage.documents/
+  document/<card>%3ARoms%2Fgc%2F...iso`), copied in 88 s into
+  `files/data/dw4.iso`, `data_hash 1c693d45198dd6c1` (the PC's value).
+- `renderer: OpenGL ES 3.2 V@0676.53 ... on Adreno (TM) 740, depth clamp
+  GL_EXT_depth_clamp`: the real extension, so the vertex shader's emulation
+  is not used here. Low latency audio is on.
+- The intro and the title run without an error in logcat.
+- The built-in controller: every button works in the game and in the menus,
+  and the Back button opens and closes the menu (`menu: open (the
+  controller's View / Back button)`). The title shows the Xbox-style menu
+  glyph for START.
+- The window is 1920 x 970: the status bar and the navigation bar stay
+  visible. Phase C makes the game window immersive full screen.
+
+The GL limits and compressed formats came from gles_check on 14.11.2026
+("GLES checks without the app"): ASTC LDR and HDR, BPTC and S3TC, 16x
+anisotropy, 256 vertex uniform vectors. Still unknown: the Focus Mode
+behaviour of the lower screen's touch (phase E0).
+
+On 14.11.2026 the new debug APK (main 12f6a1a8 merged) was installed with
+`adb install -r` (data and settings.ini kept); the lock screen is secure,
+so the game was not started while the owner was away ("The main merge of
+14.11.2026").

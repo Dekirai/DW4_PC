@@ -1,5 +1,7 @@
 #include "cpu_gate.hpp"
 
+#include "http.hpp"
+
 #include <cmath>
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
@@ -55,9 +57,35 @@ int crt_math_path() noexcept {
 #endif
 }
 
-std::optional<std::string> online_cpu_refusal() {
-    if (crt_math_path() != 3) return std::string(kCpuRefusal);
+std::optional<std::string> online_refusal_for(bool android, int crt_path) {
+    if (android) return std::string(kAndroidRefusal);
+    if (crt_path != 3) return std::string(kCpuRefusal);
     return std::nullopt;
 }
+
+std::optional<std::string> online_cpu_refusal() { return online_refusal_for(kAndroidBuild, kAndroidBuild ? 0 : crt_math_path()); }
+
+std::optional<std::string> lan_refusal_for(bool android, bool peer_is_loopback) {
+    if (android && !peer_is_loopback) return std::string(kAndroidLanRefusal);
+    return std::nullopt;
+}
+
+std::optional<std::string> lan_refusal(bool peer_is_loopback) { return lan_refusal_for(kAndroidBuild, peer_is_loopback); }
+
+std::optional<std::string> lan_game_problem_for(bool android, const std::string& guest_game) {
+    if (guest_game == lan_game_for(android)) return std::nullopt;
+    if (guest_game == lan_game_for(!android)) return std::string(android ? kAndroidLanRefusal : kPcLanAndroidRefusal);
+    return std::string("Another game.");
+}
+
+std::optional<std::string> lan_game_problem(const std::string& guest_game) { return lan_game_problem_for(kAndroidBuild, guest_game); }
+
+std::optional<std::string> cloud_refusal_for(bool android, bool https_transport) {
+    if (android) return std::string(kAndroidCloudRefusal);
+    if (!https_transport) return std::string(kNoTransportCloudRefusal);
+    return std::nullopt;
+}
+
+std::optional<std::string> cloud_refusal() { return cloud_refusal_for(kAndroidBuild, kHttpsTransport); }
 
 } // namespace dw4::game::online

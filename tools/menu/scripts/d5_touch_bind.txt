@@ -1,0 +1,21 @@
+# D5: a binding slot by touch (DW4_MENU_PAGE=controls/bindings.buttons): a tap captures (cancelled by the overlay's
+# Cancel), a long press clears; X binds slot 2 after another tap.
+wait 3
+expect open
+expect page controls/bindings.buttons
+tap 659 171.9
+wait 4
+expect dialog capture
+shot d5_00_capture_touch
+tap 548 304
+wait 2
+expect log menu: capture A slot 2 cancelled (touch)
+tap 659 171.9
+wait 4
+pad x
+wait 3
+expect log menu: capture A slot 2 =
+longpress 659 171.9
+wait 3
+expect log menu: Controls > A slot 2 = (cleared)
+expect value controls.bind.buttons.a A|-|-

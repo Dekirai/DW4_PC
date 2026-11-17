@@ -34,7 +34,15 @@
 #include "online_ui.hpp"
 #include "online_prompt_ui.hpp"
 #include "online_ui_script.hpp"
+#include "console_glyphs.hpp"
+#include "console_menu.hpp"
+#include "menu_script.hpp"
+#include "f1_actions.hpp"
+#include "menu_choices.hpp"
+#include "menu_ops.hpp"
+#include "screen2.hpp"
 #include "title_entry.hpp"
+#include "app_paths.hpp"
 #include "online/lobby.hpp"
 #include "online/title_driver.hpp"
 #include "online_achievements.hpp"
@@ -54,6 +62,13 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
+#ifdef SDL_PLATFORM_ANDROID
+// (SDLActivity calls SDL_main in libmain.so: main below is renamed to it.)
+#include <SDL3/SDL_main.h>
+// (DW4_TEST_CONTEXT_LOSS: the context destroyed by EGL itself.)
+#include <EGL/egl.h>
+#include <SDL3/SDL_egl.h>
+#endif
 // (Data Overflow's meta file of lane F, round O1b, once merged: the records
 // page reads its Data Records, SURVIVAL.md 9.2.)
 #if __has_include("overflow_profile.hpp")
@@ -66,11 +81,13 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <deque>
 #include <thread>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -95,6 +112,7 @@ struct Options {
     std::string input_script;
     std::filesystem::path online_script; // --online-script FILE: the scripted pad of an online room test run (online_script.hpp)
     std::filesystem::path online_card;   // --online-card FOLDER (DW4_ONLINE_DEV builds): the online card starts with these saves
+    std::filesystem::path menu_script;   // --menu-script FILE (test runs): the F1 menus driven by a script (menu_script.hpp)
     std::filesystem::path online_ui;     // --online-ui FILE (test runs): the account and room screens driven by a script (online_ui_script.hpp)
     std::filesystem::path online_folder; // --online-folder DIR (test runs): the remembered login there instead of saves/online beside the program
     std::filesystem::path load_state; // --load-state FILE: start from a save state file
@@ -109,6 +127,10 @@ struct Options {
     std::string import_boxes;
     int import_slot = 0;
     std::filesystem::path convert_from, convert_to; // --convert-rvz IN OUT
+    std::string import_disc; // --import-disc PATH (Android debug builds): the first start's import of PATH
+    // --mute: no sound output this run (no audio device opened; settings.ini
+    // and the device's volume untouched): checks on a device nobody hears.
+    bool mute{};
     // Online co-op: --host (with --players, --port, --net-delay) or --join ADDRESS[:PORT].
     bool net_host{};
     std::string net_join;
@@ -292,9 +314,343 @@ std::string check_game_data(const std::filesystem::path& path) {
     return {};
 }
 
+// The view whose settings the lifecycle watch saves (run() sets it while the
+// game runs).
+dw4::game::HostView* g_lifecycle_view = nullptr;
+
+// The app's lifecycle (Android; SDL hands these only to event watches, on
+// the thread that runs the game, from SDL_PollEvent, docs/ANDROID.md):
+// logged. Going to the background saves changed settings (Android may end
+// the app there without another word); in the background the game loop
+// stands still in SDL_PollEvent (the game pauses) and SDL pauses the sound
+// output. Coming back, the loop starts its clock again (no catch-up of the
+// time it stood); a lost OpenGL context comes back as
+// SDL_EVENT_RENDER_DEVICE_RESET (host_event). Low memory: the renderer lets
+// its unused textures go at the next pass.
+bool SDLCALL lifecycle_watch(void*, SDL_Event* event) {
+    const char* what = nullptr;
+    switch (event->type) {
+    case SDL_EVENT_TERMINATING: what = "terminating"; break;
+    case SDL_EVENT_LOW_MEMORY: what = "low memory"; break;
+    case SDL_EVENT_WILL_ENTER_BACKGROUND: what = "entering the background"; break;
+    case SDL_EVENT_DID_ENTER_BACKGROUND: what = "in the background"; break;
+    case SDL_EVENT_WILL_ENTER_FOREGROUND: what = "entering the foreground"; break;
+    case SDL_EVENT_DID_ENTER_FOREGROUND: what = "in the foreground"; break;
+    default: break;
+    }
+    if (what) {
+        std::printf("lifecycle: %s\n", what);
+        std::fflush(stdout);
+    }
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND)
+        if (auto* view = g_lifecycle_view; view && view->settings_changed && !view->test_run) {
+            const bool saved = view->settings.save();
+            if (saved) view->settings_changed = false;
+            std::printf("lifecycle: settings %s\n", saved ? "saved" : "could not be saved");
+            std::fflush(stdout);
+        }
+    if (event->type == SDL_EVENT_DID_ENTER_FOREGROUND) dw4::game::note_lifecycle(dw4::game::LifecycleNote::foreground);
+    if (event->type == SDL_EVENT_LOW_MEMORY) dw4::game::note_lifecycle(dw4::game::LifecycleNote::low_memory);
+#ifdef SDL_PLATFORM_ANDROID
+    // (SDL lets go of the OpenGL context right after this; the surface's end
+    // waits for it: DW4Activity.GameSurface.surfaceDestroyed.)
+    if (event->type == SDL_EVENT_DID_ENTER_BACKGROUND) dw4::game::android_note_game_paused(true);
+    // (The second screen's EGL surface before SDL's pause, screen2.hpp.)
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND) dw4::game::screen2_enter_background();
+    if (event->type == SDL_EVENT_WILL_ENTER_FOREGROUND) dw4::game::android_note_game_paused(false);
+#endif
+    return true;
+}
+
+// The game's one window with its OpenGL context, ImGui and the fonts. The
+// first start's screens (the disc's copy or conversion), the LAN lobby and
+// the game draw into it (docs/ANDROID.md: Android has one window); whoever
+// needs it first opens it, run() keeps it to the end.
+struct GameWindow {
+    SDL_Window* window = nullptr;
+    SDL_GLContext context = nullptr;
+    int samples = 0;
+    ImFont* tag_font = nullptr;  // the overhead name tags' font (also the online screens' headings)
+    ImFont* body_font = nullptr; // the online screens' text over the title
+};
+GameWindow g_game_window;
+
+// DW4_TEST_CONTEXT_LOSS (a test switch, presentation only): a comma list of
+// frame numbers and the word "background". At each frame of a test run the
+// game does what SDL does after a lost context (run(): a new context made
+// current, the old one destroyed, SDL_EVENT_RENDER_DEVICE_RESET pushed; any
+// platform). "background" (Android): every time the game comes back from
+// the background its EGL context is destroyed first, so SDL itself finds
+// it lost (context_loss_test_watch). Read when used (Android's --env sets
+// it after the start).
+struct ContextLossTest {
+    std::vector<int> frames;
+    bool background = false;
+};
+ContextLossTest context_loss_test() {
+    ContextLossTest test;
+    const char* list = std::getenv("DW4_TEST_CONTEXT_LOSS");
+    if (!list) return test;
+    std::string_view rest(list);
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        const std::string_view item = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        if (item == "background") {
+            test.background = true;
+            continue;
+        }
+        int frame = 0;
+        const auto [end, error] = std::from_chars(item.data(), item.data() + item.size(), frame);
+        if (error == std::errc() && end == item.data() + item.size()) test.frames.push_back(frame);
+    }
+    std::sort(test.frames.begin(), test.frames.end());
+    return test;
+}
+
+#ifdef SDL_PLATFORM_ANDROID
+// A lost OpenGL context: SDL makes a new one current before it sends
+// SDL_EVENT_RENDER_DEVICE_RESET (SDL_androidevents.c), the window keeps that
+// handle (run() destroys it at the end). The GL objects: host_event and
+// status_frame.
+bool SDLCALL context_reset_watch(void*, SDL_Event* event) {
+    if (event->type == SDL_EVENT_RENDER_DEVICE_RESET && g_game_window.window)
+        if (SDL_GLContext current = SDL_GL_GetCurrentContext()) g_game_window.context = current;
+    return true;
+}
+
+// DW4_TEST_CONTEXT_LOSS=background (context_loss_test; Android's --env in
+// dw4args, docs/ANDROID.md "Robustness"): every time the game comes back
+// from the background its OpenGL context is destroyed first (EGL's own
+// eglDestroyContext; SDL let go of it on the way into the background), so
+// SDL cannot make it current again, makes a new one and sends
+// SDL_EVENT_RENDER_DEVICE_RESET (SDL_androidevents.c,
+// android_egl_context_restore): the path of a device that lost the context.
+// Read when the game comes back (--env sets it after the start).
+bool SDLCALL context_loss_test_watch(void*, SDL_Event* event) {
+    if (event->type != SDL_EVENT_WILL_ENTER_FOREGROUND || !g_game_window.context) return true;
+    if (!context_loss_test().background) return true;
+    const EGLDisplay display = static_cast<EGLDisplay>(SDL_EGL_GetCurrentDisplay());
+    const bool destroyed = display != EGL_NO_DISPLAY && eglDestroyContext(display, static_cast<EGLContext>(g_game_window.context)) == EGL_TRUE;
+    if (destroyed) std::printf("lifecycle: test: the OpenGL context destroyed in the background (DW4_TEST_CONTEXT_LOSS)\n");
+    else std::printf("lifecycle: test: the OpenGL context could not be destroyed (EGL error 0x%x)\n", unsigned(eglGetError()));
+    std::fflush(stdout);
+    return true;
+}
+#endif
+
+// Opens the window once (SDL's video must be started); test runs open it
+// hidden at 1280x960 (DW4_WINDOW, DW4_WIDESCREEN; DW4_DEV_SETTINGS /
+// DW4_DEV_WINDOW: the settings' window).
+GameWindow& open_game_window(bool test_run, bool dev_window, dw4::game::Settings& settings) {
+    if (g_game_window.window) return g_game_window;
+    auto& w = g_game_window;
+#ifdef SDL_PLATFORM_ANDROID
+    // OpenGL ES 3.0 (gl_renderer.cpp's GLES path) on an RGBA8 surface (the
+    // kept picture's blit needs its texture's format).
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+#else
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    if (test_run) flags |= SDL_WINDOW_HIDDEN;
+#ifdef SDL_PLATFORM_ANDROID
+    // The whole screen without the status and navigation bars (SDL's
+    // immersive window style; DW4Activity keeps it so).
+    flags |= SDL_WINDOW_FULLSCREEN;
+#endif
+    // Multisampling is chosen with the window (settings.ini msaa, read at
+    // start-up); without support the window opens without it.
+    // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings);
+    // with DW4_DEV_SETTINGS / DW4_DEV_WINDOW the settings' msaa.
+    const int msaa = test_run && !dev_window
+                         ? (std::getenv("DW4_MSAA") ? std::atoi(std::getenv("DW4_MSAA")) : 0)
+                         : settings.msaa;
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
+    // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
+    // unless DW4_WIDESCREEN=1.
+    // (DW4_DEV_SETTINGS / DW4_DEV_WINDOW: the settings' window.)
+    int window_width = test_run && !dev_window ? 1280 : settings.width;
+    int window_height = test_run && !dev_window ? 960 : settings.height;
+    if (test_run && !dev_window) {
+        if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
+        settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
+    }
+    w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+    w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
+    // A level the GPU does not have (8x on the AYN Thor's Adreno 740, which
+    // has 4x): the next lower one, down to none.
+    for (int samples = msaa / 2; !w.context && msaa > 1; samples /= 2) {
+        if (w.window) SDL_DestroyWindow(w.window);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, samples > 1 ? 1 : 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, samples > 1 ? samples : 0);
+        w.window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+        w.context = w.window ? SDL_GL_CreateContext(w.window) : nullptr;
+        if (w.context) std::printf("window: %dx anti-aliasing is not offered here; %dx instead\n", msaa, samples > 1 ? samples : 0);
+        if (samples <= 1) break;
+    }
+    if (!w.window || !w.context) {
+        // No half-open window stays behind (the next call would return it
+        // without a context): the same error again at the next attempt.
+        const std::string error = SDL_GetError();
+        if (w.window) SDL_DestroyWindow(w.window);
+        w.window = nullptr;
+        w.context = nullptr;
+        throw std::runtime_error(error);
+    }
+    SDL_GL_MakeCurrent(w.window, w.context);
+#ifdef SDL_PLATFORM_ANDROID
+    SDL_AddEventWatch(context_reset_watch, nullptr);
+    SDL_AddEventWatch(context_loss_test_watch, nullptr);
+#endif
+    SDL_GL_SetSwapInterval(test_run || !settings.vsync ? 0 : 1);
+    if (!test_run && settings.fullscreen) SDL_SetWindowFullscreen(w.window, true);
+    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &w.samples);
+    // (OpenGL ES has no switch: multisampling follows the surface.)
+    if (w.samples > 1 && !dw4::game::gl_is_es()) glEnable(GL_MULTISAMPLE);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+    ImGui_ImplSDL3_InitForOpenGL(w.window, w.context);
+    dw4::game::install_text_input_hook();
+    ImGui_ImplOpenGL3_Init(dw4::game::gl_is_es() ? "#version 300 es" : "#version 330");
+    // The menus keep ImGui's own font (the first one added is the
+    // default); the overhead name tags take a bold system face when
+    // there is one (Segoe UI Bold, Arial Bold: readable over any
+    // background at their small size), else ImGui's scalable one.
+    auto& fonts = *ImGui::GetIO().Fonts;
+    ImFont* pixel_font = fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
+    // (The menus above 1x: ImGui's scalable font, update_ui_scale.)
+    dw4::game::set_ui_fonts(pixel_font, fonts.AddFontDefaultVector());
+    if (const char* windows = std::getenv("WINDIR"))
+        for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
+            const auto file = std::filesystem::path(windows) / "Fonts" / face;
+            std::error_code error;
+            if (!w.tag_font && std::filesystem::is_regular_file(file, error)) w.tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+        }
+    if (!w.tag_font) w.tag_font = fonts.AddFontDefaultVector();
+    // The online screens over the title: a regular system face beside
+    // the bold one (Segoe UI, Arial), else ImGui's scalable one.
+    if (const char* windows = std::getenv("WINDIR"))
+        for (const char* face : {"segoeui.ttf", "arial.ttf"}) {
+            const auto file = std::filesystem::path(windows) / "Fonts" / face;
+            std::error_code error;
+            if (!w.body_font && std::filesystem::is_regular_file(file, error)) w.body_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+        }
+    if (!w.body_font) w.body_font = fonts.AddFontDefaultVector();
+    dw4::game::update_ui_scale(w.window, settings, test_run);
+    dw4::game::request_frame_rate(settings);
+    return w;
+}
+
+// DW4_GL_CHECK=1 (the renderer's switch, docs/ANDROID.md): the GL errors the
+// status screens raise (the first start's copy and conversion, the LAN
+// lobby: no renderer exists yet, whose check counts the game's frames), read
+// after every frame of theirs; the first 20 logged, the totals when a screen
+// ends ("status screen: GL error check (SCREEN): N errors in M frames").
+struct StatusGlCheck {
+    int on = -1; // (read at the first frame: Android's --env sets it after the start)
+    std::uint64_t frames = 0, errors = 0;
+    bool active() {
+        if (on < 0) {
+            const char* value = std::getenv("DW4_GL_CHECK");
+            on = value && *value && *value != '0' ? 1 : 0;
+        }
+        return on == 1;
+    }
+    void frame() {
+        if (!active()) return;
+        ++frames;
+        for (int i = 0; i < 8; ++i) {
+            const GLenum error = glGetError();
+            if (error == GL_NO_ERROR) break;
+            if (++errors <= 20) std::cerr << "status screen: GL error 0x" << std::hex << error << std::dec << " (frame " << frames << ")\n";
+        }
+    }
+    void report(const std::string& screen) {
+        if (active()) std::cout << "status screen: GL error check (" << screen << "): " << errors << " errors in " << frames << " frames\n";
+    }
+};
+StatusGlCheck g_status_gl;
+
+// One frame of a screen in the game window before the game runs (the first
+// start's copy or conversion, the LAN lobby): a panel with the lines, a
+// progress bar when progress >= 0, and a Cancel button. False once the
+// player cancels or closes the window.
+bool status_frame(GameWindow& w, const char* title, const std::vector<std::string>& lines, double progress) {
+    bool keep = true;
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        ImGui_ImplSDL3_ProcessEvent(&event);
+        if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) keep = false;
+#ifdef SDL_PLATFORM_ANDROID
+        // A lost OpenGL context during the first start or the LAN lobby (no
+        // renderer yet): ImGui's GL objects again.
+        if (event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+            std::cout << "lifecycle: the OpenGL context was recreated (status screen)\n";
+            ImGui_ImplOpenGL3_Shutdown();
+            ImGui_ImplOpenGL3_Init("#version 300 es");
+            dw4::game::console_glyphs().reset(); // (an F1 menu shown before left its pictures' names)
+        }
+#endif
+    }
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(display.x - dw4::game::ui_px(32.0f), dw4::game::ui_px(560.0f)), 0.0f), ImGuiCond_Always);
+    ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+    for (const auto& line : lines) ImGui::TextWrapped("%s", line.c_str());
+    if (progress >= 0.0) ImGui::ProgressBar(float(std::clamp(progress, 0.0, 1.0)), ImVec2(-1.0f, 0.0f));
+    if (ImGui::Button("Cancel")) keep = false;
+    ImGui::End();
+    ImGui::Render();
+    int width = 0, height = 0;
+    SDL_GetWindowSizeInPixels(w.window, &width, &height);
+    glViewport(0, 0, width, height);
+    glClearColor(24.0f / 255.0f, 28.0f / 255.0f, 40.0f / 255.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    SDL_GL_SwapWindow(w.window);
+    g_status_gl.frame();
+    return keep;
+}
+
+// A long job (the worker) with its progress shown in the game window until
+// it ends; the player's Cancel sets `cancel`. Without a window it only waits.
+void show_progress(GameWindow* w, const char* title, const std::string& line, std::atomic<double>& progress, std::atomic<bool>& cancel,
+                   std::atomic<bool>& done) {
+    while (!done.load()) {
+        if (w) {
+            if (!status_frame(*w, title, {line}, progress.load())) cancel.store(true);
+        } else {
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+                if (event.type == SDL_EVENT_QUIT) cancel.store(true);
+        }
+        SDL_Delay(16);
+    }
+    if (w) g_status_gl.report(line);
+}
+
 // An RVZ image becomes a plain disc image once, in data/ next to the program
-// (a window shows the progress; closing it cancels). Returns the problem.
-std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem::path& iso) {
+// (the game window shows the progress when `ui` is set, Cancel or closing it
+// cancels). Returns the problem.
+std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem::path& iso, dw4::game::Settings* ui) {
     std::atomic<double> progress{0.0};
     std::atomic<bool> cancel{false}, done{false};
     std::string result;
@@ -302,49 +658,187 @@ std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem:
         result = dw4::game::convert_rvz(rvz, iso, &progress, &cancel);
         done.store(true);
     });
-    SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", 520, 96, 0);
-    SDL_Renderer* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
-    while (!done.load()) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event))
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancel.store(true);
-        if (renderer) {
-            SDL_SetRenderDrawColor(renderer, 24, 28, 40, 255);
-            SDL_RenderClear(renderer);
-            SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
-            SDL_RenderDebugText(renderer, 16, 16, "Preparing the game data from the RVZ image (once)...");
-            const SDL_FRect frame{16, 48, 488, 24};
-            SDL_RenderRect(renderer, &frame);
-            const SDL_FRect bar{18, 50, float(484.0 * std::clamp(progress.load(), 0.0, 1.0)), 20};
-            SDL_SetRenderDrawColor(renderer, 80, 160, 255, 255);
-            SDL_RenderFillRect(renderer, &bar);
-            SDL_RenderPresent(renderer);
+    GameWindow* window = nullptr;
+    if (ui && SDL_Init(SDL_INIT_VIDEO)) {
+        try {
+            window = &open_game_window(false, false, *ui);
+        } catch (const std::exception&) {
+            window = nullptr;
         }
-        SDL_Delay(16);
     }
+    show_progress(window, "Digimon World 4 PC", "Preparing the game data from the RVZ image (once)...", progress, cancel, done);
     worker.join();
-    if (renderer) SDL_DestroyRenderer(renderer);
-    if (window) SDL_DestroyWindow(window);
     return result;
 }
 
 // RVZ data: the converted image next to the program, converting it first
-// when needed. Other paths come back unchanged.
-std::filesystem::path resolve_rvz(const std::filesystem::path& path, std::string& problem) {
+// when needed (`ui`: shown in the game window). Other paths come back
+// unchanged.
+std::filesystem::path resolve_rvz(const std::filesystem::path& path, std::string& problem, dw4::game::Settings* ui = nullptr) {
     if (!dw4::game::is_rvz(path)) return path;
-    std::filesystem::path base;
-    if (const char* program = SDL_GetBasePath()) base = program;
+    const std::filesystem::path base = dw4::game::app_root();
     const auto iso = base / "data" / (path.stem().string() + ".iso");
     std::error_code error;
     if (std::filesystem::is_regular_file(iso, error)) return iso;
-    problem = prepare_rvz(path, iso);
+    problem = prepare_rvz(path, iso, ui);
     return problem.empty() ? iso : std::filesystem::path();
 }
 
+#ifdef SDL_PLATFORM_ANDROID
+// Android's first start (docs/ANDROID.md, The disc): the image the player
+// chose in the system's file picker (a content:// URI, which SDL_IOFromFile
+// opens; a debug build's --import-disc takes a plain path the same way) is
+// copied once into data/ of the app's folder, an RVZ image converted to
+// ISO on the way (the RVZ copy removed after). The game reads data/dw4.iso
+// from then on. Returns it, or empty and the problem.
+std::filesystem::path import_disc(const std::string& source, dw4::game::Settings& settings, std::string& problem) {
+    SDL_IOStream* in = SDL_IOFromFile(source.c_str(), "rb");
+    if (!in) {
+        problem = std::string("The chosen file cannot be read: ") + SDL_GetError();
+        return {};
+    }
+    // The head first: a wrongly chosen file stops here, before a copy of its
+    // whole size. An ISO: the game id at 0, the GameCube magic at 0x1C. An
+    // RVZ: "RVZ\x01", the ISO's and its own size at 0x24 / 0x2C, the disc's
+    // header at 0x58 (rvz.cpp).
+    std::array<unsigned char, 0x80> head{};
+    std::size_t head_size = 0;
+    while (head_size < head.size()) {
+        const std::size_t got = SDL_ReadIO(in, head.data() + head_size, head.size() - head_size);
+        if (got == 0) break;
+        head_size += got;
+    }
+    auto be32 = [&](std::size_t at) {
+        return (Uint32(head[at]) << 24) | (Uint32(head[at + 1]) << 16) | (Uint32(head[at + 2]) << 8) | Uint32(head[at + 3]);
+    };
+    auto be64 = [&](std::size_t at) { return (Uint64(be32(at)) << 32) | be32(at + 4); };
+    const bool rvz = head_size == head.size() && std::memcmp(head.data(), "RVZ\x01", 4) == 0;
+    const std::size_t disc_at = rvz ? 0x58 : 0;
+    if (head_size < head.size() || be32(disc_at + 0x1C) != 0xC2339F3Du) {
+        SDL_CloseIO(in);
+        problem = "The chosen file is not a GameCube disc image (ISO) or RVZ image.\n\nWIA, CISO and NKit images can be converted to "
+                  "ISO or RVZ in Dolphin (right-click the game > Convert File...).";
+        return {};
+    }
+    if (const std::string id(reinterpret_cast<const char*>(head.data() + disc_at), 6);
+        id != "GDJEB2" || head[disc_at + 6] != 0 || head[disc_at + 7] != 0) {
+        SDL_CloseIO(in);
+        problem = "This disc is " + id + " (revision " + std::to_string(int(head[disc_at + 7])) +
+                  "), not Digimon World 4 USA (GDJEB2, revision 0).";
+        return {};
+    }
+    // The copy's size; a provider that streams through a pipe has none: an
+    // RVZ names its own, an ISO is a whole GameCube disc.
+    Sint64 size = SDL_GetIOSize(in);
+    if (size <= 0) size = rvz ? Sint64(be64(0x2C)) : Sint64(1459978240);
+    const auto folder = dw4::game::app_root() / "data";
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    // Room for the copy (and an RVZ's converted ISO next to it) plus a margin.
+    if (const auto space = std::filesystem::space(folder, error); !error) {
+        const Uint64 needed = Uint64(size) + (rvz ? be64(0x24) : 0) + (Uint64(64) << 20);
+        if (space.available < needed) {
+            SDL_CloseIO(in);
+            problem = "There is not enough free space for the game data: " + std::to_string(needed >> 20) + " MB needed, " +
+                      std::to_string(space.available >> 20) + " MB free.";
+            return {};
+        }
+    }
+    error.clear();
+    // Back to the start; a provider that cannot seek (a pipe) gets the head
+    // written first and the rest copied after it.
+    const bool rewound = SDL_SeekIO(in, 0, SDL_IO_SEEK_SET) == 0;
+    const auto image = folder / "dw4.iso";
+    const auto copy = folder / (rvz ? "dw4.rvz.part" : "dw4.iso.part");
+    std::cout << "import: " << source << " (" << size << " bytes, " << (rvz ? "RVZ" : "disc image") << ") -> " << image.string() << '\n';
+    GameWindow* window = nullptr;
+    if (SDL_Init(SDL_INIT_VIDEO)) {
+        try {
+            window = &open_game_window(false, false, settings);
+        } catch (const std::exception& failed) {
+            std::cerr << "import: no window (" << failed.what() << ")\n";
+        }
+    }
+    std::atomic<double> progress{0.0};
+    std::atomic<bool> cancel{false}, done{false};
+    std::thread worker([&] {
+        std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+        std::vector<char> buffer(std::size_t(4) << 20);
+        Sint64 total = 0;
+        if (!rewound) {
+            out.write(reinterpret_cast<const char*>(head.data()), std::streamsize(head_size));
+            total = Sint64(head_size);
+        }
+        for (;;) {
+            if (cancel.load()) {
+                problem = "Cancelled.";
+                break;
+            }
+            const std::size_t got = SDL_ReadIO(in, buffer.data(), buffer.size());
+            if (got == 0) {
+                if (SDL_GetIOStatus(in) != SDL_IO_STATUS_EOF) problem = std::string("Reading the chosen file failed: ") + SDL_GetError();
+                break;
+            }
+            out.write(buffer.data(), std::streamsize(got));
+            if (!out) {
+                problem = "Writing " + copy.string() + " failed (is there enough free space?).";
+                break;
+            }
+            total += Sint64(got);
+            if (size > 0) progress.store(std::min(1.0, double(total) / double(size)));
+        }
+        done.store(true);
+    });
+    show_progress(window, "Digimon World 4 PC", rvz ? "Copying the RVZ image into the game's folder (once)..." : "Copying the disc image into the game's folder (once)...",
+                  progress, cancel, done);
+    worker.join();
+    SDL_CloseIO(in);
+    if (problem.empty() && rvz) {
+        const auto converted = folder / "dw4.iso.part";
+        progress.store(0.0);
+        done.store(false);
+        std::thread converter([&] {
+            problem = dw4::game::convert_rvz(copy, converted, &progress, &cancel);
+            done.store(true);
+        });
+        show_progress(window, "Digimon World 4 PC", "Preparing the game data from the RVZ image (once)...", progress, cancel, done);
+        converter.join();
+        std::filesystem::remove(copy, error);
+        if (problem.empty()) std::filesystem::rename(converted, image, error);
+        else std::filesystem::remove(converted, error);
+    } else if (problem.empty()) {
+        std::filesystem::rename(copy, image, error);
+    }
+    if (problem.empty() && error) problem = "Moving the copy to " + image.string() + " failed: " + error.message();
+    if (!problem.empty()) {
+        std::filesystem::remove(copy, error);
+        return {};
+    }
+    // The copy checked like any game data; an unusable one does not stay.
+    if (problem = check_game_data(image); !problem.empty()) {
+        std::filesystem::remove(image, error);
+        return {};
+    }
+    return image;
+}
+#endif
+
 // First start without game data: ask for the disc image or extraction folder.
+// (Android: a disc image only, SDL has no folder picker there; the result is
+// a content:// URI, import_disc copies it.)
 std::filesystem::path choose_game_data() {
     if (!SDL_Init(SDL_INIT_VIDEO)) return {};
+#ifdef SDL_PLATFORM_ANDROID
+    const SDL_MessageBoxButtonData buttons[] = {
+        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Disc image..."},
+        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+    };
+    const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "Digimon World 4 PC",
+                                 "Choose your Digimon World 4 (USA) disc image (.iso / .gcm, or Dolphin's .rvz). "
+                                 "It is copied into the game's folder once (an .rvz converted), so the picked "
+                                 "file can go afterwards.",
+                                 2, buttons, nullptr};
+#else
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Disc image..."},
         {0, 2, "Extracted folder..."},
@@ -355,6 +849,7 @@ std::filesystem::path choose_game_data() {
                                  "Dolphin's .rvz, converted once) or a Dolphin extraction folder. The choice is "
                                  "saved in settings.ini.",
                                  3, buttons, nullptr};
+#endif
     int choice = 0;
     if (!SDL_ShowMessageBox(&box, &choice) || choice == 0) return {};
     // The dialog may answer from another thread.
@@ -367,9 +862,16 @@ std::filesystem::path choose_game_data() {
         if (files && files[0]) r->path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(files[0])));
         r->done.store(true);
     };
+#ifdef SDL_PLATFORM_ANDROID
+    // ("*": Android's picker knows no MIME type for .rvz / .gcm and would hide them.)
+    static const SDL_DialogFileFilter filters[] = {{"All files", "*"}};
+    std::cout << "first start: the file picker\n";
+    SDL_ShowOpenFileDialog(callback, &result, nullptr, filters, 1, nullptr, false);
+#else
     static const SDL_DialogFileFilter filters[] = {{"GameCube disc image", "iso;gcm;rvz"}, {"All files", "*"}};
     if (choice == 1) SDL_ShowOpenFileDialog(callback, &result, nullptr, filters, 2, nullptr, false);
     else SDL_ShowOpenFolderDialog(callback, &result, nullptr, nullptr, false);
+#endif
     while (!result.done.load()) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {}
@@ -491,11 +993,9 @@ std::string card_names(const std::vector<dw4::game::CardFile>& files) {
     return names.empty() ? "-" : names;
 }
 
-// The program's folder ("" when unknown).
-std::filesystem::path program_dir() {
-    const char* base = SDL_GetBasePath();
-    return base ? std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(base))) : std::filesystem::path();
-}
+// The program's folder ("" when unknown); on Android the app's external
+// files folder (app_paths.hpp).
+std::filesystem::path program_dir() { return dw4::game::app_root(); }
 
 // The online account's achievements of a room (online_achievements.hpp):
 // their own HTTPS worker with the room's login, the account's profile in
@@ -658,8 +1158,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (const char* folder = std::getenv("DW4_MODS")) mods_root = folder;
     } else {
         std::error_code error;
-        if (const char* program = SDL_GetBasePath(); program && std::filesystem::is_directory(std::filesystem::path(program) / "mods", error))
-            mods_root = std::filesystem::path(program) / "mods";
+        if (const auto program = program_dir(); !program.empty() && std::filesystem::is_directory(program / "mods", error))
+            mods_root = program / "mods";
         else
             mods_root = "mods";
     }
@@ -668,6 +1168,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
     engine.set_resource_overrides(mod_folders);
     for (const auto& mod : mods)
         if (mod.enabled && mod.problem.empty()) std::cout << "mod: " << mod.name << " " << mod.version << " (" << mod.file_count << " files)\n";
+    // The game data's identity the LAN and online peers compare: the same
+    // disc (image or extraction, with the same mods) gives the same value on
+    // the PC and on Android.
+    std::printf("data: %s, data_hash %016llx\n", reinterpret_cast<const char*>(options.data.u8string().c_str()), static_cast<unsigned long long>(data_hash(engine.resources())));
     // Fast loading (settings.ini [gameplay] loading; --loading; test runs:
     // DW4_FAST_LOADING=1). A stage load latches it (Engine::fast_loading).
     // A choice in the F1 menu replaces the command line's.
@@ -804,8 +1308,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::string status, shown;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(options.smoke_frames ? 1 : 30);
         SDL_Init(SDL_INIT_VIDEO);
-        SDL_Window* lobby_window = options.smoke_frames ? nullptr : SDL_CreateWindow("Digimon World 4 PC - Online", 560, 96, 0);
-        SDL_Renderer* lobby_renderer = lobby_window ? SDL_CreateRenderer(lobby_window, nullptr) : nullptr;
+        // (In the game window; a test run's only with DW4_RENDER=1, hidden.)
+        const bool lobby_draws = !options.smoke_frames || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0);
+        GameWindow* lobby_window = lobby_draws ? &open_game_window(options.smoke_frames != 0, dev_window, settings) : nullptr;
         bool cancelled = false;
         while (!net.lobby(start, status, error)) {
             if (!error.empty()) break;
@@ -813,18 +1318,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 std::cout << "online: " << status << '\n';
                 shown = status;
             }
-            SDL_Event event;
-            while (SDL_PollEvent(&event))
-                if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancelled = true;
-            if (lobby_renderer) {
-                SDL_SetRenderDrawColor(lobby_renderer, 24, 28, 40, 255);
-                SDL_RenderClear(lobby_renderer);
-                SDL_SetRenderDrawColor(lobby_renderer, 230, 230, 230, 255);
+            if (lobby_window) {
                 const std::string where = options.net_host ? "Hosting on port " + std::to_string(options.net_port)
                                                            : "Joining " + options.net_join + ":" + std::to_string(options.net_port);
-                SDL_RenderDebugText(lobby_renderer, 16, 20, where.c_str());
-                SDL_RenderDebugText(lobby_renderer, 16, 52, status.c_str());
-                SDL_RenderPresent(lobby_renderer);
+                if (!status_frame(*lobby_window, "Digimon World 4 PC - Online", {where, status}, -1.0)) cancelled = true;
+            } else {
+                SDL_Event event;
+                while (SDL_PollEvent(&event))
+                    if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancelled = true;
             }
             if (cancelled || std::chrono::steady_clock::now() > deadline) {
                 error = cancelled ? "Cancelled." : "Nobody joined in time.";
@@ -832,8 +1333,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             SDL_Delay(10);
         }
-        if (lobby_renderer) SDL_DestroyRenderer(lobby_renderer);
-        if (lobby_window) SDL_DestroyWindow(lobby_window);
+        if (lobby_window) {
+            std::cout << "online: the lobby drew in the game window\n";
+            g_status_gl.report("the LAN lobby");
+        }
         if (!error.empty()) throw std::runtime_error("online: " + error);
         const auto& started = net.start();
         first_stage = started.stage;
@@ -908,9 +1411,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
     };
     if (options.online_calibrate) return calibrate(options.online_calibrate, 1e9).ok ? 0 : 1;
     // The remembered login and the online character's account folders
-    // (saves/online beside the program; --online-folder in test runs).
+    // (saves/online beside the program, on Android in the app's private
+    // folder; --online-folder in test runs).
     const auto online_folder = options.smoke_frames && !options.online_folder.empty() ? options.online_folder
-                               : (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "saves" / "online";
+                               : (dw4::game::private_root().empty() ? std::filesystem::path(".") : dw4::game::private_root()) / "saves" / "online";
     // Opens a room's session (the command line's room before the game loop,
     // the one the title's Online screens or F1 Online prepared during it):
     // the replay rate calibration (a hidden replay, one engine at a time),
@@ -1114,7 +1618,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     const char* controller_log_file = options.smoke_frames ? std::getenv("DW4_CONTROLLER_LOG") : nullptr;
     if (draw && (!options.smoke_frames || (controller_log_file && *controller_log_file))) {
         controller_log.emplace();
-        const auto folder = program_dir().empty() ? std::filesystem::path(".") : program_dir();
+        const auto folder = dw4::game::private_root().empty() ? std::filesystem::path(".") : dw4::game::private_root();
         if (controller_log->open(options.smoke_frames ? std::filesystem::u8path(controller_log_file) : folder / "saves" / "controllers.log")) {
             int sdl_version = SDL_GetVersion();
             controller_log->write(std::string("DW4_PC ") + DW4_PC_VERSION + ", SDL " + std::to_string(SDL_VERSIONNUM_MAJOR(sdl_version)) + "." +
@@ -1129,7 +1633,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             controller_log.reset();
         }
     }
+#ifdef SDL_PLATFORM_ANDROID
+    // Android's Back key reaches the game (host_event: the F1 menu) instead
+    // of closing the app.
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+#endif
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
+    SDL_AddEventWatch(lifecycle_watch, nullptr);
     if (controller_log) controller_log->write(std::string("sdl: started; libusb-1.0.dll ") + (dw4::game::libusb_in_process() ? "in use" : "not in use"));
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
@@ -1137,81 +1647,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
     ImFont* body_font = nullptr; // the online screens' text over the title
     int samples = 0;
     if (draw) {
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
-        if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
-        // Multisampling is chosen with the window (settings.ini msaa, read at
-        // start-up); without support the window opens without it.
-        // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings);
-        // with DW4_DEV_SETTINGS / DW4_DEV_WINDOW the settings' msaa.
-        const int msaa = options.smoke_frames && !dev_window
-                             ? (std::getenv("DW4_MSAA") ? std::atoi(std::getenv("DW4_MSAA")) : 0)
-                             : settings.msaa;
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
-        // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
-        // unless DW4_WIDESCREEN=1.
-        // (DW4_DEV_SETTINGS / DW4_DEV_WINDOW: the settings' window.)
-        int window_width = options.smoke_frames && !dev_window ? 1280 : settings.width;
-        int window_height = options.smoke_frames && !dev_window ? 960 : settings.height;
-        if (options.smoke_frames && !dev_window) {
-            if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
-            settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
-        }
-        window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
-        context = window ? SDL_GL_CreateContext(window) : nullptr;
-        if (!context && msaa > 1) {
-            if (window) SDL_DestroyWindow(window);
-            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-            window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
-            context = window ? SDL_GL_CreateContext(window) : nullptr;
-        }
-        if (!window || !context) throw std::runtime_error(SDL_GetError());
-        SDL_GL_MakeCurrent(window, context);
-        SDL_GL_SetSwapInterval(options.smoke_frames || !settings.vsync ? 0 : 1);
-        if (!options.smoke_frames && settings.fullscreen) SDL_SetWindowFullscreen(window, true);
-        SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
-        if (samples > 1) glEnable(GL_MULTISAMPLE);
-
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGui::GetIO().IniFilename = nullptr;
-        ImGui::StyleColorsDark();
-        ImGui_ImplSDL3_InitForOpenGL(window, context);
-        ImGui_ImplOpenGL3_Init("#version 330");
-        // The menus keep ImGui's own font (the first one added is the
-        // default); the overhead name tags take a bold system face when
-        // there is one (Segoe UI Bold, Arial Bold: readable over any
-        // background at their small size), else ImGui's scalable one.
-        auto& fonts = *ImGui::GetIO().Fonts;
-        fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
-        if (const char* windows = std::getenv("WINDIR"))
-            for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
-                const auto file = std::filesystem::path(windows) / "Fonts" / face;
-                std::error_code error;
-                if (!tag_font && std::filesystem::is_regular_file(file, error)) tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
-            }
-        if (!tag_font) tag_font = fonts.AddFontDefaultVector();
-        // The online screens over the title: a regular system face beside
-        // the bold one (Segoe UI, Arial), else ImGui's scalable one.
-        if (const char* windows = std::getenv("WINDIR"))
-            for (const char* face : {"segoeui.ttf", "arial.ttf"}) {
-                const auto file = std::filesystem::path(windows) / "Fonts" / face;
-                std::error_code error;
-                if (!body_font && std::filesystem::is_regular_file(file, error)) body_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
-            }
-        if (!body_font) body_font = fonts.AddFontDefaultVector();
+        // (The first start's screens or the LAN lobby may have opened it.)
+        auto& opened = open_game_window(options.smoke_frames != 0, dev_window, settings);
+        window = opened.window;
+        context = opened.context;
+        samples = opened.samples;
+        tag_font = opened.tag_font;
+        body_font = opened.body_font;
     }
 
     // Audio: the SoundManager's streams go to the default playback device
     // (not in smoke tests). DW4_AUDIO_DUMP=FILE.wav records what was mixed.
     SDL_AudioStream* audio = nullptr;
-    if (!options.smoke_frames && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+    if (options.mute && !options.smoke_frames) std::cout << "audio: muted (--mute)\n";
+    if (!options.smoke_frames && !options.mute && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, dw4::engine::SoundManager::kOutputRate};
         audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
         if (audio) SDL_ResumeAudioStreamDevice(audio);
@@ -1238,11 +1687,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // The Graphics options (settings.ini [graphics]); test runs read no
         // settings.ini: the defaults with DW4_TEXTURE_QUALITY,
         // DW4_TEXTURE_FILTER, DW4_LOD_BIAS, DW4_SHARPEN, DW4_SHADOW_QUALITY
-        // and DW4_TEXTURE_MEMORY (graphics_options.hpp).
-        if (renderer)
-            renderer->set_graphics(options.smoke_frames
-                                       ? dw4::game::graphics_from_env({}, [](const char* name) -> const char* { return std::getenv(name); })
-                                       : settings.graphics);
+        // and DW4_TEXTURE_MEMORY (graphics_options.hpp). (A test run's F1
+        // menu shows those; test runs never save settings.ini.)
+        if (options.smoke_frames)
+            settings.graphics = dw4::game::graphics_from_env({}, [](const char* name) -> const char* { return std::getenv(name); });
+        if (renderer) renderer->set_graphics(settings.graphics);
         // The window, the renderer, the sound output, the controllers, the
         // F1 menu and the pictures as the host's shared parts see them
         // (host_view.hpp: the story and a Data Overflow run use the same).
@@ -1257,6 +1706,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.audio = audio;
         view.audio_dump_path = audio_dump_path;
         view.audio_mix = audio_mix;
+        // The menu button for touch (Android; DW4_TOUCH_UI=1 in a test run,
+        // also on the PC for its picture; a test run's screenshots stay
+        // without it otherwise): shown for the first seconds too.
+        const bool touch_test = std::getenv("DW4_TOUCH_UI") && std::atoi(std::getenv("DW4_TOUCH_UI")) != 0;
+#ifdef SDL_PLATFORM_ANDROID
+        view.touch_ui = draw && (!options.smoke_frames || touch_test);
+#else
+        view.touch_ui = draw && touch_test;
+#endif
+        view.last_touch = std::chrono::steady_clock::now();
+        g_lifecycle_view = &view;
         // The controller prompts (button_prompts.hpp): the game's button
         // glyphs follow each player's device (the character select's lines
         // are the players' own, every other line player 1's), the port's
@@ -1322,8 +1782,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // mods/dump/textures. Test runs use neither.
         dw4::game::TexturePack texture_pack;
         auto mods_folder = [&](const char* sub) {
-            std::filesystem::path base;
-            if (const char* program = SDL_GetBasePath()) base = program;
+            const std::filesystem::path base = program_dir();
             std::error_code error;
             if (!base.empty() && std::filesystem::is_directory(base / "mods", error)) return base / "mods" / sub;
             return std::filesystem::path("mods") / sub;
@@ -1381,6 +1840,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
         {
             std::filesystem::path lang_root = (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "lang";
             if (const char* folder = std::getenv("DW4_LANG_DIR"); folder && *folder && options.smoke_frames) lang_root = std::filesystem::u8path(folder);
+#ifdef SDL_PLATFORM_ANDROID
+            // (Android: the APK's packs into lang/ of the app's folder first,
+            // as the PC build copies them next to the program.)
+            else
+                dw4::game::install_bundled_language_packs(lang_root);
+#endif
             languages.discover(lang_root);
             std::string wanted = options.smoke_frames ? std::string("en") : settings.language;
             if (const char* forced = std::getenv("DW4_LANGUAGE"); forced && *forced) wanted = forced;
@@ -1418,12 +1883,49 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto& movie_serial = view.picture.movie_serial;
         auto& movie_stage = view.picture.movie_stage;
         // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots);
-        // DW4_MENU_TAB=<tab> selects that tab when it first shows.
+        // DW4_MENU_TAB=<tab> selects that tab when it first shows;
+        // DW4_MENU_SECTION=Graphics scrolls the Settings tab to that section.
         bool running = true;
         auto& show_menu = view.show_menu;
         show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
         auto& menu_tab = view.menu_tab;
         menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
+        view.menu_section = std::getenv("DW4_MENU_SECTION") ? std::getenv("DW4_MENU_SECTION") : "";
+        // The PC F1 menu's picture proofs (test runs, docs/CONSOLE_MENU.md K0):
+        // DW4_MENU_EXPAND=1 every header open, DW4_MENU_STILL=1 the live
+        // values fixed, DW4_MENU_SCROLL=page:<n> or <px> the window scrolled
+        // there in every frame (stable from the second), logged as
+        // "menu-scroll: page n of m" (m: the last page).
+        int menu_scroll_page = -1;
+        float menu_scroll_px = -1.0f;
+        if (options.smoke_frames) {
+            dw4::game::set_menu_picture_hooks(std::getenv("DW4_MENU_EXPAND") != nullptr, std::getenv("DW4_MENU_STILL") != nullptr);
+            if (const char* scroll = std::getenv("DW4_MENU_SCROLL")) {
+                const std::string_view text(scroll);
+                if (text.rfind("page:", 0) == 0) menu_scroll_page = std::max(0, std::atoi(scroll + 5));
+                else menu_scroll_px = std::max(0.0f, float(std::atof(scroll)));
+            }
+        }
+        float menu_scroll_page_height = 0.0f; // the window's visible content height in the last frame
+        std::string menu_scroll_logged;
+        // The second screen's panels in a test run (screen2.hpp; test runs
+        // read no settings.ini): DW4_SCREEN2_OVERLAY=1 shows the overlay
+        // window (the PC's form), DW4_SCREEN2_TAB=status|online|menu chooses
+        // the tab, DW4_SCREEN2_MENU=1 puts DW4_OPEN_MENU's F1 menu on the
+        // second screen. DW4_TEST_CONTEXT_LOSS's frames (context_loss_test):
+        // at those frames the OpenGL context is lost and made again as
+        // Android's SDL does after a lost context (a new context, the old
+        // one gone, SDL_EVENT_RENDER_DEVICE_RESET), so both screens' rebuild
+        // runs.
+        std::vector<int> context_loss_frames;
+        if (options.smoke_frames) {
+            if (const char* overlay = std::getenv("DW4_SCREEN2_OVERLAY")) settings.screen2_overlay = std::atoi(overlay) != 0;
+            if (const char* tab = std::getenv("DW4_SCREEN2_TAB"))
+                for (const auto id : {dw4::game::Screen2Tab::online, dw4::game::Screen2Tab::status, dw4::game::Screen2Tab::menu})
+                    if (std::string_view(tab) == dw4::game::screen2_tab_id(id)) settings.screen2_tab = id;
+            view.menu_on_screen2 = view.show_menu && std::getenv("DW4_SCREEN2_MENU") != nullptr;
+            context_loss_frames = context_loss_test().frames;
+        }
         auto tab_flags = [&](const char* name) -> ImGuiTabItemFlags {
             if (menu_tab != name) return ImGuiTabItemFlags_None;
             menu_tab.clear();
@@ -1619,7 +2121,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const bool trace_events = options.smoke_frames && std::getenv("DW4_TRACE_EVENTS");
         std::filesystem::path profile_path;
         if (!options.smoke_frames) {
-            if (const char* program = SDL_GetBasePath()) profile_path = std::filesystem::path(program) / "saves" / "profile.dat";
+            if (const auto program = program_dir(); !program.empty()) profile_path = program / "saves" / "profile.dat";
         } else if (const char* file = std::getenv("DW4_PROFILE")) {
             profile_path = file;
         }
@@ -1751,6 +2253,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         dw4::game::TitleOnline title_online;
         bool title_online_shown = false; // the screens over the title (the last frame)
         bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
+        bool screen2_online_shown = false; // the second screen's Online panel showed (the last frame; screen2.hpp)
         bool menu_shown_before = false;  // the F1 menu was open in the last frame (it opens on Online in the world)
         bool instance_line_shown = false; // the line under the own status window showed in the last frame (19.5.4)
         dw4::game::RoomLive last_room_live; // the last frame's session facts (a UI test run's wait-instance and wait-members)
@@ -1966,9 +2469,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
+        dw4::game::RefreshClock refresh_clock; // (the step clock in the display's refreshes, interpolation.hpp)
+        bool focus_paused_before = false; // (the focus pause's log lines)
         // State files live in saves/states next to the program (not in test runs).
         std::filesystem::path state_dir;
-        if (const char* program = SDL_GetBasePath()) state_dir = std::filesystem::path(program) / "saves" / "states";
+        if (const auto program = program_dir(); !program.empty()) state_dir = program / "saves" / "states";
         auto state_path = [&](std::size_t slot) { return state_dir / ("state" + std::to_string(slot + 1) + ".dw4state"); };
         if (!options.smoke_frames && !state_dir.empty())
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
@@ -2038,14 +2543,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         };
+        // (Loading works on the title too, unlike saving: can_save.)
+        auto can_load = [&](std::size_t slot) -> std::string {
+            if (net.active() || online) return "Save states are off in online sessions.";
+            if (!state_slots[slot]) return "State " + std::to_string(slot + 1) + " is empty.";
+            return {};
+        };
         auto load_state = [&](std::size_t slot) {
-            if (net.active() || online) {
-                state_message = "Save states are off in online sessions.";
-                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-                return;
-            }
-            if (!state_slots[slot]) {
-                state_message = "State " + std::to_string(slot + 1) + " is empty.";
+            if (const auto problem = can_load(slot); !problem.empty()) {
+                state_message = problem;
                 message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                 return;
             }
@@ -2345,6 +2851,386 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         load_timing.started_longest_texture_ms, (long long)over(8.3), (long long)over(16.7));
             load_timing.window_done = true;
         };
+        // ---- The F1 menu's actions (f1_actions.hpp): the classic menu calls
+        // them where it ran the code inline, the console menu
+        // (console_menu.hpp) calls the same ones.
+        dw4::game::F1Actions f1;
+        f1.languages = &languages;
+        f1.select_language = [&](const std::string& code) {
+            std::string message;
+            if (languages.select(code, &message)) {
+                settings.language = code;
+                settings_changed = true;
+            } else {
+                state_message = "Language: " + message;
+                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            }
+        };
+        f1.preset_index = [&] {
+            // "Original" only while the running game is not randomized
+            // either: a loaded save's bond keeps its randomizer whatever
+            // the settings say.
+            const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
+            const bool original_graphics = dw4::game::is_original_graphics(settings.graphics);
+            const bool modern_graphics = dw4::game::is_modernized_graphics(settings.graphics);
+            const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 && !settings.skip_intro &&
+                                  !settings.fast_loading && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
+                                  settings.damage_taken == 100 && settings.rand_seed == 0 && !playing.active() && original_graphics;
+            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
+                                    settings.fast_loading && modern_graphics;
+            return original ? 0 : modernized ? 1 : 2;
+        };
+        f1.apply_preset = [&](bool modern) {
+            settings.widescreen = modern;
+            settings.smooth_motion = modern;
+            settings.msaa = modern ? 4 : 0;
+            settings.skip_intro = modern;
+            settings.fast_loading = modern;
+            // Graphics: Original is the GameCube's look (no pack, bilinear,
+            // the game's shadow map); Modernized a pack's 4x textures, 16x
+            // anisotropic filtering and a 4x shadow map (sharpening is left
+            // as it is: a matter of taste). graphics_options.hpp
+            // preset_graphics.
+            settings.graphics = dw4::game::preset_graphics(modern, settings.graphics);
+            if (renderer) renderer->set_graphics(settings.graphics);
+            loading_override.reset();
+            if (!modern) {
+                settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
+                settings.rand_seed = 0;
+            }
+            // (Online the host's gameplay settings stay.)
+            if (!net.active()) apply_gameplay(engine.cheats());
+            settings_changed = true;
+        };
+        f1.preset_notes = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
+            if (!playing.active()) return lines;
+            if (net.active())
+                lines.push_back({dw4::game::InfoTone::warn, "This session plays the host's randomizer (" + dw4::game::describe_randomizer(playing) + ")."});
+            else if (randomizer_unique != 0 && randomizer_bound && randomizer_bound->active())
+                lines.push_back({dw4::game::InfoTone::warn, "The loaded save plays the randomizer (" + dw4::game::describe_randomizer(*randomizer_bound) +
+                                                                "): its bond keeps it, whatever the preset. F1 > Cheats can let this save play the "
+                                                                "original game."});
+            else
+                lines.push_back({dw4::game::InfoTone::warn, "The randomizer is on for new games (" + dw4::game::describe_randomizer(playing) + ", F1 > Cheats)."});
+            return lines;
+        };
+        f1.loading_fast = [&] { return net.active() ? engine.cheats().fast_loading : fast_loading_choice(); };
+        f1.set_loading = [&](bool fast) {
+            settings.fast_loading = fast;
+            loading_override.reset();
+            apply_gameplay(engine.cheats());
+            settings_changed = true;
+        };
+        f1.net_active = [&] { return net.active(); };
+        f1.online_room = [&] { return online != nullptr; };
+        f1.can_save = [&] { return can_save(); };
+        f1.can_load = [&](std::size_t slot) { return can_load(slot); };
+        f1.save_state = [&](std::size_t slot) { save_state(slot); };
+        f1.load_state = [&](std::size_t slot) {
+            load_state(slot);
+            return state_message.rfind("Loaded state", 0) == 0;
+        };
+        f1.slot_text = [&](std::size_t slot) -> std::string {
+            if (slot >= state_slots.size() || !state_slots[slot]) return {};
+            return state_slots[slot]->snapshot.stage + ", " + std::to_string(state_slots[slot]->inputs.size()) + " steps since its stage loaded";
+        };
+        f1.slot_stage = [&](std::size_t slot) -> std::string {
+            return slot < state_slots.size() && state_slots[slot] ? state_slots[slot]->snapshot.stage : std::string();
+        };
+        f1.state_count = state_slots.size();
+        f1.state_message = &state_message;
+        f1.state_dir = [&] { return state_dir; };
+        f1.cheats = [&]() -> dw4::engine::Cheats& { return engine.cheats(); };
+        f1.cheats_online = [&] { return net.active() || online != nullptr; };
+        f1.gameplay_changed = [&] {
+            if (net.active() || online) return;
+            apply_gameplay(engine.cheats());
+            settings_changed = true;
+        };
+        f1.randomizer_status = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            if (net.active()) {
+                lines.push_back({dw4::game::InfoTone::normal, "This session: " +
+                                                                  dw4::game::describe_randomizer(dw4::game::randomizer_from_cheats(engine.cheats())) +
+                                                                  " (the host's)."});
+            } else if (randomizer_unique != 0 && randomizer_bound) {
+                const std::string who = randomizer_name.empty() ? "This save" : "This save (" + randomizer_name + ")";
+                if (randomizer_bound->active())
+                    lines.push_back({dw4::game::InfoTone::warn, who + " plays " + dw4::game::describe_randomizer(*randomizer_bound) + "."});
+                else
+                    lines.push_back({dw4::game::InfoTone::normal, who + " plays the original game."});
+            } else {
+                lines.push_back({dw4::game::InfoTone::dim, "No save in play: a new game binds the settings below to its save."});
+            }
+            return lines;
+        };
+        // (The classic menu shows these buttons by the same two questions.)
+        f1.randomizer_can_unbind = [&] { return !net.active() && randomizer_unique != 0 && randomizer_bound && randomizer_bound->active(); };
+        f1.randomizer_can_bind = [&] {
+            return !net.active() && randomizer_unique != 0 && randomizer_bound && randomizer_settings().active() &&
+                   !(*randomizer_bound == randomizer_settings());
+        };
+        f1.randomizer_unbind = [&] {
+            // An explicit "off" bond: the save plays the original game from
+            // now on (enemies spawning from here, the next stage change,
+            // drops), also after a restart.
+            randomizer_bound = dw4::game::RandomizerConfig{};
+            dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, randomizer_name, *randomizer_bound);
+            std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(randomizer_unique) << " plays the original game now\n";
+            toasts.push_back({"Randomizer", "This save plays the original game now.", std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+        };
+        f1.randomizer_bind = [&] {
+            randomizer_bound = randomizer_settings();
+            dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, randomizer_name, *randomizer_bound);
+            dw4::game::write_randomizer_spoiler(randomizer_folder, randomizer_unique, *randomizer_bound);
+            std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(randomizer_unique) << " bound to "
+                      << dw4::game::describe_randomizer(*randomizer_bound) << "\n";
+        };
+        f1.randomizer_new_seed = [&] {
+            settings.rand_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+        };
+        f1.players = [&] {
+            std::vector<dw4::game::PlayerLine> lines;
+            if (net.active() || online) return lines;
+            if (auto* sys = engine.get<dw4::engine::GameSystem>())
+                for (int slot = 0; slot < 4; ++slot) {
+                    const auto& player = sys->players[std::size_t(slot)];
+                    if (!player.joined || !player.stats.ready) continue;
+                    char text[128];
+                    std::snprintf(text, sizeof text, "Level %d  HP %d/%d  MP %d/%d  Bits %d", player.stats.level, player.hp, player.max_hp, player.mp,
+                                  player.max_mp, player.bits);
+                    lines.push_back({slot, text});
+                }
+            return lines;
+        };
+        f1.cheat_refill = [&](int slot) {
+            if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->cheat_refill(engine, slot);
+        };
+        f1.cheat_levels = [&](int slot, int levels) {
+            if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->cheat_levels(engine, slot, levels);
+        };
+        f1.cheat_bits = [&](int slot, int bits) {
+            if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->cheat_bits(slot, bits);
+        };
+        f1.achievements = &achievements;
+        f1.achievement_notes = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            if (!achievements_on()) lines.push_back({dw4::game::InfoTone::warn, "Achievements are switched off (Settings)."});
+            else if (last_gate != dw4::game::AchievementGate::open)
+                lines.push_back({dw4::game::InfoTone::warn, dw4::game::achievement_gate_text(last_gate)});
+            return lines;
+        };
+        f1.play_time = [&] {
+            const std::int64_t minutes = dw4::game::menu_still() ? 0 : achievements.profile().stat("play_minutes");
+            char text[32];
+            std::snprintf(text, sizeof text, "%lld:%02lld", (long long)(minutes / 60), (long long)(minutes % 60));
+            return std::string(text);
+        };
+        f1.saves_summary = [&](bool player_words) {
+            std::vector<dw4::game::InfoLine> lines;
+            auto& tab = saves_tab;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - tab.read_at > std::chrono::seconds(2)) {
+                for (int slot = 0; slot < 2; ++slot) {
+                    const auto gci = player_store.read(slot);
+                    tab.has_file[std::size_t(slot)] = gci.has_value();
+                    tab.boxes[std::size_t(slot)] = gci ? dw4::save::summarize_save(*gci) : std::nullopt;
+                }
+                tab.read_at = now;
+            }
+            const bool single = player_store.kind() == dw4::save::CardStore::Kind::single_file;
+            for (int slot = 0; slot < 2; ++slot) {
+                const bool card = slot == 0 || player_store.slot_exists(1) ||
+                                  player_card_settings[1].mode == dw4::engine::CardSetting::Mode::inserted;
+                // (Android: where it is in the player's words; the path is in the details.)
+                const std::string where = player_words ? (card ? std::string("on this device") : std::string("none")) : player_store.describe(slot);
+                lines.push_back({dw4::game::InfoTone::normal, std::string(player_words ? "Memory card " : "Slot ") + (slot == 0 ? 'A' : 'B') + ": " + where +
+                                                                  (!card ? (player_words ? "" : " (no memory card in this slot)")
+                                                                   : tab.has_file[std::size_t(slot)] ? ""
+                                                                                                      : " (no save yet)")});
+                if (const auto& boxes = tab.boxes[std::size_t(slot)])
+                    for (std::size_t i = 0; i < boxes->size(); ++i)
+                        lines.push_back({dw4::game::InfoTone::dim, "Box " + std::to_string(i + 1) + ": " + dw4::save::describe_box((*boxes)[i])});
+                else if (tab.has_file[std::size_t(slot)])
+                    lines.push_back({dw4::game::InfoTone::error, "The save is damaged (neither data copy passes its check)."});
+            }
+            if (single && player_words) lines.push_back({dw4::game::InfoTone::dim, "Every save keeps the one before it as a backup copy."});
+            for (const auto& note : save_choice.notes) lines.push_back({dw4::game::InfoTone::normal, note});
+            for (const auto& problem : save_choice.problems) lines.push_back({dw4::game::InfoTone::warn, problem});
+            if (net.active()) lines.push_back({dw4::game::InfoTone::normal, "Online, the session plays from shared copies of the cards."});
+            return lines;
+        };
+        f1.saves_details = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            const bool single = player_store.kind() == dw4::save::CardStore::Kind::single_file;
+            for (int slot = 0; slot < 2; ++slot)
+                if (slot == 0 || player_store.slot_exists(1))
+                    lines.push_back({dw4::game::InfoTone::dim, std::string("Slot ") + (slot == 0 ? 'A' : 'B') + ": " + player_store.describe(slot)});
+            lines.push_back({dw4::game::InfoTone::dim, std::string("Chosen by ") + dw4::game::why_text(save_choice.why) + "."});
+            if (single)
+                lines.push_back({dw4::game::InfoTone::dim, "Each save keeps the previous file as .bak beside it. The file holds the same bytes as "
+                                                           "Dolphin's B2-GDJE-NDMWSaveData.gci (rename it to use it there). settings.ini [data] "
+                                                           "save / save_b move the files; [data] cards = a GCI folder (e.g. Dolphin's GC/USA) "
+                                                           "plays from that folder instead. Slot B holds a card once its file exists."});
+            return lines;
+        };
+        f1.save_slot_a = [&] { return player_store.describe(0); };
+        f1.settings_file = [&] { return settings.file; };
+        f1.controller_log = [&] { return view.controller_log ? view.controller_log->path().string() : std::string(); };
+        f1.cloud_panel = &cloud_panel;
+        f1.card_store = &player_store;
+        f1.cloud_available = [&] { return !online && !net.active() && !net.in_lobby(); }; // (the classic menu's panel too)
+        f1.texture_panel = [&] {
+            dw4::game::TexturePackPanel panel;
+            panel.pack = &texture_pack;
+            panel.folder = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
+            panel.reload = reload_pack;
+            panel.loading = pack_loader.busy();
+            return panel;
+        };
+        f1.mods = &mods;
+        f1.mods_root = mods_root;
+        f1.net_in_lobby = [&] { return net.in_lobby(); };
+        f1.has_lobby = [&] { return lobby != nullptr; };
+        f1.session_lines = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            if (net.active()) {
+                lines.push_back({dw4::game::InfoTone::normal, "Playing a direct session as player " + std::to_string(net.local_slot() + 1) + " of " +
+                                                                  std::to_string(net.start().players) + " (input delay " +
+                                                                  std::to_string(net.start().delay) + " steps)."});
+                if (net.desync()) lines.push_back({dw4::game::InfoTone::error, "Desync at step " + std::to_string((unsigned long long)*net.desync()) + "."});
+            } else if (net.in_lobby()) {
+                lines.push_back({dw4::game::InfoTone::normal, lobby_status});
+            } else if (online) {
+                const auto& room = online->room();
+                lines.push_back({dw4::game::InfoTone::normal,
+                                 "The world as " + room.account + " (instance " + std::to_string(online->session().wid()) + ")"});
+                lines.push_back({dw4::game::InfoTone::normal, "Instance " + std::to_string(online->session().inst()) + ", slot " +
+                                                                  std::to_string(online->session().own_slot() + 1) + ", " +
+                                                                  dw4::game::online::mode_name(online->session().mode()) + ", input delay " +
+                                                                  std::to_string(online->session().delay())});
+                if (auto* character = online->character()) lines.push_back({dw4::game::InfoTone::dim, character->status_text()});
+                lines.push_back({dw4::game::InfoTone::dim, online->story_line()});
+            }
+            return lines;
+        };
+        f1.connection_lines = [&] {
+            std::vector<dw4::game::InfoLine> lines;
+            if (!online) return lines;
+            const auto& session = online->session();
+            const auto& link = session.net();
+            const auto& recent = session.stats().recent();
+            const auto& delayed = session.stats().delayed_total();
+            const bool playing = session.mode() == dw4::game::online::Mode::sealed;
+            const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, link.network_rtt_ms(), recent.drop_rate(),
+                                                                 session.overlay(steady_seconds()).waiting_for_server);
+            const auto tone = quality == dw4::game::online::LinkQuality::good   ? dw4::game::InfoTone::ok
+                              : quality == dw4::game::online::LinkQuality::fair ? dw4::game::InfoTone::warn
+                                                                                : dw4::game::InfoTone::error;
+            char text[320];
+            lines.push_back({tone, std::string("Link: ") + dw4::game::online::link_quality_name(quality)});
+            if (link.rtt_ms >= 0 && link.from_relay)
+                std::snprintf(text, sizeof text, "Ping (network round trip to the server): %.0f ms. The server measures %.0f ms (spread %d ms): that "
+                                                 "includes about %.0f ms of waiting for this game's next picture.",
+                              link.network_rtt_ms(), link.rtt_ms, int(link.rtt_spread_ms), std::max(0.0, link.pass_wait_ms));
+            else if (link.rtt_ms >= 0)
+                std::snprintf(text, sizeof text, "Ping (network round trip to the server): %.0f ms (TCP estimate)", link.rtt_ms);
+            else
+                std::snprintf(text, sizeof text, "Ping: not measured yet");
+            lines.push_back({link.rtt_ms >= 0 ? dw4::game::InfoTone::normal : dw4::game::InfoTone::dim, text});
+            if (playing)
+                std::snprintf(text, sizeof text, "Input delay: %d ticks (%.0f ms). With others in your stage every input waits this long.", session.delay(),
+                              session.delay() * dw4::engine::kFieldSeconds * 1000.0);
+            else
+                std::snprintf(text, sizeof text, "Input delay: none (you play this stage on your own)");
+            lines.push_back({dw4::game::InfoTone::normal, text});
+            if (recent.samples) {
+                std::snprintf(text, sizeof text, "Your inputs, last seconds: %.0f ms until they run (max %.0f); %.1f %% came too late for the server.",
+                              recent.exec_avg() * 1000.0, recent.exec_max * 1000.0, recent.drop_rate() * 100.0);
+                lines.push_back({dw4::game::InfoTone::normal, text});
+            }
+            if (link.from_relay && link.sealed) {
+                std::snprintf(text, sizeof text, "Server: %llu of your inputs filled in, %llu late, of %llu in this stage.",
+                              static_cast<unsigned long long>(link.filled), static_cast<unsigned long long>(link.late),
+                              static_cast<unsigned long long>(link.sealed));
+                lines.push_back({dw4::game::InfoTone::normal, text});
+            }
+            std::snprintf(text, sizeof text, "Session: %llu inputs with others, latency avg %.0f ms; %d reconnects, %d resyncs, %zu stalls caught up.",
+                          static_cast<unsigned long long>(delayed.samples), delayed.exec_avg() * 1000.0, link.reconnects, link.resyncs,
+                          session.backlog_runs());
+            lines.push_back({dw4::game::InfoTone::dim, text});
+            if (online->log().is_open()) {
+                lines.push_back({dw4::game::InfoTone::dim, "When online play lags, send this file (it holds no password):"});
+                lines.push_back({dw4::game::InfoTone::normal, online->log().path().string()});
+            }
+            return lines;
+        };
+        f1.end_session = [&] { end_session(); };
+        f1.net_close = [&] { net.close(); };
+        f1.leave_room = [&] { leave_room(); };
+        f1.copy_log_path = [&] {
+            if (online && online->log().is_open()) ImGui::SetClipboardText(online->log().path().string().c_str());
+        };
+        f1.stage_info = [&] {
+            return "Stage: " + engine.stage_name() + "  (" + engine.loader_state() + ")  frame " +
+                   std::to_string((unsigned long long)(dw4::game::menu_still() ? 0 : engine.frame()));
+        };
+        // (Whether F1 pauses the game when it is open: the loop's pause, the
+        // lower screen's Menu tab and the console menu's chip.)
+        const auto menu_pauses = [&] { return settings.pause_in_menu && !options.smoke_frames && !net.active() && !online; };
+        f1.game_paused = [&, menu_pauses] { return show_menu && menu_pauses(); };
+        f1.toast = [&](const std::string& title, const std::string& text) {
+            toasts.push_back({title, text, std::chrono::steady_clock::now() + std::chrono::seconds(4)});
+        };
+        // ---- Android's console F1 menu (console_menu.hpp, docs/CONSOLE_MENU.md):
+        // the same actions and ops in console style. Its test switches count
+        // in test runs, and on Android through --env (debuggable builds).
+        const auto menu_env = [&](const char* name) -> const char* {
+#ifdef SDL_PLATFORM_ANDROID
+            return std::getenv(name);
+#else
+            return options.smoke_frames ? std::getenv(name) : nullptr;
+#endif
+        };
+        dw4::game::ConsoleMenu console{f1};
+        const bool console_default = [&] {
+            const char* style = menu_env("DW4_MENU_STYLE");
+#ifdef SDL_PLATFORM_ANDROID
+            return !(style && std::string(style) == "classic");
+#else
+            return style && std::string(style) == "console";
+#endif
+        }();
+        view.console_menu = console_default;
+        bool console_open = false; // F1 showed in console style in the last pass
+        // DW4_MENU_TRACE: the game's pad in the 3 passes after the console menu closed (the latch).
+        const bool console_trace = menu_env("DW4_MENU_TRACE") != nullptr;
+        int console_after_close = 0;
+        // DW4_MENU_LOWER=1 (PC test runs): the window stands for the lower
+        // screen, the console menu in its Menu panel (with DW4_WINDOW=1240x1080).
+        const bool menu_lower_test = menu_env("DW4_MENU_LOWER") != nullptr;
+        if (const char* input = menu_env("DW4_MENU_INPUT")) console.set_input_mode(std::string(input) == "touch");
+        // The menu script and its virtual pad (menu_script.hpp): --menu-script
+        // FILE or DW4_MENU_SCRIPT=FILE, the pad's family DW4_MENU_PAD (thor).
+        dw4::game::MenuScript menu_script;
+        {
+            std::string script_file = options.menu_script.string();
+#ifndef SDL_PLATFORM_ANDROID
+            // (A test switch: without --smoke-test it would attach a virtual
+            // pad and end the run at the script's end.)
+            if (!script_file.empty() && !options.smoke_frames) {
+                std::cout << "menu script: ignored (--menu-script needs --smoke-test)\n";
+                script_file.clear();
+            }
+#endif
+            if (const char* file = menu_env("DW4_MENU_SCRIPT"); file && script_file.empty()) script_file = file;
+            std::string error;
+            if (!script_file.empty() && !menu_script.load(std::filesystem::u8path(script_file), error)) throw std::runtime_error("menu script: " + error);
+            const char* pad = menu_env("DW4_MENU_PAD");
+            if ((pad || !script_file.empty()) && !menu_script.attach_pad(pad ? pad : "thor", error)) throw std::runtime_error("menu script: " + error);
+        }
         auto print_load_timing = [&] {
             const std::string control = load_timing.control ? std::to_string(load_timing.control - load_timing.begin) : std::string("-");
             std::printf("loadtime %s%s: started after %lld fields, control after %s fields, loop %.1f ms (longest pass %.1f ms)\n",
@@ -2364,7 +3250,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 run_host.discord = discord ? &*discord : nullptr;
                 run_host.screenshot = options.screenshot;
                 run_host.test_frames = options.smoke_frames;
+                // (A run's F1 is its own, classic: overflow_host.cpp.)
+                view.console_menu = false;
                 const auto outcome = dw4::game::overflow::run_from_story(view, engine, request, run_host);
+                view.console_menu = console_default;
                 std::printf("overflow: run %s after %llu steps (%s Lv %d), run hash %016llx%s%s\n", dw4::game::overflow::run_end_name(outcome.end),
                             (unsigned long long)outcome.steps, dw4::game::overflow::form_display_name(outcome.form).c_str(), outcome.level,
                             (unsigned long long)outcome.run_hash, outcome.error.empty() ? "" : ": ", outcome.error.c_str());
@@ -2398,7 +3287,37 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 continue;
             }
             const auto pass_start = std::chrono::steady_clock::now();
+            view.pass_started = pass_start;
             bool pass_presented = false; // (online.log's pictures per second)
+            if (draw && !context_loss_frames.empty() && frame >= context_loss_frames.front()) {
+                context_loss_frames.erase(context_loss_frames.begin());
+                // (DW4_TEST_CONTEXT_LOSS: SDL_androidevents.c's restore after a
+                // lost context, with the old context really gone.)
+                SDL_GLContext lost = g_game_window.context;
+                if (SDL_GLContext fresh = SDL_GL_CreateContext(window)) {
+                    SDL_GL_MakeCurrent(window, fresh);
+                    SDL_GL_DestroyContext(lost);
+                    g_game_window.context = fresh;
+                    SDL_GL_SetSwapInterval(0);
+                    SDL_Event reset{};
+                    reset.type = SDL_EVENT_RENDER_DEVICE_RESET;
+                    reset.render.windowID = SDL_GetWindowID(window);
+                    SDL_PushEvent(&reset);
+                    std::cout << "test: the OpenGL context lost and made again at frame " << frame << '\n';
+                } else {
+                    std::cout << "test: no second OpenGL context at frame " << frame << ": " << SDL_GetError() << '\n';
+                }
+            }
+            // The menu script's inputs of this pass (before the events are read).
+            if (menu_script.active()) {
+                dw4::game::MenuScript::Host script_host{view, console};
+                menu_script.update(script_host);
+                if (!script_host.shot.empty() && !options.screenshot.empty()) ui_shot = script_host.shot;
+                if (script_host.finished) {
+                    if (menu_script.failures()) exit_code = 3;
+                    running = false;
+                }
+            }
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 // A binding being edited, ImGui, quit, the window size,
@@ -2418,6 +3337,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
             if (view.quit_requested) running = false;
+            // Back from the background (Android; the loop stood in
+            // SDL_PollEvent): the game goes on where it stopped, without
+            // catching up the time it stood.
+            if (dw4::game::take_lifecycle(dw4::game::LifecycleNote::foreground)) {
+                last = std::chrono::steady_clock::now();
+                accumulator = 0;
+                view.next_present = view.last_present = last;
+                std::cout << "lifecycle: the game goes on\n";
+            }
+            // Android said memory is short: the textures no picture used in
+            // the last frames go (they come again when drawn).
+            if (dw4::game::take_lifecycle(dw4::game::LifecycleNote::low_memory) && renderer) {
+                const auto trimmed = renderer->trim_textures();
+                std::cout << "lifecycle: low memory: " << trimmed.textures << " textures (" << (trimmed.bytes >> 10) << " KiB) let go\n";
+            }
             // The display language between two steps (docs/L10N.md): a change
             // lays every text line out again; nothing in the game state moves.
             languages.at_frame(frame);
@@ -2445,6 +3379,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
             } else if (!show_menu && !title_online.active) {
                 // The keyboard and the controllers (host_view.hpp).
                 live = dw4::game::read_live_input(view);
+                if (console_after_close > 0) {
+                    --console_after_close;
+                    char text[64];
+                    std::snprintf(text, sizeof text, "menu: game pad after close: %08x", unsigned(live[0].buttons));
+                    dw4::game::menu_log(text);
+                }
             }
             // (Data Overflow: the story steps with neutral live pads while it
             // fades out, as with the F1 menu open; its sound fades along.)
@@ -2501,14 +3441,57 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
             }
+            // While another window has the focus the game pauses and goes
+            // quiet when [menu] pause_unfocused says so (default on Android:
+            // the notification shade or the quick settings, Android pauses the
+            // app only when it leaves the screen and the controller's input
+            // goes to that window meanwhile; the PC's default is off: Alt+Tab,
+            // a minimized window). Never in a session (its steps are every
+            // member's) or a test run.
+            const bool focus_paused =
+                view.unfocused && settings.pause_unfocused && !options.smoke_frames && !net.active() && !net.in_lobby() && !online;
+            if (focus_paused != focus_paused_before) {
+                std::cout << (focus_paused ? "focus: another window is in front: the game pauses\n" : "focus: back: the game goes on\n");
+                focus_paused_before = focus_paused;
+            }
             // (Behind Play's loading screen the title is not heard either.)
-            view.gain = overflow_switch.gain() * (title_driver.covering() ? 0.0f : 1.0f);
+            view.gain = overflow_switch.gain() * (title_driver.covering() || focus_paused ? 0.0f : 1.0f);
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
             // (DW4_DEV_PRESENT: every pass is one present of the virtual refresh.)
             const double pass_seconds = dev.presenting() ? 1.0 / dev.hz : std::chrono::duration<double>(now - last).count();
-            accumulator += pass_seconds;
+            // With VSync the step clock counts a pass in the display's
+            // refreshes (RefreshClock: the jitter of a pass's start no longer
+            // decides between 0 and 2 steps); an online room's session paces
+            // its steps from the measured time itself, test runs step once.
+            // (DW4_DEV_MEASURED_CLOCK=1: the measured time as before, for a
+            // comparison with DW4_FRAME_STATS.)
+            static const bool measured_clock = std::getenv("DW4_DEV_MEASURED_CLOCK") && std::atoi(std::getenv("DW4_DEV_MEASURED_CLOCK")) != 0;
+            const bool refresh_paced = settings.vsync && !measured_clock && !dev.presenting() && !options.smoke_frames && !online && !net.active() && view.window;
+            if (refresh_paced) {
+                double refresh_hz = 0;
+                if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(view.window)))
+                    refresh_hz = mode->refresh_rate_numerator > 0 && mode->refresh_rate_denominator > 0
+                                     ? double(mode->refresh_rate_numerator) / double(mode->refresh_rate_denominator)
+                                     : double(mode->refresh_rate);
+                accumulator += refresh_clock.pass(pass_seconds, refresh_hz);
+            } else {
+                refresh_clock.reset();
+                accumulator += pass_seconds;
+            }
+            // (DW4_FRAME_STATS: when the step clock starts and stops counting
+            // in refreshes; the first 20 changes.)
+            static const bool pacing_trace = std::getenv("DW4_FRAME_STATS") != nullptr;
+            static bool counting_before = false;
+            static int counting_changes = 0;
+            if (pacing_trace && refresh_clock.counting() != counting_before && counting_changes < 20) {
+                counting_before = refresh_clock.counting();
+                ++counting_changes;
+                if (counting_before) std::printf("frames: the step clock counts in the display's refreshes (%.3f ms)\n", refresh_clock.period() * 1000.0);
+                else std::printf("frames: the step clock takes the measured time (the passes do not come in whole refreshes)\n");
+                std::fflush(stdout);
+            }
             last = now;
             // (Online rooms keep real time in test runs too: the relay seals on its clock.)
             int steps = options.smoke_frames && !dev.presenting() && !online && !ui_script.loaded() ? (net.in_lobby() ? 0 : 1) : 0;
@@ -2554,7 +3537,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // no menu, so no attract movie starts while the player types; over
             // the menu the title runs on: it waits for the player anyway.)
             const auto* title_menu = engine.get<dw4::engine::Title2Manager>();
-            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online) || net.in_lobby() ||
+            const bool paused = f1.game_paused() || net.in_lobby() || focus_paused ||
                                 (title_online.active && !online && !(title_menu && title_menu->menu_open()));
             if (net.active())
                 if (auto message = net.take_message(); !message.empty()) {
@@ -3120,7 +4103,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
 #endif
+                const auto step_started = std::chrono::steady_clock::now();
                 engine.step(pads);
+                dw4::game::frame_stats_step(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - step_started).count());
                 if (online) {
                     online->session().after_step(steady_seconds());
                     online->after_live_step(steady_seconds());
@@ -3527,7 +4512,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (lobby) {
                 const auto* sys = engine.get<dw4::engine::GameSystem>();
                 lobby->set_offline_game(!online && ((sys && sys->game_started) || !dw4::game::is_menu_stage(engine.stage_name())));
-                lobby->update(steady_seconds(), title_online_shown || (show_menu && online_tab_shown) || ui_script.active());
+                lobby->update(steady_seconds(), title_online_shown || (show_menu && online_tab_shown) || ui_script.active() || screen2_online_shown);
                 if (online && lobby->take_leave_request()) {
                     online->leave_prompt = false;
                     leave_room();
@@ -3783,7 +4768,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // the game reads the pad.
                 // (Over the title the cursor always shows, as in the game's
                 // own menus: A presses the highlighted button at once.)
-                dw4::game::set_menu_navigation(show_menu || title_online.active, title_online.active && !show_menu);
+                // (Not while the console menu shows F1: it reads the pad itself.)
+                const bool console_shows = show_menu && view.console_menu;
+                dw4::game::set_menu_navigation(!console_shows && ((show_menu && !view.menu_on_screen2) || title_online.active),
+                                               title_online.active && !show_menu);
                 // (A UI test run's keys: last frame's go up, this frame's go down.)
                 for (const int key : ui_keys_down) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), false);
                 ui_keys_down.clear();
@@ -3871,11 +4859,98 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     online_ui.focus_below_go = !online_ui.focus_go && !online_ui.focus_visibility && !go_session.go_offers().empty();
                 }
                 menu_shown_before = show_menu;
+                // The console menu: opened (the one-shots), closed (its modals
+                // lost), and once per pass player 1's buttons and the keys.
+                if (show_menu && view.console_menu && !console_open) {
+                    console.opened(view, menu_tab, view.menu_section, steady_seconds());
+                    menu_tab.clear();
+                    view.menu_section.clear();
+                    console_open = true;
+                } else if (!show_menu && console_open) {
+                    console.closed(view);
+                    console_open = false;
+                    if (console_trace) console_after_close = 3;
+                }
+                if (!show_menu) view.console_menu = console_default; // (the next opening's style)
+                if (show_menu && view.console_menu) {
+                    dw4::game::ConsoleInput console_input{dw4::game::player1_menu_keys(view), view.console_keys, steady_seconds()};
+                    view.console_keys.clear();
+                    console.update(view, console_input);
+                    if (console.classic_requested()) {
+                        // (Developer > Classic menu: the PC's F1 menu until it closes.)
+                        console.closed(view);
+                        console_open = false;
+                        view.console_menu = false;
+                    }
+                } else {
+                    view.console_keys.clear();
+                }
                 // Overhead name tags over the picture, under the menus.
                 dw4::game::draw_tags(view, scene);
-                if (show_menu) {
-                    ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
+                // The second screen's panels (screen2.hpp): this frame's facts
+                // (read from the game after its step, presentation only), and
+                // their overlay window over the game, the PC's form (Android's
+                // while no second screen shows them), off unless [screen2]
+                // overlay.
+                const auto screen2_lower = dw4::game::screen2_display();
+                const bool screen2_on_lower = screen2_lower.surface && settings.screen2_mode == dw4::game::Screen2Mode::automatic;
+                dw4::game::Screen2Status screen2_facts;
+                dw4::game::Screen2Online screen2_net;
+                if (screen2_on_lower || settings.screen2_overlay) {
+                    screen2_facts = dw4::game::screen2_status(engine, view.labels, online ? online->session().own_slot() : 0);
+                    screen2_net.lobby = lobby.get();
+                    screen2_net.live = online ? &room_live : nullptr;
+                    if (net.active())
+                        screen2_net.direct = "Player " + std::to_string(net.local_slot() + 1) + " of " + std::to_string(net.start().players) +
+                                             " (input delay " + std::to_string(net.start().delay) + ")";
+                    else if (net.in_lobby())
+                        screen2_net.direct = lobby_status;
+                }
+                screen2_online_shown = false;
+                // (Not over the console menu on this screen: it fills the
+                // screen, and the panels' window would lie over its rows.)
+                const bool console_on_top = show_menu && view.console_menu && !view.menu_on_screen2;
+                if (!screen2_on_lower && !console_on_top)
+                    screen2_online_shown = dw4::game::draw_screen2_overlay(settings, settings_changed, screen2_facts, screen2_net);
+                // The F1 menu: in the window, or on the second screen's Menu
+                // tab when it was opened there (the same tabs either way).
+                const auto draw_f1_menu = [&](bool on_screen2) {
+                    if (view.console_menu) {
+                        console.draw(view, on_screen2 ? dw4::game::ConsolePlace::lower : dw4::game::ConsolePlace::top);
+                        return;
+                    }
+                    if (!on_screen2) {
+                    if (const float s = dw4::game::ui_scale(); s == 1.0f) {
+                        ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
+                    } else {
+                        // (A larger menu size: the window as large as the
+                        // display allows, centred, at every opening and when
+                        // the size changes; it scrolls inside.)
+                        static float sized_for = 0;
+                        const ImGuiCond cond = sized_for != s ? ImGuiCond_Always : ImGuiCond_Appearing;
+                        sized_for = s;
+                        const ImVec2 display = ImGui::GetIO().DisplaySize;
+                        const float margin = dw4::game::ui_px(8.0f);
+                        const ImVec2 room(std::max(display.x - 2 * margin, 200.0f), std::max(display.y - 2 * margin, 200.0f));
+                        ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(room.x, dw4::game::ui_px(300.0f)), std::min(room.y, dw4::game::ui_px(200.0f))), room);
+                        ImGui::SetNextWindowSize(ImVec2(std::min(room.x, dw4::game::ui_px(620.0f)), std::min(room.y, dw4::game::ui_px(560.0f))), cond);
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), cond, ImVec2(0.5f, 0.5f));
+                    }
+                    if (menu_scroll_page >= 0 || menu_scroll_px >= 0.0f)
+                        ImGui::SetNextWindowScroll(ImVec2(0.0f, menu_scroll_px >= 0.0f ? menu_scroll_px : float(menu_scroll_page) * menu_scroll_page_height));
                     ImGui::Begin("DW4 PC (F1)");
+                    if (menu_scroll_page >= 0) {
+                        // (The page height and the last page from this frame's window.)
+                        menu_scroll_page_height = ImGui::GetContentRegionAvail().y;
+                        const float max_y = ImGui::GetScrollMaxY();
+                        const int last = menu_scroll_page_height > 0 ? int(std::ceil(max_y / menu_scroll_page_height - 1e-3f)) : 0;
+                        const std::string line = "menu-scroll: page " + std::to_string(menu_scroll_page) + " of " + std::to_string(last);
+                        if (line != menu_scroll_logged) {
+                            menu_scroll_logged = line;
+                            std::cout << line << std::endl;
+                        }
+                    }
+                    }
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
                         {
@@ -3894,16 +4969,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (ImGui::BeginCombo("Language", entry_label(current).c_str())) {
                                 for (std::size_t i = 0; i < entries.size(); ++i) {
                                     ImGui::PushID(int(i));
-                                    if (ImGui::Selectable(entry_label(i).c_str(), i == current) && i != current) {
-                                        std::string message;
-                                        if (languages.select(entries[i].code, &message)) {
-                                            settings.language = entries[i].code;
-                                            settings_changed = true;
-                                        } else {
-                                            state_message = "Language: " + message;
-                                            message_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-                                        }
-                                    }
+                                    if (ImGui::Selectable(entry_label(i).c_str(), i == current) && i != current) f1.select_language(entries[i].code);
                                     ImGui::PopID();
                                 }
                                 ImGui::EndCombo();
@@ -3922,41 +4988,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             // "Original" only while the running game is not randomized
                             // either: a loaded save's bond keeps its randomizer whatever
                             // the settings say.
+                            // (The preset's state and its block: f1_actions.hpp.)
                             const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
-                            const bool original_graphics = dw4::game::is_original_graphics(settings.graphics);
-                            const bool modern_graphics = dw4::game::is_modernized_graphics(settings.graphics);
-                            const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
-                                                  !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
-                                                  settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0 &&
-                                                  !playing.active() && original_graphics;
-                            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
-                                                    settings.fast_loading && modern_graphics;
-                            int preset = original ? 0 : modernized ? 1 : 2;
-                            static const char* presets[] = {"Original", "Modernized", "Custom"};
-                            if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
-                                const bool modern = preset == 1;
-                                settings.widescreen = modern;
-                                settings.smooth_motion = modern;
-                                settings.msaa = modern ? 4 : 0;
-                                settings.skip_intro = modern;
-                                settings.fast_loading = modern;
-                                // Graphics: Original is the GameCube's look (no
-                                // pack, bilinear, the game's shadow map);
-                                // Modernized a pack's 4x textures, 16x
-                                // anisotropic filtering and a 4x shadow map
-                                // (sharpening is left as it is: a matter of
-                                // taste). graphics_options.hpp preset_graphics.
-                                settings.graphics = dw4::game::preset_graphics(modern, settings.graphics);
-                                if (renderer) renderer->set_graphics(settings.graphics);
-                                loading_override.reset();
-                                if (!modern) {
-                                    settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
-                                    settings.rand_seed = 0;
-                                }
-                                // (Online the host's gameplay settings stay.)
-                                if (!net.active()) apply_gameplay(engine.cheats());
-                                settings_changed = true;
-                            }
+                            int preset = f1.preset_index();
+                            if (ImGui::Combo("Preset", &preset, dw4::game::menu::kPresetNames, 3) && preset < 2) f1.apply_preset(preset == 1);
                             ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the game's own textures and shadows, the "
                                                 "intro, GameCube load times and the original balance.");
@@ -3976,16 +5011,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::PopTextWrapPos();
                             // Loading: the original's disc and loading-thread time or none
                             // of it (shown as it applies: online the host's choice).
-                            const bool fast = net.active() ? engine.cheats().fast_loading : fast_loading_choice();
+                            const bool fast = f1.loading_fast();
                             int loading = fast ? 1 : 0;
-                            static const char* loadings[] = {"Original", "Fast"};
                             ImGui::BeginDisabled(net.active());
-                            if (ImGui::Combo("Loading", &loading, loadings, 2)) {
-                                settings.fast_loading = loading == 1;
-                                loading_override.reset();
-                                apply_gameplay(engine.cheats());
-                                settings_changed = true;
-                            }
+                            if (ImGui::Combo("Loading", &loading, dw4::game::menu::kLoadingNames, 2)) f1.set_loading(loading == 1);
                             ImGui::EndDisabled();
                             ImGui::PushTextWrapPos(0.0f);
                             if (net.active())
@@ -4012,13 +5041,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         dw4::game::settings_audio_section(view);
                         dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
-                        if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        dw4::game::settings_screen2_section(settings, settings_changed, view.menu_section);
+                        if (ImGui::CollapsingHeader("Save states", dw4::game::f1_tree_flags(ImGuiTreeNodeFlags_DefaultOpen))) {
+                            ImGui::PushTextWrapPos(0.0f);
+#ifdef SDL_PLATFORM_ANDROID
+                            ImGui::TextDisabled("Files: %s", state_dir.string().c_str());
+#else
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
+#endif
+                            ImGui::PopTextWrapPos();
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
                                 ImGui::PushID(int(slot));
-                                if (ImGui::SmallButton("Save")) save_state(slot);
+                                if (ImGui::SmallButton("Save")) f1.save_state(slot);
                                 ImGui::SameLine();
-                                if (ImGui::SmallButton("Load")) load_state(slot);
+                                if (ImGui::SmallButton("Load")) f1.load_state(slot);
                                 ImGui::SameLine();
                                 if (state_slots[slot])
                                     ImGui::Text("%zu: %s, %zu steps since its stage loaded", slot + 1, state_slots[slot]->snapshot.stage.c_str(),
@@ -4028,16 +5064,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::PopID();
                             }
                         }
-                        if (ImGui::CollapsingHeader("Mods")) {
+                        if (ImGui::CollapsingHeader("Mods", dw4::game::f1_tree_flags())) {
                             ImGui::TextDisabled("Folders in %s with a mod.ini; changes apply at the next start.", mods_root.string().c_str());
                             if (mods.empty()) ImGui::TextDisabled("No mods found.");
                             for (auto& mod : mods) {
                                 bool enabled = !settings.disabled_mods.count(mod.id);
-                                if (ImGui::Checkbox(("##mod" + mod.id).c_str(), &enabled)) {
-                                    if (enabled) settings.disabled_mods.erase(mod.id);
-                                    else settings.disabled_mods.insert(mod.id);
-                                    settings_changed = true;
-                                }
+                                if (ImGui::Checkbox(("##mod" + mod.id).c_str(), &enabled))
+                                    dw4::game::ops::set_mod_enabled(dw4::game::host_ops(view), mod.id, enabled);
                                 ImGui::SameLine();
                                 ImGui::Text("%s %s%s%s (%zu files)", mod.name.c_str(), mod.version.c_str(), mod.author.empty() ? "" : " by ",
                                             mod.author.c_str(), mod.file_count);
@@ -4048,9 +5081,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 if (!mod.description.empty()) ImGui::TextDisabled("    %s", mod.description.c_str());
                             }
                         }
-                        if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
-                        if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
-                            settings_changed = true;
+                        {
+                            bool pause = settings.pause_in_menu;
+                            if (ImGui::Checkbox("Pause the game while this menu is open", &pause))
+                                dw4::game::ops::set_pause_in_menu(dw4::game::host_ops(view), pause);
+                            // ([menu] pause_unfocused: default on Android, off on the PC.)
+                            bool unfocused = settings.pause_unfocused;
+#ifdef SDL_PLATFORM_ANDROID
+                            const char* unfocused_label = "Pause the game while another window is in front (notifications, quick settings)";
+#else
+                            const char* unfocused_label = "Pause the game while another window is in front (Alt+Tab, minimized)";
+#endif
+                            if (ImGui::Checkbox(unfocused_label, &unfocused))
+                                dw4::game::ops::set_pause_unfocused(dw4::game::host_ops(view), unfocused);
+                            bool skip = settings.skip_intro;
+                            if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &skip))
+                                dw4::game::ops::set_skip_intro(dw4::game::host_ops(view), skip);
+                        }
                         ImGui::TextDisabled("Save (memory card slot A): %s", player_store.describe(0).c_str());
                         ImGui::TextDisabled("(the Saves tab shows slot B, the backups and imports GameCube saves)");
                         ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
@@ -4065,7 +5112,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     if (ImGui::BeginTabItem("Gameplay", nullptr, tab_flags("Gameplay"))) {
                         // Data Overflow's Simulator Keeper in the lobby (SURVIVAL.md 3.2).
-                        if (ImGui::Checkbox("Show the simulator NPC", &settings.overflow_npc)) view.settings_changed = true;
+                        if (bool npc = settings.overflow_npc; ImGui::Checkbox("Show the simulator NPC", &npc))
+                            dw4::game::ops::set_overflow_npc(dw4::game::host_ops(view), npc);
                         // Data Overflow's dev start (SURVIVAL.md 15.1, round O1a).
                         const std::string refusal = overflow_switch.busy() ? std::string("A run is starting.")
                                                                            : dw4::game::overflow::start_refusal(engine, net.active() || net.in_lobby() || online || title_online.active);
@@ -4162,7 +5210,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::SameLine();
                                 // The target box beside the box it takes.
                                 ImGui::BeginDisabled(!tab.chosen[i]);
-                                ImGui::SetNextItemWidth(80);
+                                ImGui::SetNextItemWidth(dw4::game::ui_px(80));
                                 ImGui::Combo("##into", &tab.into[i], box_names, 4);
                                 ImGui::EndDisabled();
                                 ImGui::SameLine();
@@ -4172,7 +5220,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::PopID();
                             }
                             static const char* slots[] = {"Slot A", "Slot B"};
-                            ImGui::SetNextItemWidth(120);
+                            ImGui::SetNextItemWidth(dw4::game::ui_px(120));
                             ImGui::Combo("Into the save of", &tab.slot, slots, 2);
                             std::vector<dw4::save::BoxMove> moves;
                             bool clash = false;
@@ -4202,7 +5250,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::PopTextWrapPos();
                         }
                         if (!tab.message.empty()) ImGui::TextWrapped("%s", tab.message.c_str());
-                        cloud_panel.draw(player_store, !online && !net.active() && !net.in_lobby());
+                        cloud_panel.draw(player_store, f1.cloud_available());
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Online", nullptr, tab_flags("Online"))) {
@@ -4339,29 +5387,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::TextDisabled("No save in play: a new game binds the settings below to its save.");
                             }
                             ImGui::PopTextWrapPos();
-                            if (!net.active() && randomizer_unique != 0 && randomizer_bound) {
-                                if (randomizer_bound->active() && ImGui::Button("Play this save without the randomizer")) {
-                                    // An explicit "off" bond: the save plays the original
-                                    // game from now on (enemies spawning from here, the next
-                                    // stage change, drops), also after a restart.
-                                    randomizer_bound = dw4::game::RandomizerConfig{};
-                                    dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, randomizer_name, *randomizer_bound);
-                                    std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(randomizer_unique)
-                                              << " plays the original game now\n";
-                                    toasts.push_back({"Randomizer", "This save plays the original game now.",
-                                                      std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+                            // (f1.randomizer_can_*: the console menu's rows ask the same.)
+                            const bool can_unbind = f1.randomizer_can_unbind();
+                            if (can_unbind && ImGui::Button("Play this save without the randomizer")) {
+                                f1.randomizer_unbind();
+                                gameplay_changed = true;
+                            }
+                            if (f1.randomizer_can_bind()) {
+                                if (can_unbind) ImGui::SameLine();
+                                if (ImGui::Button("Bind the settings below to this save")) {
+                                    f1.randomizer_bind();
                                     gameplay_changed = true;
-                                }
-                                if (randomizer_settings().active() && !(*randomizer_bound == randomizer_settings())) {
-                                    if (randomizer_bound->active()) ImGui::SameLine();
-                                    if (ImGui::Button("Bind the settings below to this save")) {
-                                        randomizer_bound = randomizer_settings();
-                                        dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, randomizer_name, *randomizer_bound);
-                                        dw4::game::write_randomizer_spoiler(randomizer_folder, randomizer_unique, *randomizer_bound);
-                                        std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(randomizer_unique) << " bound to "
-                                                  << dw4::game::describe_randomizer(*randomizer_bound) << "\n";
-                                        gameplay_changed = true;
-                                    }
                                 }
                             }
                         }
@@ -4373,14 +5409,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         ImGui::SameLine();
                         if (ImGui::Button("New seed")) {
-                            settings.rand_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+                            f1.randomizer_new_seed();
                             gameplay_changed = true;
                         }
                         gameplay_changed |= ImGui::Checkbox("Item drops", &settings.rand_drops);
-                        static const char* enemy_modes[] = {"Off", "Every enemy on its own", "One family per wave"};
-                        gameplay_changed |= ImGui::Combo("Enemies", &settings.rand_enemies, enemy_modes, 3);
-                        static const char* zone_modes[] = {"Off", "Dungeon entrances within an area"};
-                        gameplay_changed |= ImGui::Combo("Loading zones", &settings.rand_zones, zone_modes, 2);
+                        gameplay_changed |= ImGui::Combo("Enemies", &settings.rand_enemies, dw4::game::menu::kEnemyModeNames, 3);
+                        gameplay_changed |= ImGui::Combo("Loading zones", &settings.rand_zones, dw4::game::menu::kZoneModeNames, 2);
                         ImGui::PushTextWrapPos(0.0f);
                         ImGui::TextDisabled("Drops change into other items of the same kind (key items stay). Enemies become other "
                                             "Digimon with the original enemy's strength, EXP and drops; bosses and story fights stay. "
@@ -4389,10 +5423,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                             "spoiler log beside it); a save from before keeps playing the original game until you "
                                             "bind the settings to it above.");
                         ImGui::PopTextWrapPos();
-                        if (gameplay_changed && !cheats_online) {
-                            apply_gameplay(cheats);
-                            settings_changed = true;
-                        }
+                        if (gameplay_changed) f1.gameplay_changed(); // (offline only)
                         ImGui::EndDisabled();
                         if (net.active()) ImGui::TextDisabled("Online, the host's settings apply.");
                         if (auto* sys = engine.get<dw4::engine::GameSystem>(); sys && !cheats_online) {
@@ -4403,13 +5434,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::SeparatorText(("Player " + std::to_string(slot + 1)).c_str());
                                 ImGui::Text("Level %d  HP %d/%d  MP %d/%d  Bits %d", player.stats.level, player.hp, player.max_hp,
                                             player.mp, player.max_mp, player.bits);
-                                if (ImGui::Button("Refill HP/MP")) sys->cheat_refill(engine, slot);
+                                if (ImGui::Button("Refill HP/MP")) f1.cheat_refill(slot);
                                 ImGui::SameLine();
-                                if (ImGui::Button("+1 level")) sys->cheat_levels(engine, slot, 1);
+                                if (ImGui::Button("+1 level")) f1.cheat_levels(slot, 1);
                                 ImGui::SameLine();
-                                if (ImGui::Button("+10 levels")) sys->cheat_levels(engine, slot, 10);
+                                if (ImGui::Button("+10 levels")) f1.cheat_levels(slot, 10);
                                 ImGui::SameLine();
-                                if (ImGui::Button("+100,000 bits")) sys->cheat_bits(slot, 100000);
+                                if (ImGui::Button("+100,000 bits")) f1.cheat_bits(slot, 100000);
                                 ImGui::PopID();
                             }
                         }
@@ -4423,15 +5454,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("(randomizer runs: %zu)", profile.unlocked_randomizer.size());
                         }
-                        const std::int64_t minutes = profile.stat("play_minutes");
+                        const std::int64_t minutes = dw4::game::menu_still() ? 0 : profile.stat("play_minutes");
                         ImGui::TextDisabled("In-game time %lld h %02lld min (without loading).", (long long)(minutes / 60), (long long)(minutes % 60));
                         if (!achievements_on()) ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "Achievements are switched off (Settings).");
                         else if (last_gate != dw4::game::AchievementGate::open)
                             ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "%s", dw4::game::achievement_gate_text(last_gate));
                         ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextDisabled("Offline achievements stay on this PC (%s). Cheats, rebalancing and a save state loaded in "
+                        ImGui::TextDisabled("Offline achievements stay on %s (%s). Cheats, rebalancing and a save state loaded in "
                                             "the running stage pause them; runs with the randomizer count separately.",
-                                            profile_path.empty() ? "not saved" : profile_path.string().c_str());
+                                            dw4::game::kThisMachine, profile_path.empty() ? "not saved" : profile_path.string().c_str());
                         ImGui::PopTextWrapPos();
                         auto day = [](std::int64_t unix_seconds) {
                             const std::chrono::sys_days days = std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds(std::chrono::seconds(unix_seconds)));
@@ -4450,7 +5481,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 }
                             const std::string header = std::string(dw4::game::achievement_category_name(cat)) + " (" + std::to_string(done) + "/" +
                                                        std::to_string(total) + ")###cat" + std::to_string(category);
-                            if (!ImGui::CollapsingHeader(header.c_str())) continue;
+                            if (!ImGui::CollapsingHeader(header.c_str(), dw4::game::f1_tree_flags())) continue;
                             if (!ImGui::BeginTable(("ach" + std::to_string(category)).c_str(), 3, ImGuiTableFlags_SizingStretchProp)) continue;
                             for (const auto& def : list) {
                                 if (def.category != cat) continue;
@@ -4479,8 +5510,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     if (ImGui::BeginTabItem("Debug", nullptr, tab_flags("Debug"))) {
                     ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
-                    ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
-                                renderer->mesh_count(), renderer->texture_count());
+                    ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)(dw4::game::menu_still() ? 0 : engine.frame()),
+                                items.size(), renderer->mesh_count(), dw4::game::menu_still() ? std::size_t(0) : renderer->texture_count());
                     static char stage[64] = "stagis10";
                     ImGui::InputText("##stage", stage, sizeof stage);
                     ImGui::SameLine();
@@ -4493,20 +5524,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                         p->on_ground ? 1 : 0);
                         }
                     }
-                    if (ImGui::CollapsingHeader("Unimplemented original behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (ImGui::CollapsingHeader("Unimplemented original behavior", dw4::game::f1_tree_flags(ImGuiTreeNodeFlags_DefaultOpen))) {
                         for (const auto& note : engine.notes()) ImGui::BulletText("%s (x%zu)", note.text.c_str(), note.count);
                     }
-                    if (ImGui::CollapsingHeader("Demo scripts")) {
+                    if (ImGui::CollapsingHeader("Demo scripts", dw4::game::f1_tree_flags())) {
                         for (const auto& line : engine.demo().describe()) ImGui::TextUnformatted(line.c_str());
                     }
-                    if (ImGui::CollapsingHeader("Log")) {
+                    if (ImGui::CollapsingHeader("Log", dw4::game::f1_tree_flags())) {
                         for (const auto& line : engine.log_lines()) ImGui::TextUnformatted(line.c_str());
                     }
                     ImGui::EndTabItem();
                     }
                     ImGui::EndTabBar();
                     }
-                    ImGui::End();
+                    if (!on_screen2) ImGui::End();
+                };
+                if (show_menu && !view.menu_on_screen2) {
+                    if (menu_lower_test && view.console_menu) {
+                        // (DW4_MENU_LOWER: the lower screen's Menu panel in the window, over black.)
+                        ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, 255));
+                        dw4::game::Screen2Menu lower_menu;
+                        lower_menu.open = lower_menu.here = lower_menu.own_chrome = true;
+                        lower_menu.draw = [&] { console.draw(view, dw4::game::ConsolePlace::lower); };
+                        dw4::game::draw_screen2_screen(settings, settings_changed, screen2_facts, screen2_net, lower_menu);
+                        if (lower_menu.ask == dw4::game::Screen2Menu::Ask::close) dw4::game::toggle_menu_logged(view, "the second screen");
+                    } else {
+                        draw_f1_menu(false);
+                    }
                 }
                 online_tab_shown = show_menu && online_tab_now;
                 // The online screens over the title (its menu's third entry
@@ -4585,8 +5629,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 } else if (title_online.active && !lobby) {
                     title_online.active = false;
                 }
+                // (Under the console menu's header while it fills this screen:
+                // 8 u margin, 48 u header, 8 u.)
+                const float notice_y = show_menu && view.console_menu && !view.menu_on_screen2 ? dw4::game::ui_px(64) : dw4::game::ui_px(12);
                 if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
-                    ImGui::SetNextWindowPos(ImVec2(12, 12));
+                    ImGui::SetNextWindowPos(ImVec2(dw4::game::ui_px(12), notice_y));
                     ImGui::SetNextWindowBgAlpha(0.6f);
                     ImGui::Begin("##state", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4608,7 +5655,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const std::string line = session.is_host() ? std::string("Instance: ") + kVisibility[vis] + "   {MENU} change"
                                                                    : "Instance: " + session.member_name(session.host()) + "'s (" + kVisibility[vis] + ")";
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
-                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 64), ImGuiCond_Always, ImVec2(0.5f, 1));
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(64)), ImGuiCond_Always, ImVec2(0.5f, 1));
                         ImGui::SetNextWindowBgAlpha(0.6f);
                         ImGui::Begin("##instance_line", nullptr,
                                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4658,7 +5705,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (const auto* panels = engine.get<dw4::engine::PanelManager>()) home_line = panels->disk_under_cursor(own) == 8;
                     if (home_line) {
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
-                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 96), ImGuiCond_Always, ImVec2(0.5f, 1));
+                        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(96)), ImGuiCond_Always, ImVec2(0.5f, 1));
                         ImGui::SetNextWindowBgAlpha(0.6f);
                         ImGui::Begin("##host_exit", nullptr,
                                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4681,7 +5728,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 24), ImGuiCond_Always, ImVec2(0.5f, 1));
+                    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - dw4::game::ui_px(24)), ImGuiCond_Always, ImVec2(0.5f, 1));
                     ImGui::SetNextWindowBgAlpha(0.6f);
                     ImGui::Begin("##online", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4703,7 +5750,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                           : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
                                                                                             : ImVec4(1.0f, 0.4f, 0.4f, 1);
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(12, display.y - 12), ImGuiCond_Always, ImVec2(0, 1));
+                    ImGui::SetNextWindowPos(ImVec2(dw4::game::ui_px(12), display.y - dw4::game::ui_px(12)), ImGuiCond_Always, ImVec2(0, 1));
                     ImGui::SetNextWindowBgAlpha(0.45f);
                     ImGui::Begin("##net", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -4766,14 +5813,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
                 if (!toasts.empty()) {
                     const ImVec2 display = ImGui::GetIO().DisplaySize;
-                    ImGui::SetNextWindowPos(ImVec2(display.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+                    ImGui::SetNextWindowPos(ImVec2(display.x - dw4::game::ui_px(12), notice_y), ImGuiCond_Always, ImVec2(1, 0));
                     ImGui::SetNextWindowBgAlpha(0.75f);
                     ImGui::Begin("##achievements", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                     // Long notices (a save path) wrap instead of running off
                     // the window's left edge.
-                    ImGui::PushTextWrapPos(std::min(display.x - 40.0f, std::max(360.0f, display.x * 0.4f)));
+                    ImGui::PushTextWrapPos(std::min(display.x - dw4::game::ui_px(40.0f), std::max(dw4::game::ui_px(360.0f), display.x * 0.4f)));
                     for (const auto& toast : toasts) {
                         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", toast.title.c_str());
                         // ("Press {START} ...": the controller's picture.)
@@ -4785,6 +5832,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // Data Overflow's fade (nothing while no run is near).
                 dw4::game::overflow::draw_fade(overflow_switch.black());
+                // The menu button for touch (Android), over the fade too.
+                dw4::game::draw_touch_menu_button(view);
                 dw4::game::render_ui();
 
                 const bool shoot = (!options.screenshot.empty() &&
@@ -4803,6 +5852,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     dw4::game::write_screenshot(path, width, height);
                     std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
+                    if (screen2_on_lower) {
+                        const auto dot = path.rfind('.');
+                        dw4::game::screen2_request_shot(path.substr(0, dot) + "_screen2" + (dot == std::string::npos ? ".bmp" : path.substr(dot)));
+                    }
                 }
                 // DW4_DEV_DUMP / DW4_DEV_IDS: every present of the window,
                 // then the same draw list as item numbers (not presented).
@@ -4834,6 +5887,75 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     pass_presented = true;
                     if (online) online->session().presented(steady_seconds());
                 });
+                // The second screen (screen2.hpp): Android's lower screen shown
+                // or not ([screen2] mode), then its own frame after the window's
+                // swap (its panels, the F1 menu when it was opened there); what
+                // its touches asked for. Nothing on the PC.
+                dw4::game::screen2_request(settings.screen2_mode == dw4::game::Screen2Mode::automatic);
+                if (screen2_on_lower) {
+                    dw4::game::Screen2Menu screen2_menu;
+                    screen2_menu.open = show_menu;
+                    screen2_menu.here = view.menu_on_screen2;
+                    screen2_menu.pauses = menu_pauses();
+                    screen2_menu.own_chrome = view.console_menu;
+                    screen2_menu.draw = [&] { draw_f1_menu(true); };
+                    const bool menu_here = show_menu && view.menu_on_screen2;
+                    // The F1 menu there draws every pass while the controller
+                    // moves through it (and half a second after), else every
+                    // other pass as the panels do (a touch draws at once):
+                    // its live frame time graph alone would swap the lower
+                    // screen every pass, on the game's thread.
+                    static auto lower_menu_input = std::chrono::steady_clock::time_point{};
+                    const auto lower_now = std::chrono::steady_clock::now();
+                    if (menu_here && dw4::game::menu_pad_held(view)) lower_menu_input = lower_now;
+                    const bool lower_menu_busy =
+                        menu_here && (lower_now - lower_menu_input < std::chrono::milliseconds(500) || (view.console_menu && console.animating()));
+                    bool lower_online = false;
+                    const bool drawn = dw4::game::screen2_frame(
+                        [&] {
+                            // (The controller moves through the F1 menu where it shows.)
+                            // (The console menu reads the pad itself: no navigation there.)
+                            dw4::game::set_menu_navigation(menu_here && !view.console_menu, false);
+                            if (menu_here && !view.console_menu) dw4::game::feed_menu_pad(view);
+                        },
+                        [&] { lower_online = dw4::game::draw_screen2_screen(settings, settings_changed, screen2_facts, screen2_net, screen2_menu); },
+                        settings.ui_scale, lower_menu_busy);
+                    if (drawn) {
+                        screen2_online_shown = screen2_online_shown || lower_online;
+                        if (menu_here) online_tab_shown = show_menu && online_tab_now;
+                    }
+                    switch (screen2_menu.ask) {
+                    case dw4::game::Screen2Menu::Ask::open:
+                        if (!show_menu) dw4::game::toggle_menu(view);
+                        view.menu_on_screen2 = true;
+                        std::cout << "menu: open (the second screen)\n";
+                        break;
+                    case dw4::game::Screen2Menu::Ask::move_here:
+                        view.menu_on_screen2 = show_menu;
+                        std::cout << "menu: moved to the second screen\n";
+                        break;
+                    case dw4::game::Screen2Menu::Ask::close:
+                        if (show_menu) dw4::game::toggle_menu(view);
+                        std::cout << "menu: closed (the second screen)\n";
+                        break;
+                    case dw4::game::Screen2Menu::Ask::none: break;
+                    }
+                    if (!screen2_menu.tab.empty()) {
+                        menu_tab = screen2_menu.tab;
+                        if (view.console_menu && show_menu && console_open && screen2_menu.tab == "Online") console.request_focus("online", "", false);
+                    }
+                } else {
+                    // (No lower screen now: a field of it lets go of the keyboard.)
+                    dw4::game::screen2_release_input();
+                    if (view.menu_on_screen2) {
+                        // (The second screen went: the F1 menu shows in the window.)
+                        view.menu_on_screen2 = false;
+                        std::cout << "menu: back in the window (no second screen)\n";
+                    }
+                }
+                // The console menu's close (the menu's B, Start, Close, a loaded state).
+                if (const auto close_input = console.take_close_request(); !close_input.empty() && show_menu)
+                    dw4::game::toggle_menu_logged(view, close_input.c_str());
                 present_max = std::max(present_max, view.last_present_seconds * 1000.0);
 #ifdef DW4_GHOST_PROBE
                 if (probe_report && ghosts.drawn() > 0) {
@@ -5142,15 +6264,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
         view.switch2_reader = nullptr;
         switch2_reader.reset();
         dw4::game::set_ui_view(nullptr);
+        g_lifecycle_view = nullptr;
         if (button_prompts) dw4::game::ButtonPrompts::set_active(nullptr);
     }
     if (draw) {
+        dw4::game::screen2_shutdown();
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
     }
     if (audio) SDL_DestroyAudioStream(audio);
-    if (context) SDL_GL_DestroyContext(context);
+    // (The window's current handle: Android may have replaced the context.)
+    if (context) SDL_GL_DestroyContext(g_game_window.context ? g_game_window.context : context);
     if (window) SDL_DestroyWindow(window);
     SDL_Quit();
     return exit_code;
@@ -5185,6 +6310,7 @@ void print_help() {
                  "  --card-dir GCI_ROOT          play on a GCI folder root (Card A / Card B) for this run\n"
                  "  --save-file FILE             this run's save file for slot A (slot B: <name>_b<ext>)\n"
                  "  --load-state FILE            start from a save state file\n"
+                 "  --mute                       no sound this run (no audio device opened; settings.ini untouched)\n"
                  "\n"
                  "LAN and direct play:\n"
                  "  --host [--players N] [--port N] [--net-delay N]\n"
@@ -5209,6 +6335,9 @@ void print_help() {
                  "  --debug-camera EX,EY,EZ,TX,TY,TZ\n"
                  "                               a fixed camera (eye, target)\n"
                  "  --overflow-run KEY=VALUE ... a Data Overflow run (form=p_agumon field=stagbs02 seed=N [at=F] [frames=N] ...)\n"
+                 "  --env NAME=VALUE             set an environment variable before the run reads any\n"
+                 "  --menu-script FILE           the F1 menus driven by a script (with --smoke-test)\n"
+                 "  --import-disc PATH           Android debug builds: the first start's import of PATH\n"
                  "\n"
                  "Online test runs:\n"
                  "  --online-login NAME --online-play [BOX]\n"
@@ -5265,12 +6394,16 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef SDL_PLATFORM_ANDROID
+    dw4::game::route_output_to_logcat();
+#else
     // The release game has no console window: its lines go to the pipe or the
     // console it was started with, else to saves/game.log (program_output.hpp).
     {
         const auto folder = program_dir();
         dw4::game::route_program_output((folder.empty() ? std::filesystem::path(".") : folder) / "saves" / "game.log");
     }
+#endif
     program_name = name_of_program(argc > 0 ? argv[0] : nullptr);
     // Test runs and the converter never open dialogs (they run unattended).
     bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
@@ -5280,6 +6413,9 @@ int main(int argc, char** argv) {
             std::string_view(argv[i]) == "--export-presence-art")
             interactive = false;
     try {
+#ifdef SDL_PLATFORM_ANDROID
+        if (const std::string problem = dw4::game::app_root_problem(); !problem.empty()) throw std::runtime_error(problem);
+#endif
         Options options;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
@@ -5361,7 +6497,24 @@ int main(int argc, char** argv) {
             else if (arg == "--online-card") options.online_card = next();
             else if (arg == "--online-ui") options.online_ui = next();
             else if (arg == "--online-folder") options.online_folder = next();
+            else if (arg == "--menu-script") options.menu_script = next();
             else if (arg == "--load-state") options.load_state = next();
+            else if (arg == "--import-disc") options.import_disc = next();
+            else if (arg == "--mute") options.mute = true;
+            else if (arg == "--env") {
+                // --env NAME=VALUE: an environment variable set before the
+                // run reads any (Android's test runs have only arguments,
+                // the dw4args extra of a debug build).
+                const std::string value = next();
+                const auto eq = value.find('=');
+                if (eq == std::string::npos || eq == 0) throw std::runtime_error("--env takes NAME=VALUE");
+                const std::string name = value.substr(0, eq), text = value.substr(eq + 1);
+#ifdef _WIN32
+                _putenv_s(name.c_str(), text.c_str());
+#else
+                setenv(name.c_str(), text.c_str(), 1);
+#endif
+            }
             else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--overflow-run") {
                 // KEY=VALUE tokens up to the next option (overflow_run.hpp).
@@ -5419,12 +6572,30 @@ int main(int argc, char** argv) {
         if (options.data.empty()) options.data = settings.data;
         // First start: pick and check the disc image or extraction, then
         // remember it.
+#ifdef SDL_PLATFORM_ANDROID
+        // (A debug build's --import-disc PATH: the first start's import of a
+        // file the picker cannot be driven to in a test, docs/ANDROID.md.)
+        if (!options.import_disc.empty()) {
+            SDL_Init(SDL_INIT_VIDEO);
+            std::string problem;
+            auto imported = import_disc(options.import_disc, settings, problem);
+            if (problem.empty()) problem = check_game_data(imported);
+            if (!problem.empty()) throw std::runtime_error(problem);
+            settings.data = imported;
+            settings.save();
+            options.data = imported;
+        }
+#endif
         if (options.data.empty() && !options.smoke_frames) {
             for (;;) {
                 auto chosen = choose_game_data();
                 if (chosen.empty()) return 1;
                 std::string problem;
-                chosen = resolve_rvz(chosen, problem);
+#ifdef SDL_PLATFORM_ANDROID
+                chosen = import_disc(chosen.string(), settings, problem);
+#else
+                chosen = resolve_rvz(chosen, problem, &settings);
+#endif
                 if (problem.empty()) problem = check_game_data(chosen);
                 if (problem.empty()) {
                     settings.data = chosen;
@@ -5439,7 +6610,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("no --data given and " + settings.file.string() + " has no [data] path");
         {
             std::string problem;
-            options.data = resolve_rvz(options.data, problem);
+            options.data = resolve_rvz(options.data, problem, interactive ? &settings : nullptr);
             if (problem.empty()) problem = check_game_data(options.data);
             if (!problem.empty()) throw std::runtime_error(problem);
         }

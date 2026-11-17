@@ -49,6 +49,20 @@ void test_remove() {
     check(!ini.remove("data", "width"), "Other sections keep their keys");
     check(ini.text() == "; DW4 PC settings\n[window]\nvsync = false\n\n[data]\npath=E:\\Games\\DW4\n",
           "Only the key's line goes");
+    // A section set() appended and whose keys went again leaves no trace.
+    auto appended = dw4::IniFile::parse(kSample);
+    const auto before = appended.text();
+    appended.set("screen2", "mode", "off");
+    check(appended.text() != before, "A new section is appended");
+    check(!appended.remove_section_if_empty("screen2"), "A section with a key stays");
+    appended.remove("screen2", "mode");
+    check(appended.remove_section_if_empty("Screen2"), "An empty section goes");
+    check(appended.text() == before, "The document is as it was");
+    check(!appended.remove_section_if_empty("screen2"), "A missing section is nothing to remove");
+    auto commented = dw4::IniFile::parse("[a]\n; a note\n[b]\nx=1\n");
+    check(!commented.remove_section_if_empty("a"), "A comment keeps its section");
+    auto middle = dw4::IniFile::parse("[a]\nx=1\n\n[b]\n\n[c]\ny=2\n");
+    check(middle.remove_section_if_empty("b") && middle.text() == "[a]\nx=1\n\n[c]\ny=2\n", "An empty section in the middle goes with its blank line");
 }
 } // namespace
 
