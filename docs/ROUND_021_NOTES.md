@@ -50,6 +50,14 @@ time (a half-open cut's end included), then 50 ms; `ProxyCutTests` pass.
   W7i: `lag_leave why=lag_debt lag_debt_s=10.1` at 211.6 s. W7j: the barrier-set path (a's BARRIER at 298.09 s, his close
   56 ms later: `host_away why=closed grace_s=60 debt_s=37.7`, b's BARRIER at 298.24 s, b on into stag0102; a back at
   338.1 s, `join_decided` of b's stage group, one instance, `host_left` at the scripts' end).
+- **Scenarios, the rest of the marathon** (same relay build of f6276ed4, the later commits notes only; exe b3fa754f): every
+  batch passed on its first run, no repeat needed. `m_w4` (`run_20261116_170430`): W4, W4b, W4c, W4i passed. `m_w7`
+  (`run_20261116_171740`): W7, W7b, W7c, W7d, W7e, W7f, W7g passed. W7f twice more (`m_w7f_2` `run_20261116_175108`,
+  `m_w7f_3` `run_20261116_175647`) and W7g twice more (`m_w7g_2` `run_20261116_180226`, `m_w7g_3`
+  `run_20261116_180736`): passed, so W7f and W7g three times each. No `lag_leave` in any of these runs (the lag debt
+  takes nobody out on the ordinary cuts and hiccups); W7g ends as in 0.2.0 (nine `host_away`, eight `host_back`,
+  `host_lost` inside the closing cut). The PC restarted on 17.11 after the marathon's end; no process of the lane
+  survived, every mysqld of the runs logged its shutdown.
 
 ## Left
 
