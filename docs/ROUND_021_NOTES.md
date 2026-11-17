@@ -181,13 +181,16 @@ Logs in `build/r021/logs/`.
 
 ## The integration (branch `int-021`, 2026-11-17)
 
-Worktree `DW4_PC-wt/int021`, branch `int-021` from main d230037f (main had not moved). Scripts, builds and logs in
-`build/r021/` (gitignored; "How to run" below). No code changed in this stage (notes and harness logs only); not
-pushed, no tag.
+Worktree `DW4_PC-wt/int021`, branch `int-021` from main d230037f. Main moved after the two lane merges (the Android UX
+line `feat-android-cux`, merged into main as a304d6c9 after the user's Thor check), so main was merged in before the
+check pass (step c). Scripts, builds and logs in `build/r021/` (gitignored; "How to run" below). No code changed in
+this stage beyond the merges' conflict resolution (notes and harness logs only); not pushed, no tag.
 
 | Step | What | Commit | Conflicts and their resolution |
 | --- | --- | --- | --- |
 | a | merge `fix-021-relay` (85040ddf) `--no-ff` | 558689ae | none |
-| b | merge `fix-021-client` (9ba0fff6) `--no-ff` | (this commit) | `docs/ROUND_021_NOTES.md` (both lanes added it): both kept, each lane's text as written in its own section (the relay lane's headings one level down), one common intro. SEAMLESS (3.4 and 19.24's W4bs row of the client lane, 6.4, 6.9, 19.6.6, 19.6.7, 19.24, 19.32 of the relay lane) and PLAYER_GUIDE merged by git with both sides' text (checked against each branch) |
+| b | merge `fix-021-client` (9ba0fff6) `--no-ff` | f0297de4 | `docs/ROUND_021_NOTES.md` (both lanes added it): both kept, each lane's text as written in its own section (the relay lane's headings one level down), one common intro. SEAMLESS (3.4 and 19.24's W4bs row of the client lane, 6.4, 6.9, 19.6.6, 19.6.7, 19.24, 19.32 of the relay lane) and PLAYER_GUIDE merged by git with both sides' text (checked against each branch) |
+| c | merge main a304d6c9 `--no-ff` (the Android port and its console F1, the focus pause on the PC too with default off, the LAN hello's platform tag, Android's online / LAN / cloud refusals, docs) | 7400b578 | `CMakeLists.txt`: the client lane's release layout (install rules) with main's "no DW4_PC on Android" (`if(DW4_BUILD_APP AND NOT ANDROID)`). `game_main.cpp` `main()`: Android's lines to logcat (main), the PC's to the pipe / console / `saves/game.log` (the lane's `route_program_output`, now the `#else` branch: a no-op off Windows anyway), `program_name` for both. `game_main.cpp` `--help`: the lane's `print_help()` with main's new options added (`--mute`, `--env`, `--menu-script`, `--import-disc`), so it still lists every option the parser takes. Merged by git with both sides: `online.cpp`'s test env list (the barrier hooks and main's entries), PLAYER_GUIDE (the lane's absolute links, main's focus pause / menu size / second screen / Thor text), DEVELOPMENT (the lane's "Release packages", main's `cmake` / `android` rows), `online_ui.cpp`. README and SEAMLESS: main did not touch them |
 
-The check pass: below, as it runs.
+The check pass on 7400b578: below, as it runs. An earlier start of it on f0297de4 (before main moved) was stopped;
+its logs are in `build/r021/alt/logs_f0297de4_stopped`.
