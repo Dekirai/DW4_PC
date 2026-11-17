@@ -231,3 +231,22 @@ Logs in `build/r021/logs/`. Code of 7400b578 (the later commits notes only).
   396cb219 (`det_pkg.log`), `--help` names `DW4_PC` and lists main's new options (`help_pkg.log`), a hidden
   `--smoke-test 1800 --mute` exit 0 (`smoke_pkg.log`).
 - **Scenarios**: the marathon (below).
+
+**The marathon** (`marathon.sh`, `logs/marathon.log`, run.py under `python -I` without a wrapper, `--parallel 1`,
+BelowNormal; mysqld 3751, ports 60700-60799; the client `scen/dw4_int021_dev.exe`, a copy of `dev`'s game, md5
+a44e81f9; W22's protocol 48 client `old48/dw4_old48_dev.exe`, md5 e527c2cf; resumable: a batch whose log ends with
+EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Progress (18:35):
+
+- Passed on their first run: `m_smoke` (W1 W4c W10 W31 S22b RGJ1), `m_new021` (W4bs W4bsx W7h W7i W7j), `ui home`,
+  `ui goalong`, `m_w4` (W4 W4b W4d-W4i), `m_w7` (W7 W7b-W7g), `m_prompt` (W2 W2b W11 W11b W11r W30c), `m_drops`
+  (S11a S11b), `m_ui` (the ten ui runs), `m_go` (W31b-W31i); in `m_mod` W10b W10c W10d W10s W5.
+- **W5s failed once** (`scen_m_mod.log`, `run_20261117_143735`), every expectation held, the relay logged one
+  `statehash_mismatch` and `checkpoint_suspect` (why=statehash_rebuilt): c (the moderator) rebuilt from a's checkpoint
+  of tick 4179 (16 ticks replayed, READY at 4193 with its check fingerprint equal), joined at 4198, and its STATEHASH of
+  4200, two ticks after the join, differed from a's (5817b4ee... / 89453ef7...); every NETFP equal (21 from 4200 to
+  5400), the STATEHASHes of 4800 and 5400 equal again. The repeat passed (`scen_m_mod_rep.log`, `run_20261117_150742`:
+  c joined at 4203, its first STATEHASH at 4800). No machine stall in the logs. This is the rebuild gap SEAMLESS 19.31
+  notes for fix-d43's W7f run `135002` (a STATEHASH after a checkpoint rebuild differs for a while, every NETFP equal):
+  a client matter, not from 0.2.1 (neither lane touched the checkpoint or the tick state). Places:
+  `src/game/online/session.cpp:2616` (the client's `engine_.tick_state_hash()` at the first period tick after the
+  join) and `server/DW4Online/src/DW4Online.Relay/Hub/RoomHub.cs:2381-2383` (the relay's compare and `MarkSuspect`).
