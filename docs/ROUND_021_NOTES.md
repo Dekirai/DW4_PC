@@ -264,3 +264,14 @@ EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Prog
   idle-priority processes), g's longest pass 245 ms (first run) and 859 ms (repeat), g's slot `late` (input delay up to
   5), o's executions 67 ms on average in the repeat. No product fault; a harness race (the check would need the
   database's save time instead of the log poll's).
+- `m_i1a_1..3` (W1x W3 W4bx W5f W6 W8 W9, W12 W18 W19 W22 W24 W25 W26, W27 W28 W29 W30 W30b W30x W32) passed;
+  `m_reg_1` S1 S2 S3 S5 S14z S16 passed; `m_reg_2` S17a S17b S18b S19a S19b S19c passed.
+- **S18 failed once on the busy machine** (`scen_m_reg_2.log`, `run_20261117_204921`): every NETFP equal (188), b's
+  script step "mat matz02 no until answered>=1,asking<=0 ... frames>=400" (`S18/b.script` line 20) ran out of its
+  400 frames before a's exit prompt asked b (asking=1 came 663 frames after the step began); the clients' longest
+  passes 2.9-3.8 s, executions up to 4.0 s, input delay up to 15. Its repeat waits for a quiet machine (below).
+- **The load gate**: with the user's game running, repeats would have failed on the same stalls, so the marathon was
+  stopped after `m_reg_2` (21:25; its repeat deferred) and goes on as `marathon2.sh`: the same batches (the finished
+  ones skipped), before every batch and every repeat `gate.ps1` waits until the processes at normal priority or above
+  use less than 3 cores for 45 s (each wait in `marathon.log`), and at the end `m_s14p_q`: S14p once more on a quiet
+  machine.
