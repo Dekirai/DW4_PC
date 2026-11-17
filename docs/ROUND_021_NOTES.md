@@ -194,3 +194,40 @@ this stage beyond the merges' conflict resolution (notes and harness logs only);
 
 The check pass on 7400b578: below, as it runs. An earlier start of it on f0297de4 (before main moved) was stopped;
 its logs are in `build/r021/alt/logs_f0297de4_stopped`.
+
+### Checks of the integration
+
+Logs in `build/r021/logs/`. Code of 7400b578 (the later commits notes only).
+
+- **Builds** (Release, Ninja, the FetchContent sources of the main checkout): `rel` = the release game (DEV=OFF,
+  BUILD_TESTING OFF; `bld_rel.log`, 139 compiler warnings as in 0.2.0, `dw4_game.exe` md5 5f0cc9b8, PE subsystem 2);
+  `dev` (DEV=ON, tests; `bld_dev.log`, md5 a44e81f9, subsystem 3); `plain` (DEV=OFF with tests; `bld_plain.log`).
+- **ctest** 81/81 in `dev` (`ctest_dev.log`) and 81/81 in `plain` (`ctest_plain.log`).
+- **det.sh** (the main checkout's) twice on `off/dw4_int021_off.exe` (a copy of `rel`'s game): all four runs 4004f056 /
+  audio 396cb219 (`det.log`).
+- **Save state suite** (`build/r021/st`) on `off/dw4_int021_st.exe`: 17/17 English (`st_en.log`), 17/17 German
+  (`st_de.log`; every case "game.tsv 4515 texts, 0 rejected").
+- **The PC's F1 against main a304d6c9** (`f1cmp.sh`; main's release game built from a `git archive` of a304d6c9 in
+  `build/r021/mainref`, md5 cab4799e; CONSOLE_MENU.md's P0 set: the 8 tabs plus Settings at Graphics and at Second
+  screen, 100 % 1280x960 with Xbox prompts and 231 % 1920x1080 with the Thor's, `DW4_MENU_STILL`, frame 240, every exe
+  as `dw4_game.exe` in the same folder beside the committed `lang/de`): 20 of 20 pictures bytewise identical. With the
+  German pack chosen (`f1lang.sh`, `DW4_LANGUAGE=de`, no game.tsv) the Settings tab differs only in the Language box's
+  label: main "Deutsch (Fan-Übersetzung) (pictures only, no game.tsv)", int-021 "... (pictures only)" (100 %: 113
+  pixels in x 353-412, y 115-126; 231 %: 1451 pixels in x 916-1130, y 138-166).
+- **The console menu's scripts** (`menu.sh`: `tools/menu/run.sh d` on a copy of `rel`'s game beside the committed
+  `lang/de`): d1 to d8 without a failed expect (`menu_d.log`).
+- **Server**: the solution builds with 0 warnings (`sln_build.log`), unit 716/716 (`unit.log`), integration 155
+  passed, 3 skipped (the opt-in end-to-end tests; `it.log`; own mysqld on 3750, shut down by SQL).
+- **Publish dry run** (`pub.sh`: `publish.ps1` from a clean `git archive` of HEAD in `build/r021/pub/src`): unit
+  716/716 in Release, `DW4Online-0.2.0.zip` (50.6 MB, 374 files, the same file names as 0.2.0's), every assembly
+  0.2.0+ecf97f25 (the version bump is the ship stage's), `WorldProtocol.Version` 50, the 14 embedded migrations up to
+  0014_reports, no appsettings.Production / Development / Local.json, no key or certificate file
+  (`publish.log`, `publish_inspect.log`, `publish_zip_list.txt`).
+- **Package dry run** (`pkg.sh pkg 0.2.1`: `scripts/package_windows.ps1` through `pkg.cmd`, a fresh build in
+  `build/r021/pkg`, the main checkout's pins file): every content rule held, `DW4_PC-0.2.1-windows-x64.zip` (5.0 MB,
+  15 files), its file list and order equal the 0.2.0 zip's; no game.tsv, no PDB, no Android file (no `.so`, APK,
+  Gradle, console menu or tools/menu file), no profile path; `DW4_PC.exe` subsystem 2, system DLLs only;
+  `sha256sum -c` OK (`pkg.log`, `pkg_zip_list.txt`). The unpacked `DW4_PC.exe` (md5 fa11d8a1): det.sh 4004f056 /
+  396cb219 (`det_pkg.log`), `--help` names `DW4_PC` and lists main's new options (`help_pkg.log`), a hidden
+  `--smoke-test 1800 --mute` exit 0 (`smoke_pkg.log`).
+- **Scenarios**: the marathon (below).
