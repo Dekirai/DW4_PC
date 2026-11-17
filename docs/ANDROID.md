@@ -2101,9 +2101,9 @@ all. Now (`online/cpu_gate.hpp`):
 - The loopback rule cannot see a tunnel: `adb reverse` (the device's
   loopback to the PC) or `adb forward` (the PC to the device's loopback)
   reaches another machine through 127.0.0.1 (a debuggable build, files/
-  dw4args.allow and adb; checked on the emulator with a PC host and the
-  emulator's guest through `adb reverse`: the session started). Since the
-  review fixes the LAN hello carries the platform: its game tag is the
+  dw4args.allow and adb; checked on the emulator in both directions: the
+  session started; the refusal since: "The review fixes of 16.11.2026").
+  Since the review fixes the LAN hello carries the platform: its game tag is the
   PC's `GDJEB2` as always and `GDJEB2/android` on Android
   (`lan_game_for`), and the host refuses the other platform's tag
   (`lan_game_problem`: "LAN play with an Android device comes with a later
@@ -2168,6 +2168,89 @@ Logs in the worktree's `build/sync020` (not committed).
   LAN refusal in a message box (`E/DW4 dw4_game: LAN play with another
   device on Android comes with a later update.`); logcat without fatal
   lines.
+
+### The review fixes of 16.11.2026
+
+The merge's review found four points, none of them from the merge itself:
+
+- **The focus pause on the PC.** The owner's decision of 14.11.2026
+  (`[menu] pause_unfocused`: on by default on Android, off on the PC,
+  switchable in F1 on both) came after the Android-only pause of that
+  morning, which nobody had caught up with: the PC had neither the focus
+  events nor the F1 row, and the default was on everywhere. Now both
+  platforms have it (`kPauseUnfocusedDefault`; "Lifecycle").
+- **Android's missing HTTPS transport.** The cloud backup offered its login,
+  Upload and Download on Android, and the online screens showed their forms
+  below the refusal, though no request could ever leave the device. Now
+  `cloud_refusal()` locks the cloud backup and the online screens show only
+  the refusal ("Online and LAN play on Android until the protocol bump",
+  which also corrects the earlier claim that only the CPU gate had kept
+  Android offline).
+- **The adb tunnel past the loopback rule.** `adb reverse` / `adb forward`
+  reach another machine through the device's loopback (a developer's setup:
+  a debuggable build, `dw4args`, adb); the LAN hello's platform tag refuses
+  such a session whichever side hosts (same section).
+- **The player guide.** docs/PLAYER_GUIDE.md now describes the options this
+  line shows on the PC, and this list replaces the P0 note's "only *Menu
+  size*".
+
+The PC's F1 (the classic menu; the console style is only a test run's
+there, `DW4_MENU_STYLE=console` with `--smoke-test`) against main d230037f,
+all of it:
+
+- Settings, display: *Menu size* (`[window] ui_scale`; *Automatic (100 %)*
+  on the PC).
+- Settings: the section *Second screen* with *Panels over the game (Status,
+  Online)* (`[screen2] overlay`, `tab`; off by default).
+- Settings: *Pause the game while another window is in front (Alt+Tab,
+  minimized)* below *Pause the game while this menu is open* (`[menu]
+  pause_unfocused`, off by default).
+- Controls: the Nintendo layout's text names the AYN Thor; *AYN Thor
+  controller style* (`[gamepad] thor_style`) shows only while such a
+  controller is connected or the style is set; the Thor's button pictures
+  (`prompts=thor`).
+
+Checks (finished on 17.11.2026; logs in the worktree's `build/fixr`, not
+committed):
+
+- **The PC**, the Release builds with `DW4_ONLINE_DEV` off and on at the
+  fixes (Ninja: no work left at the final commit): ctest 81 of 81 (the
+  focus pause's defaults and storage in `controls_tests`, the LAN tags and
+  the cloud refusal for both platforms in `online_cpu_gate_tests`).
+  `det.sh` twice on an exe copy: `4004f056` / `396cb219` in both runs both
+  times.
+- **P0** (`DW4_MENU_STILL`, as above) against the merged state's build:
+  14 of 20 pictures identical; the 6 Settings pictures (the tab, Graphics,
+  Second screen, at 100 % and 231 %) differ only by the new pause row (the
+  scrollbar, and the rows below it moved down by one).
+- **The console menu's scripts** (`tools/menu/run.sh d`, the exe beside the
+  committed `lang/de` files as before): d1 to d8 without a failed expect.
+- **LAN between two PC games** on loopback (`--host` / `--join`, a 900-frame
+  test run each): the session started, the final fingerprints equal.
+- **Online scenarios** with the development client: W1, W4, W4i and W7
+  passed.
+- **APKs**: the debug APK with both ABIs and the profile APK for
+  arm64-v8a; their `libmain.so` holds the new texts.
+- **The emulator** (`dw4cux33`, headless, the debug APK): the console F1's
+  Saves > *Cloud backup* is locked with "Cloud backup on Android comes with
+  a later update."; the classic F1's Saves tab shows only that line under
+  *Cloud backup (online account)*; its Online tab shows only "Online play
+  on Android comes with a later update." and "Offline play is not
+  affected."; the notification shade pauses the game (`focus: another
+  window is in front: the game pauses`, then `focus: back: the game goes
+  on`); `--smoke-test 1500` with `DW4_GL_CHECK=1`: 0 GL errors; logcat
+  without fatal lines.
+- **LAN through adb tunnels** (the emulator and a PC game on loopback
+  ports): before the fixes a PC host and the emulator's guest through `adb
+  reverse`, and the emulator's host and a PC guest through `adb forward`,
+  both played a session. After them, `adb reverse`: the emulator's guest
+  stops with "Rejected: LAN play with an Android device comes with a later
+  update." and the PC host ends with "Nobody joined in time."; `adb
+  forward`: the PC guest stops with "Rejected: LAN play with another device
+  on Android comes with a later update.".
+- **Not checked:** the PC's focus pause by hand (Alt+Tab, a minimized
+  window). A hidden test run never has the focus and never pauses for it
+  (`--smoke-test`), so this needs a played window.
 
 ## The Thor
 
