@@ -1,0 +1,16 @@
+# W7h (fix-021, 19.6.7): while a's link hangs open, b's STATE sets the stage group's flags; c, held for b's scene, joins when it
+# ends, a still away; before, the silent host stayed the reporter and c's JOIN expired into a NEW of its own (HoldExpired)
+b: online-script: testhook busy 1200
+relay: host_away .*why=silence
+c: online-script: step .* log: c joined while a was away
+b: online-script: step .* log: b sees c while a is away
+relay: host_back
+a: online-script: step .* log: a sees c
+a: online-script: step .* log: a played on as host
+!relay: new .*notice=HoldExpired
+!relay: lag_leave
+!relay: instance_end .*reason=host_lost
+shared: b c >= 600
+!a: online-script: FAIL
+!b: online-script: FAIL
+!c: online-script: FAIL

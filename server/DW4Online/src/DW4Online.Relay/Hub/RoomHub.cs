@@ -592,15 +592,24 @@ public sealed partial class RoomHub
     private byte[] SealOne(HubInstance i, long now)
     {
         var t = i.NextSeal;
-        byte mask = 0;
+        byte mask = 0, filledMask = 0, inTimeMask = 0;
         var rec = new TickRecord();
         for (var s = 0; s < Wire.MaxSlots; ++s)
         {
             if (i.Streams[s] is not { } st || !st.Carries(t)) continue;
             mask |= (byte)(1 << s);
             rec.Pads[s] = st.Take(t, now, out var filled);
-            if (filled) Count("filled_pads");
+            if (filled)
+            {
+                Count("filled_pads");
+                filledMask |= (byte)(1 << s);
+            }
+            else if (i.Slots[s] is { Connected: true }) inTimeMask |= (byte)(1 << s);
         }
+        // fix-021: the lag rule's debt (SlotStream.LagDebt): a filled slot held up the connected members whose pads came in time.
+        for (var s = 0; s < Wire.MaxSlots; ++s)
+            if ((mask & (1 << s)) != 0)
+                i.Streams[s]!.CountLag((filledMask & (1 << s)) != 0, (inTimeMask & ~(1 << s)) != 0 && i.Slots[s] is { } owner && LagCounts(owner));
         rec = Rebuild(rec, mask);
         if (i.PendingEvents.Count > 0)
         {
@@ -637,6 +646,10 @@ public sealed partial class RoomHub
         }
         return bytes;
     }
+
+    /// <summary>A filled tick of <paramref name="m"/>'s slot counts for the lag rule's debt (<see cref="SlotStream.LagDebt"/>): not while
+    /// it is a host in his grace (his absence debt bounds that, 19.6.7) or resyncing (it sends no pads while it catches up, by design).</summary>
+    private static bool LagCounts(HubMember m) => !m.Resyncing && !(m.World is { HostAway: true } w && w.Host == m);
 
     /// <summary>Events in one sealed record (below the format's 255: LEAD_FROM always fits).</summary>
     public const int MaxEventsPerTick = 200;
@@ -840,6 +853,12 @@ public sealed partial class RoomHub
             Count("netfp_ahead");
             return;
         }
+        // (fix-021: how far its engine got, for the STATE reporter: one still catching up reports ticks the others played long ago.)
+        if (m.ExecutedIn != (i.Id, i.Visit) || msg.Tick > m.ExecutedTick)
+        {
+            m.ExecutedIn = (i.Id, i.Visit);
+            m.ExecutedTick = msg.Tick;
+        }
         if (Info.Protocol >= Wire.ReadyCheckProtocol)
         {
             // Protocol 48: the donor's fingerprint of its checkpoint's check tick (Wire.ReadyCheckTicks after the checkpoint
@@ -1021,6 +1040,15 @@ public sealed partial class RoomHub
             return;
         }
         i.StateReporter = m;
+        // fix-021: by the rule a change of the reporter uses (Supersedes): a reporter's STATE older than the one in effect of another
+        // member still in the stage group is kept, not applied. Before, the reporter's every STATE took effect: a host back from a drop
+        // sends the STATEs of the ticks he catches up, older than a guest's in effect, and they overrode it (a join let in or held on
+        // flags of the past).
+        if (!Supersedes(i, m, msg))
+        {
+            Count("state_stale");
+            return;
+        }
         ApplyState(i, m, msg);
         StateTookEffect(i, now);
     }
@@ -1032,17 +1060,63 @@ public sealed partial class RoomHub
         if (i.World is { } gw && gw.Members.Any(x => x.Go is not null)) TryGo(gw, now);
     }
 
-    /// <summary>The member whose STATE sets a stage group's flags (<see cref="OnState"/>): the connected one in it longest, then the
-    /// lowest slot.</summary>
-    private static HubMember? StateReporter(HubInstance i) =>
-        i.Seats.Where(x => x.Member.Connected).OrderBy(x => x.Member.InstanceSince).ThenBy(x => x.Slot).Select(x => x.Member).FirstOrDefault();
+    /// <summary>
+    /// The member whose STATE sets a stage group's flags (<see cref="OnState"/>): the connected one in it longest (then the lowest slot)
+    /// that is not away; when every connected member is away, the connected one longest (the whole group stalled). Away (fix-021): a
+    /// host in his grace (19.6.7: a half-open link counts as connected), a member resyncing, a member whose slot lags (its last
+    /// <see cref="SlotStream.LagFills"/> sealed ticks filled: a link that hangs, a returned host still catching up). Their engines
+    /// report nothing new, or the STATEs of ticks the others played long ago; before, a host in a grace started by silence stayed the
+    /// reporter for up to the whole grace, the guests' STATEs were ignored, and a joiner was let in on stale flags or waited
+    /// Instances:JoinHoldSeconds and got a NEW (HoldExpired). The reporter changes through <see cref="SyncStateReporter"/> (the
+    /// grace's start and end call it, the housekeeping finds a lag that began or ended).
+    /// </summary>
+    private static HubMember? StateReporter(HubInstance i)
+    {
+        HubMember? best = null;
+        var bestAway = true;
+        for (var s = 0; s < Wire.MaxSlots; ++s)
+        {
+            if (i.Slots[s] is not { Connected: true } x) continue;
+            var away = AwayForState(i, s, x);
+            if (best is null || (bestAway && !away) || (bestAway == away && x.InstanceSince < best.InstanceSince))
+            {
+                best = x;
+                bestAway = away;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>The member in slot <paramref name="s"/> does not play in time in <paramref name="i"/> (<see cref="StateReporter"/>): a host
+    /// in his grace, resyncing, its slot lagging, or its engine more than <see cref="ReporterBehindTicks"/> behind the sealed ticks (its
+    /// newest NETFP of the visit: a client back from a drop sends its pads in time at once, they follow the wall clock, while its engine
+    /// still catches up for seconds).</summary>
+    private static bool AwayForState(HubInstance i, int s, HubMember x) =>
+        (x.World is { HostAway: true } w && w.Host == x) || x.Resyncing ||
+        (i.Mode == InstanceMode.Sealed && i.Sealing && (i.Streams[s] is { FillStreak: >= SlotStream.LagFills } ||
+                                                        (x.ExecutedIn == (i.Id, i.Visit) && i.NextSeal > x.ExecutedTick + ReporterBehindTicks)));
+
+    /// <summary>An engine whose newest NETFP is this far behind the next sealed tick still catches up (three seconds: an engine in time
+    /// reports every 60th tick it executed, a one-way time after it was sealed).</summary>
+    public const uint ReporterBehindTicks = 180;
 
     /// <summary>
-    /// The reporter of <paramref name="i"/>'s STATE may have changed (a LEAVE, a lost or returned connection, a slot that went or came;
-    /// fix-d43, W7f's race): when it did, its newest STATE of this visit takes effect, so no change of the reporter loses a state (a
-    /// client sends STATE only on a change). Against the STATE in effect of a member still in the stage group it must be newer (by
-    /// tick): a reporter back from a lost link never takes a newer state back with its older one (nor with one it sent into the lost
-    /// link: its client sends that one no more). The STATE of a member that left counts no more (its tick may be another timeline's,
+    /// A STATE of <paramref name="from"/> takes the place of the one in effect (fix-021, one rule for <see cref="OnState"/> and
+    /// <see cref="SyncStateReporter"/>): when none is in effect this visit, or its member left the stage group (its tick may be another
+    /// timeline's, W7e's straggler), or it is newer by tick; at the same tick only from the member in effect (a client reports a change
+    /// at the tick of the one before: its load end; a repeat changes nothing). An older STATE never takes effect: a host back from a drop
+    /// or a member resynced catches up and reports ticks the stage group played long ago.
+    /// </summary>
+    private static bool Supersedes(HubInstance i, HubMember from, StateMsg msg) =>
+        !i.StateApplied || i.StateFrom is not { } cur || !InGroup(i, cur) || msg.Tick > i.StateTick || (msg.Tick == i.StateTick && cur == from);
+
+    /// <summary>
+    /// The reporter of <paramref name="i"/>'s STATE may have changed (a LEAVE, a lost or returned connection, a slot that went or came,
+    /// a host's grace that began or ended, a lag that began or ended; fix-d43, W7f's race; fix-021): when it did, its newest STATE of
+    /// this visit takes effect, so no change of the reporter loses a state (a client sends STATE only on a change). Against the STATE
+    /// in effect of a member still in the stage group it must be newer (by tick, <see cref="Supersedes"/>): a reporter back from a lost
+    /// link never takes a newer state back with its older one (nor with one it sent into the lost link: its client sends that one no
+    /// more). The STATE of a member that left counts no more (its tick may be another timeline's,
     /// W7e's straggler). Before, the STATE of a member that was not the reporter was dropped: in W7f a, reconnecting, held slot 0 again
     /// for 26 ms before its LEAVE, b's joinable STATE came in between and was ignored, b sent none again, so b's stage group stayed
     /// *Scene* and a's JOIN of it waited Instances:JoinHoldSeconds for nothing and became a stage group of its own (HoldExpired). Only
@@ -1060,8 +1134,8 @@ public sealed partial class RoomHub
         var reporter = StateReporter(i);
         if (reporter == i.StateReporter) return false;
         i.StateReporter = reporter;
-        if (reporter is null || !i.States.TryGetValue(reporter, out var newest) || newest.Visit != i.Visit ||
-            (i.StateApplied && i.StateFrom is { } from && InGroup(i, from) && newest.Tick <= i.StateTick))
+        if (reporter is null || !i.States.TryGetValue(reporter, out var newest) || newest.Visit != i.Visit || ReferenceEquals(newest, i.StateInEffect) ||
+            !Supersedes(i, reporter, newest))
             return false;
         Count("state_reporter_changed");
         Note("state_reporter", i, ("member", reporter.Index), ("slot", reporter.Slot), ("tick", newest.Tick), ("flags", newest.Flags),
@@ -1078,6 +1152,7 @@ public sealed partial class RoomHub
     {
         i.StateFrom = from;
         i.StateTick = msg.Tick;
+        i.StateInEffect = msg;
         i.StateApplied = true;
         i.Joinable = (msg.Flags & StateMsg.Joinable) != 0 && !i.LogFull;
         // A new instance is *starting* until its stage group is first joinable (19.7.6).
@@ -2055,6 +2130,7 @@ public sealed partial class RoomHub
         i.StateReporter = null;
         i.StateFrom = null;
         i.StateTick = 0;
+        i.StateInEffect = null;
         i.StateApplied = false;
         i.LogOwner = null;
         i.LogFull = false;
@@ -3560,15 +3636,26 @@ public sealed partial class RoomHub
                 // The host in his grace (19.6.7): his slot fills with neutral pads until the grace's end, no lagOut, no reconnect LEAVE.
                 // Back in time, his lagOut counts from his return (WorldHub.HostBack), and a lagging host whose absence debt is spent
                 // is out too (WorldHub.HostDebtSpent: a link that keeps dropping, fix-flap). A guest's clock never restarts: his
-                // reconnects do not stop the lag rule.
+                // reconnects do not stop the lag rule. fix-021: a lagging member is out too once its slot's lag debt reached the limit
+                // (SlotStream.LagDebt: drops each shorter than the limit with short bursts of pads in time between them, guests and
+                // hosts alike; before, every burst ended the streak and such a link stayed in its stage group for good).
                 var inGrace = m.World is { HostAway: true } hw && hw.Host == m;
                 var gone = !inGrace && !m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0;
                 var lagOut = !inGrace && lagging && !everyoneLags && !m.Resyncing &&
-                             (Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0 || m.World is { } dw && dw.Host == m && HostDebtSpent(dw, now));
+                             (Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0 || st.LagDebt * Wire.TickSeconds >= _relay.LagLeaveSeconds ||
+                              m.World is { } dw && dw.Host == m && HostDebtSpent(dw, now));
                 if (gone || lagOut)
                 {
                     Count(gone ? "reconnect_timeout" : "lag_leave");
-                    Note(gone ? "reconnect_timeout" : "lag_leave", i, ("member", m.Index));
+                    if (gone) Note("reconnect_timeout", i, ("member", m.Index));
+                    else
+                    {
+                        // (Which limit: the fill streak, the slot's lag debt (fix-021) or the host's absence debt (fix-flap).)
+                        var why = Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0 ? "streak"
+                            : st.LagDebt * Wire.TickSeconds >= _relay.LagLeaveSeconds ? "lag_debt" : "host_debt";
+                        if (why == "lag_debt") Count("lag_leave_debt");
+                        Note("lag_leave", i, ("member", m.Index), ("why", why), ("lag_debt_s", Math.Round(st.LagDebt * Wire.TickSeconds, 1)));
+                    }
                     StampLeave(i, s, now);
                     if (!gone) TellApart(i, m);
                     if (i.Ended) return;

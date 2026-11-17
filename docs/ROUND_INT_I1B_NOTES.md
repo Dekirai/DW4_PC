@@ -442,7 +442,10 @@ The full check pass on 0070a8f2 (the code of 3be2df8a; no code changed). Logs in
 ### Open after 0.2.0
 
 Not fixed in 0.2.0, for the next round (0.2.1). The review's four relay findings (should_fix, rare; the places as
-found again in this stage, paths under `server/DW4Online/src/DW4Online.Relay/`):
+found again in this stage, paths under `server/DW4Online/src/DW4Online.Relay/`). **1-3 fixed** on branch
+`fix-021-relay` for DW4Online 0.2.1 (docs/ROUND_021_NOTES.md, SEAMLESS 19.32 "fix-021"), with the lag rule's gap
+("Left" below) and fix-d43's pre-existing finding on a removed member playing alone; 4 is decided for 0.2.1: the
+rule stays as documented (the host is your friend, no pairwise check of co-arrivals):
 
 1. `Hub/RoomHub.cs:1037` `StateReporter` takes the connected member longest in the stage group: a host in a grace
    started by silence (his link hangs open, up to the 60 s grace) stays the reporter, the guests' STATEs are
@@ -501,9 +504,10 @@ lead nowhere (absolute GitHub links would).
   keeps dropping for a few seconds and coming back would stay in his stage group without a pad in time.~~ **Done** on
   branch `fix-flap` (from 0ef550e9; "The flapping host" above): the host's absence debt, a stretch without play in time
   bounded by one absence's worst case (80 s); `WorldFlapTests`, W7g. Merged into int-i1b for 0.2.0 (55f5041d).
-- The lag rule's own gap ("The flapping host", left): a member whose half-open drops each stay below the lag limit (a
+- ~~The lag rule's own gap ("The flapping host", left): a member whose half-open drops each stay below the lag limit (a
   host: below the 4 s of silence that start a grace), with a burst of pads in time between them, stays in his stage
-  group; a guest so for any length of such drops below `Relay:LagLeaveSeconds`.
+  group; a guest so for any length of such drops below `Relay:LagLeaveSeconds`.~~ **Done** on branch `fix-021-relay`
+  (0.2.1): the slot's lag debt (SEAMLESS 6.4), W7i.
 - Later: a client flag in BARRIER for a barrier of a visit the member never loaded would let the relay decide it apart
   also when its tick lies inside what the new visit sealed (now the split after `Instances:BarrierReportSeconds`, the
   others stalled 5 s; it needs the old visit to have run shorter than the new one has when the member comes back).

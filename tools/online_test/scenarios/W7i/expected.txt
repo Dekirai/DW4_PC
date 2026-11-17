@@ -1,0 +1,12 @@
+# W7i (fix-021, 6.4, 19.6.7): b's link hangs open for 7 s at a time, 0.2 s apart; each cut is below the lag limit and a burst of pads
+# in time ends its fill streak, but its lag debt reaches Relay:LagLeaveSeconds in the second cut: lag_leave, b plays on apart, a leads
+# on; before, b stayed in a's stage group for good
+relay: lag_leave .*why=lag_debt
+a: online-script: step .* log: a plays on without b
+b: online-script: step .* log: b plays on apart
+a: online-script: step .* log: a stayed host
+!relay: host_away
+!relay: instance_end .*reason=host_lost
+shared: a b >= 600
+!a: online-script: FAIL
+!b: online-script: FAIL

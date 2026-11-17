@@ -1247,7 +1247,16 @@ one member's late uplink costs that member its inputs for those ticks, never
 the others a hitch. Machines execute only sealed ticks, their own slot's pad
 included as sealed. A member that has filled pads for 30 ticks in a row is
 marked as lagging (icon on its name tag); after `Relay:LagLeaveSeconds`
-(default 10) of continuous filling the server stamps LEAVE.
+(default 10) of continuous filling the server stamps LEAVE. Since fix-021
+(DW4Online 0.2.1) also a lagging member whose slot's *lag debt* reached
+that limit: the sealed ticks it was filled while another connected member's
+pad came in time, minus its own ticks in time, one for one, never below 0
+(`SlotStream.LagDebt`; not counted while every connected member was filled
+at a tick, for a host in his grace or a member resyncing). A pad in time
+ends the fill streak, so before a link whose drops each stayed below the
+limit, with a short burst of pads in time between them, never reached it
+(19.6.7, "A link that keeps dropping"); a member who plays in time at least
+as long as it holds the others up never gets there.
 
 **Delay.** Member i executes tick t when SEALED(t) arrives, about one one-way
 time after `S(t)`, and sends its pad for `t + d_i` then; it arrives about one
@@ -2361,7 +2370,18 @@ the same 47549cdd for stag0102.) The server compares per tick:
   (`Instances:ForkConfirmMs`), then the tick is compared (a forged SPLIT every
   two seconds hid every comparison). The instance's flags and context (STATE)
   come from one member only, the connected one that has been in the instance
-  longest (then the lowest slot): the *reporter*. The others' STATEs are
+  longest (then the lowest slot) and is not away (fix-021: not a host in
+  his grace, a half-open link counting as connected; not resyncing; its
+  slot not lagging; its engine not catching up, its newest NETFP at most
+  180 ticks behind the sealed ticks; when every connected member is away,
+  the connected one longest): the *reporter*. A STATE takes effect only when it is newer (by
+  tick) than the one in effect of another member still in the stage group,
+  at a reporter change and for the reporter's own STATE alike
+  (`RoomHub.Supersedes`; at the same tick only the member in effect's own
+  next one; an older one is counted `state_stale` and kept): a host back
+  from a drop catches up and reports ticks the others played long ago. The
+  grace's start and end (`StartGrace`, `HostBack`) sync the reporter too.
+  The others' STATEs are
   kept, not applied (`HubInstance.States`, the newest per member of the
   visit; fix-d43, W7f's race, 19.32): when the reporter changes (its LEAVE,
   its link lost, a member back in its slot by a reconnect, any slot that
@@ -2396,8 +2416,8 @@ alone stays in its instance as a stage group of its own; the host gets a
 crash; 19.6.7, 19.15.)
 
 - A lagging member (6.4) gets a connection icon on its name tag on the other
-  machines; after `Relay:LagLeaveSeconds` of continuous filling the server
-  stamps LEAVE.
+  machines; after `Relay:LagLeaveSeconds` of continuous filling, or of lag
+  debt (fix-021, 6.4), the server stamps LEAVE.
 - A closed connection: the slot is filled for `Relay:ReconnectSeconds`
   (default 10), then LEAVE.
 - The disconnected client freezes its picture with "Connection lost,
@@ -9705,7 +9725,15 @@ names the instance its engine played on (`HubInstance.ApartFrom`, from
 `HubMember.LoneWorld` set where the member goes on alone and cleared when
 it is placed again or starts a new session); with its seat the barrier is
 decided inside the instance as before. A member that went on alone from a
-detached stage group goes home the same way.
+detached stage group goes home the same way. Until that barrier (fix-021)
+its engine is on that instance's story whatever its seat: removed
+meanwhile (or the instance gone, or from a detached group), it is on a
+foreign story (`OnForeignStory` reads `HubMember.LoneWorld`, unless the
+story is its own: a host playing apart): its STORY is refused (*owner*,
+`story_foreign`) whatever key it names, and the achievements' play context
+reads it as that instance's guest. Before, a STORY with its own key reached
+its own keeper with the former host's progress, and the context said
+"home".
 
 #### 19.6.7 The host's connection loss (Q8)
 
@@ -9730,7 +9758,11 @@ detached stage group goes home the same way.
   `Instances:MaxResumeTicks` rises to 4,200 for a host (60 s at 59.94 Hz
   plus 600), or round J's checkpoint resume covers it. Guests see the
   countdown; rows read *Host reconnecting*; joins and travels wait; guests'
-  story values are held (19.8.5). The world's member timeout
+  story values are held (19.8.5). The stage group's STATE flags come from a
+  guest from the grace's start on (fix-021: a host in his grace, or with his
+  slot lagging, is no reporter, 6.9), so an arrival held for the stage
+  group (a scene, a boss fight) is let in when the guests' game allows it,
+  not on the host's flags from before his link hung. The world's member timeout
   (`World:MemberTimeoutSeconds`, 35, as the room's) does not apply to a host
   in his grace: he stays a world member until the grace's end plus
   `World:MemberTimeoutMarginSeconds` (10).
@@ -9760,7 +9792,13 @@ detached stage group goes home the same way.
     `host_grace_shortened`, `host_away ... debt_s=`); a debt already spent
     ends the instance at the next housekeeping (`host_lost`). A host who
     shares no stage group with a guest gets a fresh grace: his drops hold
-    nobody's play up (`lag_leave` took him out, or he leads alone).
+    nobody's play up (`lag_leave` took him out, or he leads alone, or his
+    stage group gathers at a barrier: the guests do not wait for him there,
+    "At a barrier" below; fix-021, before a host who dropped exactly at a
+    gate got what his debt left although his guests went on at once). A
+    grace the debt shortened is a fresh one from its start once he shares
+    no stage group with a guest any more (they went on without him;
+    `host_grace_fresh`, fix-021).
   - *The lag rule:* connected and lagging (outside `lagOut`'s exceptions:
     everyone lags, a resync), a host whose debt reached the limit is out of
     the stage group (`lag_leave`: he plays apart, still host, the instance
@@ -9808,17 +9846,26 @@ detached stage group goes home the same way.
   comes and goes (`Relay:ReconnectSeconds` counts each drop on its own);
   with his pads in time between the drops he plays on, as before. A burst
   of pads in time ends any member's fill streak, though: a link whose
-  half-open drops each stay below `Relay:LagLeaveSeconds` (a guest's) or
+  half-open drops each stayed below `Relay:LagLeaveSeconds` (a guest's) or
   below `World:HostSilenceSeconds` (a host's: no grace, no debt), with
-  such a burst between them, stays in his stage group (left for the lag
-  rule, which has the same gap without drops).
+  such a burst between them, stayed in his stage group for good (the lag
+  rule's own gap, the same without drops). Since fix-021 the lag rule bounds
+  it like the absence debt, for guests and hosts: the slot's *lag debt*
+  (6.4; the ticks it held a member in time up, minus its ticks in time)
+  takes a lagging member out at `Relay:LagLeaveSeconds` (W7i: 7 s cuts
+  0.2 s apart, out within the second cut). A host's return restarts it
+  with his lag clock (his absence debt bounds what came before); a brief
+  hiccup is paid back by as much play in time.
 - **A crash** (the engine lost): within the grace only with round I5 (a
   checkpoint rejoin of his own slot, 19.15); before I5 a crashed host ends
   his instance after 60 s.
 - **At a barrier.** Guests never wait for a lost host on their loading
   screens (Q8: "the instance runs on"): the barrier is decided without him,
   as `Disconnect` decides it today, and the stage group goes on to its
-  target; the host keeps his seat and his grace. Back within the grace, his
+  target; the host keeps his seat and his grace, a fresh one whatever his
+  absence debt (fix-021: a stage group at its barrier is shared with
+  nobody, `WorldHub.SharedGroup`; a silent host's report is split off after
+  `Instances:BarrierReportSeconds`; W7j). Back within the grace, his
   client, still parked at that barrier (today's `Connect` would mark him
   lone at a `Barrier` / `Arrival` and his client would go on as NEW after
   5 s), is resumed into it: he arrives alone and JOINs his own instance's
@@ -9832,7 +9879,11 @@ detached stage group goes home the same way.
   swallows them for 7 s at a time, 0.2 s apart, eight times, then closes
   the link for 30 s (a flapping link): the debt shortens the later graces
   and leaves the close about 20 s, `host_lost` inside the cut, inside the
-  bound.
+  bound. fix-021: W7h holds a's packets for 50 s while an arrival waits for
+  the guest's scene (the guest's STATE lets it in, a away); W7i swallows a
+  guest's packets as W7g does a host's (its lag debt takes it out); W7j
+  gives a W7g's cuts and then cuts his link at his park at an exit (a fresh
+  60 s grace although his debt, his guest goes on, he joins it back).
 
 #### 19.6.8 Desync
 
@@ -12456,6 +12507,9 @@ means round I1a):
 | W7e | I1 | a drops while its stage group with b is parked at a barrier: b goes on into the target at once; a back after 20 s arrives alone and joins b's stage group there, still host |
 | W7f | I1b | (the integration's fix stage) W7e's race on demand: a's link goes as the sealed NEW's BARRIER_OK comes (`DW4_ONLINE_TEST_CUT_AT_ANSWER`, development builds: the answer is lost with it); SNAPSHOT_ASK makes b the uploader; a resumes into the new visit and re-sends its old barrier, which lies past b's sealed ticks: decided apart at once (`barrier_apart`, no split, no stall for b), a JOIN under a's visit, READY, still host. (fix-d43) On a relay without 2b009cee a housekeeping pass in the ~20 ms between a's reconnect and its re-sent barrier took a out for lag first (`lag_leave`) and its barrier was a straggler's (`barrier_alone`), the same JOIN; since 2b009cee (19.6.7) the returned host is not taken out, so W7f expects `barrier_apart` and no `lag_leave` (the merge of fix-d43 into int-i1b); a JOIN held until `HoldExpired` (the STATE reporter race, 19.32) fails it |
 | W7g | I1b | (fix-flap) a flapping host link: from @200 the proxy swallows a's packets for 7 s at a time, 0.2 s apart (eight half-open cuts, a client's "cut" with "every" / "count"), then closes a's link for 30 s at @257.6: each half-open cut's silence starts a grace, each window is a return, and a's pads of the last ticks before it come in time (its fill streak ends every time); the host's absence debt (silences and graces, minus the windows) shortens the later graces (`host_away ... grace_s=` below 60) and leaves the close about 20 s of its 70 s, so the instance ends (`host_lost`) inside the cut, about 78 s after the first one, inside the bound of 19.6.7, instead of never; b goes home, a after its reconnect |
+| W7h | 0.2.1 | (fix-021) the STATE reporter while the host's link hangs: b starts a shared scene at @190 (the development test hook TEST busy, 1200 ticks); c, a stranger, takes the gate to stag0101 meanwhile and its JOIN waits for the scene; from @197 the proxy holds a's packets for 50 s (half-open). b's joinable STATE at the scene's end takes effect (a, silent and lagging, is no reporter) and c joins b and a's standing Digimon before @240; a comes back (`host_back`) and sees c. Before, the silent host stayed the reporter, b's STATE was ignored and c's JOIN became a NEW of its own (`HoldExpired`) |
+| W7i | 0.2.1 | (fix-021) a guest's link that keeps hanging open below the lag limit: from @200 the proxy swallows b's packets for 7 s at a time, 0.2 s apart, eight times (W7g's shape for the guest); b's pads of the last ticks before each window come in time, so its fill streak ends every time, but its lag debt reaches `Relay:LagLeaveSeconds` in the second cut: `lag_leave why=lag_debt`, b plays on apart, a leads on, no grace. Before, b stayed in a's stage group for good |
+| W7j | 0.2.1 | (fix-021) a host who drops exactly at a gate after earlier drops: W7g's eight half-open cuts from @230 (an absence debt of about 45 s), then a and b step on matz02 at @292 and a's client cuts its link at its park for 40 s (`DW4_ONLINE_TEST_CUT_AT_PARK`; b's uplink 150 ms slower, so a's BARRIER is first and the barrier still gathers when his link closes): it is decided without him, b goes on into stag0102 at once, a's grace is a fresh 60 s (`host_away why=closed grace_s=60 debt_s=` above 10), and a back after 40 s joins b (or, when his link closed before his BARRIER came, the debt's grace made fresh once b went on, `host_grace_fresh`). Before, the gathering stage group counted as shared: about 25 s and `host_lost`. The test proxy passes a client's close on right after its last bytes since fix-021 (before 600 ms later: the relay decided the barrier with a before it saw the close, the first run's path) |
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
 | W10 | I1b | a removes b: b goes home; b's prompt (its PLAN after the removal: no row, the cursor on *New instance*; the integration's check) and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached; W10d: a removes b while b's JOIN waits (the relay's test hold `World:TestJoinHoldMs`, a scene's stand-in): b goes home from the loading screen at once and never gets a seat again |
@@ -15307,6 +15361,73 @@ prompt) and integration tests 142 (3 skipped); det.sh with online off
 4004f056 / 396cb219 twice. W29's fake guests answer the loading-screen form
 (the first a row with nobody at stag0101, the cursor on *New instance*, the
 second a's row with one there, preselected).
+
+**fix-021 (DW4Online 0.2.1, the relay lane, 2026-11-16).** The relay
+findings left open after 0.2.0 (docs/ROUND_INT_I1B_NOTES.md, "Open after
+0.2.0") and two older gaps; relay only, protocol 50 and schema 14 unchanged
+(0.2.0 clients and a 0.2.1 relay work together either way round). Notes:
+docs/ROUND_021_NOTES.md; tests `Fix021RelayTests` (13), each failing
+without its fix, two controls passing without them.
+
+- **The STATE reporter plays in time** (finding 1). `StateReporter` took
+  the connected member in the stage group longest: a host in a grace
+  started by silence (a half-open link counts as connected) stayed the
+  reporter for up to the whole grace, the guests' STATEs were ignored
+  (`state_ignored`), and an arrival held for the stage group was let in on
+  his flags from before (a boss fight the guest started meanwhile) or
+  waited `Instances:JoinHoldSeconds` and got a NEW (`HoldExpired`). Now a
+  member that is away is no reporter while another is not (6.9): a host in
+  his grace, a member resyncing, a slot lagging (30 fills in a row), an
+  engine whose newest NETFP is more than 180 ticks behind the sealed ticks
+  (`RoomHub.ReporterBehindTicks`: a client back from a drop sends its pads
+  in time at once, they follow the wall clock, while its engine replays for
+  seconds). `StartGrace` and `HostBack` sync the reporter; the housekeeping
+  finds a lag that began or ended. Scenario W7h.
+- **One rule for a STATE to take effect** (finding 2). `OnState` applied
+  the reporter's every STATE; `SyncStateReporter` checked newer-by-tick at
+  a change of the reporter only. Both use `Supersedes` now: none in effect
+  this visit, or its member left the stage group, or newer by tick; at the
+  same tick only the member in effect's own next STATE (two changes in one
+  tick, a repeat). An older one is kept, counted `state_stale`: a host back
+  from a drop (or a member resynced) reports the ticks it catches up.
+- **A host who drops at a gate gets a fresh grace** (finding 3).
+  `WorldHub.SharedGroup` counts a stage group at its barrier as shared
+  with nobody: a closed link takes the host out of it at once and the
+  barrier is decided without him, a silent one is split off after
+  `Instances:BarrierReportSeconds` (19.6.7, "At a barrier"). Before, his
+  grace was computed while he was still in the gathering group, so his
+  absence debt shortened it although his guests went on at once, and the
+  instance ended for everyone before the minute. A link that closes a
+  moment before his BARRIER comes (lost with it) is an ordinary drop, the
+  grace what the debt leaves; once his guests go on without him (the
+  barrier decided without him, any exit they take) he shares no stage group
+  with them and the housekeeping makes the grace a fresh
+  `World:HostGraceSeconds` from its start (`host_grace_fresh`, the guests'
+  countdown renewed; the debt does not grow meanwhile). Scenario W7j. (A
+  host whose BARRIER completed the barrier is in the guests' new stage group
+  when his link goes, as in W7e and W7f: an ordinary drop, his debt counts.)
+- **The lag rule's gap** ("The flapping host", left by fix-flap): a pad in
+  time ends the fill streak, so a link whose drops each stayed below the
+  limit, with a short burst of pads in time between them, stayed in its
+  stage group for good (a guest: half-open cuts below
+  `Relay:LagLeaveSeconds`; a host: below `World:HostSilenceSeconds`, no
+  grace, no absence debt). The slot's lag debt (6.4, `SlotStream.LagDebt`,
+  counted per sealed tick in `SealOne`) bounds it like the host's absence
+  debt, for guests and hosts: a lagging member is out (`lag_leave
+  why=lag_debt`) once the ticks it held a member in time up exceed its
+  ticks in time by `Relay:LagLeaveSeconds`. A brief hiccup is paid back by
+  as much play in time (a stall of 9.9 s once, 2 s every 6 s, 5 s with 5 s
+  in time, 3.5 s every 10 s: never out); a host's return restarts it with
+  his lag clock (the absence debt bounds his graces). The fill streak's
+  rule stays as it was (a group stall followed by one member's play still
+  takes the other out at once). Scenario W7i.
+- **A removed member playing alone is on the former host's story**
+  (fix-d43's review, pre-existing; 19.6.6): `OnForeignStory` reads
+  `HubMember.LoneWorld` for a member that plays on alone (no stage group or
+  the empty hub one of a reconnect): foreign once it holds no seat there, so
+  its STORY is refused whatever key it names and the achievements' context
+  is that instance's guest, not home. A host playing apart keeps his own
+  story and context.
 
 ### 19.33 Round fix-019: the review of 0.1.7 (DW4Online 0.1.9)
 

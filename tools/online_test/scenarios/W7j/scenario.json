@@ -1,0 +1,46 @@
+{
+  "desc": "a host who drops exactly at a gate after earlier drops (fix-021, 19.6.7 'At a barrier'): a hosts in stag0101 with b, both walk to matz02 and stand by it; from @230 the proxy holds a's packets for 7 s at a time, 0.2 s apart, eight times (W7g's cuts: an absence debt of about 45 s), then both step on matz02 at @292 and a's own client cuts its link at its park for 40 s (DW4_ONLINE_TEST_CUT_AT_PARK). b's link is 150 ms slower upward, so a's BARRIER comes first and the barrier is still gathering when a's link closes: it is decided without him and b goes on into stag0102 at once. a shares no stage group with b, so his grace is a fresh 60 s; back after 40 s he arrives alone and joins b, still host. Before, the gathering stage group counted as shared with b: the debt left the grace about 25 s and the instance ended (host_lost) before a came back (k10 for both: the route crosses stag0101's rock slope)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "allow_close": true,
+  "db_checks": [
+    {
+      "name": "one instance, not lost",
+      "sql": "SELECT COUNT(*), SUM(COALESCE(end_reason, '') = 'host_lost') FROM instance_history",
+      "expect": "^1\t0$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0,
+      "env": {
+        "DW4_ONLINE_TEST_CUT_AT_PARK": "40"
+      },
+      "cut": {
+        "at": 230,
+        "seconds": 7,
+        "mode": "half",
+        "every": 7.2,
+        "count": 8
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true,
+      "impair": {
+        "up": "150,0,0",
+        "down": "0,0,0"
+      }
+    }
+  ]
+}
