@@ -1,0 +1,33 @@
+{
+  "desc": "counter-proof of W4bs: the stall counted in full as before 0.2.1 (DW4_ONLINE_TEST_BARRIER_LIMIT=1000): b's client goes on alone five seconds after the relay's last hold, W4bs's checks must fail",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "counter_proof": true,
+  "expect_fail": [
+    "^b logged what it must not \\(online: The server did not answer\\)",
+    "^b: online-script: FAIL \\(line \\d+\\) waited>=59"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "env": {
+        "DW4_ONLINE_TEST_BARRIER_STALL": "6.3",
+        "DW4_ONLINE_TEST_BARRIER_LIMIT": "1000"
+      }
+    }
+  ]
+}

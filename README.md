@@ -34,7 +34,7 @@ Dolphin. It is **not yet a complete 1:1 reconstruction**: smaller parts of the
 original engine are still missing, so you may meet differences or bugs (please
 [report them](#reporting-problems)). Online play has its own
 [known limits](docs/PLAYER_GUIDE.md#known-limits); developers find the plan in
-the [roadmap](docs/ROADMAP.md).
+the [roadmap](https://github.com/Dekirai/DW4_PC/blob/main/docs/ROADMAP.md).
 
 Windows only for now. An Android version is in development (tested on the AYN
 Thor handheld); it is not released yet and has no date.
@@ -107,8 +107,8 @@ in `settings.ini`. An `.rvz` is converted once into `data\<name>.iso` next to
 the program; the game then uses that ISO. WIA, CISO and NKit images must be
 converted to ISO or RVZ in Dolphin first (right-click > *Convert File...*).
 
-**A console window** with the program's log opens next to the game: leave it
-open while you play and close the game through its own window.
+**The log.** The game opens no console window: it writes what it found and
+the reason when something stops it to `saves\game.log` next to the program.
 
 **Controls.** Keyboard and controllers work right away; F1 > *Controls*
 rebinds everything (up to three inputs per control).
@@ -271,8 +271,9 @@ uses the defaults and asks for the game data again; your saves stay.
 Bugs and questions go to the
 **[Issues page](https://github.com/Dekirai/DW4_PC/issues)**. Say what you did
 and what happened, and attach the log that fits: `saves\controllers.log` for
-controllers, `saves\online.log` for online play, or the last lines of the
-console window. Never post your password or recovery code, and no game files.
+controllers, `saves\online.log` for online play, else `saves\game.log` (after
+a restart, the start before is in `saves\game.previous.log`). Never post your
+password or recovery code, and no game files.
 
 ## Building from source
 
@@ -284,25 +285,28 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Jobs 4
 ```
 
 This builds `build\Release` and runs the tests; `-Package` installs a
-ready-to-copy folder into `dist\DW4_PC`. Self-built games play offline and
-over LAN but cannot connect to the online server. Everything else:
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+ready-to-copy folder in the release layout into `dist\DW4_PC`
+(`scripts\package_windows.ps1` makes the release zip). Self-built games play
+offline and over LAN but cannot connect to the online server. Everything else:
+[docs/DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md).
 
-**Contributing:** read [DEVELOPMENT.md](docs/DEVELOPMENT.md) first; the
-project's rules (English everywhere, no game data in Git, no GitHub Actions,
-local validation) are in [AGENTS.md](AGENTS.md).
+**Contributing:** read
+[DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md)
+first; the project's rules (English everywhere, no game data in Git, no GitHub
+Actions, local validation) are in
+[AGENTS.md](https://github.com/Dekirai/DW4_PC/blob/main/AGENTS.md).
 
 ## Documentation
 
 | Document | For |
 | --- | --- |
 | [PLAYER_GUIDE.md](docs/PLAYER_GUIDE.md) | Players: settings, controls, controllers, saves, randomizer, achievements, online, mods, texture packs, command line |
-| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developers: how the port works, building, tests, test runs, the online server |
-| [ROADMAP.md](docs/ROADMAP.md) | For developers: the acceptance gates and the plan |
-| [SAVES.md](docs/SAVES.md) | The save files and the GameCube save import in depth |
-| [TEXTURES.md](docs/TEXTURES.md) | Textures, graphics options, the texture pack format |
-| [SURVIVAL.md](docs/SURVIVAL.md) | Data Overflow, the survival mode |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The engine's design |
+| [DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md) | Developers: how the port works, building, tests, test runs, the online server |
+| [ROADMAP.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/ROADMAP.md) | For developers: the acceptance gates and the plan |
+| [SAVES.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/SAVES.md) | The save files and the GameCube save import in depth |
+| [TEXTURES.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/TEXTURES.md) | Textures, graphics options, the texture pack format |
+| [SURVIVAL.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/SURVIVAL.md) | Data Overflow, the survival mode |
+| [ARCHITECTURE.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/ARCHITECTURE.md) | The engine's design |
 
 ## Legal
 

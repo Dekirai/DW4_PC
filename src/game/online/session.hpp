@@ -68,6 +68,7 @@ struct SessionConfig {
     std::string own_name;
     std::uint32_t rate = 3000;          // replay steps per second until measured (RATE)
     double barrier_timeout = 5.0;       // a solo group goes on as NEW without an answer (3.4)
+    double barrier_pass_limit = 0.5;    // of a longer pass of this machine only this much counts toward it (0.2.1)
     double replay_budget = 0.05;        // seconds of catch-up per poll (0: until caught up); the loading screen
                                         // still gets about 15 pictures a second
     double presence_interval = 0.2;     // PRESENCE five times per second
@@ -91,6 +92,11 @@ struct SessionConfig {
     // JOIN_REQ kind home goes unanswered, as from a modified client that
     // keeps playing after its removal; the relay then detaches the group.
     bool test_ignore_home = false;
+    // DW4_ONLINE_TEST_BARRIER_STALL=SECONDS (development builds, 0.2.1's W4bs): at the
+    // first barrier the relay holds, the client's pass stalls this long and
+    // the relay's holds that came meanwhile are dropped, as from a relay that
+    // stalled with it (W4b's machine-wide stall of 0.2.0).
+    double test_stall = 0;
     // Round I1b, the arrival prompt (19.7.4): the gate form holds the own
     // player's confirming press while the engine names a departure from home
     // (off: every arrival gets the loading-screen form, DW4_ONLINE_TEST_GATE_
@@ -715,6 +721,9 @@ private:
     std::uint32_t ended_by_ = 0;      // WORLD_NOTICE ended's member: its "left." right after says nothing new
     double join_toast_due_ = -1;      // the JOIN's toast waits for INSTANCE_INFO until then (-1: none)
     bool test_answer_cut_armed_ = false, test_answer_cut_fired_ = false; // (test_arm_answer_cut, development builds)
+    // (SessionConfig::test_stall: 0 none yet, 1 due at the end of this poll, 2 dropping the holds of the next poll, 3 done.)
+    int test_stall_phase_ = 0;
+    int test_stall_dropped_ = 0;
     std::uint8_t own_box_ = 1;
     // Round I1b: go along (session_go.cpp).
     std::vector<GoOffer> go_offers_;

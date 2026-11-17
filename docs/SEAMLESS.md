@@ -402,7 +402,11 @@ the friend list: 19.6.3, 19.7, 19.9):
 If the server does not answer within five seconds (connection lost), a solo
 group continues as NEW without a story update and is not offered to joiners
 until it reconnects (it uploads its snapshot and log then); a larger group
-keeps waiting (its members cannot run unsealed ticks).
+keeps waiting (its members cannot run unsealed ticks). The five seconds count
+from the server's last word (a held barrier's BARRIER_WAIT, every second) and
+only while the client listens: of a pass of its own longer than half a second
+(a stall of the whole machine, which stops a relay on it too) only half a
+second counts (0.2.1, `SessionConfig::barrier_pass_limit`; W4bs).
 
 ### 3.5 Leaving an instance
 
@@ -12491,6 +12495,7 @@ means round I1a):
 | W3 | I1 | nothing running: no prompt, NEW with the remembered visibility, the toast |
 | W4 | I1 | a and b, strangers, take the gate 2 s apart with nothing running: co-arrival without a prompt, host a, b's toast |
 | W4b | I1 | b takes the gate 6 s after a, a's instance still *starting*: b joins it without a prompt (counter-proof: with `World:StartingSeconds` 0 b gets the prompt) |
+| W4bs | 0.2.1 | W4b with b's pass stalling 6.3 s at the relay's first hold, the holds of those seconds dropped (`DW4_ONLINE_TEST_BARRIER_STALL`: the machine-wide stall of W4b's failed run of 0.2.0, which stopped the relay too): the client's five seconds without the relay's word count only half a second of its own long pass, b joins a's starting instance (counter-proof W4bsx: with `DW4_ONLINE_TEST_BARRIER_LIMIT=1000` b goes on alone) |
 | W4c | I1b | (decision 43) k's instance plays at stag0101; a and b, strangers, take the gate there at the same moment, both get the gate form (k's row, *Here (1)*) and both choose *New instance* (autochoice new): one new instance with both (a co-arrival, or a join of its starting instance), two in the history with k's |
 | W4d | I1b | (decision 48) as W4c, but a chooses *New instance* Public at once and b, a stranger, *New instance* Private 1.5 s later (`DW4_ONLINE_AUTOCHOICE_DELAY_MS`: a's barrier comes first): a's base holds for nobody, b refuses a's starting instance (`starting_refused`): three instances, b's Private with b alone, b nobody's guest |
 | W4e | I1b | (decision 48) the other order of W4d: b's Private choice at once, a's Public 1.5 s later: b's base holds for nobody, a never sees b's instance: three instances, the same result as W4d |

@@ -40,6 +40,7 @@
 #include "online_achievements.hpp"
 #include "online/cpu_gate.hpp"
 #include "online/env_check.hpp"
+#include "program_output.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -3886,7 +3887,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             for (std::size_t i = 0; i < entries.size(); ++i)
                                 if (entries[i].code == languages.selected()) current = i;
                             auto entry_label = [&](std::size_t i) {
-                                return entries[i].texts ? entries[i].name : entries[i].name + " (pictures only, no game.tsv)";
+                                // (A pack without its game.tsv, the release's form, swaps pictures only.)
+                                return entries[i].texts ? entries[i].name : entries[i].name + " (pictures only)";
                             };
                             ImGui::BeginDisabled(!languages.has_packs());
                             if (ImGui::BeginCombo("Language", entry_label(current).c_str())) {
@@ -5154,6 +5156,74 @@ int run(const Options& options, dw4::game::Settings& settings) {
     return exit_code;
 }
 
+// The running program's name for --help and the error lines: DW4_PC in the
+// release folder, dw4_game in a build folder (argv[0]'s file name).
+std::string program_name = "DW4_PC";
+
+std::string name_of_program(const char* argv0) {
+    try {
+        if (argv0 && *argv0) {
+            auto name = std::filesystem::path(argv0).stem().string();
+            if (!name.empty()) return name;
+        }
+    } catch (const std::exception&) {
+    }
+    return "DW4_PC";
+}
+
+// --help: every option main() takes (keep it in step with the parser below).
+void print_help() {
+    std::cout << "Digimon World 4 PC " << DW4_PC_VERSION << "\n"
+              << "Usage: " << program_name << " [OPTIONS]\n"
+              << "Without options the game boots the logos and the title; the first start asks for the game data.\n"
+                 "\n"
+                 "Playing:\n"
+                 "  --data PATH                  this disc image (.iso, .gcm, .rvz) or extracted folder for this run\n"
+                 "                               (instead of settings.ini [data] path)\n"
+                 "  --stage NAME                 start straight in a stage (stagml11: the Home lobby)\n"
+                 "  --loading original|fast      this run's loading speed\n"
+                 "  --card-dir GCI_ROOT          play on a GCI folder root (Card A / Card B) for this run\n"
+                 "  --save-file FILE             this run's save file for slot A (slot B: <name>_b<ext>)\n"
+                 "  --load-state FILE            start from a save state file\n"
+                 "\n"
+                 "LAN and direct play:\n"
+                 "  --host [--players N] [--port N] [--net-delay N]\n"
+                 "                               host a session (2 players, port 52040, input delay 3 by default)\n"
+                 "  --join HOST[:PORT]           join a session\n"
+                 "\n"
+                 "Tools (they print what they did and exit):\n"
+                 "  --save-info FILE|FOLDER      the boxes of a GameCube save\n"
+                 "  --import-save FILE|FOLDER[:all|BOXES] [--import-slot A|B] [--card-dir GCI_ROOT | --save-file FILE]\n"
+                 "                               import a GameCube save (.gci .gcs .sav .raw .gcp) into slot A or B;\n"
+                 "                               BOXES: 1,3 (the same boxes) or 1>2,4>1 (box 1 into box 2, ...)\n"
+                 "  --convert-rvz IN.rvz OUT.iso convert an RVZ disc image to an ISO\n"
+                 "  --export-presence-art FOLDER Discord art asset PNGs from your game data\n"
+                 "  --help, -h                   this list\n"
+                 "\n"
+                 "Test runs (docs/DEVELOPMENT.md \"Test runs\"):\n"
+                 "  --smoke-test FRAMES          run FRAMES steps as fast as the machine runs them, no window, no sound\n"
+                 "  --input SCRIPT               scripted pads (frame BUTTON [duration [player]], GOTO, SEEK, SEND)\n"
+                 "  --screenshot FILE.bmp        a picture at the end (with --screenshot-frames N,M,...: at those frames)\n"
+                 "  --screenshot-frames N,M,...\n"
+                 "  --flag N[=V]                 set story flag N (default 1) at the start\n"
+                 "  --debug-camera EX,EY,EZ,TX,TY,TZ\n"
+                 "                               a fixed camera (eye, target)\n"
+                 "  --overflow-run KEY=VALUE ... a Data Overflow run (form=p_agumon field=stagbs02 seed=N [at=F] [frames=N] ...)\n"
+                 "\n"
+                 "Online test runs:\n"
+                 "  --online-login NAME --online-play [BOX]\n"
+                 "                               log in as NAME (remembered, or DW4_ONLINE_PASSWORD) and play box BOX (1-4)\n"
+                 "  --online-camera 0|1, --online-light 0|1, --online-fast\n"
+                 "                               the camera mode, light mode and fast loading the session uses\n"
+                 "  --online-difficulty 0|1|2    the Game Start's difficulty (development builds; others ignore it)\n"
+                 "  --online-calibrate STEPS [--online-calibrate-stage NAME]\n"
+                 "                               print this PC's replay rate (default stage stag0102) and exit\n"
+                 "  --online-script FILE         the scripted pad of an online test run\n"
+                 "  --online-card FOLDER         the online card starts with these saves (development builds)\n"
+                 "  --online-ui FILE             the account and world screens driven by a script\n"
+                 "  --online-folder DIR          the remembered logins there instead of saves\\online\n";
+}
+
 // --save-info FILE / --import-save FILE[:BOXES]: the preview of a GC save
 // (any container save_import.hpp reads), and the import into this run's
 // store (--card-dir / --save-file / the player's save files, slot A or B),
@@ -5163,7 +5233,7 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
     std::string error;
     const auto source = dw4::save::load_import(path, error);
     if (!source) {
-        std::cerr << "dw4_game: " << path.string() << ": " << error << '\n';
+        std::cerr << program_name << ": " << path.string() << ": " << error << '\n';
         return 1;
     }
     const auto saved = dw4::save::save_time_text(source->gci);
@@ -5173,7 +5243,7 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
     if (options.import_save.empty()) return 0;
     const auto moves = dw4::save::parse_box_moves(options.import_boxes);
     if (!moves) {
-        std::cerr << "dw4_game: unknown boxes '" << options.import_boxes << "'\n";
+        std::cerr << program_name << ": unknown boxes '" << options.import_boxes << "'\n";
         return 1;
     }
     // A run without --smoke-test: the player's store (with the one-time
@@ -5195,6 +5265,13 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // The release game has no console window: its lines go to the pipe or the
+    // console it was started with, else to saves/game.log (program_output.hpp).
+    {
+        const auto folder = program_dir();
+        dw4::game::route_program_output((folder.empty() ? std::filesystem::path(".") : folder) / "saves" / "game.log");
+    }
+    program_name = name_of_program(argc > 0 ? argv[0] : nullptr);
     // Test runs and the converter never open dialogs (they run unattended).
     bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
     for (int i = 1; i < argc; ++i)
@@ -5312,16 +5389,9 @@ int main(int argc, char** argv) {
                 }
             }
             else if (arg == "--help" || arg == "-h") {
-                std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
-                             "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
-                             "         [--save-file FILE] [--load-state FILE] [--loading original|fast]\n"
-                             "         [--export-presence-art FOLDER] (Discord art asset PNGs from your game data)\n"
-                             "         [--overflow-run form=p_agumon field=stagbs02 seed=N [at=F] [frames=N] ...] (Data Overflow)\n"
-                             "dw4_game --save-info FILE|FOLDER\n"
-                             "dw4_game --import-save FILE|FOLDER[:all|BOXES] [--import-slot A|B] [--card-dir GCI_ROOT | --save-file FILE]\n"
-                             "         BOXES: 1,3 (the same boxes) or 1>2,4>1 (box 1 into box 2, ...); .gci .gcs .sav .raw .gcp\n";
+                print_help();
                 return 0;
-            } else throw std::runtime_error("unknown option " + arg);
+            } else throw std::runtime_error("unknown option " + arg + " (" + program_name + " --help lists them)");
         }
         if (!options.convert_from.empty()) {
             // --convert-rvz IN OUT: write the plain disc image and exit.
@@ -5376,7 +5446,7 @@ int main(int argc, char** argv) {
         if (!options.export_art.empty()) return dw4::game::export_presence_art(options.data, options.export_art);
         return run(options, settings);
     } catch (const std::exception& error) {
-        std::cerr << "dw4_game: " << error.what() << '\n';
+        std::cerr << program_name << ": " << error.what() << '\n';
         // Without a console the reason shows in a message box.
         if (interactive) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon World 4 PC", error.what(), nullptr);
         return 1;

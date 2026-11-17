@@ -79,14 +79,16 @@ The game is portable: everything it writes is next to the program.
 | `saves\overflow.dat` | Data Overflow's progress |
 | `saves\randomizer.ini` | The randomizer bound to each saved character, with a spoiler file per character |
 | `saves\online\` | Remembered online logins (protected for your Windows account; no password is stored) |
-| `saves\online.log`, `saves\controllers.log` | Logs to attach to a bug report (see [Reporting problems](../README.md#reporting-problems)) |
+| `saves\game.log`, `saves\online.log`, `saves\controllers.log` | Logs to attach to a bug report (see [Reporting problems](../README.md#reporting-problems)); `saves\game.previous.log` is the game log of the start before |
 | `data\` | Disc images converted from RVZ |
 | `mods\` | Content mods (`mods\<id>`), texture packs (`mods\textures`) and texture dumps (`mods\dump\textures`) |
 | `lang\` | Language packs (`lang\<code>\`) |
 
-The console window that opens with the game prints what it found (lines such
-as `saves: ...`, `mod: ...`, `language: ...`, `controllers: ...`) and the
-reason when something stops the game.
+The game opens no console window. It writes what it found (lines such as
+`saves: ...`, `mod: ...`, `language: ...`, `controllers: ...`) and the reason
+when something stops the game to `saves\game.log`, anew at each start (the
+start before is kept as `saves\game.previous.log`). Started from a command
+prompt (cmd, PowerShell), it prints these lines into that window instead.
 
 ## The F1 menu
 
@@ -120,11 +122,12 @@ Anything else shows as *Custom*.
 found in `lang\<code>\` next to the program, each in its own language. The
 choice applies at once. A pack changes the game's own text (and some
 pictures); the port's menus stay English. A pack without its text catalog
-says "(pictures only, no game.tsv)". The release comes with the German pack
-in this form, *Deutsch (Fan-Übersetzung)*: it shows the German originals of
-two pictures from your disc (the status labels and BITS), the game text stays
-English. Players with different languages can play together. Without packs
-the list is greyed out. Details: [L10N.md](L10N.md).
+says "(pictures only)". The release comes with the German pack in this form,
+*Deutsch (Fan-Übersetzung)*: it shows the German originals of two pictures
+from your disc (the status labels and BITS), the game text stays English.
+Players with different languages can play together. Without packs the list is
+greyed out. Details:
+[L10N.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/L10N.md).
 
 ## Display and graphics
 
@@ -390,7 +393,7 @@ the save lives.
   exits. `--save-file FILE` makes any run use that file for slot A
   (`<name>_b<ext>` for slot B).
 
-More about the files: [SAVES.md](SAVES.md).
+More about the files: [SAVES.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/SAVES.md).
 
 **Save states.** F5 saves and F9 loads state 1; the Settings tab has four
 slots, kept as `saves/states/state<N>.dw4state` next to the program. A state
@@ -782,7 +785,7 @@ shown on the server's website with their rarity.
   server is in maintenance." come with a *Try again* button.
 - "Online play is not available in this build yet": a build made from the
   source code without the server's certificate pins (see
-  [DEVELOPMENT.md](DEVELOPMENT.md#release-builds-and-the-server-pins)).
+  [DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md#release-builds-and-the-server-pins)).
 
 ### Known limits
 
@@ -837,7 +840,7 @@ DW4_PC.exe --join 192.168.1.20           rem or --join host:port
 
 ## Data Overflow (survival mode)
 
-*Work in progress* ([SURVIVAL.md](SURVIVAL.md)). Offline, a Gekomon stands by
+*Work in progress* ([SURVIVAL.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/SURVIVAL.md)). Offline, a Gekomon stands by
 the Home lobby's Outside World Gate once the lobby intro is done and the gate
 leads somewhere; talking to it alone opens the battle simulator (with more
 players it says it takes one Digimon at a time).
@@ -880,7 +883,7 @@ data, mods included, match.
 **For mod authors:** `dw4_catalog ROOT --find TEXT` lists logical paths and
 `--read PATH --out FILE` writes an original file as a template (ROOT may be
 the disc image). `dw4_catalog.exe` ships next to `DW4_PC.exe` in the release
-folder (and builds with the source code, see [DEVELOPMENT.md](DEVELOPMENT.md)).
+folder (and builds with the source code, see [DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md)).
 
 ## Texture packs
 
@@ -895,7 +898,7 @@ quality only change something with a pack. Two layouts work:
   (BC7, BC3, BC1 or RGBA8 DDS files with their mip chains, or PNG), each
   file's scale over the original and its levels; one 4x file serves Ultra and
   High. The format, the encodings and the rules a pack builder follows are in
-  [TEXTURES.md](TEXTURES.md#texture-packs-format-2).
+  [TEXTURES.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/TEXTURES.md#texture-packs-format-2).
 - **Loose files** (format 1): a PNG (or DDS) of any size whose name ends in
   `_<hash>.png` up to 8 folders below the folder replaces that texture (a
   folder of more than 200,000 files and folders is not read as a pack).
@@ -914,12 +917,14 @@ older packs still match.
 
 Textures dumped or packs made from the game are game-derived: keep them on
 your machine and do not share them. Tools that build a whole pack from your
-own copy are described in [DEVELOPMENT.md](DEVELOPMENT.md#texture-pack-tools).
+own copy are described in [DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md#texture-pack-tools).
 
 ## Command line
 
-The game needs no command line; these options are for special cases. `--help`
-prints a short list.
+The game needs no command line; these options are for special cases.
+`DW4_PC.exe --help` lists every option. Started from a command prompt (cmd,
+PowerShell), the game prints into that window (the prompt does not wait for
+it); started otherwise, into `saves\game.log`.
 
 | Option | What it does |
 | --- | --- |
@@ -942,7 +947,7 @@ DW4_PC.exe --stage stagml11   rem jump straight to the Home lobby
 ```
 
 Developer options (test runs, scripted input, screenshots) are in
-[DEVELOPMENT.md](DEVELOPMENT.md#test-runs).
+[DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md#test-runs).
 
 ## settings.ini reference
 

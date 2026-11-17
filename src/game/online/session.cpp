@@ -333,8 +333,17 @@ bool Session::await_hello(double timeout) {
 
 void Session::poll(double now) {
     now_ = now;
-    poll_gap_ = last_poll_at_ >= 0 ? std::clamp(now - last_poll_at_, 0.0, 1.0) : 0.0;
+    const double gap = last_poll_at_ >= 0 ? std::max(0.0, now - last_poll_at_) : 0.0;
+    poll_gap_ = std::min(gap, 1.0);
     last_poll_at_ = now;
+    // The five seconds a solo group waits at a barrier (3.4, below) are the
+    // relay's silence while this client listens. A long pass of its own (a
+    // stall of the whole machine, which stops a relay on it too: W4b's failed
+    // run of 0.2.0, a 6.3 s pass) counts only barrier_pass_limit of it: the
+    // relay's word after the stall (its holds speak every second) still
+    // comes in time. (A stall of this client alone loses nothing: the
+    // relay's words wait in the socket and are read below.)
+    if (mode_ == Mode::parked && gap > config_.barrier_pass_limit) parked_at_ += gap - config_.barrier_pass_limit;
     flush_late_pads(); // (the last backlog run's)
     if (transport_) {
         inbox_.clear();
@@ -375,13 +384,20 @@ void Session::poll(double now) {
         }
         if (!open && transport_) lose_connection(now);
     }
+    if (test_stall_phase_ == 2) {
+        test_stall_phase_ = 3;
+        log("test: %d holds of the relay dropped after the stall", test_stall_dropped_);
+        std::printf("online: test: %d holds of the relay dropped after the stall\n", test_stall_dropped_);
+        std::fflush(stdout);
+    }
     if (mode_ == Mode::catching_up) run_catch_up(now);
     note_mode();
     if (mode_ == Mode::solo || mode_ == Mode::sealed || mode_ == Mode::observing) report_window(now, false);
     // A solo group parked without an answer goes on as NEW (3.4); a larger
     // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
     // for a co-arrival, a join or a boss choice) is an answer: the five
-    // seconds count from the server's last word, and a boss choice waits.
+    // seconds count from the server's last word (without this machine's own
+    // stalls, above), and a boss choice waits.
     if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && !prompt_hold_ && now - parked_at_ > config_.barrier_timeout)
         barrier_fallback(now);
     if (prompt_ && auto_answer_at_ >= 0 && now >= auto_answer_at_) auto_answer(now);
@@ -396,6 +412,15 @@ void Session::poll(double now) {
             send_story(now, false);
         }
         send_presence(now);
+    }
+    if (test_stall_phase_ == 1) {
+        // DW4_ONLINE_TEST_BARRIER_STALL (development builds, W4bs): the whole pass stalls
+        // here; the next poll drops the holds that came meanwhile.
+        test_stall_phase_ = 2;
+        log("test: the pass stalls %.1f s at the held barrier (DW4_ONLINE_TEST_BARRIER_STALL)", config_.test_stall);
+        std::printf("online: test: the pass stalls %.1f s at the held barrier\n", config_.test_stall);
+        std::fflush(stdout);
+        std::this_thread::sleep_for(std::chrono::duration<double>(config_.test_stall));
     }
 }
 
@@ -616,6 +641,11 @@ void Session::handle(const w::Frame& frame, double now) {
             loading_.clear();
             break;
         }
+        if (test_stall_phase_ == 2) {
+            ++test_stall_dropped_; // (DW4_ONLINE_TEST_BARRIER_STALL: a hold of the relay that "stalled" with this client)
+            break;
+        }
+        if (config_.test_stall > 0 && test_stall_phase_ == 0 && mode_ == Mode::parked) test_stall_phase_ = 1;
         prompt_hold_ = false;
         std::string names;
         for (std::size_t i = 0; i < m.names.size(); ++i) names += (i ? (i + 1 == m.names.size() ? " and " : ", ") : "") + m.names[i];
