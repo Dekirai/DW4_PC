@@ -245,8 +245,22 @@ EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Prog
   of tick 4179 (16 ticks replayed, READY at 4193 with its check fingerprint equal), joined at 4198, and its STATEHASH of
   4200, two ticks after the join, differed from a's (5817b4ee... / 89453ef7...); every NETFP equal (21 from 4200 to
   5400), the STATEHASHes of 4800 and 5400 equal again. The repeat passed (`scen_m_mod_rep.log`, `run_20261117_150742`:
-  c joined at 4203, its first STATEHASH at 4800). No machine stall in the logs. This is the rebuild gap SEAMLESS 19.31
+  c joined at 4203, its first STATEHASH at 4800). No machine stall in the logs. This is the rebuild gap SEAMLESS 19.32
   notes for fix-d43's W7f run `135002` (a STATEHASH after a checkpoint rebuild differs for a while, every NETFP equal):
   a client matter, not from 0.2.1 (neither lane touched the checkpoint or the tick state). Places:
   `src/game/online/session.cpp:2616` (the client's `engine_.tick_state_hash()` at the first period tick after the
   join) and `server/DW4Online/src/DW4Online.Relay/Hub/RoomHub.cs:2381-2383` (the relay's compare and `MarkSuspect`).
+- **S14p failed twice** (`scen_m_reg_1.log`, `run_20261117_201312`; `scen_m_reg_1_rep.log`, `run_20261117_204548`),
+  both times only on run.py's `story_saved` precondition "the owner's online_story had flag 505 before g set it ((2,
+  1))"; every NETFP equal (34 / 38 compared), g's STATEHASH-free run otherwise as expected. Analysis: g logs "505 set"
+  (its script step, tick 3397 / 3502), then sends its STORY in the same pass (`online-trace: story ... rev=1`, then
+  `story_ack rev=2`); the relay merged it into o's keeper and the server saved revision 2 at once (the relay's `story`
+  event account 1 revision 2, at the tick of the set, not earlier: no foreign story reached o's row). run.py's watcher
+  (`tools/online_test/run.py:870-879`) reads g's log only every 0.1 s and reads the database's "before" after it saw
+  the line; when the save is quicker than that, the precondition (`run.py:1324-1326`) fails although the flag reached
+  the owner's row in well under the ten seconds. The same harness race made S14p pass only on its second run in round
+  I1b (SEAMLESS 19.32, "a story save faster than the harness's log poll"). Here it was the machine: from about 20:00 the
+  user played a game at normal priority (about ten cores busy beside the BelowNormal marathon; also other workflows'
+  idle-priority processes), g's longest pass 245 ms (first run) and 859 ms (repeat), g's slot `late` (input delay up to
+  5), o's executions 67 ms on average in the repeat. No product fault; a harness race (the check would need the
+  database's save time instead of the log poll's).
