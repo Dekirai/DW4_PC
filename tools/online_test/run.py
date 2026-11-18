@@ -249,9 +249,12 @@ def free_port(stack):
     raise RuntimeError("no free port in " + stack.args.ports)
 
 
-def wait_port(port, seconds):
+def wait_port(port, seconds, process=None):
+    """True once 127.0.0.1:port accepts a connection within `seconds`; False at the end, or at once when `process` exited."""
     end = time.time() + seconds
     while time.time() < end:
+        if process is not None and process.poll() is not None:
+            return False
         try:
             socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
             return True
@@ -282,7 +285,10 @@ def start_mysql(stack):
                                 "--bind-address=127.0.0.1", "--port=%d" % port, "--character-set-server=utf8mb4",
                                 "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00", "--innodb-use-native-aio=0",
                                 "--log-error=" + os.path.join(stack.dir, "mysqld.err")], os.path.join(stack.dir, "mysqld.out"))
-    if not wait_port(port, 40):
+    # (180 s: on a loaded machine mysqld, BelowNormal like the clients, stood after "Completed initialization of buffer pool"
+    # for more than the 40 s of before while games ran at normal priority; seven runs of int-021's check pass and fix stage
+    # were lost, and the terminate cut its start short. A mysqld that exits ends the wait at once.)
+    if not wait_port(port, 180, stack.mysqld):
         raise RuntimeError("mysqld did not open port %d" % port)
     stack.mysql = (port, pw)
     return create_database(stack)
