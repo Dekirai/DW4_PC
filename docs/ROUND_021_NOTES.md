@@ -192,7 +192,7 @@ this stage beyond the merges' conflict resolution (notes and harness logs only);
 | b | merge `fix-021-client` (9ba0fff6) `--no-ff` | f0297de4 | `docs/ROUND_021_NOTES.md` (both lanes added it): both kept, each lane's text as written in its own section (the relay lane's headings one level down), one common intro. SEAMLESS (3.4 and 19.24's W4bs row of the client lane, 6.4, 6.9, 19.6.6, 19.6.7, 19.24, 19.32 of the relay lane) and PLAYER_GUIDE merged by git with both sides' text (checked against each branch) |
 | c | merge main a304d6c9 `--no-ff` (the Android port and its console F1, the focus pause on the PC too with default off, the LAN hello's platform tag, Android's online / LAN / cloud refusals, docs) | 7400b578 | `CMakeLists.txt`: the client lane's release layout (install rules) with main's "no DW4_PC on Android" (`if(DW4_BUILD_APP AND NOT ANDROID)`). `game_main.cpp` `main()`: Android's lines to logcat (main), the PC's to the pipe / console / `saves/game.log` (the lane's `route_program_output`, now the `#else` branch: a no-op off Windows anyway), `program_name` for both. `game_main.cpp` `--help`: the lane's `print_help()` with main's new options added (`--mute`, `--env`, `--menu-script`, `--import-disc`), so it still lists every option the parser takes. Merged by git with both sides: `online.cpp`'s test env list (the barrier hooks and main's entries), PLAYER_GUIDE (the lane's absolute links, main's focus pause / menu size / second screen / Thor text), DEVELOPMENT (the lane's "Release packages", main's `cmake` / `android` rows), `online_ui.cpp`. README and SEAMLESS: main did not touch them |
 
-The check pass on 7400b578: below, as it runs. An earlier start of it on f0297de4 (before main moved) was stopped;
+The check pass on 7400b578: below (complete on 18.11; the result at the end of the marathon). An earlier start of it on f0297de4 (before main moved) was stopped;
 its logs are in `build/r021/alt/logs_f0297de4_stopped`.
 
 ### Checks of the integration
@@ -235,7 +235,7 @@ Logs in `build/r021/logs/`. Code of 7400b578 (the later commits notes only).
 **The marathon** (`marathon.sh`, `logs/marathon.log`, run.py under `python -I` without a wrapper, `--parallel 1`,
 BelowNormal; mysqld 3751, ports 60700-60799; the client `scen/dw4_int021_dev.exe`, a copy of `dev`'s game, md5
 a44e81f9; W22's protocol 48 client `old48/dw4_old48_dev.exe`, md5 e527c2cf; resumable: a batch whose log ends with
-EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Progress (18:35):
+EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). The runs (17.11 12:25 to 18.11 12:02):
 
 - Passed on their first run: `m_smoke` (W1 W4c W10 W31 S22b RGJ1), `m_new021` (W4bs W4bsx W7h W7i W7j), `ui home`,
   `ui goalong`, `m_w4` (W4 W4b W4d-W4i), `m_w7` (W7 W7b-W7g), `m_prompt` (W2 W2b W11 W11b W11r W30c), `m_drops`
@@ -259,10 +259,10 @@ EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Prog
   (`tools/online_test/run.py:870-879`) reads g's log only every 0.1 s and reads the database's "before" after it saw
   the line; when the save is quicker than that, the precondition (`run.py:1324-1326`) fails although the flag reached
   the owner's row in well under the ten seconds. The same harness race made S14p pass only on its second run in round
-  I1b (SEAMLESS 19.32, "a story save faster than the harness's log poll"). Here it was the machine: from about 20:00 the
-  user played a game at normal priority (about ten cores busy beside the BelowNormal marathon; also other workflows'
-  idle-priority processes), g's longest pass 245 ms (first run) and 859 ms (repeat), g's slot `late` (input delay up to
-  5), o's executions 67 ms on average in the repeat. No product fault; a harness race (the check would need the
+  I1b (SEAMLESS 19.32, "a story save faster than the harness's log poll"). On 17.11 the machine was busy (from about
+  20:00 the user played a game at normal priority, about ten cores beside the BelowNormal marathon; g's longest pass
+  245 ms / 859 ms, g's slot `late`, input delay up to 5), but that was not the cause: on 18.11 S14p failed the same way
+  on a quiet machine and passed on a busy one (below). No product fault; a harness race (the check would need the
   database's save time instead of the log poll's).
 - `m_i1a_1..3` (W1x W3 W4bx W5f W6 W8 W9, W12 W18 W19 W22 W24 W25 W26, W27 W28 W29 W30 W30b W30x W32) passed;
   `m_reg_1` S1 S2 S3 S5 S14z S16 passed; `m_reg_2` S17a S17b S18b S19a S19b S19c passed.
@@ -301,3 +301,47 @@ EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Prog
   stall). The repeat passed (`scen_m_extra_2_rep.log`, `run_20261118_095934`: b hit after 2452 frames). The enemies'
   choice of target, which the script's own comment names (the e_nume "sometimes went for a instead"); no online fault,
   the 3000 frames leave little room. Neither lane touched it.
+- W7g twice more (`m_w7g_2`, after the gate waited 32 minutes for the user's game, and `m_w7g_3` after 14): passed.
+  So W7f and W7g passed four times each in this marathon (`m_w7` and three more).
+- **S14p on a quiet machine** (`scen_m_s14p_q.log`, `run_20261118_113824`, the gate open at 2.0 cores): failed the same
+  way, the third time (g's executions at most 363 ms). The relay's `story` event (account 1, revision 2) came at its ms
+  125586.9, between its sealing of tick 3301 (125065.6) and 3421 (127068.3), so near tick 3332, and g's "505 set" step
+  ran at its engine tick 3314 with input delay 5-6 and a backlog of up to 8 ticks: the save followed g's line by roughly
+  0.1-0.3 s, less than the watcher's log poll (0.1 s) plus the `mysql.exe` start of its "before" read
+  (`run.py:878-880`). The repeat (`scen_m_s14p_q_rep.log`, `run_20261118_115934`; the user's game ran again, the gate
+  waited 18 minutes and opened at 4.8 cores) passed: "flag 505 in the owner's online_story (revision 2) 0.5 s after g
+  set it". Four runs: three failed (two on a busy machine, one on a quiet one), one passed (busy): the quicker the path,
+  the surer the precondition fails. The harness's race, not 0.2.1's (no change of this round touches the story merge or
+  its save: the relay lane's `OnForeignStory` change, `WorldHub.cs:1704-1715`, is for a member alone outside an
+  instance; g plays in o's instance).
+
+**The marathon's result**: every one of the 105 scenario directories, the 12 ui runs and the 9 fake-client scenarios
+passed (W7f and W7g four times each); every fingerprint (NETFP) compared was equal, except the one tick each of S11a,
+S11b, JR and JS2 that their test hooks make differ before the resync READY (allowed). First runs that failed:
+W5s (the checkpoint rebuild's STATEHASH gap, a client matter from before 0.2.1; repeat passed), S18 (a 3-4 s machine
+stall; repeat on a quiet machine passed), M2 (the enemies' target, 95 frames over its step limit; repeat passed), S14p
+(run.py's `story_saved` race: 3 of 4 runs failed, 1 passed). No failure from 0.2.1's changes. Two runs on 17.11 never
+started a scenario (mysqld did not open its port in run.py's 40 s on the loaded machine) and one batch was cut by the
+session end; each was run again. Every mysqld of the runs ended with "Shutdown complete"; no process of this stage is
+left.
+
+### Left (int-021)
+
+- run.py's `story_saved` (S14p): read the owner's row "before" at g's earlier line "505 not in the host's story"
+  (`S14p/g.script` line 13: nothing sets 505 between it and the mat), not after "505 set"; or compare the saved
+  revision. Harness only.
+- M2's `b.script` line 14: 3000 frames for the e_nume to hit b in its menu (this round 3095 and 2452): more room or
+  a's fight farther from b.
+- W5s: the checkpoint rebuild's STATEHASH gap (SEAMLESS 19.32, the client's first STATEHASH two ticks after a join
+  from a checkpoint).
+- run.py's mysqld start window (40 s, `run.py:285`) is short on a loaded machine.
+
+### How to run (int-021)
+
+Scripts in `build/r021/` (gitignored), each a copy adapted from the r020 ones: `bld.cmd`, `ctest.cmd`, `utest.sh`,
+`itest.sh` (mysqld 3750), `checks.sh` (det, st), `f1cmp.sh` / `f1lang.sh` (the PC's F1 against main), `menu.sh`
+(`tools/menu/run.sh d`), `pub.sh` (publish dry run), `pkg.sh` / `pkg.cmd` (package dry run); the marathon:
+`marathon.sh` (17.11, without the gate), `marathon2.sh` (with `gate.ps1`), `marathon3.sh` (18.11: `scen3.sh`, ports
+60600-60699, the infra retry). A batch whose log ends with EXIT is skipped; `touch build/r021/marathon_stop` stops
+before the next batch. `mysqld_recover.py DATADIR PORT PWFILE LOG` starts a test mysqld once for its crash recovery and
+shuts it down by SQL.
