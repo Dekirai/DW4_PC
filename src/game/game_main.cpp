@@ -4976,7 +4976,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::TextDisabled("Other languages come as language packs in lang/<code>/ next to the program.");
                             else if (languages.selected() != "en")
                                 ImGui::TextDisabled(entries[current].texts ? "The game's own text in this language; the port's menus stay English."
-                                                                           : "This pack's pictures only; the game's text and the port's menus stay English.");
+                                                                           : "Pictures only; the game's text and the port's menus stay English.");
                         }
                         {
                             // Presets: Original (the GameCube presentation, load
