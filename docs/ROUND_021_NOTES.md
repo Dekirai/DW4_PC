@@ -414,3 +414,33 @@ Logs in `build/r021fix/logs/`. Final code a3f683b3 (the later commits notes only
   scenario: mysqld stood after "Completed initialization of buffer pool" for more than run.py's 40 s while the games ran
   (`scen_*_infra*.log`); each ran again. So run.py's window is 180 s now and ends at once when mysqld exits (3b2fd68c,
   `test_wait_port.py`).
+- **W7i on a quiet machine: not run.** `quiet.sh` waited behind the gate at 2 cores from 19:11 (a game of the user at
+  normal priority the whole evening) and was stopped by the main session at 21:04 because the user's PC lagged under
+  the test load. W7i stays open: it failed twice under the user's load in this stage (above), passed in the check pass
+  and in the relay lane on the same lag code, and the fix stage changed nothing on its path.
+
+**The fix stage's result**: the review's seven findings and the check pass's S14p and M2 fixed (R1-R7, F1, F2) plus
+run.py's mysqld window, each with a test that fails without its fix (or a counter-run of the old code); builds, ctest
+81/81 twice, server unit 718/718, integration 155 + 3 skipped, publish dry run, det.sh, the save state suite en/de, the
+console menu scripts d1-d8, the package dry run and every scenario of the marathon passed (S14p three of three, M2 twice,
+W4 / W7 / W10 families, the join set, ui accounts), except W7i (twice `why=streak` under the user's load; its rerun on a
+quiet machine is open). Every mysqld that started a scenario ended with "Shutdown complete"; no process of this stage is
+left.
+
+### Left (fix stage)
+
+- W7i once on a quiet machine (`build/r021fix/quiet.sh f_w7i_q W7i`, `MAXCORES=2`).
+- W5s's checkpoint rebuild gap (SEAMLESS 19.32; passed this time) stays a client matter from before 0.2.1.
+- The console detach (R3) was checked in a console without a window; a real cmd window (start `DW4_PC.exe`, see the one
+  line, close the window, the game plays on) is the user's check.
+- The server's version (`Directory.Build.props` 0.2.0) is the ship stage's.
+
+### How to run (fix stage)
+
+Scripts in `build/r021fix/` (gitignored), copies adapted from `build/r021/`: `env.sh`, `utest.sh` (unit), `itest.sh`
+(integration, mysqld 3750 with `build/r021/it-mysql`), `build.sh` / `builds.sh TAG` / `ctest.sh` (the check pass's build
+folders `build/r021/{rel,dev,plain}`, logs here), `checks.sh det|pkg|st_en|st_de|menu`, `f1lang.sh`, `pub.sh` (publish
+dry run), `pkg.sh` / `pkg.cmd` (package dry run in `build/r021/pkg`, output `distP`), `pins_test.sh` + `pinscheck.py`
+(R2), `console_test.py` + `console_child.py` (R3, R6: own console without a window, own desktop never shown),
+`install_dist_test.ps1` (R7), `nopins_probe.cmd`; the scenarios: `scen.sh`, `marathon.sh [BATCH...]` (the gate, the
+infra retry, a failed batch's scenarios once more), `quiet.sh NAME SCENARIO...` (`MAXCORES`, `MAXWAIT`).
