@@ -274,4 +274,19 @@ EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Prog
   stopped after `m_reg_2` (21:25; its repeat deferred) and goes on as `marathon2.sh`: the same batches (the finished
   ones skipped), before every batch and every repeat `gate.ps1` waits until the processes at normal priority or above
   use less than 3 cores for 45 s (each wait in `marathon.log`), and at the end `m_s14p_q`: S14p once more on a quiet
-  machine.
+  machine. Another workflow's normal-priority runs kept the machine above 3 cores, so the gate's threshold became 7 of
+  the 16 cores (`gatekick.sh`, 22:22).
+- `m_reg_3` (S21 S22a J1 M1 A1) passed. Two runs never started a scenario: S18's repeat (22:22) and `m_extra_1`'s first
+  run (22:53) ended with "mysqld did not open port 3751" (run.py's 40 s start window, `run.py:285-286`; both
+  `mysqld.err` stop after "Completed initialization of buffer pool" while Dolphin, MMXCM_PC and a game used 6-8 cores at
+  normal priority); no scenario result. `m_extra_1`'s repeat (the whole batch) passed J5 JB JR JS JS2 L1; in L1s the
+  session ended (17.11 23:21: the clients' exit 1073807364 = 0x40010004, the session end's termination; run.py was cut
+  before its summary).
+- **Resume (18.11, after the reboot of 09:15)**: HEAD 6274a65f, main still a304d6c9. No process of this stage was left;
+  the scenario mysqld's data (`tools/online_test/.work/mysql-data`, 3751) had a stale pid file (moved to
+  `build/r021/alt/stale_20261118`) and no clean shutdown: started once on its own for InnoDB's crash recovery and shut
+  down by SQL (`logs/mysqld_recover_20261118.*`: "Shutdown complete"); `it-mysql` (3750) had shut down cleanly. The
+  rest runs as `marathon3.sh` (`scen3.sh`: test ports 60600-60699, since the user's IDA MCP servers now listen on
+  60734-60736; a run that ends before any scenario because mysqld did not open its port is kept as
+  `scen_BATCH_infraN.log` and runs again after the gate, at most twice): `m_extra_1b` (L1s), `m_reg_2_s18` (S18's
+  repeat), `m_extra_2`, `m_fake`, W7f and W7g three more times each, `m_s14p_q`.
