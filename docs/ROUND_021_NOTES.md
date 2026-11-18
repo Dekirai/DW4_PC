@@ -345,3 +345,12 @@ Scripts in `build/r021/` (gitignored), each a copy adapted from the r020 ones: `
 60600-60699, the infra retry). A batch whose log ends with EXIT is skipped; `touch build/r021/marathon_stop` stops
 before the next batch. `mysqld_recover.py DATADIR PORT PWFILE LOG` starts a test mysqld once for its crash recovery and
 shuts it down by SQL.
+
+## The fix stage (int-021, 2026-11-18)
+
+The check pass's failures and the integration's review, fixed on `int-021` (worktree `DW4_PC-wt/int021`, from
+2cdda3bc); scripts, builds and logs in `build/r021fix/` (gitignored). Not pushed, no tag.
+
+| # | Finding (review / check) | Fix | Test (fails without the fix) |
+| --- | --- | --- | --- |
+| R1 | `Supersedes` took another member's STATE at the same tick as a repeat: the two STATEs of tick 0 every client sends (its load report, then its first step's with the load end) counted as one, so a guest's load end that came while the host's link was lost was `state_stale`; and `SyncStateReporter` returned early when the reporter stayed, so its kept STATE never took effect once the member whose newer one was in effect left | `RoomHub.EndsLoad` (at the same tick another member's STATE with the load end supersedes one without it); `SyncStateReporter` applies the reporter's newest whenever it supersedes (`state_kept_took_effect`) | `A_guests_load_end_that_comes_while_the_hosts_link_is_lost_...`, `A_reporters_kept_state_takes_effect_once_the_member_...` (each fails without its part: `logs/unit_counter_endsload.log`, `unit_counter_kept.log`); unit 718/718 (`unit_full_2.log`) |
