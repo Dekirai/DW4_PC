@@ -168,7 +168,7 @@ Visual Studio's CMake when present. Builds never start the game.
 | `-Configuration Debug\|Release\|RelWithDebInfo` | Build type and folder (`build\<Configuration>`, default Release) |
 | `-Jobs N` | Parallel build jobs (1-64, default 4) |
 | `-CoreOnly` | Skips the SDL/OpenGL runtime (`DW4_BUILD_APP=OFF`) |
-| `-Package` | Installs into `dist\DW4_PC` the release layout ([Release packages](#release-packages)): one self-contained `DW4_PC.exe` (static C++ runtime, only system DLLs), `dw4_catalog.exe`, the licenses, the player docs and the language packs, ready to copy anywhere |
+| `-Package` | Installs into `dist\DW4_PC` the release layout ([Release packages](#release-packages)): one self-contained `DW4_PC.exe` (static C++ runtime, only system DLLs), `dw4_catalog.exe`, the licenses, the player docs and the language packs, ready to copy anywhere; what an earlier `-Package` installed there that the layout no longer has is removed (`scripts\install_dist.ps1`), files the game wrote there (saves, `settings.ini`) stay |
 
 The game builds as `dw4_game.exe` (in `build\<Configuration>`); the install
 step renames it to `DW4_PC.exe`, the release's single entry point.
@@ -178,10 +178,14 @@ build folder; `build.ps1` does not create it) with an optional stage name.
 A build without `DW4_ONLINE_DEV` (the release game) is a Windows program: no
 console window opens with it (`DW4_GAME_CONSOLE` OFF, PE subsystem 2). Its
 lines go to a pipe or file its starter gave it (test runs, `> out.txt`), else
-to the console it was started from (cmd, PowerShell; the prompt does not wait
-for it), else to `saves\game.log` next to the program (the start before:
-`saves\game.previous.log`); `src/game/program_output.hpp`. Development builds
-keep the console; `-DDW4_GAME_CONSOLE=ON` gives any build one.
+to `saves\game.log` next to the program (the start before:
+`saves\game.previous.log`). Started from a console (cmd, PowerShell; the
+prompt does not wait for a Windows program), `--help` and the tools print
+there; a run that plays the game prints one line there naming the log and
+leaves the console (`FreeConsole`), so that console's Ctrl+C or its closing
+does not end it; `src/game/program_output.hpp`. A batch file (such as
+`Play-DW4-Game.cmd`) waits for the game as before. Development builds keep the
+console; `-DDW4_GAME_CONSOLE=ON` gives any build one.
 
 CMake options:
 
@@ -773,17 +777,23 @@ powershell -ExecutionPolicy Bypass -File scripts\package_windows.ps1 -Version 0.
 
 It configures `-BuildDirectory` (default `build\Package`) as the release game
 (Release, `DW4_ONLINE_DEV` and `BUILD_TESTING` OFF, `DW4_GAME_CONSOLE` OFF,
-`DW4_ONLINE_REQUIRE_PINS` ON: the pins of `local/online_pins.txt`, or
-`-PinsFile FILE`; `-NoPins` allows a test package that plays offline and over
-LAN only), builds `dw4_game` and `dw4_catalog`, installs into a fresh
+`DW4_ONLINE_REQUIRE_PINS` ON: the pins of `-CMakeArgs
+"-DDW4_ONLINE_PINS=<in use>,<spare>"`, else of `-PinsFile FILE`, else of
+`local/online_pins.txt`; `-NoPins` makes a test package without any pins, not
+even `local/online_pins.txt`'s, that plays offline and over LAN only; both pin
+variables are passed on every run, so a value of an earlier run never stays in
+a reused build folder's CMake cache), builds `dw4_game` and `dw4_catalog`,
+installs into a fresh
 `<build>\package\DW4_PC-<version>-windows-x64` and checks it: exactly the
 files above (the language files must be tracked in git), no `game.tsv`, no
 PDB / ILK / EXP / LIB, no file that names a profile folder (`Users/` or
 `Users\`, ASCII or UTF-16) or a PDB path, `DW4_PC.exe` a Windows program (PE
-subsystem 2) without a C++ runtime DLL (`dumpbin /dependents`). Only then it
+subsystem 2) without a C++ runtime DLL (`dumpbin /dependents`) that holds
+exactly the pins of their source. Only then it
 writes `-OutputDirectory` (default `dist`)`\DW4_PC-<version>-windows-x64.zip`
 (the files at its root, `/` separators) and `<zip>.sha256` (`sha256sum -c`
-reads it) and lists the zip's content. It refuses a checkout with changes to
+reads it) and lists the zip's content and the pins with their source (public
+values: compare them with `deploy/print-pins.ps1`). It refuses a checkout with changes to
 tracked files (`-AllowDirty`) and an existing zip (`-Force`); `-CMakeArgs`
 passes more configure options (for example `FETCHCONTENT_SOURCE_DIR_*` to
 build without downloads), `-Jobs N` the build's parallel jobs.

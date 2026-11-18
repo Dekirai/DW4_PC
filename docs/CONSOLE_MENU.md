@@ -191,7 +191,9 @@ stage input in `tools/menu/input`; `DW4_DATA` names the game data) and
   not, Saves' home row, the load's card, Load on the title after a soft
   reset, Back while a capture waits for its button, Y's look); d8 touch
   after a button (the first tap counts), a value zone that stays put, a drag
-  that starts on a section title.
+  that starts on a section title, the Language row's label of a pack
+  without its game.tsv ("(pictures only)": run it beside the committed
+  `lang/de`, the release's form).
 - C: pictures of every category and sub-page in pad and touch mode, every
   modal, the lower screen, 100 % / 300 % and Xbox prompts, the Developer
   category, with the layout check of the touch targets.

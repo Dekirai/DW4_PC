@@ -351,12 +351,13 @@ void general_root(Builder& b) {
         std::vector<std::string> labels;
         int current = 0;
         for (std::size_t i = 0; i < entries.size(); ++i) {
-            labels.push_back(entries[i].texts ? entries[i].name : entries[i].name + " (pictures only, no game.tsv)");
+            labels.push_back(entries[i].menu_label());
             if (entries[i].code == a.languages->selected()) current = int(i);
         }
         Row& r = b.choice("general.language", "Language", labels, current, [&a, &entries](int i) { a.select_language(entries[std::size_t(i)].code); });
         if (!a.languages->has_packs()) r.locked = "Language packs go into lang/<code>/";
-        else if (a.languages->selected() != "en") r.desc = "Game text only; the menus stay English.";
+        else if (a.languages->selected() != "en")
+            r.desc = entries[std::size_t(current)].texts ? "Game text only; the menus stay English." : "Pictures only; the game text and the menus stay English.";
     }
     {
         const int current = a.preset_index ? a.preset_index() : 2;

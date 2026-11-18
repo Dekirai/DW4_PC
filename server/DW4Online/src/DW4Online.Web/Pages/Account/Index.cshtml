@@ -75,7 +75,7 @@
 {
     <h2>E-mail</h2>
     <div class="panel">
-        <p class="muted small">Optional and not shown to anyone. A server that sends e-mail uses it only for password resets; the recovery code below works either way.</p>
+        <p class="muted small">Optional and never shown to other players (the server's staff can see it). A server that sends e-mail uses it only for password resets; the recovery code below works either way.</p>
         <form method="post" asp-page-handler="Email" class="stack">
             <label>E-mail address <input type="email" asp-for="Email" autocomplete="email" maxlength="254" /></label>
             <label>Current password <input type="password" asp-for="CurrentPassword" autocomplete="current-password" required maxlength="128" /></label>

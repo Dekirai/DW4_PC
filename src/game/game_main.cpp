@@ -4961,15 +4961,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             std::size_t current = 0;
                             for (std::size_t i = 0; i < entries.size(); ++i)
                                 if (entries[i].code == languages.selected()) current = i;
-                            auto entry_label = [&](std::size_t i) {
-                                // (A pack without its game.tsv, the release's form, swaps pictures only.)
-                                return entries[i].texts ? entries[i].name : entries[i].name + " (pictures only)";
-                            };
+                            // (A pack without its game.tsv, the release's form, swaps pictures only.)
                             ImGui::BeginDisabled(!languages.has_packs());
-                            if (ImGui::BeginCombo("Language", entry_label(current).c_str())) {
+                            if (ImGui::BeginCombo("Language", entries[current].menu_label().c_str())) {
                                 for (std::size_t i = 0; i < entries.size(); ++i) {
                                     ImGui::PushID(int(i));
-                                    if (ImGui::Selectable(entry_label(i).c_str(), i == current) && i != current) f1.select_language(entries[i].code);
+                                    if (ImGui::Selectable(entries[i].menu_label().c_str(), i == current) && i != current) f1.select_language(entries[i].code);
                                     ImGui::PopID();
                                 }
                                 ImGui::EndCombo();
@@ -4978,7 +4975,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (!languages.has_packs())
                                 ImGui::TextDisabled("Other languages come as language packs in lang/<code>/ next to the program.");
                             else if (languages.selected() != "en")
-                                ImGui::TextDisabled("The game's own text in this language; the port's menus stay English.");
+                                ImGui::TextDisabled(entries[current].texts ? "The game's own text in this language; the port's menus stay English."
+                                                                           : "This pack's pictures only; the game's text and the port's menus stay English.");
                         }
                         {
                             // Presets: Original (the GameCube presentation, load
@@ -6326,7 +6324,7 @@ void print_help() {
                  "  --export-presence-art FOLDER Discord art asset PNGs from your game data\n"
                  "  --help, -h                   this list\n"
                  "\n"
-                 "Test runs (docs/DEVELOPMENT.md \"Test runs\"):\n"
+                 "Test runs (https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md#test-runs):\n"
                  "  --smoke-test FRAMES          run FRAMES steps as fast as the machine runs them, no window, no sound\n"
                  "  --input SCRIPT               scripted pads (frame BUTTON [duration [player]], GOTO, SEEK, SEND)\n"
                  "  --screenshot FILE.bmp        a picture at the end (with --screenshot-frames N,M,...: at those frames)\n"
@@ -6399,19 +6397,24 @@ int main(int argc, char** argv) {
 #else
     // The release game has no console window: its lines go to the pipe or the
     // console it was started with, else to saves/game.log (program_output.hpp).
-    {
-        const auto folder = program_dir();
-        dw4::game::route_program_output((folder.empty() ? std::filesystem::path(".") : folder) / "saves" / "game.log");
-    }
+    const auto game_log = (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "saves" / "game.log";
+    dw4::game::route_program_output(game_log);
 #endif
     program_name = name_of_program(argc > 0 ? argv[0] : nullptr);
     // Test runs and the converter never open dialogs (they run unattended).
+    // (--env DW4_NO_ERROR_BOX=... counts wherever it stands, also behind a
+    // mistyped option: the review of 0.2.1; Android's test runs have only
+    // arguments.)
     bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
-    for (int i = 1; i < argc; ++i)
-        if (std::string_view(argv[i]) == "--smoke-test" || std::string_view(argv[i]) == "--convert-rvz" ||
-            std::string_view(argv[i]) == "--import-save" || std::string_view(argv[i]) == "--save-info" ||
-            std::string_view(argv[i]) == "--export-presence-art")
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--smoke-test" || arg == "--convert-rvz" || arg == "--import-save" || arg == "--save-info" || arg == "--export-presence-art")
             interactive = false;
+        if (arg == "--env" && i + 1 < argc) {
+            const std::string_view value = argv[i + 1];
+            if (value.rfind("DW4_NO_ERROR_BOX=", 0) == 0 && value.size() > std::string_view("DW4_NO_ERROR_BOX=").size()) interactive = false;
+        }
+    }
     try {
 #ifdef SDL_PLATFORM_ANDROID
         if (const std::string problem = dw4::game::app_root_problem(); !problem.empty()) throw std::runtime_error(problem);
@@ -6546,6 +6549,14 @@ int main(int argc, char** argv) {
                 return 0;
             } else throw std::runtime_error("unknown option " + arg + " (" + program_name + " --help lists them)");
         }
+#ifndef SDL_PLATFORM_ANDROID
+        // A run that plays the game leaves the console it was started from
+        // (one line there names saves/game.log): its Ctrl+C and its closing
+        // end it no more. --help and the tools print there and exit.
+        if (options.convert_from.empty() && options.save_info.empty() && options.import_save.empty() && options.export_art.empty() &&
+            !options.online_calibrate)
+            dw4::game::leave_console(game_log, program_name);
+#endif
         if (!options.convert_from.empty()) {
             // --convert-rvz IN OUT: write the plain disc image and exit.
             std::atomic<double> progress{0.0};

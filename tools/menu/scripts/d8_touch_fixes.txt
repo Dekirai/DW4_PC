@@ -19,6 +19,8 @@ shot d8_02_general_touch
 tap 780 123
 expect setting preferences.language de
 expect dialog none
+# (the committed pack, without its game.tsv as in the release: the label says so, the PC's F1 alike)
+expect value general.language Deutsch (Fan-Übersetzung) (pictures only)
 shot d8_03_language_de
 tap 270 123
 expect setting preferences.language en

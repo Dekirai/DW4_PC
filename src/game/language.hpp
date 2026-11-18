@@ -38,6 +38,9 @@ public:
         std::string code;  // "en" for English
         std::string name;  // in its own language ("English", "Deutsch (Fan-Übersetzung)"), UTF-8
         bool texts = true; // false: the pack has no game.tsv (its pictures only, the text stays English)
+        // The F1 menus' name for it (the PC's and the console's alike): a pack
+        // without its game.tsv, the release's form, swaps pictures only.
+        std::string menu_label() const { return texts ? name : name + " (pictures only)"; }
     };
     // The language packs below lang_root (lang/ next to the program);
     // English is always the first entry.

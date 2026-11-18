@@ -285,7 +285,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Jobs 4
 ```
 
 This builds `build\Release` and runs the tests; `-Package` installs a
-ready-to-copy folder in the release layout into `dist\DW4_PC`
+ready-to-copy folder in the release layout into `dist\DW4_PC`, removing what an
+earlier `-Package` put there that the layout no longer has
 (`scripts\package_windows.ps1` makes the release zip). Self-built games play
 offline and over LAN but cannot connect to the online server. Everything else:
 [docs/DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blob/main/docs/DEVELOPMENT.md).

@@ -36,7 +36,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 & $ctestExe --test-dir $buildDirectory --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 if ($Package) {
-    & $cmakeExe --install $buildDirectory --prefix (Join-Path $projectRoot 'dist\DW4_PC')
-    if ($LASTEXITCODE -ne 0) { throw 'Packaging failed.' }
+    # (Exactly the release layout: what an earlier -Package put there and the layout no longer has goes; saves and settings stay.)
+    & (Join-Path $PSScriptRoot 'install_dist.ps1') -BuildDirectory $buildDirectory -Prefix (Join-Path $projectRoot 'dist\DW4_PC') -CMake $cmakeExe
 }
 Write-Host "Build and tests complete: $buildDirectory"

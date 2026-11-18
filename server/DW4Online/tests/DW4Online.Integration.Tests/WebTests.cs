@@ -27,7 +27,10 @@ public class WebTests
     {
         await using var host = await TestHost.StartAsync();
         using var web = new WebBrowser(host);
-        Assert.Contains("Create an account", (await web.GetAsync("/register")).Html);
+        var register = (await web.GetAsync("/register")).Html;
+        Assert.Contains("Create an account", register);
+        // (The review of 0.2.1: the staff's account page shows the e-mail address, so the promise names them.)
+        Assert.Contains("never shown to other players (the server's staff can see it)", register);
         var code = await web.RegisterAsync("WebUser");
         Assert.Matches("[A-Z0-9-]{10,}", code);
         Assert.NotNull(web.Cookie("dw4_session"));
@@ -76,7 +79,9 @@ public class WebTests
         var recovery = await web.RegisterAsync("Settler");
         var game = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Settler", password = "a decent password", deviceName = "DW4_PC test" });
         var gameToken = (await game.Json()).GetProperty("token").GetString()!;
-        Assert.Contains("DW4_PC test", (await web.GetAsync("/account")).Html);
+        var account = (await web.GetAsync("/account")).Html;
+        Assert.Contains("DW4_PC test", account);
+        Assert.Contains("never shown to other players (the server's staff can see it)", account);
 
         Assert.Contains("The current password is wrong.", (await web.PostAsync("/account?handler=Email", new() { ["Email"] = "me@example.org",
             ["CurrentPassword"] = "wrong" }, "/account")).Html);

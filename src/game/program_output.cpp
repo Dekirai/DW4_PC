@@ -20,6 +20,10 @@ namespace dw4::game {
 
 #if defined(_WIN32) && defined(DW4_GAME_WINDOWED)
 namespace {
+// route_program_output attached this process to the console it was started
+// from (leave_console detaches it).
+bool g_attached = false;
+
 // A standard handle the starter gave this process (a pipe, a file, a console
 // it shares): its output stays there.
 bool usable(HANDLE handle) {
@@ -34,6 +38,28 @@ void stderr_to_stdout() {
     if (freopen_s(&stream, "NUL", "w", stderr) != 0) return;
     if (_fileno(stdout) >= 0 && _fileno(stderr) >= 0) _dup2(_fileno(stdout), _fileno(stderr));
     std::setvbuf(stderr, nullptr, _IONBF, 0);
+}
+
+// stdout into log_file, written anew (the one before kept as
+// <stem>.previous<ext>), unbuffered (a crash loses no line); else into NUL (a
+// folder the game cannot write to: the lines go nowhere). Returns the file's
+// name, "" for NUL.
+std::string stdout_to_log(const std::filesystem::path& log_file) {
+    std::error_code error;
+    std::filesystem::create_directories(log_file.parent_path(), error);
+    if (std::filesystem::exists(log_file, error)) {
+        auto previous = log_file;
+        previous.replace_extension(".previous" + log_file.extension().string());
+        std::filesystem::rename(log_file, previous, error);
+    }
+    FILE* stream = nullptr;
+    if (_wfreopen_s(&stream, log_file.c_str(), L"w", stdout) == 0) {
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        const auto text = log_file.u8string();
+        return std::string(text.begin(), text.end());
+    }
+    freopen_s(&stream, "NUL", "w", stdout);
+    return {};
 }
 } // namespace
 
@@ -51,31 +77,33 @@ std::string route_program_output(const std::filesystem::path& log_file) {
     if (AttachConsole(ATTACH_PARENT_PROCESS) && freopen_s(&stream, "CONOUT$", "w", stdout) == 0) {
         // (The prompt of cmd or PowerShell does not wait for a Windows program: the lines come after it.)
         where = "the console it was started from";
+        g_attached = true;
     } else {
-        std::error_code error;
-        std::filesystem::create_directories(log_file.parent_path(), error);
-        if (std::filesystem::exists(log_file, error)) {
-            auto previous = log_file;
-            previous.replace_extension(".previous" + log_file.extension().string());
-            std::filesystem::rename(log_file, previous, error);
-        }
-        if (_wfreopen_s(&stream, log_file.c_str(), L"w", stdout) == 0) {
-            // (Unbuffered: a crash loses no line.)
-            std::setvbuf(stdout, nullptr, _IONBF, 0);
-            const auto text = log_file.u8string();
-            where.assign(text.begin(), text.end());
-        } else {
-            freopen_s(&stream, "NUL", "w", stdout); // (a folder the game cannot write to: the lines go nowhere)
-        }
+        where = stdout_to_log(log_file);
     }
     stderr_to_stdout();
     std::cout.clear();
     std::cerr.clear();
-    if (where == "the console it was started from") std::cout << '\n';
+    if (g_attached) std::cout << '\n';
+    return where;
+}
+
+std::string leave_console(const std::filesystem::path& log_file, const std::string& program) {
+    if (!g_attached) return {};
+    g_attached = false;
+    const auto text = log_file.u8string();
+    std::cout << program << ": the game runs; its lines go to " << std::string(text.begin(), text.end()) << '\n' << std::flush;
+    const std::string where = stdout_to_log(log_file);
+    stderr_to_stdout();
+    std::cout.clear();
+    std::cerr.clear();
+    // (The console's Ctrl+C, Ctrl+Break and closing no longer reach this process.)
+    FreeConsole();
     return where;
 }
 #else
 std::string route_program_output(const std::filesystem::path&) { return {}; }
+std::string leave_console(const std::filesystem::path&, const std::string&) { return {}; }
 #endif
 
 } // namespace dw4::game

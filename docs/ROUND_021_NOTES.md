@@ -155,8 +155,9 @@ Logs in `build/r021/logs/`.
 - Merge and push are the user's (not done in this lane). The zip in `build/r021/dist` is the script's test output from
   this branch; the release zip comes from main after the merge (`scripts/package_windows.ps1 -Version 0.2.1`).
 - `build/Game` of the main checkout (`Play-DW4-Game.cmd`) becomes a Windows program at its next configure after the
-  merge (DEV=OFF): cmd does not wait for it and its lines go to the cmd window only while that is still open, else to
-  `saves/game.log`; `-DDW4_GAME_CONSOLE=ON` there keeps the old console.
+  merge (DEV=OFF). (Corrected in the fix stage: inside a batch file cmd waits for a Windows program too, `start /?`; and
+  since the fix stage a run that plays leaves the console for `saves/game.log`, one line in the window naming it.)
+  `-DDW4_GAME_CONSOLE=ON` there keeps the old console.
 - The AttachConsole path was checked from a process with a console but no window (no visible window was opened); a
   real cmd window is the user's check.
 - Files without an eol rule (LICENSE, `licenses/*-MIT.txt`, `data/lang/*`) ship with the checkout's line endings; a

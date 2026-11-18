@@ -13,9 +13,11 @@ textures.tsv of every pack committed in data/lang); no game.tsv, no PDB; no file
 ("Users/" or "Users\", ASCII or UTF-16) or a PDB path; DW4_PC.exe is a Windows (GUI) program and needs no C++ runtime DLL.
 
 -Version names the release (release numbers follow the server, for example 0.2.1); the game's own version, CMake's
-project version, is not changed. Player packages need the server's certificate pins (DW4_ONLINE_REQUIRE_PINS=ON:
-local/online_pins.txt, -PinsFile or -CMakeArgs "-DDW4_ONLINE_PINS=..."); -NoPins allows a test package without them,
-whose game plays offline and over LAN only.
+project version, is not changed. Player packages need the server's certificate pins (DW4_ONLINE_REQUIRE_PINS=ON):
+-CMakeArgs "-DDW4_ONLINE_PINS=<in use>,<spare>", else -PinsFile, else local/online_pins.txt. Every run passes both pin
+variables (CMake cache variables: a value of an earlier run in the same -BuildDirectory never stays), and a content rule
+checks that DW4_PC.exe holds exactly the pins of that source. -NoPins makes a test package without any pins (not even
+local/online_pins.txt's), whose game plays offline and over LAN only. The summary names the pins and their source.
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File scripts\package_windows.ps1 -Version 0.2.1
@@ -43,6 +45,26 @@ $name = "DW4_PC-$Version-windows-x64"
 $zipPath = Join-Path $outputDirectory "$name.zip"
 $shaPath = "$zipPath.sha256"
 if ((Test-Path -LiteralPath $zipPath) -and -not $Force) { throw "$zipPath exists already (-Force replaces it)." }
+
+# The server pins and their source, read as CMakeLists.txt reads them: a non-empty -CMakeArgs "-DDW4_ONLINE_PINS=..." wins,
+# else the pins file (-PinsFile, else local/online_pins.txt: one pin per line, # comments); -NoPins: none at all.
+$pinsArgPattern = '^-DDW4_ONLINE_PINS(:[A-Za-z]+)?='
+if (@($CMakeArgs | Where-Object { $_ -match '^-DDW4_ONLINE_PINS_FILE(:[A-Za-z]+)?=' }).Count -gt 0) { throw '-PinsFile names the pins file (not -CMakeArgs).' }
+$pinsGiven = @($CMakeArgs | Where-Object { $_ -match $pinsArgPattern })
+$pinsValue = if ($pinsGiven.Count -gt 0) { ($pinsGiven[-1] -replace $pinsArgPattern, '').Trim().Trim('"') } else { '' }
+if ($NoPins -and ($pinsValue -or $PinsFile)) { throw '-NoPins makes a package without pins: leave out -PinsFile and DW4_ONLINE_PINS.' }
+$pinsFilePath = if ($PinsFile) { Resolve-FromRoot $PinsFile } else { Join-Path $projectRoot 'local\online_pins.txt' }
+if ($PinsFile -and -not (Test-Path -LiteralPath $pinsFilePath)) { throw "$pinsFilePath does not exist." }
+$expectedPins = @()
+$pinsSource = 'none'
+if ($NoPins) { $pinsSource = 'none (-NoPins)' }
+elseif ($pinsValue) {
+    $expectedPins = @($pinsValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $pinsSource = '-CMakeArgs DW4_ONLINE_PINS'
+} elseif (Test-Path -LiteralPath $pinsFilePath) {
+    $expectedPins = @(Get-Content -LiteralPath $pinsFilePath | Where-Object { $_ -notmatch '^[ \t]*#' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $pinsSource = if ($PinsFile) { $pinsFilePath } else { 'local/online_pins.txt' }
+}
 
 # The source: a clean checkout of a commit (tracked files unchanged), unless -AllowDirty.
 $git = (Get-Command git -ErrorAction Stop).Source
@@ -72,18 +94,24 @@ foreach ($line in $compilerEnvironment) {
 $cmakeExe = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 if (-not (Test-Path -LiteralPath $cmakeExe)) { $cmakeExe = (Get-Command cmake -ErrorAction Stop).Source }
 
-# Configure and build the release game (and dw4_catalog).
+# Configure and build the release game (and dw4_catalog). Both pin variables are passed on every run (the review of 0.2.1:
+# they are CMake cache variables, so a test server's pin from an earlier run's -CMakeArgs or another -PinsFile stayed in a
+# reused build folder, and a non-empty DW4_ONLINE_PINS wins over any file); -NoPins passes an empty pins file, so not even
+# local/online_pins.txt reaches the test package.
 $require = if ($NoPins) { 'OFF' } else { 'ON' }
+if ($NoPins) {
+    $pinsFilePath = Join-Path $buildDirectory 'no_pins.txt'
+    [System.IO.File]::WriteAllText($pinsFilePath, "# package_windows.ps1 -NoPins: a package without server pins`n", [System.Text.Encoding]::ASCII)
+}
 $configure = @('-S', $projectRoot, '-B', $buildDirectory, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DDW4_BUILD_APP=ON',
-    '-DBUILD_TESTING=OFF', '-DDW4_ONLINE_DEV=OFF', '-DDW4_GAME_CONSOLE=OFF', '-DDW4_GHOST_PROBE=OFF', "-DDW4_ONLINE_REQUIRE_PINS=$require")
-if ($PinsFile) { $configure += "-DDW4_ONLINE_PINS_FILE=$((Resolve-FromRoot $PinsFile) -replace '\\', '/')" }
-$configure += $CMakeArgs
+    '-DBUILD_TESTING=OFF', '-DDW4_ONLINE_DEV=OFF', '-DDW4_GAME_CONSOLE=OFF', '-DDW4_GHOST_PROBE=OFF', "-DDW4_ONLINE_REQUIRE_PINS=$require",
+    "-DDW4_ONLINE_PINS=$pinsValue", "-DDW4_ONLINE_PINS_FILE=$($pinsFilePath -replace '\\', '/')")
+$configure += @($CMakeArgs | Where-Object { $_ -notmatch $pinsArgPattern })
 $configureOutput = & $cmakeExe @configure
 $configureExit = $LASTEXITCODE
 $configureOutput | ForEach-Object { Write-Host $_ }
 if ($configureExit -ne 0) { throw 'CMake configuration failed.' }
-# (The summary names the pins' count only; the configure output above names the pins file.)
-$pins = @($configureOutput | ForEach-Object { if ($_ -match 'DW4Online server pins: (\S+)') { "server pins: $($Matches[1])" } })
+$pinsLine = @($configureOutput | Where-Object { $_ -match 'DW4Online server pins: ' } | ForEach-Object { $_ -replace '^.*DW4Online server pins: ', '' })
 & $cmakeExe --build $buildDirectory --parallel $Jobs --target dw4_game dw4_catalog
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 
@@ -133,6 +161,13 @@ if (Test-Path -LiteralPath $gamePath) {
     $pe = [BitConverter]::ToInt32($bytes, 0x3C)
     $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
     if ($subsystem -ne 2) { $problems.Add("DW4_PC.exe: PE subsystem $subsystem, not 2 (a Windows program without a console window)") }
+    # Exactly the pins of their source (the strings shaped like a pin: 43 base64 characters and '='; compared case-sensitively).
+    $held = @([regex]::Matches($latin1.GetString($bytes), '(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{43}=(?![A-Za-z0-9+/=])') |
+        ForEach-Object { $_.Value } | Sort-Object -CaseSensitive -Unique)
+    $wanted = @($expectedPins | Sort-Object -CaseSensitive -Unique)
+    if (($held -join ',') -cne ($wanted -join ',')) {
+        $problems.Add("DW4_PC.exe: holds $($held.Count) server pin(s), not the $($wanted.Count) of $pinsSource (configure: $($pinsLine -join '; '))")
+    }
     $dumpbin = Get-Command dumpbin -ErrorAction SilentlyContinue
     if ($dumpbin) {
         foreach ($exe in @('DW4_PC.exe', 'dw4_catalog.exe')) {
@@ -167,7 +202,9 @@ $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvar
 [System.IO.File]::WriteAllText($shaPath, "$hash  $name.zip`n", [System.Text.Encoding]::ASCII) # (sha256sum -c reads it)
 
 Write-Host ''
-Write-Host "Package $name (commit $commit; $($pins -join '; '))"
+Write-Host "Package $name (commit $commit)"
+# (The pins are public values, hashes of the certificate's public key: compare them with deploy/print-pins.ps1.)
+Write-Host "Server pins: $($expectedPins.Count) from $pinsSource$(if ($expectedPins.Count -gt 0) { ': ' + ($expectedPins -join ', ') })"
 $total = 0
 foreach ($file in $expected) {
     $size = (Get-Item -LiteralPath (Join-Path $stage $file)).Length

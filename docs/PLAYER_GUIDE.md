@@ -87,8 +87,8 @@ The game is portable: everything it writes is next to the program.
 The game opens no console window. It writes what it found (lines such as
 `saves: ...`, `mod: ...`, `language: ...`, `controllers: ...`) and the reason
 when something stops the game to `saves\game.log`, anew at each start (the
-start before is kept as `saves\game.previous.log`). Started from a command
-prompt (cmd, PowerShell), it prints these lines into that window instead.
+start before is kept as `saves\game.previous.log`), also when it was started
+from a command prompt (see [Command line](#command-line)).
 
 ## The F1 menu
 
@@ -622,9 +622,10 @@ account screens over the title:
   Windows account in `saves/online`; no password is stored).
 - **Register:** user names have 3 to 20 letters, digits, `_` and `-`;
   passwords at least 10 characters; the e-mail address is optional and never
-  shown to others (password resets by e-mail are not offered yet; the
-  recovery code is the way back in). The **recovery code** is shown once:
-  write it down. An account can also be created on the server's website.
+  shown to other players (the server's staff can see it; password resets by
+  e-mail are not offered yet; the recovery code is the way back in). The
+  **recovery code** is shown once: write it down. An account can also be
+  created on the server's website.
 - **Forgot the password?** sets a new password with the recovery code (and
   gives you a new code).
 
@@ -953,8 +954,10 @@ own copy are described in [DEVELOPMENT.md](https://github.com/Dekirai/DW4_PC/blo
 
 The game needs no command line; these options are for special cases.
 `DW4_PC.exe --help` lists every option. Started from a command prompt (cmd,
-PowerShell), the game prints into that window (the prompt does not wait for
-it); started otherwise, into `saves\game.log`.
+PowerShell), `--help` and the tools print into that window; the game itself
+writes `saves\game.log` (one line in the window says so) and does not depend
+on the window: the prompt does not wait for it, and closing the window or
+Ctrl+C there does not end the game.
 
 | Option | What it does |
 | --- | --- |

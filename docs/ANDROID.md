@@ -810,7 +810,8 @@ phase B's GLES paths. The changes after it, for Android:
   language is chosen again; the menu's entry follows it (before, it kept
   saying "pictures only" until the next start; checked on the PC the other
   way round: a game.tsv removed after the start, the switch at frame 3000,
-  the entry then says "(pictures only, no game.tsv)").
+  the entry then says "(pictures only, no game.tsv)"; since 0.2.1 "(pictures
+  only)", as in the PC's F1).
 - **The renderer on GLES**: immutable storage for pack textures and BC7
   through `GL_EXT_texture_compression_bptc` (renderer section above),
   `DW4_GL_CHECK=1`.
@@ -855,7 +856,8 @@ Checked on 14.11.2026:
   the earlier APK (the disc copy stayed), started with `dw4args '--mute
   --env DW4_GL_CHECK=1'`: `language: 2 language pack files from the APK
   into .../files/lang`, the title; the Back key opens F1, the Language
-  entry offers "Deutsch (Fan-Übersetzung) (pictures only, no game.tsv)";
+  entry offered "Deutsch (Fan-Übersetzung) (pictures only, no game.tsv)" (since
+  0.2.1 "... (pictures only)");
   chosen by touch: `language: de: no game.tsv ... 2 of 3 pictures ready`;
   with a game.tsv pushed into the app's folder and German chosen again:
   `game.tsv 4515 texts, 0 rejected ..., 3 of 3 pictures ready`; back to
