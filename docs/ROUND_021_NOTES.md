@@ -364,3 +364,34 @@ The check pass's failures and the integration's review, fixed on `int-021` (work
 | F1 | S14p (3 of 4 runs): run.py read the owner's row "before" after g's "505 set", the server saved it 0.1-0.3 s after that line | `story_saved` takes `"before"` (S14p: "505 not in the host's story", about 15 s before the mat); `story_saved_verdict` | `tools/online_test/test_story_saved.py` (fails with the old run.py and scenario.json) |
 | F2 | M2 once: b hit 95 frames after its 3000-frame wait | 3600 frames (a's map reading, which b must still see, began 3500 / 4240 frames after b's menu) | the runs below |
 | - | W5s's STATEHASH gap after a checkpoint rebuild (a client matter from before 0.2.1, SEAMLESS 19.32) and S18's machine stall | not changed | |
+
+### Checks of the fix stage
+
+Logs in `build/r021fix/logs/`. Final code a3f683b3 (the later commits notes only).
+
+- **Builds** (the check pass's folders `build/r021/{rel,dev,plain}`, incremental, BelowNormal): `rel` `dw4_game.exe` md5
+  7039ab62 (PE subsystem 2), `dev` 2c34346b (subsystem 3), `plain` 94c7349b; no warning in the recompiled files
+  (`bld_*_2.log`). A first build at 533141c5 (`bld_*_1.log`, rel 6fe24c73) showed the new F1 note filling the window's
+  width at 100 % (`f1lang.sh`: `f1/fix/lang_100.bmp`); a3f683b3 shortened it.
+- **ctest** 81/81 in `dev` and in `plain`, both builds (`ctest_*_1.log`, `ctest_*_2.log`).
+- **Server**: unit 718/718 at a3f683b3 (`unit_final.log`); integration 155 passed, 3 skipped (`it.log`; own mysqld on 3750
+  with the check pass's data, shut down by SQL: "Shutdown complete"); publish dry run from a `git archive` of a3f683b3
+  (`pub.sh`: unit 718/718 in Release, `DW4Online-0.2.0.zip` 374 files, every assembly 0.2.0+a3f683b3, protocol 50, 14
+  migrations, no settings leak, no key or certificate; `publish*.log`).
+- **det.sh** twice on a copy of `rel` (7039ab62): all four runs 4004f056 / audio 396cb219 (`det.log`); also at 6fe24c73
+  (`det_6fe24c73.log`).
+- **Save state suite** 17/17 English, 17/17 German at 7039ab62 (`st_en.log`, `st_de.log`) and at 6fe24c73.
+- **Console menu scripts** d1-d8 at 7039ab62: 0 failed expects (`menu_d.log`); d8's new label expect fails on the check
+  pass's exe 5f0cc9b8 ("... (pictures only, no game.tsv)", `menu_d8_old.log`). At 6fe24c73 d3 failed 13 expects while
+  three builds, ctest and a package build ran beside it (its script raced ahead of dng101b1's load into another Cheats
+  page); the repeat on the final exe passed.
+- **Package dry run** (`pkg.sh pkg 0.2.1 -Force`, `pkg.log`): from the clean a3f683b3 in `build/r021/pkg` with the main
+  checkout's pins file: every content rule held (the new one too: `DW4_PC.exe` holds exactly the file's 2 pins), the
+  summary names them and their source, `DW4_PC-0.2.1-windows-x64.zip` 15 files, the same list as the check pass's,
+  `sha256sum -c` OK, no profile path; the unpacked `DW4_PC.exe` (769dd96e): det.sh 4004f056 / 396cb219, `--help` names
+  `DW4_PC` and the absolute "Test runs" link, a hidden `--smoke-test 1800 --mute` exit 0 (`det_pkg.log`).
+- **R2's counter-proof** (`pins_test.sh`, `pins_test.log`): the script of 2cdda3bc after a run with a test pin in
+  `-CMakeArgs` built the next `-PinsFile` run and a `-NoPins` run with that test pin (all rules green); the fixed one built
+  the file's 2 pins, none with `-NoPins` (while `local/online_pins.txt` held a test pin), that local pin without arguments,
+  and refused `-NoPins -PinsFile`. The old `-NoPins` configure in a fresh folder took `local/online_pins.txt`
+  (`nopins_probe.log`). The test's local pins file and the old script copy are in `build/r021fix/alt/pins_test`.
