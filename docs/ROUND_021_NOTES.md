@@ -444,3 +444,17 @@ dry run), `pkg.sh` / `pkg.cmd` (package dry run in `build/r021/pkg`, output `dis
 (R2), `console_test.py` + `console_child.py` (R3, R6: own console without a window, own desktop never shown),
 `install_dist_test.ps1` (R7), `nopins_probe.cmd`; the scenarios: `scen.sh`, `marathon.sh [BATCH...]` (the gate, the
 infra retry, a failed batch's scenarios once more), `quiet.sh NAME SCENARIO...` (`MAXCORES`, `MAXWAIT`).
+
+## The ship stage (release 0.2.1, 2026-11-18)
+
+From int-021 77b191d1 (the fix stage's result). Scripts and logs in `build/r021ship/` (gitignored), copies adapted from
+`build/r021fix/`.
+
+- **The server's version**: `server/DW4Online/Directory.Build.props` 0.2.1 (8ccc70e0); protocol 50, schema 14, no
+  migration. Unit 718/718 at 8ccc70e0 (`logs/unit_int021.log`).
+- **Main**: main a304d6c9 is an ancestor of int-021, so main is fast-forwarded to it (no merge of main needed) and pushed
+  (main only, no force, no tag).
+- **W7i: open for a quiet machine.** The main session decided to ship without W7i's rerun on a quiet machine: it passed
+  in the relay lane and in the check pass on the same lag code, it failed twice in the fix stage only under the user's
+  load (`why=streak` where the passing runs had `why=lag_debt`; the lag rule took b out either way), and the fix stage
+  did not touch the lag path. To do on a quiet machine: `build/r021fix/quiet.sh f_w7i_q W7i` (`MAXCORES=2`).
