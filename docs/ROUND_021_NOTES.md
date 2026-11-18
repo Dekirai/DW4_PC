@@ -395,3 +395,14 @@ Logs in `build/r021fix/logs/`. Final code a3f683b3 (the later commits notes only
   the file's 2 pins, none with `-NoPins` (while `local/online_pins.txt` held a test pin), that local pin without arguments,
   and refused `-NoPins -PinsFile`. The old `-NoPins` configure in a fresh folder took `local/online_pins.txt`
   (`nopins_probe.log`). The test's local pins file and the old script copy are in `build/r021fix/alt/pins_test`.
+- **Scenarios** (`marathon.sh`, `logs/marathon.log`: run.py under `python -I`, `--parallel 1`, BelowNormal, mysqld 3751,
+  ports 60600-60699, the relay of a3f683b3, the client `scen/dw4_fix_dev.exe` = `dev` 2c34346b; the load gate under 7
+  cores at normal priority before every batch). S14p passed (`f_s14p_1`, `run_20261118_135758`: "flag 505 ... revision 2,
+  0.6 s after g set it"). `f_new`: W4bs, W4bsx, W7h, W7j passed; **W7i failed twice** (`run_20261118_140157`,
+  `run_20261118_144728`), each time `lag_leave why=streak` at 211.2 / 211.5 s (lag debt 10 / 10.2 s) where its passing runs
+  had `why=lag_debt` at 211.5-211.8 s: the user's game at normal priority (8.5-12 cores; the gate opened at 0.8 and 5.0)
+  stretched b's passes (315-450 passes/s, longest 146-233 ms, against 700 / 7 ms in the check pass's run
+  `run_20261117_130127`, input delay 4-8 against 2-3), so b's pads in the 0.2 s between the first two cuts were not in time
+  and its fill streak reached the 10 s on its own. The lag rule took b out either way; the scenario's point (the debt
+  where the streak ends every time) needs b's burst in time: a run on a quiet machine below. No change of the fix stage
+  touches the lag rule (`RoomHub.cs:3660-3673`). `f_w7`: W7, W7b-W7g passed.
