@@ -289,4 +289,15 @@ EXIT is skipped, a batch's failures run once more in `scen_BATCH_rep.log`). Prog
   rest runs as `marathon3.sh` (`scen3.sh`: test ports 60600-60699, since the user's IDA MCP servers now listen on
   60734-60736; a run that ends before any scenario because mysqld did not open its port is kept as
   `scen_BATCH_infraN.log` and runs again after the gate, at most twice): `m_extra_1b` (L1s), `m_reg_2_s18` (S18's
-  repeat), `m_extra_2`, `m_fake`, W7f and W7g three more times each, `m_s14p_q`.
+  repeat), `m_extra_2`, `m_fake`, W7f and W7g three more times each, `m_s14p_q`. Every mysqld start of it opened its
+  port in time (no infra retry).
+- Passed (18.11, the gate open at 0.3-3.6 cores): L1s (`scen_m_extra_1b.log`), **S18's repeat**
+  (`scen_m_reg_2_s18.log`, `run_20261118_092704`: so S18's failure of 17.11 was the busy machine), `m_extra_2` L2 L3
+  P1 P2 P3 RG7, `m_fake` (the 9 fake-client scenarios), W7f three times (`m_w7f_1..3`), W7g once (`m_w7g_1`).
+- **M2 failed once** (`scen_m_extra_2.log`, `run_20261118_093330`): every fingerprint equal (294 compared, 17,520
+  shared ticks), only b's step "idle until lost>=1 fail ... frames>=3000" (`M2/b.script` line 14: b in its menu among
+  GENE-01's e_nume, waiting to be hit) ran out: a's fight beside it drew the e_nume (a's HP 49 -> 18), b's HP fell
+  (198 -> 192) at frame 3095 of the step, 95 frames after its limit; the clients' passes normal (exec p95 150 ms, no
+  stall). The repeat passed (`scen_m_extra_2_rep.log`, `run_20261118_095934`: b hit after 2452 frames). The enemies'
+  choice of target, which the script's own comment names (the e_nume "sometimes went for a instead"); no online fault,
+  the 3000 frames leave little room. Neither lane touched it.
