@@ -483,3 +483,38 @@ From int-021 77b191d1 (the fix stage's result). Scripts and logs in `build/r021s
 - **How to run** (`build/r021ship/`): `utest.sh LOG [REPO]` (unit tests), `pub_main.sh` (the server zip from the main
   checkout and its inspection), `pkg_main.sh VERSION` / `pkg_main.cmd` (the game zip from the main checkout's
   `build/Game`), `checks_pkg.sh` (det.sh, `--help`, the hidden smoke start), `desktop.sh` and `update_md.py` (the delivery).
+
+## The delivery review's repair (2026-11-18)
+
+A review of the 0.2.1 delivery (main 0ae01a3e, both zips, the delivery folder) had eight findings; each was checked
+here. The delivery texts are corrected, no code changed, neither zip rebuilt (their content stands; SHA-256 unchanged:
+server `7ed03bb6...875fd`, game `66bdf7be...03cbd`). Scripts and logs in `build/r021repair/` (gitignored); the delivery
+texts as they were before in `build/r021repair/before/`.
+
+| # | Finding | Checked | Done |
+| --- | --- | --- | --- |
+| 1 | The PC's step clock with VSync is new in 0.2.1 and no release text said so: `RefreshClock` (interpolation.hpp) came with the Android line merged as a304d6c9 (1d1f073f, ba2bb7a0, 0cb06d9a; not in d230037f). Offline with VSync on (the default) the game counts its steps in the display's refreshes. Measured on the Thor only (ANDROID.md); on the PC only the class's simulated unit tests ran (`interpolation_tests`: 60 Hz, a 59.94 Hz display that reports 60, 120 Hz, uneven presents, work every other pass, a 144 Hz mode at the game's own pace), never `refresh_paced` itself (`game_main.cpp:3471` leaves out `--smoke-test`, online play and runs without a window) | true; 0.2.0's clock is the `else` branch (the measured time), which `--env DW4_DEV_MEASURED_CLOCK=1` restores in the release game too (a plain `getenv`; not on the online lock list) | a "Frame pacing" line in the release notes and the changelog (with that switch), a sentence in the server update guide's client paragraph; the user's visible check below |
+| 2 | R3's test started the game by `subprocess.Popen` without handles and without inheritance, while cmd and PowerShell start a program with inheritance: a Windows program might get the console's handles there, take `route_program_output`'s "usable stdout" branch, never attach, write no `saves\game.log` | not so on this Windows 11 (build 26300). `console_test2.py` / `console_child2.py` (copies adapted from the fix stage's; the packaged `DW4_PC.exe` 997f6825; an own console without a window on an own desktop, BelowNormal) had a real `cmd.exe /d /s /c` start the game (cmd started with inheritance, its standard handles the console's and inheritable), and Windows PowerShell 5.1 (`& 'EXE' ...; Start-Sleep 8`: the shell stays, as at its prompt). Each time the console held the one line, the game was not on the console's process list after 3 s and its lines were in `saves\game.log` (`logs/console_test2.log`, `console_test2_pswait.log`; the Popen control as in the fix stage). A shell that ends at once (`powershell -Command` without the wait) gets no line, since AttachConsole finds no parent console; the log is written all the same | release texts unchanged; a real cmd window stays the user's check |
+| 3 | W7i: `why` names the fill streak before the lag debt when both limits hold (`RoomHub.cs:3667-3668`) | true: the fix stage's two failed runs logged `why=streak` with `lag_debt_s` 10 and 10.2, so in the second the debt had reached the limit as well. In both, b's pads between the cuts were not in time and its streak never ended (the scenario's premise); with the streak ended at each burst only the debt reaches the limit and `why=lag_debt` follows (the passing runs). A quiet rerun with `why=streak` and `lag_debt_s` of 10 or more means the premise failed again, not the rule | notes only (the expectation and the order are test and relay code: not changed) |
+| 4 | Four files of the game zip have CRLF where 0.2.0's had LF: `lang/de/language.ini`, `lang/de/textures.tsv`, `licenses/enbrip-MIT.txt`, `licenses/pl_mpeg-MIT.txt`. `cmake --install` copies the working tree (`core.autocrlf` true from the Git installation's system config); those files are `text=auto` without an eol rule | true (`git ls-files --eol`: `w/crlf`, pl_mpeg `w/mixed`; the zip's copies have 17, 8, 21 and 17 CRs, 0.2.0's none, and without the CRs they are md5-equal to 0.2.0's). The parsers drop `\r` (`language_pack.cpp`, `ini.cpp`); a package from a clone with autocrlf false gets another SHA-256 | not rebuilt (both read alike; the client lane's notes named it); an `eol=lf` rule in `.gitattributes` would make the package independent of autocrlf (left) |
+| 5 | The release texts said the Second screen shows "every player's form, level, HP, MP, EXP and Bits": other online players in the stage (their presence, `screen2.cpp:57-67`) get form, level, HP and MP only | true | release notes and changelog corrected; PLAYER_GUIDE ("every joined player's") and the F1 hint were right |
+| 6 | `build/r021ship/logs/desktop.log`'s last compare says "differ" | true, only the path prefix (the stage-start file names `PC/settings.ini`, the end one `settings.ini`); the three md5 values are equal, checked again here, nothing under `saves` newer than 16.11 | a line appended to `desktop.log` |
+| 7 | Five `tail -f` watchers of earlier stages still run (two on `build/r021/logs/marathon.log`, three on `build/r021fix/logs/marathon.log`, started 18.11 09:21-14:54, their parents gone), although the check pass's and the fix stage's notes say no process was left | true (PIDs 31088, 66096, 119320, 134132, 135408) | not ended here (not this stage's processes): `taskkill /PID 31088 /PID 66096 /PID 119320 /PID 134132 /PID 135408` in cmd, or a restart |
+| 8 | The server DLLs name their PDB path (the build machine's profile folder) | true, as in 0.2.0 and every server release before; the server zip goes to the own server, not to the public release | none |
+
+### Left (repair)
+
+- **The PC's step clock, the user's visible check** (finding 1): offline, VSync on, started from cmd as `DW4_PC.exe --env
+  DW4_FRAME_STATS=10`, a minute at the title and one in a dungeon. `saves\game.log` should have "frames: the step clock
+  counts in the display's refreshes (X ms)" (X = 1000 / the monitor's rate), about 59.9 steps/s in every ten-second line
+  and "a 0 next to a 2+" at or near 0 (at 60 Hz a lone one about every 16.7 s). For a comparison the same with `--env
+  DW4_DEV_MEASURED_CLOCK=1` (the clock of 0.2.0). Worth it at 144 Hz and with variable refresh.
+- W7i once on a quiet machine (`build/r021fix/quiet.sh f_w7i_q W7i`, `MAXCORES=2`), read as in finding 3.
+- A real cmd window for R3 (the one line, close the window, the game plays on).
+- The five watchers of finding 7 (the command above).
+- An `eol=lf` rule for the installed text files (finding 4), before the next package.
+
+### How to run (repair)
+
+`build/r021repair/console_test2.py NAME EXE [play cmd cmdinh ps pswait cmdhelp]` (results in `contest/NAME/`; the game
+started by the shell is found by its parent PID and ended by that PID after 5 s).
