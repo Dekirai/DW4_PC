@@ -458,3 +458,28 @@ From int-021 77b191d1 (the fix stage's result). Scripts and logs in `build/r021s
   in the relay lane and in the check pass on the same lag code, it failed twice in the fix stage only under the user's
   load (`why=streak` where the passing runs had `why=lag_debt`; the lag rule took b out either way), and the fix stage
   did not touch the lag path. To do on a quiet machine: `build/r021fix/quiet.sh f_w7i_q W7i` (`MAXCORES=2`).
+- **Pushed**: main a304d6c9..33d9f20f (`git merge --ff-only int-021` in the main checkout, `git push origin HEAD`; no
+  force, no tag).
+- **Server zip** `DW4Online-0.2.1.zip`: `publish.ps1` from the main checkout at 33d9f20f (`logs/publish_main.log`): unit
+  718/718 in Release, 374 files with the same names as 0.2.0's zip, every assembly 0.2.1+33d9f20f, `WorldProtocol.Version`
+  50, the 14 embedded migrations up to 0014_reports, no appsettings.Production / Development / Local.json, no key or
+  certificate (`publish_main_inspect.log`, `publish_zip_list.txt`). 50,205,953 bytes, SHA-256
+  `7ed03bb6ca22e030d80831e513740781983ed3d94900e3dbc4928398382875fd`.
+- **Game zip** `DW4_PC-0.2.1-windows-x64.zip`: `scripts/package_windows.ps1 -Version 0.2.1 -BuildDirectory build\Game
+  -Jobs 4` from the main checkout at 33d9f20f (BelowNormal; the build folder's cached FetchContent sources; the pins from
+  `local/online_pins.txt`, the summary's values kept out of the log shown, `logs/pkg_main.log`): every content rule held
+  (`DW4_PC.exe` holds exactly the file's 2 pins), 15 files in the fix stage's dry run's list and order, no game.tsv / PDB /
+  Android file / profile path, `DW4_PC.exe` PE subsystem 2 and system DLLs only, md5 997f6825 (equal to
+  `build/Game/dw4_game.exe`); 5,028,210 bytes, SHA-256 `66bdf7bed2001d0922d051302bdd2e1be9d1cc31167ff2baf2f83119cf603cbd`,
+  `sha256sum -c` OK (`pkg_main_check.log`, `pkg_main_zip_list.txt`). `build/Game` is now configured as the package script
+  sets it (DW4_GAME_CONSOLE OFF: a Windows program; DW4_ONLINE_REQUIRE_PINS ON).
+- **The packaged exe**: det.sh on a copy (md5 997f6825): both runs 4004f056 / audio 396cb219 (`det_pkg.log`); `--help`
+  names `DW4_PC`, lists `--host` and `--join` and links "Test runs" on GitHub (`smoke_pkg.log`, `help_pkg.txt`); a hidden
+  `--smoke-test 1800 --mute` of `DW4_PC.exe` in a scratch copy of the unpacked zip (no settings.ini, no saves): exit 0 at
+  frame 1800 (its lines in the pipe, no file written there).
+- **Delivered** to the user's delivery folder (outside the repository): both zips, the changelog, the release notes and the
+  server update guide's 0.2.1 box; the 0.2.0 files moved aside (nothing deleted), the user's settings and saves unchanged
+  (md5 before and after).
+- **How to run** (`build/r021ship/`): `utest.sh LOG [REPO]` (unit tests), `pub_main.sh` (the server zip from the main
+  checkout and its inspection), `pkg_main.sh VERSION` / `pkg_main.cmd` (the game zip from the main checkout's
+  `build/Game`), `checks_pkg.sh` (det.sh, `--help`, the hidden smoke start), `desktop.sh` and `update_md.py` (the delivery).
