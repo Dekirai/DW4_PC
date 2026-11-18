@@ -2381,8 +2381,11 @@ the same 47549cdd for stag0102.) The server compares per tick:
   the connected one longest): the *reporter*. A STATE takes effect only when it is newer (by
   tick) than the one in effect of another member still in the stage group,
   at a reporter change and for the reporter's own STATE alike
-  (`RoomHub.Supersedes`; at the same tick only the member in effect's own
-  next one; an older one is counted `state_stale` and kept): a host back
+  (`RoomHub.Supersedes`; at the same tick the member in effect's own next
+  one, another member's only when it carries the load end the one in effect
+  lacks: every client reports tick 0 twice, its load before its first step
+  and that step's with the load end; an older one is counted `state_stale`
+  and kept): a host back
   from a drop catches up and reports ticks the others played long ago. The
   grace's start and end (`StartGrace`, `HostBack`) sync the reporter too.
   The others' STATEs are
@@ -2393,7 +2396,11 @@ the same 47549cdd for stag0102.) The server compares per tick:
   housekeeping pass), the new reporter's newest STATE takes effect when its
   tick is newer than the one in effect, or when the member whose STATE is
   in effect left the stage group, so no change of the reporter loses a
-  state (a client sends STATE only on a change). A reporter back from a lost
+  state (a client sends STATE only on a change). A reporter that stays
+  looks again too: its newest STATE, kept while another member's newer one
+  was in effect, takes effect once that member left the stage group
+  (counter `state_kept_took_effect`; the review of 0.2.1). A reporter back
+  from a lost
   link never takes a newer state back with its older one; a member that
   leaves the stage group keeps no STATE there (back in it later in the
   visit, only what its engine reports from then on counts); a new visit
@@ -15395,6 +15402,20 @@ without its fix, two controls passing without them.
   same tick only the member in effect's own next STATE (two changes in one
   tick, a repeat). An older one is kept, counted `state_stale`: a host back
   from a drop (or a member resynced) reports the ticks it catches up.
+  The integration's review found two gaps (fixed before the release): every
+  client reports tick 0 twice (its forced STATE after the load, before its
+  first step, and that step's with the load end), so a guest's load end
+  that came while the host's link was lost (his own went into it) was
+  `state_stale` and the stage group stayed "loading, not joinable, no entry
+  context" until the reporter's next change; at the same tick another
+  member's STATE with the load end now takes the place of one without it
+  (`RoomHub.EndsLoad`). And a reporter that stayed never looked again at
+  its own kept STATE: once the member whose newer STATE was in effect left
+  the stage group, its flags stayed in effect; `SyncStateReporter` now
+  applies the reporter's newest STATE whenever it supersedes, changed
+  reporter or not (`state_kept_took_effect`). Unit tests
+  `A_guests_load_end_that_comes_while_the_hosts_link_is_lost_...`,
+  `A_reporters_kept_state_takes_effect_once_the_member_...`.
 - **A host who drops at a gate gets a fresh grace** (finding 3).
   `WorldHub.SharedGroup` counts a stage group at its barrier as shared
   with nobody: a closed link takes the host out of it at once and the

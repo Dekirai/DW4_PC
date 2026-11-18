@@ -1103,12 +1103,25 @@ public sealed partial class RoomHub
     /// <summary>
     /// A STATE of <paramref name="from"/> takes the place of the one in effect (fix-021, one rule for <see cref="OnState"/> and
     /// <see cref="SyncStateReporter"/>): when none is in effect this visit, or its member left the stage group (its tick may be another
-    /// timeline's, W7e's straggler), or it is newer by tick; at the same tick only from the member in effect (a client reports a change
-    /// at the tick of the one before: its load end; a repeat changes nothing). An older STATE never takes effect: a host back from a drop
-    /// or a member resynced catches up and reports ticks the stage group played long ago.
+    /// timeline's, W7e's straggler), or it is newer by tick; at the same tick the member in effect's own (a client reports a change at
+    /// the tick of the one before; a repeat changes nothing), another member's only when it ends the load the one in effect had not
+    /// (<see cref="EndsLoad"/>). An older STATE never takes effect: a host back from a drop or a member resynced catches up and reports
+    /// ticks the stage group played long ago.
     /// </summary>
     private static bool Supersedes(HubInstance i, HubMember from, StateMsg msg) =>
-        !i.StateApplied || i.StateFrom is not { } cur || !InGroup(i, cur) || msg.Tick > i.StateTick || (msg.Tick == i.StateTick && cur == from);
+        !i.StateApplied || i.StateFrom is not { } cur || !InGroup(i, cur) || i.StateInEffect is not { } inEffect || msg.Tick > inEffect.Tick ||
+        (msg.Tick == inEffect.Tick && (cur == from || EndsLoad(msg, inEffect)));
+
+    /// <summary>
+    /// At the same tick, a STATE with the load end comes after one without it (the review of 0.2.1). Every client reports tick 0 twice:
+    /// its forced STATE after the load (BARRIER_OK, before its first step) and, after that step, the same tick 0
+    /// (<c>tick_ ? tick_ - 1 : 0</c>) with <see cref="StateMsg.LoadEnded"/>, which a client sets once per visit and keeps. By the tick
+    /// alone the second was a repeat of another member's first: a guest's load end that came while the host's link was lost (his own
+    /// went into it) was kept as <c>state_stale</c>, and the stage group stayed "loading, not joinable, no entry context" until the
+    /// reporter's next change.
+    /// </summary>
+    private static bool EndsLoad(StateMsg msg, StateMsg inEffect) =>
+        (msg.Flags & StateMsg.LoadEnded) != 0 && (inEffect.Flags & StateMsg.LoadEnded) == 0;
 
     /// <summary>
     /// The reporter of <paramref name="i"/>'s STATE may have changed (a LEAVE, a lost or returned connection, a slot that went or came,
@@ -1121,7 +1134,10 @@ public sealed partial class RoomHub
     /// for 26 ms before its LEAVE, b's joinable STATE came in between and was ignored, b sent none again, so b's stage group stayed
     /// *Scene* and a's JOIN of it waited Instances:JoinHoldSeconds for nothing and became a stage group of its own (HoldExpired). Only
     /// the flags change here (no decision runs: the callers are inside other steps); a decision that reads them sees them at once, the
-    /// holds at the latest in the next housekeeping pass. True: a STATE took effect.
+    /// holds at the latest in the next housekeeping pass. The same holds for a reporter that stays (the review of 0.2.1): its newest
+    /// STATE, kept as <c>state_stale</c> while the one in effect was a newer one of another member, takes effect once that member left
+    /// the stage group (counted <c>state_kept_took_effect</c>). Before, only a change of the reporter looked again, so the flags of a
+    /// member gone stayed in effect until the reporter's next change. True: a STATE took effect.
     /// </summary>
     private bool SyncStateReporter(HubInstance i)
     {
@@ -1132,14 +1148,14 @@ public sealed partial class RoomHub
         foreach (var x in i.States.Keys)
             if (!InGroup(i, x)) i.States.Remove(x);
         var reporter = StateReporter(i);
-        if (reporter == i.StateReporter) return false;
+        var changed = reporter != i.StateReporter;
         i.StateReporter = reporter;
         if (reporter is null || !i.States.TryGetValue(reporter, out var newest) || newest.Visit != i.Visit || ReferenceEquals(newest, i.StateInEffect) ||
             !Supersedes(i, reporter, newest))
             return false;
-        Count("state_reporter_changed");
+        Count(changed ? "state_reporter_changed" : "state_kept_took_effect");
         Note("state_reporter", i, ("member", reporter.Index), ("slot", reporter.Slot), ("tick", newest.Tick), ("flags", newest.Flags),
-            ("reason", newest.Reason.ToString()), ("was", i.StateFrom?.Index ?? 0), ("was_tick", i.StateTick));
+            ("reason", newest.Reason.ToString()), ("was", i.StateFrom?.Index ?? 0), ("was_tick", i.StateTick), ("kept", changed ? 0 : 1));
         ApplyState(i, reporter, newest);
         return true;
     }

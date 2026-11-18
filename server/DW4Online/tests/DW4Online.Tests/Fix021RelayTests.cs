@@ -19,6 +19,9 @@ namespace DW4Online.Tests;
 ///    the limit (the fill streak ends at any pad in time), for guests and for a host below World:HostSilenceSeconds;
 /// 5. a member removed while it played on alone (between its removal and its next barrier) was not on a foreign story: a STORY with
 ///    its own key reached its own keeper with the host's progress, and the achievements' context said "home".
+/// The review of 0.2.1 found two gaps of 2's rule: the two STATEs of tick 0 every client sends (its load report, then its first
+/// step's with the load end) counted as one, and a reporter that stayed never looked again at its own kept STATE once the member
+/// whose newer one was in effect left.
 /// Each test fails without its fix.
 /// </summary>
 public partial class HubLogicTests
@@ -444,5 +447,82 @@ public partial class HubLogicTests
         Assert.Equal(1, h.Hub.KeeperOf(a.AccountId)!.Story.Flags[505]);
         var ctx = h.Hub.PlayContext(a.AccountId, h.Now)!;
         Assert.Equal((w.Wid, true), (ctx.Wid, ctx.IsHost));
+    }
+
+    // ---- The review of 0.2.1 (finding 1 of the integration's review): two gaps of the one rule (Supersedes) for a STATE to take effect.
+
+    /// <summary>The forced STATE a client sends after its load (BARRIER_OK, before its first step): tick 0, no load end yet.</summary>
+    private static void LoadReport(Harness h, string name)
+    {
+        var i = h.I(name);
+        h.Send(name, new StateMsg(i.Id, i.Visit, 0, 0, 5, StateReason.Loading).Frame());
+    }
+
+    [Fact]
+    public void A_guests_load_end_that_comes_while_the_hosts_link_is_lost_takes_effect_and_stays_in_effect_when_he_is_back()
+    {
+        var r = new FlapRig();
+        var h = r.H;
+        // Both report their load (tick 0, before the first step): a's takes effect (the reporter), b's is kept.
+        LoadReport(h, "a");
+        LoadReport(h, "b");
+        Assert.Equal((h.Mem("a"), StateReason.Loading, false), (r.I.StateFrom, r.I.Reason, r.I.Joinable));
+        // a's link closes right after his first step: his STATE of that step (tick 0 again, with the load end) went into it, and his
+        // client sends it no more. b reports.
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(1000);
+        Assert.Same(h.Mem("b"), r.I.StateReporter);
+        // b's STATE of its first step: tick 0 with the load end, joinable. Before, the same tick as a's load report in effect counted as
+        // a repeat (state_stale), and the stage group stayed "loading, not joinable, no entry context" (on main the reporter's every
+        // STATE took effect).
+        h.Send("b", new StateMsg(r.I.Id, r.I.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe | StateMsg.LoadEnded, 7, StateReason.None).Frame());
+        Assert.Equal((h.Mem("b"), true, (ulong?)7), (r.I.StateFrom, r.I.Joinable, r.I.EntryContext));
+        Assert.False(h.Hub.Counters.ContainsKey("state_stale"));
+        // a is back in his grace and plays in time: the reporter again. His newest STATE (the load report) never takes b's back.
+        r.Back("a");
+        r.Mode["a"] = 2;
+        r.Play(1000);
+        Assert.False(r.W.HostAway);
+        Assert.Same(h.Mem("a"), r.I.StateReporter);
+        Assert.Equal((h.Mem("b"), true, StateReason.None, (ulong?)7), (r.I.StateFrom, r.I.Joinable, r.I.Reason, r.I.EntryContext));
+        // An arrival joins the stage group at once.
+        ArriveC(h, "stag0201");
+        var ok = h.Decision("c");
+        Assert.Equal((BarrierDecision.Join, r.I.Id), (ok.Decision, ok.NewInst));
+    }
+
+    [Fact]
+    public void A_reporters_kept_state_takes_effect_once_the_member_whose_newer_state_was_in_effect_left_the_stage_group()
+    {
+        var r = new FlapRig();
+        var h = r.H;
+        r.Play(1000);
+        StateAt(h, "a", r.I.NextSeal - 1, joinable: true);
+        // a's link closes; b reports a scene meanwhile.
+        r.Drop("a");
+        r.Mode["a"] = 0;
+        r.Play(3000);
+        var t1 = r.I.NextSeal - 1;
+        StateAt(h, "b", t1, joinable: false);
+        // a is back and plays in time: the reporter again; his engine catches up and reports a tick before b's (kept, state_stale).
+        r.Back("a");
+        r.Mode["a"] = 2;
+        r.Play(1000);
+        Assert.Same(h.Mem("a"), r.I.StateReporter);
+        StateAt(h, "a", t1 - 30, joinable: true);
+        Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("state_stale"));
+        Assert.Equal((h.Mem("b"), false), (r.I.StateFrom, r.I.Joinable));
+        // b's link closes and its slot goes (Relay:ReconnectSeconds): b's STATE counts no more (19.32: a member that left), a's newest
+        // takes effect though a stayed the reporter. Before, SyncStateReporter looked again only at a change of the reporter: the flags
+        // of b, gone, stayed in effect until a's engine reported its next change.
+        r.Drop("b");
+        r.Mode["b"] = 0;
+        r.Play(12_000, () => h.Mem("b").Instance != r.I);
+        Assert.NotSame(r.I, h.Mem("b").Instance);
+        Assert.Same(r.I, h.Mem("a").Instance);
+        Assert.Equal((h.Mem("a"), true), (r.I.StateFrom, r.I.Joinable));
+        Assert.Equal(1, h.Hub.Counters.GetValueOrDefault("state_kept_took_effect"));
+        Assert.Equal(0, h.Hub.Counters.GetValueOrDefault("state_reporter_changed"));
     }
 }
