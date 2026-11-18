@@ -7,6 +7,7 @@
   "min_shared_ticks": 0,
   "story_saved": {
     "client": "g",
+    "before": "log: 505 not in the host's story",
     "after": "log: 505 set",
     "flag": 505,
     "seconds": 10

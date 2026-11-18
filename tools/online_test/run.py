@@ -860,10 +860,15 @@ def stored_story_flag(stack, connection, account_id, flag):
 
 
 def watch_story_saved(stack, sc, out, connection, owner_id, result, stop):
-    """scenario.json "story_saved": {"client", "after", "flag", "seconds"}: the time from the client's log line that
-    contains "after" (the script step that saw the flag set in its engine; step lines are flushed at once) until the
-    room owner's online_story row in the database holds the flag (SEAMLESS.md 17 S2: within ten seconds). The log is
-    read every 0.1 s, the database every 0.2 s; result["seconds"] is that time, None if it never came within 60 s."""
+    """scenario.json "story_saved": {"client", "before", "after", "flag", "seconds"}: the time from the client's log line
+    that contains "after" (the script step that saw the flag set in its engine; step lines are flushed at once) until the
+    room owner's online_story row in the database holds the flag (SEAMLESS.md 17 S2: within ten seconds). The row as it
+    was before the client set the flag (result["before"], the precondition) is read at the client's earlier line that
+    contains "before" (a script step before the one that sets the flag; without "before": at "after"). (int-021's check
+    pass: read at "after", S14p's precondition failed in 3 of 4 runs although the flag reached the row in time, because
+    the server saved it 0.1-0.3 s after that line, sooner than this watcher's log poll plus its mysql.exe start.) The log
+    is read every 0.1 s, the database every 0.2 s; result["seen"] when "after" came, result["seconds"] the time, None if
+    the flag never came within 60 s."""
     spec = sc["story_saved"]
     log = os.path.join(out, spec["client"] + ".log")
     seen, at, text = None, 0, ""
@@ -875,9 +880,15 @@ def watch_story_saved(stack, sc, out, connection, owner_id, result, stop):
                     chunk = f.read()
                     at = f.tell()
                 text = (text + chunk)[-4096:]
+                if spec.get("before") and "before" not in result and spec["before"] in text:
+                    result["before"] = stored_story_flag(stack, connection, owner_id, spec["flag"])
                 if spec["after"] in text:
                     seen = time.time()
-                    result["before"] = stored_story_flag(stack, connection, owner_id, spec["flag"])
+                    result["seen"] = True
+                    if "before" not in result:
+                        if spec.get("before"):
+                            result["before_missing"] = True
+                        result["before"] = stored_story_flag(stack, connection, owner_id, spec["flag"])
                     continue
             time.sleep(0.1)
             continue
@@ -889,6 +900,29 @@ def watch_story_saved(stack, sc, out, connection, owner_id, result, stop):
             result["seconds"] = None
             return
         time.sleep(0.2)
+
+
+def story_saved_verdict(spec, result):
+    """(problems, notes) of watch_story_saved's result."""
+    problems, notes = [], []
+    seconds = result.get("seconds")
+    if not result.get("seen"):
+        problems.append("story_saved: %s never logged '%s'" % (spec["client"], spec["after"]))
+    elif result.get("before_missing"):
+        problems.append("story_saved: %s never logged '%s' before '%s'" % (spec["client"], spec["before"], spec["after"]))
+    elif result["before"][1]:
+        problems.append("story_saved: the owner's online_story had flag %s before %s set it (%s)" % (spec["flag"], spec["client"],
+                                                                                                result["before"]))
+    elif seconds is None:
+        problems.append("story_saved: flag %s never reached the owner's online_story" % spec["flag"])
+    else:
+        # The log is read every 0.1 s: the flag may have been set up to 0.1 s before the line was seen.
+        notes.append("story_saved: flag %s in the owner's online_story (revision %d) %.1f s after %s set it (at most %s s)" % (
+            spec["flag"], result["revision"], seconds, spec["client"], spec["seconds"]))
+        if seconds + 0.1 > spec["seconds"]:
+            problems.append("story_saved: flag %s took %.1f s to reach the owner's online_story (> %s s)" % (spec["flag"], seconds,
+                                                                                                         spec["seconds"]))
+    return problems, notes
 
 
 def game_scenarios():
@@ -1318,22 +1352,9 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             own_story_checks(stack, connection, sc, out, accounts, seeded, problems, notes)
     latency_summary(sc, out, notes)
     if sc.get("story_saved"):
-        spec = sc["story_saved"]
-        seconds = story_saved.get("seconds")
-        if "before" not in story_saved:
-            problems.append("story_saved: %s never logged '%s'" % (spec["client"], spec["after"]))
-        elif story_saved["before"][1]:
-            problems.append("story_saved: the owner's online_story had flag %s before %s set it (%s)" % (spec["flag"], spec["client"],
-                                                                                                    story_saved["before"]))
-        elif seconds is None:
-            problems.append("story_saved: flag %s never reached the owner's online_story" % spec["flag"])
-        else:
-            # The log is read every 0.1 s: the flag may have been set up to 0.1 s before the line was seen.
-            notes.append("story_saved: flag %s in the owner's online_story (revision %d) %.1f s after %s set it (at most %s s)" % (
-                spec["flag"], story_saved["revision"], seconds, spec["client"], spec["seconds"]))
-            if seconds + 0.1 > spec["seconds"]:
-                problems.append("story_saved: flag %s took %.1f s to reach the owner's online_story (> %s s)" % (spec["flag"], seconds,
-                                                                                                             spec["seconds"]))
+        p, n = story_saved_verdict(sc["story_saved"], story_saved)
+        problems += p
+        notes += n
     if sc.get("achievements"):
         check_achievements(sc, api, tag, passwords, lock, problems, notes)
     # The scenario's database afterwards (the world's tables: instance_history's end reason, its members, prefs, ...).

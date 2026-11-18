@@ -2,7 +2,9 @@
 # them beside it and is hit there; then walks about near the entrance (fighting the e_nume) while a
 # reads the map recorder far away. Its menu opens a few steps from GENE-01's spawn point (-285, 240), which a
 # starts on the entrance mat: from (-300, 335) the e_nume sometimes went for a instead and b was never hit
-# (run 20261104_150825).
+# (run 20261104_150825). From (-296, 268) b was hit 2452 and 3095 frames after its menu opened (int-021's runs
+# 20261118_095934 and 093330: the e_nume went for a first, a's HP 49 -> 18), so the wait is 3600 frames: a's map
+# reading, which b's wander below must still see, began 3500 and 4240 frames after b's menu in those runs.
 campaign until stage=stagml11,control
 idle until epoch>=@91
 explore mate00 yes until stage=stag0101,control
@@ -11,7 +13,7 @@ explore matz00 yes 2 until stage=dng101b1,control
 log b in the dungeon
 goto -296 268 8 fail stagechange
 menu until menu=1 fail stagechange
-idle until lost>=1 fail stagechange,menu=0,frames>=3000
+idle until lost>=1 fail stagechange,menu=0,frames>=3600
 log b was hit in its menu
 idle until frames>=120 fail stagechange,menu=0
 shot b_hit_in_menu

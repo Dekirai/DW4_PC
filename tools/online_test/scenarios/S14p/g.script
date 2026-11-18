@@ -2,7 +2,8 @@
 # lobby plays its own story (which has flag 505); through the lobby gate it joins o's instance in stag0101 and plays o's
 # story there (o's card without 505: g's engine lacks it in the field). It steps on matb01, whose hint panel sets 505: new
 # to the host's story and plausible there, merged into o's keeper at once. run.py's "story_saved" times o's online_story
-# row from this script's "505 set" line (ten seconds at most); 505 stays in g's engine.
+# row from this script's "505 set" line (ten seconds at most; the row without 505 is read at "505 not in the host's
+# story", before the mat); 505 stays in g's engine.
 campaign until stage=stagml11
 talk until control,frames>=60
 log in the lobby

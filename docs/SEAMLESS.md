@@ -6819,9 +6819,12 @@ anyway; joining goes through the room list.
   for the same reason), `"server": {...}` gives the scenario its own server with those
   settings and its own database (S14h / S14a: `Rooms:StoryWhileOwnerAway`),
   `"min_shared_ticks"` lowers the shared ticks below (S14: one member plays),
-  `"story_saved": {"client", "after", "flag", "seconds"}` times the room
-  owner's `online_story` row in the database from that client's log line
-  (S14p: the guest's "505 set" step, ten seconds at most). The condition
+  `"story_saved": {"client", "before", "after", "flag", "seconds"}` times the
+  room owner's `online_story` row in the database from that client's log line
+  "after" (S14p: the guest's "505 set" step, ten seconds at most); the row's
+  value before the flag was set is read at the earlier line "before" (S14p:
+  "505 not in the host's story"; read at "after", the precondition lost the
+  race against a save quicker than the log poll, int-021). The condition
   `roomflag:N` reads the room story the client holds as confirmed (S14p: the
   owner's machine has the guest's value there while its engine does not).
   Checked per scenario: the net
