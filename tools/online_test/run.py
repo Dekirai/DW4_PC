@@ -286,7 +286,7 @@ def start_mysql(stack):
                                 "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00", "--innodb-use-native-aio=0",
                                 "--log-error=" + os.path.join(stack.dir, "mysqld.err")], os.path.join(stack.dir, "mysqld.out"))
     # (180 s: on a loaded machine mysqld, BelowNormal like the clients, stood after "Completed initialization of buffer pool"
-    # for more than the 40 s of before while games ran at normal priority; seven runs of int-021's check pass and fix stage
+    # for more than the 40 s of before while games ran at normal priority; eight runs of int-021's check pass and fix stage
     # were lost, and the terminate cut its start short. A mysqld that exits ends the wait at once.)
     if not wait_port(port, 180, stack.mysqld):
         raise RuntimeError("mysqld did not open port %d" % port)

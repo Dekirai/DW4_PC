@@ -406,3 +406,11 @@ Logs in `build/r021fix/logs/`. Final code a3f683b3 (the later commits notes only
   and its fill streak reached the 10 s on its own. The lag rule took b out either way; the scenario's point (the debt
   where the streak ends every time) needs b's burst in time: a run on a quiet machine below. No change of the fix stage
   touches the lag rule (`RoomHub.cs:3660-3673`). `f_w7`: W7, W7b-W7g passed.
+- The rest of the marathon (the user's games at normal priority most of the afternoon; the gate waited up to 36 minutes):
+  S14p twice more (`f_s14p_2` 1.2 s, `f_s14p_3` 0.5 s after g's line; so three of three with the fix), `f_w4` (W4, W4b,
+  W4bx, W4c-W4i) 10/10, `f_w10` (W10, W10b, W10c, W10d, W10s) 5/5, M2 twice (`f_m2_1`, `f_m2_2_rep`; b hit 351 and 259
+  frames into its 3600-frame wait), `f_join` (W1, W2, W11, W31, S11a, S11b, JR, JS, W5, W5s) 10/10 (W5s without the
+  rebuild gap this time), `ui accounts` (the Register screen with the new e-mail text) passed. Six runs never started a
+  scenario: mysqld stood after "Completed initialization of buffer pool" for more than run.py's 40 s while the games ran
+  (`scen_*_infra*.log`); each ran again. So run.py's window is 180 s now and ends at once when mysqld exits (3b2fd68c,
+  `test_wait_port.py`).
