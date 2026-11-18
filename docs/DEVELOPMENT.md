@@ -243,7 +243,8 @@ The native source port is the active local validation scope:
 `dw4_game --smoke-test FRAMES` runs fixed steps as fast as the machine runs
 them, without a picture unless one is asked for. Test runs read no
 `settings.ini`; they take their options from the command line and the
-environment. `DW4_NO_ERROR_BOX=1` (and the `--smoke-test`, `--convert-rvz`,
+environment. `DW4_NO_ERROR_BOX=1` (also as `--env DW4_NO_ERROR_BOX=1`, wherever
+it stands on the command line; and the `--smoke-test`, `--convert-rvz`,
 `--import-save`, `--save-info` and `--export-presence-art` modes) keep the
 error message box away; the reason still goes to stderr. Example:
 
