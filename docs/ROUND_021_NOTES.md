@@ -509,12 +509,22 @@ texts as they were before in `build/r021repair/before/`.
   counts in the display's refreshes (X ms)" (X = 1000 / the monitor's rate), about 59.9 steps/s in every ten-second line
   and "a 0 next to a 2+" at or near 0 (at 60 Hz a lone one about every 16.7 s). For a comparison the same with `--env
   DW4_DEV_MEASURED_CLOCK=1` (the clock of 0.2.0). Worth it at 144 Hz and with variable refresh.
-- W7i once on a quiet machine (`build/r021fix/quiet.sh f_w7i_q W7i`, `MAXCORES=2`), read as in finding 3.
+- ~~W7i once on a quiet machine~~: done, passed ("W7i's rerun" below).
 - A real cmd window for R3 (the one line, close the window, the game plays on).
-- The five watchers of finding 7 (the command above).
+- ~~The five watchers of finding 7~~: ended by the main session (their own PIDs).
 - An `eol=lf` rule for the installed text files (finding 4), before the next package.
 
 ### How to run (repair)
 
 `build/r021repair/console_test2.py NAME EXE [play cmd cmdinh ps pswait cmdhelp]` (results in `contest/NAME/`; the game
 started by the shell is found by its parent PID and ended by that PID after 5 s).
+
+### W7i's rerun (main session, 18.11.2026)
+
+On the user's request, after the delivery: `W7i` alone on the shipped code (int-021 77b191d1's relay; the client
+`build/r021fix/scen/dw4_fix_dev.exe`), run.py `--no-build --parallel 1`, mysqld 3751, ports 60600-60699, without the
+gate and at normal priority (the earlier runs at BelowNormal lost b's 0.2 s pad bursts under the user's games). Log
+`build/r021fix/logs/scen_f_w7i_now.log`, run folder `run_20261118_220447`: **PASS**, `lag_leave why=lag_debt
+lag_debt_s=10.1` at 211.3 s, as in its passing runs of the lane and the check pass (211.5-211.8 s). The fourth online
+fix of 0.2.1 is so covered by a passing real-client run on the final code; nothing changes in the release.
+
